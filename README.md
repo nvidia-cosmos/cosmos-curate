@@ -1,1 +1,1 @@
-# cosmos-curator
+# cosmos-curate
