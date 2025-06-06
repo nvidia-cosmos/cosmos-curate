@@ -1,3 +1,4 @@
 [submodule "cosmos-xenna"]
 	path = cosmos-xenna
 	url = ../cosmos-xenna.git
+	ignore = untracked
