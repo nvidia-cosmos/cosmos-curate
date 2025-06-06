@@ -1,0 +1,21 @@
+# A conda environment for text curation tasks using NeMo-Curator
+RUN {{cache_mount_str}} micromamba install -c conda-forge -y python=3.10.14 pip ipython
+
+RUN {{cache_mount_str}} pip install "NeMo-Curator[cuda12x,s3,azure] @ git+https://github.com/NVIDIA/NeMo-Curator.git@060d702d0e5289abb1e94a92f9b8296b36c04fb7" \
+    "cudf-cu12==25.02" \
+    && rm -rf /root/.cache/pip
+
+RUN {{cache_mount_str}} pip install \
+    ngcsdk \
+    loguru \
+    ray[default]==2.46.0 \
+    && rm -rf /root/.cache/pip
+
+RUN {{cache_mount_str}} pip install \
+    av \
+    cattrs \
+    easydict \
+    opencv-python \
+    pulp \
+    tabulate \
+    webdataset

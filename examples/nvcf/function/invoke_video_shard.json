@@ -1,0 +1,8 @@
+{
+    "pipeline": "shard",
+    "args": {
+        "input_clip_path": "FILL_IN",
+        "output_dataset_path": "FILL_IN",
+        "annotation_version": "v0"
+    }
+}

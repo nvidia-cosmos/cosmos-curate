@@ -1,0 +1,17 @@
+__pycache__/
+dist
+build
+trace.log
+
+*.swp
+*.egg-info
+.mypy_cache
+.ruff_cache
+
+*.sqsh
+
+/.idea/
+/.vscode/
+**/client.key
+**/client.crt
+**/charts/*.tgz

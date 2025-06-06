@@ -1,0 +1,30 @@
+{
+    "_comment": [
+        "image: must be of format [team/]name, do not prefix nvcr.io or org, or suffix with tag",
+        "desc: Description of image. Defaults to null",
+        "overview:  Overview of image. Defaults to null",
+        "label: Label of image. Defaults to null",
+        "label_set: Label set of image. Defaults to null - the format is a list of strings",
+        "logo: Logo of the image. Defaults to null - the format is url",
+        "publisher: Publisher of image. Defaults to null",
+        "built_by:  Name of image built by. Defaults to null",
+        "multinode: Is image multinode. Defaults to false",
+        "display_name: Display name of image. Defaults to null"
+    ],
+    "image": "[FILL_IN_OPTIONAL_TEAM/]cosmos-curate",
+    "tag": "FILL_IN",
+    "definition": {
+        "desc": null,
+        "overview": null,
+        "label": [
+            "foo",
+            "bar"
+        ],
+        "label_set": null,
+        "logo": null,
+        "publisher": null,
+        "built_by": "Cosmos",
+        "multinode": false,
+        "display_name": null
+    }
+}

@@ -1,0 +1,13 @@
+RUN {{cache_mount_str}} micromamba install python=3.10.14 -y && \
+                        pip install \
+                            azure-identity>=1.0.0 \
+                            azure-storage-blob>=12.0.0 \
+                            cattrs \
+                            huggingface_hub \
+                            loguru \
+                            ngcsdk==3.64.4 \
+                            pandas \
+                            pynvml \
+                            ray[default]==2.46.0 \
+                            scipy \
+                            tabulate

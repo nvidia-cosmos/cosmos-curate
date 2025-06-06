@@ -1,0 +1,17 @@
+{
+    "pipeline": "split",
+    "args": {
+        "input_video_path": "FILL_IN",
+        "output_clip_path": "FILL_IN",
+        "generate_embeddings": false,
+        "generate_previews": false,
+        "generate_captions": true,
+        "splitting_algorithm": "transnetv2",
+        "motion_filter": "disable",
+        "aesthetic_threshold": null,
+        "captioning_prompt_variant": "default",
+        "captioning_prompt_text": null,
+        "limit": 0,
+        "limit_clips": 0
+    }
+}

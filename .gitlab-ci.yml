@@ -1,0 +1,515 @@
+workflow:
+  rules:
+    # Run pipeline for merge requests
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    # Run pipeline for merged commits to default branch
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+    # Run pipeline for scheduled pipelines (cron)
+    - if: '$CI_PIPELINE_SOURCE == "schedule"'
+    # Run pipeline for E2E testing
+    - if: $TEST_END_TO_END == "True"
+    # Skip everything else
+    - when: never
+
+default:
+  tags:
+    - vm-builder  # Default to shell executor
+  before_script:
+    - set -x
+
+variables:
+  # Versions
+  PYTHON_VERSION: "3.10.14"
+  RUFF_VERSION: "0.11.8"
+
+  # Git config
+  GIT_STRATEGY: fetch
+  GIT_DEPTH: 1
+  GIT_SUBMODULE_STRATEGY: normal
+  GIT_SUBMODULE_DEPTH: 1
+
+  # GitLab container registry
+  CURATOR_IMAGE: ${CI_REGISTRY_IMAGE}/curator
+
+  # NVCF configuration
+  NVCF_ORG_ID: "$NVCF_ORG_ID"
+  NVCF_DEV_BASE_IMAGE: "dev-cosmos-curator"  # Base name for NVCF dev images
+  NVCF_DEV_IMAGE: "nvcr.io/${NVCF_ORG_ID}/${NVCF_DEV_BASE_IMAGE}"  # Complete NVCF dev image path
+  NVCF_STAGING_BASE_IMAGE: "staging-cosmos-curator"  # Base name for NVCF staging images
+  NVCF_STAGING_IMAGE: "nvcr.io/${NVCF_ORG_ID}/${NVCF_STAGING_BASE_IMAGE}"  # Complete NVCF staging image path
+  NVCF_PROD_BASE_IMAGE: "prod-cosmos-curator"  # Base name for NVCF prod images
+  NVCF_PROD_IMAGE: "nvcr.io/${NVCF_ORG_ID}/${NVCF_PROD_BASE_IMAGE}"  # Complete NVCF prod image path
+  NVCF_BACKEND: "$NVCF_BACKEND"
+  NVCF_GPU_TYPE: L40S
+  NVCF_INSTANCE_TYPE: OCI.GPU.L40S_1x
+  NGC_NVCF_ORG: $NVCF_ORG_ID  # Needed for helm deploy json template
+  NVCF_MAX_CONCURRENCY: 2
+  NVCF_INSTANCE_COUNT: 1
+
+  # AWS configuration
+  AWS_ACCESS_KEY_ID: "$AWS_ACCESS_KEY_ID"
+  AWS_SECRET_ACCESS_KEY: "$AWS_SECRET_ACCESS_KEY"
+  AWS_DEFAULT_REGION: "$AWS_DEFAULT_REGION"
+  S3_INPUT_VIDEO_PATH: "s3://${AWS_S3_BUCKET_NAME}/cicd-curator-oss/raw_videos/NBA_sample"
+  S3_OUTPUT_PATH: "s3://${AWS_S3_BUCKET_NAME}/cicd-curator-oss/output/${CI_PIPELINE_ID}"
+  S3_OUTPUT_CLIP_PATH: "${S3_OUTPUT_PATH}/cosmos-curator-nvcf-helm/raw_clips"
+
+  # HELM configuration
+  HELM_THANOS_RECEIVER_URL: "$HELM_THANOS_RECEIVER_URL"
+  HELM_BYO_METRICS_RECEIVER_CLIENT_CRT: $HELM_BYO_METRICS_RECEIVER_CLIENT_CRT
+  HELM_BYO_METRICS_RECEIVER_CLIENT_KEY: $HELM_BYO_METRICS_RECEIVER_CLIENT_KEY
+  HELM_GPU_REQUESTS: 1
+  HELM_GPU_LIMITS: 1
+  HELM_SHMEM_LIMIT: 500Gi
+  HELM_IMAGE_TAG:
+  TEST_END_TO_END:
+    description: "Run cosmos-curator end-to-end test pipeline"
+    value: "False"
+    options:
+      - "True"
+      - "False"
+  HELM_DEBUG_KEEP_FAILED_DEPLOYMENTS:
+    description: "On failure, do not delete the deployment"
+    value: "False"
+    options:
+      - "True"
+      - "False"
+  CICD_HELM_CHART_NAME:
+    description: "Helm chart name for the CICD pipeline"
+    value: "cosmos-curate"
+  CICD_HELM_CHART_VERSION:
+    description: "Helm chart version for the CICD pipeline"
+    value: "2.0.3"
+
+stages:
+  - lint
+  - test
+  - build
+  - end-to-end
+  - post-merge
+
+# Reusable snippets (anchors)
+.snippets:
+  # Rules for pre-merge jobs
+  pre_merge_rules: &pre_merge_rules
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" || $TEST_END_TO_END == "True"'
+    - when: never
+
+  # Rules for post-merge jobs
+  post_merge_rules: &post_merge_rules
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+    - when: never
+
+  # Rules for scheduled (cron) jobs
+  schedule_rules: &schedule_rules
+    - if: '$CI_PIPELINE_SOURCE == "schedule"'
+    - when: never
+
+  # Rules for merge result pipelines only
+  merge_result_rules: &merge_result_rules
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_EVENT_TYPE != "merge_train"'
+    - when: never
+
+  # Configure Docker authentication for GitLab/NVCF registries
+  docker_login: &docker_login |
+    export DOCKER_CONFIG="${CI_PROJECT_DIR}/.docker"
+    mkdir -p "${DOCKER_CONFIG}"
+    docker login -u gitlab-ci-token -p ${CI_JOB_TOKEN} "${CI_REGISTRY}"
+    echo "$NVCF_KEY" | docker login nvcr.io --username '$oauthtoken' --password-stdin
+
+  # Set up micromamba environment for Python dependencies
+  setup_micromamba: &setup_micromamba |
+    # Download appropriate micromamba binary based on architecture
+    if [ "$(uname -m)" == "aarch64" ]; then
+      curl -Ls https://micro.mamba.pm/api/micromamba/linux-aarch64/latest | tar -xvj bin/micromamba
+    else
+      curl -Ls https://micro.mamba.pm/api/micromamba/linux-64/latest | tar -xvj bin/micromamba
+    fi
+    # Configure micromamba environment
+    export MAMBA_ROOT_PREFIX="$(pwd)/micromamba"
+    eval "$(./bin/micromamba shell hook -s posix)"
+    # Create Python environment for curator
+    micromamba create -n curator python=${PYTHON_VERSION} poetry -y
+    micromamba activate curator
+
+  # Activate an existing micromamba environment
+  activate_micromamba: &activate_micromamba |
+    # Configure micromamba environment
+    export MAMBA_ROOT_PREFIX="$(pwd)/micromamba"
+    eval "$(./bin/micromamba shell hook -s posix)"
+    # Create Python environment for curator
+    micromamba activate curator
+
+  # Clean up micromamba environment
+  teardown_micromamba: &teardown_micromamba |
+    # Only attempt cleanup if micromamba was installed
+    if [ -f "$(pwd)/bin/micromamba" ]; then
+      micromamba deactivate || true
+      micromamba env remove -n curator -y || true
+    fi
+
+  # Install curator full requirements
+  setup_curator: &setup_curator |
+    poetry install --extras=local --no-interaction
+
+  # Install curator CLI requirements
+  setup_curator_cli: &setup_curator_cli |
+    poetry install --no-interaction
+
+ruff:
+  stage: lint
+  image: ghcr.io/astral-sh/ruff:${RUFF_VERSION}-alpine
+  tags:
+    - build-runner  # Override to Docker executor
+  variables:
+    GIT_SUBMODULE_STRATEGY: none
+  rules: *pre_merge_rules
+  script:
+    - ruff format --check
+    - ruff check
+  interruptible: true
+
+mypy:
+  stage: lint
+  image: python:3.10
+  tags:
+    - build-runner  # Override to Docker executor
+  rules: *pre_merge_rules
+  script:
+    - *setup_micromamba
+    - *setup_curator
+    - mypy --pretty
+    - *teardown_micromamba
+  interruptible: true
+
+build_deploy_curator:
+  stage: build
+  rules: *pre_merge_rules
+  script:
+    # Set up environment
+    - *docker_login
+    - *setup_micromamba
+    - *setup_curator_cli
+    - IMAGE_TAG="mr_${CI_MERGE_REQUEST_IID}_${CI_COMMIT_SHORT_SHA}"
+    - |
+      cosmos-curate image build \
+      --curator-path . \
+      --image-name ${CURATOR_IMAGE} \
+      --image-tag ${IMAGE_TAG}
+    - FULL_IMAGE=${CURATOR_IMAGE}:${IMAGE_TAG}
+    - echo "Built image ${FULL_IMAGE} from curator commit [${CI_COMMIT_SHA}]"
+    - docker push ${FULL_IMAGE}
+    - echo "Pushed image ${FULL_IMAGE} to GitLab registry"
+    - NVCF_IMAGE=${NVCF_DEV_IMAGE}:${IMAGE_TAG}
+    - docker buildx imagetools create -t ${NVCF_IMAGE} ${FULL_IMAGE}
+    - echo "Copied to image ${NVCF_IMAGE} from curator commit [${CI_COMMIT_SHA}]"
+    # Also create a floating tag for the image so it can be promoted to staging
+    - NVCF_FLOATING_IMAGE="${NVCF_DEV_IMAGE}:mr_${CI_MERGE_REQUEST_IID}"
+    - docker buildx imagetools create -t ${NVCF_FLOATING_IMAGE} ${NVCF_IMAGE}
+    - echo "Copied to image ${NVCF_FLOATING_IMAGE} from curator commit [$CI_COMMIT_SHA]"
+    # Cleanup
+    - *teardown_micromamba
+  retry:
+    max: 2
+    when: always
+  interruptible: true
+
+unit_tests:
+  stage: test
+  needs: []
+  variables:
+    PYTEST_ADDOPTS: "--junitxml=report.xml"
+  rules: *pre_merge_rules
+  script:
+    - *setup_micromamba
+    - *setup_curator
+    - pytest
+    - *teardown_micromamba
+  artifacts:
+    when: always
+    reports:
+      junit: report.xml
+  interruptible: true
+
+# Run GPU tests on SLURM cluster
+gpu_tests:
+  stage: end-to-end
+  rules: *pre_merge_rules
+  needs: [ "build_deploy_curator" ]
+  tags:
+    - ${SLURM_RUNNER_TAG}
+  variables:
+    GIT_STRATEGY: none
+    CI_BUILDS_DIR: ${NEMO_CI_PATH}/.config/${CI_JOB_ID}
+    ENROOT_CONFIG_PATH: "${CI_BUILDS_DIR}/.enroot"
+  script:
+    # Set up Docker authentication
+    - mkdir -p "${ENROOT_CONFIG_PATH}"
+    - echo "machine ${CI_REGISTRY/:5005/} login gitlab-ci-token password ${CI_JOB_TOKEN}" > $ENROOT_CONFIG_PATH/.credentials
+
+    # Pull the specific image version to test
+    - IMAGE_TAG="mr_${CI_MERGE_REQUEST_IID}_${CI_COMMIT_SHORT_SHA}"
+    - FULL_IMAGE=${CURATOR_IMAGE}:${IMAGE_TAG}
+    - BUILD_IMAGE_NAME_SBATCH="${FULL_IMAGE/:5005\///}"
+    # Submit SLURM job using the Docker image
+    - DATA_DIR=/lustre/fsw/coreai_dlalgo_ci/datasets/nemo_curator/video
+    - MODEL_DIR=/lustre/fsw/coreai_dlalgo_ci/nemo_video_curator/models
+    - AWS_CREDS_PATH="/lustre/fsw/coreai_dlalgo_ci/datasets/nemo_curator/video/awscreds"
+    - MOUNTS="${DATA_DIR}:/config/data,${MODEL_DIR}:/config/models,${AWS_CREDS_PATH}:/dev/shm/s3_creds_file,${CI_PROJECT_DIR}:/config/project"
+    - NODES=1
+    - export LOCAL_DOCKER_ENV_VAR_NAME=1
+    # Create bash script for running environment tests
+    - |
+      cat > run_env_tests.sh << 'EOL'
+      #!/bin/bash
+      set -e
+
+      # Run tests for each environment with unique report files
+      for env in cosmos_curate video_splitting unified; do
+        echo "Running tests for $env environment"
+        micromamba run -n $env pytest -m env --junitxml="/config/project/$env-report.xml" tests/cosmos_curate/pipelines
+      done
+      EOL
+    - chmod +x run_env_tests.sh
+    # Run pytest for each environment; sleep 15 min before retry
+    - >
+      srun -A ${SLURM_ACCOUNT} \
+           -p ${SLURM_PARTITION} \
+           -N 1 \
+           --container-image ${BUILD_IMAGE_NAME_SBATCH} \
+           --container-mounts ${MOUNTS} \
+           -J ${SLURM_ACCOUNT}-cosmos_curator_test.${CI_JOB_ID} \
+           -t "02:00:00" \
+           /config/project/run_env_tests.sh \
+      || (sleep 900 && false)
+  retry:
+    max: 2
+    when: always
+  artifacts:
+    when: always
+    reports:
+      junit:
+        - "*-report.xml"
+  interruptible: true
+
+# SAST jobs
+include:
+  - template: Jobs/SAST.gitlab-ci.yml
+
+semgrep-sast:
+  needs: []
+  tags:
+    - build-runner  # Override to Docker executor
+  variables:
+    GIT_SUBMODULE_STRATEGY: none
+    SAST_EXCLUDED_PATHS: "cosmos-xenna/**"
+  rules: *pre_merge_rules
+  interruptible: true
+
+# Run end-to-end tests on NVCF cluster
+nvcf-helm:
+  stage: end-to-end
+  needs: [ "build_deploy_curator" ]
+  rules: *merge_result_rules
+  allow_failure: false
+  image: python:3.10
+  tags:
+    - build-runner  # Override to Docker executor
+  variables:
+    HELM_FUNCTION_NAME: "cosmos-curator-${CI_JOB_NAME_SLUG}-${CI_PIPELINE_ID}"
+  before_script:
+    - *setup_micromamba
+    - *setup_curator_cli
+    - |
+      if ! which envsubst; then
+        apt-get update && apt-get install -y gettext jq
+      fi
+    - export HELM_BYO_METRICS_RECEIVER_CLIENT_CRT=$(echo $HELM_BYO_METRICS_RECEIVER_CLIENT_CRT_BASE64 | base64 -d | awk '{printf "%s\\n", $0}')
+    - export HELM_BYO_METRICS_RECEIVER_CLIENT_KEY=$(echo $HELM_BYO_METRICS_RECEIVER_CLIENT_KEY_BASE64 | base64 -d | awk '{printf "%s\\n", $0}')
+  script:
+      - cosmos-curate nvcf config set --org $NVCF_ORG_ID --key $NVCF_KEY
+      - |
+        if [[ "$TEST_END_TO_END" == "True" ]]; then
+          # this can be overridden by passing the HELM_IMAGE_TAG var in cicd variables
+          export HELM_IMAGE_TAG=${HELM_IMAGE_TAG:-$(cosmos-curate nvcf image list-image-detail --iname $NVCF_DEV_BASE_IMAGE |grep latestTag |sed "s/['│,]//g" |awk '{print $2}')}
+        else
+          export HELM_IMAGE_TAG="mr_${CI_MERGE_REQUEST_IID}_${CI_COMMIT_SHORT_SHA}"
+        fi
+      - NVCF_IMAGE=${NVCF_DEV_IMAGE}:$HELM_IMAGE_TAG
+      # NOTE: create_helm_file.json will now contain keys/certificates so do not print its contents
+      - cat examples/nvcf/ci/ci_create_helm_default.json.template | envsubst > create_helm_file.json
+      - cat examples/nvcf/ci/ci_deploy_helm_default.json.template | envsubst > deploy_helm_file.json
+      - cat deploy_helm_file.json | jq --arg image_repository "$NVCF_DEV_IMAGE" '.configuration.image.repository = $image_repository' > deploy_helm_file.json.new
+      - mv deploy_helm_file.json.new deploy_helm_file.json
+      - |
+        echo "NVCF DEPLOYMENT"
+        echo "*************************************"
+        echo "NVCF_IMAGE:         $NVCF_IMAGE"
+        echo "NVCF_BACKEND:       $NVCF_BACKEND"
+        echo "NVCF_GPU_TYPE:      $NVCF_GPU_TYPE"
+        echo "NVCF_INSTANCE_TYPE: $NVCF_INSTANCE_TYPE"
+        echo "AWS_DEFAULT_REGION: $AWS_DEFAULT_REGION"
+        echo "HELM_CHART_NAME:    $CICD_HELM_CHART_NAME"
+        echo "HELM_CHART_VERSION: $CICD_HELM_CHART_VERSION"
+        echo "*************************************"
+      # Create NVCF function
+      - cosmos-curate nvcf function create-function --name "${HELM_FUNCTION_NAME}" --health-ep /api/local_raylet_healthz --health-port 52365 --helm-chart https://helm.ngc.nvidia.com/${NVCF_ORG_ID}/charts/${CICD_HELM_CHART_NAME}-${CICD_HELM_CHART_VERSION}.tgz --data-file create_helm_file.json
+      # Deploy NVCF function
+      - cosmos-curate nvcf function deploy-function --data-file deploy_helm_file.json --max-concurrency $NVCF_MAX_CONCURRENCY --instance-count $NVCF_INSTANCE_COUNT
+      - |
+        while true; do
+          status=$(cosmos-curate nvcf function get-deployment-detail | grep "Status")
+          if [[ $status =~ "DEPLOYING" ]]; then
+            echo "Waiting for deployment to be active... (retrying in 10 seconds)"
+            sleep 10
+          elif [[ $status =~ "ACTIVE" ]]; then
+            echo "Deployment is active"
+            break
+          else
+            echo "Error: Deployment status '$status' is not recognized."
+            exit 1
+          fi
+        done
+      # Invoke NVCF function
+      - awk -v ak="$AWS_ACCESS_KEY_ID" -v sk="$AWS_SECRET_ACCESS_KEY" -v rg="$AWS_DEFAULT_REGION"  '/aws_access_key_id/ {$0 = "aws_access_key_id = " ak} /aws_secret_access_key/ {$0 = "aws_secret_access_key = " sk} /region/ {$0 = "region = " rg} {print}' examples/nvcf/creds/aws_credentials > aws_credentials
+      - sed -i '/^endpoint/d' aws_credentials
+      - cat examples/nvcf/function/invoke_video_split_full.json | jq --arg output_clip_path "$S3_OUTPUT_CLIP_PATH" --arg input_video_path "$S3_INPUT_VIDEO_PATH" '.args.output_clip_path = $output_clip_path | .args.input_video_path = $input_video_path' > invoke_file.json
+      - cosmos-curate nvcf function invoke-function --data-file invoke_file.json --s3-config-file aws_credentials
+  after_script:
+    - *activate_micromamba
+    - |
+      if [[ "$HELM_DEBUG_KEEP_FAILED_DEPLOYMENTS" =~ "False" ]]; then
+        cosmos-curate nvcf function delete-function
+      else
+        echo "Intentionally leaving deployment behind for debugging. This must be manually cleaned up later."
+      fi
+  artifacts:
+    when: always
+    paths:
+      - "invoke_file.json"
+      - "trace.log"
+      - "/tmp/*.log"
+
+# Run validation tests against S3 artifacts from NVCF function
+nvcf-helm-validate:
+  stage: end-to-end
+  needs: [ "nvcf-helm" ]
+  rules: *merge_result_rules
+  allow_failure: false
+  image: python:3.10
+  tags:
+    - build-runner  # Override to Docker executor
+  variables:
+    S3_FILE: "${S3_OUTPUT_CLIP_PATH}/summary.json"
+  before_script:
+    - *setup_micromamba
+    - pip3 install awscli --upgrade --user
+    - export PATH="$HOME/.local/bin:$PATH"
+    - hash -r
+    - awk -v ak="$AWS_ACCESS_KEY_ID" -v sk="$AWS_SECRET_ACCESS_KEY" -v rg="$AWS_DEFAULT_REGION"  '/aws_access_key_id/ {$0 = "aws_access_key_id = " ak} /aws_secret_access_key/ {$0 = "aws_secret_access_key = " sk} /region/ {$0 = "region = " rg} {print}' examples/nvcf/creds/aws_credentials > aws_credentials
+    - sed -i '/^endpoint/d' aws_credentials
+    - aws --version
+    - export AWS_SHARED_CREDENTIALS_FILE="$(pwd)/aws_credentials"
+    - |
+      if ! which jq; then
+        apt-get update && apt-get install -y jq
+      fi
+  script:
+    - |
+      set +e  # Disable exit on error
+      i=0
+      max=10
+      file_found=false
+      while [ $i -lt $max ]; do
+          if aws s3 ls "${S3_FILE}" &> /dev/null; then
+              echo "Found S3 caption data: ${S3_FILE}"
+              file_found=true
+              break
+          else
+              echo "Waiting for S3 data in ${S3_FILE} ... ($i of $max, retrying in 5 seconds)"
+              sleep 5
+              ((i++))
+          fi
+      done
+      set -e
+      if [ "$file_found" = false ]; then
+          echo "S3 command failed, retry limit exceeded."
+          exit 1
+      fi
+    - |
+      echo "Validating $S3_FILE ..."
+      SUMMARY_KEYWORDS=("num_input_videos" "num_processed_videos")
+      JSON_CONTENT=$(aws s3 cp "$S3_FILE" - 2>/dev/null)
+      if [ $? -ne 0 ]; then
+          echo "Error reading from S3: $S3_FILE"
+          exit 1
+      fi
+      if ! jq empty <<< "$JSON_CONTENT" 2>/dev/null; then
+          echo "Error: Invalid JSON structure"
+          exit 1
+      fi
+      for key in "${SUMMARY_KEYWORDS[@]}"; do
+          val=$(jq -r ".$key" <<< "$JSON_CONTENT")
+          if ! [[ "$val" =~ ^[0-9]+$ ]] || [ "$val" -lt 0 ]; then
+              echo "Error: Unexpected $key : $val"
+              exit 1
+          fi
+      done
+      echo "Validation successful"
+
+get_mr_id:
+  stage: post-merge
+  variables:
+    GIT_STRATEGY: none
+  rules: *post_merge_rules
+  script:
+    # Find the merge-request IID that introduced this commit
+    - |
+      MR_IID=$(curl --silent --header "PRIVATE-TOKEN: $READ_API_TOKEN" \
+        "$CI_API_V4_URL/projects/$CI_PROJECT_ID/repository/commits/$CI_COMMIT_SHA/merge_requests" \
+        | jq -r '.[0].iid')
+      if [ -z "$MR_IID" ] || [ "$MR_IID" = "null" ]; then
+        echo "Unable to map commit $CI_COMMIT_SHA to a merge request"
+        exit 1
+      fi
+    - DEV_TAG="mr_${MR_IID}"
+    - echo "DEV_TAG=$DEV_TAG" >> $CI_JOB_NAME.env
+  artifacts:
+    reports:
+      dotenv: $CI_JOB_NAME.env
+
+promote_to_staging:
+  stage: post-merge
+  variables:
+    GIT_STRATEGY: none
+  rules: *post_merge_rules
+  needs:
+    - job: get_mr_id
+      artifacts: true
+  script:
+    - echo "Promoting to staging from $DEV_TAG"
+    - *docker_login
+    - STAGING_TAG="${CI_COMMIT_TIMESTAMP%%T*}_${CI_COMMIT_SHORT_SHA}"
+    - DEV="${NVCF_DEV_IMAGE}:${DEV_TAG}"
+    - STAGING="${NVCF_STAGING_IMAGE}:${STAGING_TAG}"
+    - docker buildx imagetools create --tag "${STAGING}" "${DEV}"
+    - docker buildx imagetools create --annotation "index:staging-tag=${STAGING_TAG}" --tag "${NVCF_STAGING_IMAGE}:latest" "${STAGING}"
+
+# Promote the latest staging image to prod on a nightly schedule
+promote_to_prod:
+  stage: post-merge
+  variables:
+    GIT_STRATEGY: none
+  rules: *schedule_rules
+  script:
+    - echo "Promoting latest staging image to prod"
+    - *docker_login
+    # Determine staging tag by inspecting annotation on the latest staging image
+    - STAGING_LATEST="${NVCF_STAGING_IMAGE}:latest"
+    - STAGING_TAG=$(docker buildx imagetools inspect "$STAGING_LATEST" --raw | jq -r '.annotations["staging-tag"]')
+    - echo "Extracted staging tag ${STAGING_TAG}"
+    - STAGING_IMAGE="${NVCF_STAGING_IMAGE}:${STAGING_TAG}"
+    - PROD_IMAGE="${NVCF_PROD_IMAGE}:${STAGING_TAG}"
+    - echo "Copying $STAGING_IMAGE -> $PROD_IMAGE"
+    - docker buildx imagetools create --tag "$PROD_IMAGE" "$STAGING_IMAGE"
+    - docker buildx imagetools create --annotation "index:prod-tag=${STAGING_TAG}" --tag "${NVCF_PROD_IMAGE}:latest" "$PROD_IMAGE"

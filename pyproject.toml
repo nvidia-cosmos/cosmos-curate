@@ -1,0 +1,236 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+[project]
+name = "cosmos_curate"
+version = "1.0.0"
+description = "Cosmos-Curate"
+readme = "README.md"
+authors = [
+    {name = "NVIDIA Corporation"},
+]
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+requires-python = ">=3.10,<3.13"
+dependencies = [
+    "asyncio",
+    "attrs",
+    "click<8.2.0",
+    "fabric==3.2.2",
+    "huggingface_hub",
+    "jinja2",
+    "loguru",
+    "ngcsdk==3.64.4",
+    "pyopenssl",
+    "pyyaml==6.0.2",
+    "ray[default]==2.46.0",
+    "requests==2.32.3",
+    "rich==14.0.0",
+    "tqdm==4.67.1",
+    "typer==0.15.3",
+    "urllib3==1.26.18"
+]
+classifiers = [
+    "Programming Language :: Python :: 3.10",
+    "Operating System :: OS Independent",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Information Technology",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Scientific/Engineering :: Information Analysis",
+]
+
+[project.urls]
+Homepage = "https://github.com/nvidia-cosmos/cosmos-curate"
+Repository = "https://github.com/nvidia-cosmos/cosmos-curate.git"
+
+[tool.poetry.scripts]
+cosmos-curate = 'cosmos_curate.client.cli:cosmos_curator'
+
+[project.scripts]
+cosmos-curate = 'cosmos_curate.client.cli:cosmos_curator'
+
+[build-system]
+requires = ["setuptools==80.7.1", "jinja2>=3.1.6", "tomli", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project.optional-dependencies]
+local = [
+    "aiofiles",
+    "astral",
+    "attrs",
+    "av",
+    "azure-identity==1.22.0",
+    "azure-storage-blob==12.26.0b1",
+    "boto3",
+    "cattrs",
+    "click<8.2.0",
+    "dask",
+    "dask-cudf-cu12==24.4.1",
+    "easydict",
+    "fastapi",
+    "gpustat",
+    "huggingface_hub",
+    "jinja2",
+    "kubernetes>=28.0",
+    "loguru",
+    "ngcsdk==3.64.4",
+    "numpy<2.0.0",
+    "nvtx==0.2.11",
+    "opencv-python-headless",
+    "pandas<=2.1.4",
+    "Pillow",
+    "prometheus_client==0.21.1",
+    "psutil==7.0.0",
+    "psycopg2-binary",
+    "pyarrow",
+    "pynvml==11.5.3",
+    "pyproj",
+    "ray[default]==2.46.0",
+    "requests==2.32.3",
+    "rich==14.0.0",
+    "scikit-image",
+    "scipy",
+    "setuptools==80.7.1",
+    "sqlalchemy",
+    "tabulate",
+    "tenacity",
+    "timezonefinder",
+    "toml",
+    "torch",
+    "tqdm==4.67.1",
+    "transformers",
+    "typer[all]==0.15.3",
+    "uvicorn",
+    "vllm==0.8.5.post1",
+    "webdataset==0.2.111",
+    "cosmos-xenna @ cosmos-xenna/",
+    "fabric (>=3.2.2,<4.0.0)",
+    "open3d (==0.19.0)",
+]
+
+[tool.coverage.run]
+omit = [
+    "tests/*",
+]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 120
+indent-width = 4
+exclude = [
+    "build/",
+    "dist/",
+    "cosmos-xenna/",
+    "cosmos_curate/models/internvideo2_multi_modality/",
+]
+
+[tool.ruff.lint]
+# Do not add more, help to reduce
+# Ignore FIX002 Line contains TODO and related TD002, TD003
+# Later C901, PLR0912, PLR0913, PLR0915
+ignore = ["D203", "D213", "FIX002", "S101", "TD002", "TD003", "N806",
+          "COM812", "TRY003", "RUF200"]
+select = ["ALL"]
+extend-select = ["I"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["INP001"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["cosmos_curate", "cosmos_xenna"]
+
+[tool.mypy]
+allow_redefinition = false
+allow_untyped_globals = false
+check_untyped_defs = true
+disallow_any_generics = true
+disallow_incomplete_defs = true
+disallow_subclassing_any = true
+disallow_untyped_calls = true
+disallow_untyped_decorators = true
+disallow_untyped_defs = true
+force_uppercase_builtins = true
+no_implicit_optional = true
+no_implicit_reexport = true
+strict_equality = true
+strict_optional = true
+python_version = '3.10'
+warn_no_return = true
+warn_redundant_casts = true
+warn_return_any = true
+warn_unreachable = true
+warn_unused_ignores = true
+files = ["cosmos_curate"]
+exclude = [
+    "build/",
+    "dist/",
+    "cosmos-xenna/",
+    "cosmos_curate/core/managers/postgres_cli.py",
+    "cosmos_curate/models/internvideo2_multi_modality/",
+    "cosmos_curate/pipelines/video/utils/vision_process.py",
+    "cosmos_curate/pipelines/video/utils/nvcodec_utils.py",
+    "cosmos_curate/pipelines/video/utils/egomotion_decoder.py",
+    "cosmos_curate/pipelines/video/dedup_pipeline.py",
+]
+
+[[tool.mypy.overrides]]
+module = [
+    "cosmos_curate.models.internvideo2_multi_modality.*",
+    "cosmos_curate.pipelines.video.utils.*"
+]
+follow_imports = "skip"
+
+[tool.poetry.group.dev.dependencies]
+mypy = "1.15.0"
+pandas-stubs = "*"
+pre-commit = "4.2.0"
+pytest = "*"
+pytest-asyncio = "*"
+pytest-cov = "*"
+pytest-dependency = "*"
+pytest-mock = "*"
+pytest-order = "*"
+pytest-xdist = "*"
+ruff = "0.11.8"
+types-aiofiles = "*"
+types-awscrt = "*"
+types-beautifulsoup4 = "*"
+types-boto3 = "*"
+types-cachetools = "*"
+types-colorama = "*"
+types-greenlet = "*"
+types-jmespath = "*"
+types-jsonschema = "*"
+types-networkx = "*"
+types-openpyxl = "*"
+types-protobuf = "*"
+types-psutil = "*"
+types-psycopg2 = "*"
+types-pycurl = "*"
+types-python-dateutil = "*"
+types-pytz = "*"
+types-pyyaml = "*"
+types-PyYAML = "*"
+types-requests = "*"
+types-setuptools = "*"
+types-s3transfer = "*"
+types-simplejson = "*"
+types-six = "*"
+types-regex = "*"
+types-tabulate = "*"
+types-tensorflow = "*"
+types-toml = "*"
+types-tqdm = "*"

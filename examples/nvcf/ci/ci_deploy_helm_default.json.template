@@ -1,0 +1,48 @@
+{
+    "#comment": "# to remove commented attributes, except for this line",
+    "#availabilityZones": [
+        "zone1"
+    ],
+    "configuration": {
+        "command": [
+            "python"
+        ],
+        "args": [
+            "/opt/cosmos-curate/cosmos_curate/scripts/onto_nvcf.py",
+            "--helm",
+            "True"
+        ],
+        "image": {
+            "tag": "${HELM_IMAGE_TAG}",
+            "repository": "nvcr.io/${NGC_NVCF_ORG}/cosmos-curate"
+        },
+        "resources": {
+            "requests": {
+                "nvidia.com/gpu": "${HELM_GPU_REQUESTS}"
+            },
+            "limits": {
+                "nvidia.com/gpu": "${HELM_GPU_LIMITS}"
+            }
+        },
+        "shmem": {
+            "limit": "${HELM_SHMEM_LIMIT}"
+        },
+        "metrics": {
+          "remoteWrite": {
+            "endpoint": "${HELM_THANOS_RECEIVER_URL}"
+          },
+          "enabled": true
+        },
+        "#commentScratch": "path to additional node storage on host",
+        "#scratchDir": "/scratch"
+    },
+    "#clusters": [
+        "cluster1"
+    ],
+    "#regions": [
+        "region1"
+    ],
+    "#attributes": [
+        "attr1"
+    ]
+}

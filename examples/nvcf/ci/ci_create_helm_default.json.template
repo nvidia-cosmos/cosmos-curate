@@ -1,0 +1,14 @@
+{
+    "models": [
+    ],
+    "secrets": [
+        {
+            "name": "byo-metrics-receiver-client-crt",
+            "value": "${HELM_BYO_METRICS_RECEIVER_CLIENT_CRT}"
+        },
+        {
+            "name": "byo-metrics-receiver-client-key",
+            "value": "${HELM_BYO_METRICS_RECEIVER_CLIENT_KEY}"
+        }
+    ]
+}

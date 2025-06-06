@@ -1,0 +1,61 @@
+# A unified conda environment intended for most video/image pipelines.
+RUN {{cache_mount_str}} <<EOF
+set -euxo pipefail
+
+# pin to a specific CUDA version
+export CONDA_OVERRIDE_CUDA="12.6.3"
+
+# dependencies that we have to lock version
+micromamba install -c conda-forge\
+ transformers==4.50.0\
+
+# keep the package list sorted
+micromamba install -c conda-forge\
+ azure-identity>=1.0.0\
+ azure-storage-blob>=12.0.0\
+ boto3\
+ cattrs\
+ deepspeed\
+ easydict\
+ flash-attn-fused-dense\
+ flash-attn-layer-norm\
+ flash-attn\
+ hydra-core\
+ loguru\
+ numpy\<2.0.0\
+ nvidia/label/cuda-${CONDA_OVERRIDE_CUDA}::cuda-version\
+ nvtx\
+ open-clip-torch\
+ peft\
+ psycopg2\
+ pytest\
+ pytest-asyncio\
+ python=3.10.14\
+ pytorch[cuda]\
+ scipy\
+ sqlalchemy\
+ tabulate\
+ tenacity\
+ timm\
+
+# only for packages not available in conda
+# av conda-forge package installs ffmpeg
+# ray conda-forge package has a protobuf version conflict with pytorch
+# torchvision conda-forge package pulls in x11 dependencies
+pip install --no-cache-dir\
+ av\
+ ngcsdk==3.64.4\
+ opencv-python-headless\
+ pynvml==11.5.3\
+ ray[default]==2.46.0\
+ s2wrapper@git+https://github.com/bfshi/scaling_on_scales\
+ torchvision\
+ einops\
+
+pip install --no-cache-dir --no-deps\
+ git+https://github.com/NVlabs/VILA.git\
+
+# cleanup
+micromamba clean --all --yes
+rm -rf /root/.cache/pip
+EOF

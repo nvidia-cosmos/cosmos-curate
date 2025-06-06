@@ -1,0 +1,214 @@
+# Dockerfile template for cosmos-curate
+#
+# The dockerfile is templated so that we can provide different conda env information.
+# Docs on docker best practices:
+# - https://linuxhandbook.com/dockerize-python-apps/
+# - https://uwekorn.com/2021/03/01/deploying-conda-environments-in-docker-how-to-do-it-right.html
+# - https://cloud.google.com/architecture/best-practices-for-building-containers
+
+ARG BASE_IMAGE=nvcr.io/nvidia/pytorch:25.05-py3
+ARG DEBIAN_FRONTEND=noninteractive
+
+FROM ${BASE_IMAGE} AS main
+
+ENV TZ=America/Los_Angeles
+# Get system level packages
+RUN apt-get update \
+    && apt-get install -y \
+    # Needed for opencv
+    libsm6 libxext6 \
+    # Needed because the certs age out sometimes?
+    ca-certificates \
+    --option=Dpkg::Options::=--force-confdef \
+    && update-ca-certificates \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# GPU-accelerated ffmpeg (also needed for opencv)
+ENV FFMPEG_VERSION=7.0.1 \
+    NVCODEC_VERSION=12.1.14.0
+RUN mkdir -p /tmp && chmod 1777 /tmp && \
+    apt-get update && \
+    apt-get install -y \
+    libcrypt-dev \
+    autoconf \
+    automake \
+    build-essential \
+    cmake \
+    libaom-dev \
+    libass-dev \
+    libdav1d-dev \
+    libvorbis-dev \
+    libvpx-dev \
+    libwebp-dev \
+    libfreetype6-dev \
+    libgnutls28-dev \
+    libtool \
+    libnuma1 \
+    libnuma-dev \
+    libopenh264-dev \
+    libvorbis-dev \
+    libdrm-dev \
+    libva-dev \
+    libva-drm2 \
+    libva-x11-2 \
+    pkg-config \
+    texinfo \
+    wget \
+    vainfo \
+    yasm \
+    zlib1g-dev && \
+    wget -O /tmp/nv-codec-headers.tar.gz https://github.com/FFmpeg/nv-codec-headers/releases/download/n${NVCODEC_VERSION}/nv-codec-headers-${NVCODEC_VERSION}.tar.gz && \
+    tar xzvf /tmp/nv-codec-headers.tar.gz -C /tmp/ && \
+    cd /tmp/nv-codec-headers-${NVCODEC_VERSION} && \
+    make && \
+    make install && \
+    wget -O /tmp/ffmpeg-snapshot.tar.bz2 https://www.ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.bz2 && \
+    tar xjvf /tmp/ffmpeg-snapshot.tar.bz2 -C /tmp/ && \
+    cd /tmp/ffmpeg-${FFMPEG_VERSION} && \
+    PATH="/usr/local/cuda/bin:$PATH" \
+    ./configure \
+    --prefix=/usr/local \
+    --enable-nonfree \
+    --enable-cuda-nvcc \
+    --enable-libnpp \
+    --enable-libopenh264 \
+    --enable-libaom \
+    --enable-libdav1d \
+    --enable-libvorbis \
+    --enable-libvpx \
+    --enable-libwebp \
+    --enable-vaapi \
+    --extra-cflags=-I/usr/local/cuda/include \
+    --extra-ldflags=-L/usr/local/cuda/lib64 \
+    --extra-libs=-lpthread \
+    --extra-libs=-lm \
+    --disable-static \
+    --enable-shared \
+    --disable-doc \
+    --disable-debug && \
+    make -j$(nproc) && \
+    make install && \
+    ldconfig && \
+    # Clean up
+    cd / && \
+    rm -rf /tmp/ffmpeg* && \
+    rm -rf /tmp/nv-codec-headers* && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Install mamba
+ENV PATH="/root/miniforge3/bin:${PATH}"
+ARG PATH="/root/miniforge3/bin:${PATH}"
+ARG MAMBA_INSTALLER_FILENAME="Miniforge3-Linux-x86_64.sh"
+RUN wget https://github.com/conda-forge/miniforge/releases/download/23.3.1-1/${MAMBA_INSTALLER_FILENAME} \
+    && bash ${MAMBA_INSTALLER_FILENAME} -b \
+    && rm -f ${MAMBA_INSTALLER_FILENAME}
+
+# Install micromamba
+ENV MAMBA_ROOT_PREFIX="/cosmos_curate/conda_envs"
+ARG MICROMAMBA_RELEASE_URL="https://github.com/mamba-org/micromamba-releases/releases/download/2.0.4-0/micromamba-linux-64"
+RUN mkdir -p ${MAMBA_ROOT_PREFIX} && \
+    wget -qO "/bin/micromamba" "${MICROMAMBA_RELEASE_URL}" && chmod +x /bin/micromamba
+
+# Set home
+ENV HOME="/home"
+
+# Disable the speed limit
+ENV MAMBA_NO_LOW_SPEED_LIMIT=1
+
+# Common ENV variables needed by some ML libs
+ENV AM_I_DOCKER=True \
+    BUILD_WITH_CUDA=True \
+    TORCH_CUDA_ARCH_LIST="5.0;6.0;6.1;7.0;7.5;8.0;8.6;9.0+PTX"
+
+# Save the old env vars so we can revert to them.
+ENV OLD_PATH="$PATH" \
+    OLD_LD_LIBRARY_PATH="$LD_LIBRARY_PATH" \
+    OLD_LIBRARY_PATH="$LIBRARY_PATH" \
+    OLD_CUDA_HOME="$CUDA_HOME"
+
+# Create cosmos_curate env. Install conda so that Ray can use models from our envs
+RUN {{cache_mount_str}} micromamba create --always-copy -n cosmos_curate python=3.10.14 pip conda -c conda-forge
+# Install the cosmos-curate core deps for the cosmos_curate env
+RUN {{cache_mount_str}} micromamba -n cosmos_curate run pip install {{regular_cosmos_curator_deps_string}}
+
+# Loop through all the envs, if any are set.
+{% for env in envs %}
+# ------------------------------------Install the env-----------------------------
+RUN {{cache_mount_str}} micromamba create --always-copy -n {{env.name}} -y
+
+# Activate the env
+ENV CONDA_PREFIX="/cosmos_curate/conda_envs/envs/{{env.name}}" \
+    PATH="/cosmos_curate/conda_envs/envs/{{env.name}}/bin:$PATH" \
+    LD_LIBRARY_PATH="/cosmos_curate/conda_envs/envs/{{env.name}}/lib:/cosmos_curate/conda_envs/envs/{{env.name}}/lib/python3.10/site-packages/torch/lib:$LD_LIBRARY_PATH" \
+    LIBRARY_PATH="/cosmos_curate/conda_envs/envs/{{env.name}}/lib:$LIBRARY_PATH" \
+    CUDA_HOME="/cosmos_curate/conda_envs/envs/{{env.name}}/"
+
+# Add some shell scripts which we run when this env is activated or deactivated.
+RUN mkdir -p /cosmos_curate/conda_envs/envs/{{env.name}}/etc/conda/activate.d && \
+    mkdir -p /cosmos_curate/conda_envs/envs/{{env.name}}/etc/conda/deactivate.d
+COPY package/cosmos_curate/activate_env.sh /cosmos_curate/conda_envs/envs/{{env.name}}/etc/conda/activate.d/activate_env.sh
+COPY package/cosmos_curate/deactivate_env.sh /cosmos_curate/conda_envs/envs/{{env.name}}/etc/conda/deactivate.d/deactivate_env.sh
+
+# ------------------------------------ Env Build Steps begin ---------------------------
+{{env.build_steps_str}}
+# ------------------------------------ Env Build Steps end -----------------------------
+
+# Deactivate the env and revert to the old env vars
+ENV CONDA_PREFIX="" \
+    PATH="$OLD_PATH" \
+    LD_LIBRARY_PATH="$OLD_LD_LIBRARY_PATH" \
+    LIBRARY_PATH="$OLD_LIBRARY_PATH" \
+    CUDA_HOME=""
+{% endfor %}
+
+# This has to be done *after* the home variable has been set for silly conda reasons.
+RUN conda config --add envs_dirs /cosmos_curate/conda_envs/envs/
+# Backup option for conda envs path
+ENV CONDA_ENVS_PATH=/cosmos_curate/conda_envs/envs
+
+# Needed for setting up conda envs within a docker image for some reason
+RUN conda config --set remote_read_timeout_secs 300
+
+# Activate the cosmos_curate env
+ENV PATH="/cosmos_curate/conda_envs/envs/cosmos_curate/bin:$PATH" \
+    CONDA_PREFIX="/cosmos_curate/conda_envs/envs/cosmos_curate"
+
+# Conda does some insane stuff with certs sometimes. We force it to use the docker certs
+ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt \
+    SSL_CERT_DIR=/etc/ssl/certs
+
+# Disable Ray log dedup
+ENV RAY_DEDUP_LOGS=0 \
+    RAY_EXPERIMENTAL_NOSET_CUDA_VISIBLE_DEVICES=1 \
+    RAY_MAX_LIMIT_FROM_API_SERVER=40000 \
+    RAY_MAX_LIMIT_FROM_DATA_SOURCE=40000 \
+    RAY_DEFAULT_OBJECT_STORE_MAX_MEMORY_BYTES=800000000000 \
+    RAY_DEFAULT_OBJECT_STORE_MEMORY_PROPORTION=0.4 \
+    XENNA_RAY_METRICS_PORT=9002
+
+# boto3 & pbss
+ENV AWS_REQUEST_CHECKSUM_CALCULATION='when_required'
+
+# Set a bunch of env vars so that we cache weights in a workspace
+ENV DEFAULT_WORKSPACE_LOC="/config/default_workspace"
+ENV HF_HOME="${DEFAULT_WORKSPACE_LOC}/weights/hf_home/" \
+    LAION_CACHE_HOME="${DEFAULT_WORKSPACE_LOC}/weights/laion_cache/"
+
+# Copy the video pipeline code
+COPY cosmos_curate {{code_dir_str}}/cosmos_curate
+COPY cosmos-xenna/cosmos_xenna {{code_dir_str}}/cosmos_xenna
+COPY tests {{code_dir_str}}/tests
+COPY pytest.ini {{code_dir_str}}/
+
+# Copy additional code paths into the container
+{% for code_path in code_paths %}
+COPY {{code_path}} {{code_dir_str}}/{{code_path}}
+{% endfor %}
+
+# Expose port for FastAPI & Ray
+EXPOSE 8000 6379
+
+WORKDIR {{code_dir_str}}
+
+CMD ["python", "{{code_dir_str}}/cosmos_curate/scripts/onto_nvcf.py", "--helm", "False"]

@@ -1,0 +1,114 @@
+# Cosmos-Curate - NVCF Guide
+
+- [Cosmos-Curate - NVCF Guide](#cosmos-curate---nvcf-guide)
+    - [Store Configuration Settings](#store-configuration-settings)
+    - [Upload Container Image](#upload-container-image)
+    - [Upload Model Weights](#upload-model-weights)
+    - [Create, Deploy, Invoke Function](#create-deploy-invoke-function)
+      - [Create a Function](#create-a-function)
+      - [Deploy the Function](#deploy-the-function)
+      - [Invoke the Function](#invoke-the-function)
+
+[NVIDIA Cloud Functions (NVCF)](https://docs.nvidia.com/cloud-functions/user-guide/latest/cloud-function/overview.html)
+is a serverless API to deploy & manage AI workloads on GPUs.
+Cosmos-Curate can be deployed on NVCF for a semi/full-managed experience.
+
+As mentioned in [End User Guide](./END_USER_GUIDE.md#launch-pipelines-on-nvidia-dgx-cloud),
+please reach out to NVIDIA Cosmos-Curate team to get help for onboarding.
+
+**Note this guide does not cover the complete process for NVCF deployment,** but assumes onboarding and initial setup have been completed.
+
+### Store Configuration Settings
+
+```bash
+# Set the NVCF ORG ID and API key
+export NGC_NVCF_ORG=<your_org_id>
+export NGC_NVCF_API_KEY=<your_api_key>
+
+# Set the NVCF cluster information
+export NVCF_BACKEND=<your_backend_cluster_name>
+export NVCF_GPU_TYPE=<your_cluster_gpu_type>
+export NVCF_INSTANCE_TYPE=<your_instance_type>
+
+# Save above configuration settings to `~/.config/cosmos_curate/config.json`
+cosmos-curate nvcf config set
+```
+
+### Upload Container Image
+
+Modify `~/.config/cosmos_curate/templates/image/image_upload.json` to fill in the image name and tag; for example,
+
+```json
+{
+    "image": "cosmos-curate",
+    "tag": "1.0.0",
+    "definition": {
+    }
+}
+```
+
+Re-tag the built image with an `nvcr.io` prefix and upload it.
+
+```bash
+docker tag cosmos-curate:1.0.0 nvcr.io/$NGC_NVCF_ORG/cosmos-curate:1.0.0
+cosmos-curate nvcf image upload-image --data-file ~/.config/cosmos_curate/templates/image/image_upload.json
+```
+
+### Upload Model Weights
+
+```bash
+# download models from hugging face to local
+cosmos-curate local launch --image-name cosmos-curate --image-tag 1.0.0 --curator-path . -- python3 -m cosmos_curate.core.managers.model_cli download
+
+# sync to NVCF
+cosmos-curate nvcf model sync-models \
+    --data-file cosmos_curate/configs/all_models.json \
+    --download-dir "${COSMOS_CURATE_LOCAL_WORKSPACE_PREFIX:-$HOME}/cosmos_curate_local_workspace/models/"
+```
+
+### Create, Deploy, Invoke Function 
+
+#### Create a Function
+
+Modify `~/.config/cosmos_curate/templates/function/create_curator_helm.json` to fill in the cert and key for your Thanos instance.
+This is for the Prometheus agent to remote-write the metrics.
+
+```bash
+cosmos-curate nvcf function create-function \
+    --name "${USER}-cosmos-curate" \
+    --health-ep /api/local_raylet_healthz --health-port 52365 \
+    --helm-chart https://helm.ngc.nvidia.com/${NGC_NVCF_ORG}/charts/cosmos-curate-2.0.3.tgz \
+    --data-file ~/.config/cosmos_curate/templates/function/create_curator_helm.json
+```
+
+#### Deploy the Function
+
+Modify `~/.config/cosmos_curate/templates/function/deploy_curator_helm.json` to fill in
+- image tag in `configuration.image.tag`
+- Org ID in the `nvcf.io/<ORG-ID>/...` image string
+- GPU count in `configuration.resources.requests`
+- Thanos remote-write receiver URL in `configuration.metrics.remoteWrite.endpoint`
+
+```bash
+# --instance-count controls number of nodes
+cosmos-curate nvcf function deploy-function \
+    --max-concurrency 2 \
+    --instance-count 2 \
+    --data-file ~/.config/cosmos_curate/templates/function/deploy_curator_helm.json
+```
+
+The deployment can take up to 30 minutes, you can run the following command to check the status:
+
+```bash
+cosmos-curate nvcf function get-deployment-detail
+```
+
+#### Invoke the Function
+
+Modify `~/.config/cosmos_curate/templates/function/invoke_video_split.json` to fill in input & output paths.
+
+```bash
+cosmos-curate nvcf function invoke-function \
+    --data-file ~/.config/cosmos_curate/templates/function/invoke_video_split.json \
+    --s3-config-file ~/.aws/credentials
+```

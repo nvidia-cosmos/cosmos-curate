@@ -1,0 +1,31 @@
+{
+    "#comment": "# to remove commented attributes, except for this line",
+    "#envs": [
+        {
+            "key": "KEY",
+            "value": "VALUE"
+        }
+    ],
+    "#resources": [
+        {
+            "name": "r1",
+            "version": "v1",
+            "uri": "/res"
+        }
+    ],
+    "#tags": [
+        "tag-vcs"
+    ],
+    "models": [
+    ],
+    "secrets": [
+        {
+            "name": "byo-metrics-receiver-client-crt",
+            "value": "-----BEGIN CERTIFICATE-----\nFILL_IN_YOUR_THANOS_CLIENT_CERT\n-----END CERTIFICATE-----"
+        },
+        {
+            "name": "byo-metrics-receiver-client-key",
+            "value": "-----BEGIN RSA PRIVATE KEY-----\nFILL_IN_YOUR_THANOS_CLIENT_KEY\n-----END RSA PRIVATE KEY-----"
+        }
+    ]
+}

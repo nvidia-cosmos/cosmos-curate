@@ -1,0 +1,40 @@
+{
+    "#comment": "# to remove commented attributes, except for this line",
+    "#availabilityZones": [
+        "zone1"
+    ],
+    "configuration": {
+        "image": {
+            "tag": "FILL_IN",
+            "repository": "nvcr.io/FILL_IN/cosmos-curate"
+        },
+        "resources": {
+            "requests": {
+                "nvidia.com/gpu": "FILL_IN"
+            },
+            "limits": {
+                "nvidia.com/gpu": "FILL_IN"
+            }
+        },
+        "shmem": {
+            "limit": "800Gi"
+        },
+        "metrics": {
+          "remoteWrite": {
+            "endpoint": "FILL_IN"
+          },
+          "enabled": true
+        },
+        "#commentScratch": "path to additional node storage on host",
+        "#scratchDir": "/scratch"
+    },
+    "#clusters": [
+        "cluster1"
+    ],
+    "#regions": [
+        "region1"
+    ],
+    "#attributes": [
+        "attr1"
+    ]
+}

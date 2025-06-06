@@ -1,0 +1,237 @@
+/* Import Google Font */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap');
+
+body {
+    margin: 0;
+    padding: 0;
+    background-color: #0f0f0f;
+    font-family: 'Inter', "Helvetica Neue", Arial, sans-serif;
+    color: #ffffff;
+  }
+
+  header {
+    background-color: #1a1a1a;
+    color: white;
+    padding: 0.8rem;
+    text-align: center;
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 1000;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  }
+
+  .header-logo {
+    position: absolute;
+    left: 20px;
+    top: 50%;
+    transform: translateY(-50%);
+    height: 24px;
+    width: auto;
+    margin-right: 10px;
+    vertical-align: middle;
+  }
+
+  .nvidia-logo {
+    height: 24px;
+    width: auto;
+    display: inline-block;
+    vertical-align: middle;
+  }
+
+  header h1 {
+    margin: 0;
+    font-size: 1.5rem;
+    font-weight: 500;
+    color: #94e044;
+  }
+
+  main {
+    padding: 40px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 60px;
+    max-width: 1200px;
+    margin: 0 auto;
+    margin-top: 4rem;
+  }
+
+  .clip-row {
+    display: flex;
+    flex-direction: row;
+    gap: 40px;
+    align-items: stretch;
+    margin-bottom: 40px;
+    width: 100%;
+    height: 500px;
+  }
+
+  .video-container {
+    flex: 0 0 calc(50% - 20px);
+    position: relative;
+    min-width: 300px;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    background-color: #000;
+    border: 2px solid #333;
+    border-radius: 8px;
+    overflow: hidden;
+  }
+
+  .video-container video {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    display: block;
+    background-color: #000;
+    margin: auto 0
+  }
+
+  .caption-container {
+    flex: 0 0 calc(50% - 20px);
+    min-width: 300px;
+    background-color: #1a1a1a;
+    border: 2px solid #333;
+    border-radius: 8px;
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    overflow: hidden;
+    text-align: left;
+  }
+
+  .caption-container h2 {
+    margin: 0;
+    padding: 6px 10px;
+    color: #94e044;
+    font-size: 1.1em;
+    border-bottom: 1px solid #333;
+    flex-shrink: 0;
+    letter-spacing: 0.5px;
+    text-align: left;
+    width: calc(100% - 40px);
+  }
+
+  .caption-content {
+    flex: 1;
+    overflow-y: auto;
+    padding: 20px;
+    font-size: 1em;
+    line-height: 1.6;
+    color: #e0e0e0;
+    height: 0;
+    text-align: left;
+  }
+
+  .caption-content p {
+    margin: 0 0 1.2em 0;
+    text-align: left;
+  }
+
+  .caption-content code {
+    background-color: #2a2a2a;
+    padding: 2px 4px;
+    border-radius: 3px;
+    font-family: monospace;
+  }
+
+  .caption-content pre {
+    background-color: #2a2a2a;
+    padding: 15px;
+    border-radius: 5px;
+    overflow-x: auto;
+    margin: 1em 0;
+  }
+
+  .caption-content a {
+    color: #94e044;
+    text-decoration: none;
+  }
+
+  .caption-content a:hover {
+    text-decoration: underline;
+  }
+
+  .timestamp-container {
+    position: absolute;
+    top: 0px;
+    right: 10px;
+    background: rgba(0, 0, 0, 0.8);
+    color: white;
+    padding: 8px 12px;
+    border-radius: 4px;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    font-size: 13px;
+    backdrop-filter: blur(4px);
+    z-index: 10;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+  }
+
+  .timestamp-content {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .timestamp-icon {
+    font-size: 14px;
+    line-height: 1;
+  }
+
+  .timestamp-label {
+    color: #ffffff;
+    opacity: 0.9;
+    margin-right: 4px;
+  }
+
+  .timestamp-value {
+    color: #94e044;
+    font-family: monospace;
+    font-weight: 500;
+  }
+
+  .timestamp-separator {
+    color: #ffffff;
+    opacity: 0.7;
+    margin: 0 4px;
+  }
+
+  /* Scrollbar styling */
+  .caption-content::-webkit-scrollbar {
+    width: 8px;
+  }
+
+  .caption-content::-webkit-scrollbar-track {
+    background: #1a1a1a;
+    border-radius: 4px;
+  }
+
+  .caption-content::-webkit-scrollbar-thumb {
+    background: #333;
+    border-radius: 4px;
+  }
+
+  .caption-content::-webkit-scrollbar-thumb:hover {
+    background: #444;
+  }
+
+  @media (max-width: 1200px) {
+    .clip-row {
+      flex-direction: column;
+      gap: 20px;
+    }
+
+    .video-container,
+    .caption-container {
+      width: 100%;
+    }
+
+    .caption-container {
+      height: 400px;
+    }
+  }

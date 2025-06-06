@@ -1,0 +1,4 @@
+RUN {{cache_mount_str}} micromamba install python=3.10.14 -y
+RUN {{cache_mount_str}} pip install torch==2.3.1 transformers==4.41.2
+
+{{install_regular_cosmos_curator_deps_str}}
