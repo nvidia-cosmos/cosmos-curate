@@ -172,7 +172,7 @@ cosmos-curate image build --image-name cosmos-curate --image-tag 1.0.0 --envs un
    - For the same reason as above, we need to download weights for a few more models and it will take 10+ minutes depends on your network condition.
 
 ```bash
-cosmos-curate local launch --image-name cosmos-curate --image-tag 1.0.0 -- python3 -m cosmos_curate.core.managers.model_cli download --models aesthetic_scorer,internvideo2_mm,qwen2.5_lm,qwen2.5_vl,t5_xxl,transnetv2
+cosmos-curate local launch --image-name cosmos-curate --image-tag 1.0.0 -- python3 -m cosmos_curate.core.managers.model_cli download
 ```
 
 3. **Run the Split-Annotate Pipeline**

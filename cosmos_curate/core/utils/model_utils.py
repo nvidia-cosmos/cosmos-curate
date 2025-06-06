@@ -307,7 +307,11 @@ def _download_model_weights_from_cloud_storage_to_workspace(
         return destination
 
     if model_weights_prefix == environment.MODEL_WEIGHTS_PREFIX:
-        value_error(f"{model_weights_prefix=} must be set to a valid S3 prefix.")
+        err_msg = (
+            f"Model weights {weights_name} does not exist at {destination}; if you really intend "
+            f"to download from cloud storage, {model_weights_prefix=} must be set to a valid S3 prefix."
+        )
+        value_error(err_msg)
 
     destination.mkdir(exist_ok=True, parents=True)
     try:

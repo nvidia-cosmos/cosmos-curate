@@ -98,6 +98,7 @@ def _worker_download_models(model_names: list[str], model_weights_prefix: str) -
     hardware_info.print_disk_path_info(get_tmp_dir())
 
     # disconnect / shutdown the ray cluster
+    time.sleep(1)  # give some time for logs to be flushed
     ray.shutdown()
     return num_gpus
 
