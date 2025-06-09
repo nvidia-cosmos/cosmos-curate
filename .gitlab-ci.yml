@@ -493,23 +493,21 @@ promote_to_staging:
     - DEV="${NVCF_DEV_IMAGE}:${DEV_TAG}"
     - STAGING="${NVCF_STAGING_IMAGE}:${STAGING_TAG}"
     - docker buildx imagetools create --tag "${STAGING}" "${DEV}"
-    - docker buildx imagetools create --annotation "index:staging-tag=${STAGING_TAG}" --tag "${NVCF_STAGING_IMAGE}:latest" "${STAGING}"
 
 # Promote the latest staging image to prod on a nightly schedule
 promote_to_prod:
   stage: post-merge
-  variables:
-    GIT_STRATEGY: none
   rules: *schedule_rules
   script:
     - echo "Promoting latest staging image to prod"
     - *docker_login
+    - *setup_micromamba
+    - *setup_curator_cli
+    - cosmos-curate nvcf config set --org $NVCF_ORG_ID --key $NVCF_KEY
     # Determine staging tag by inspecting annotation on the latest staging image
-    - STAGING_LATEST="${NVCF_STAGING_IMAGE}:latest"
-    - STAGING_TAG=$(docker buildx imagetools inspect "$STAGING_LATEST" --raw | jq -r '.annotations["staging-tag"]')
+    - STAGING_TAG=$(cosmos-curate nvcf image list-image-detail --iname $NVCF_STAGING_BASE_IMAGE |grep latestTag |sed "s/['│,]//g" |awk '{print $2}')
     - echo "Extracted staging tag ${STAGING_TAG}"
     - STAGING_IMAGE="${NVCF_STAGING_IMAGE}:${STAGING_TAG}"
     - PROD_IMAGE="${NVCF_PROD_IMAGE}:${STAGING_TAG}"
     - echo "Copying $STAGING_IMAGE -> $PROD_IMAGE"
     - docker buildx imagetools create --tag "$PROD_IMAGE" "$STAGING_IMAGE"
-    - docker buildx imagetools create --annotation "index:prod-tag=${STAGING_TAG}" --tag "${NVCF_PROD_IMAGE}:latest" "$PROD_IMAGE"
