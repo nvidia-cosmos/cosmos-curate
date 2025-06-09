@@ -196,7 +196,6 @@ def run_pipeline(
     input_tasks: list[T],
     stages: list[CuratorStage | CuratorStageSpec],
     model_weights_prefix: str = MODEL_WEIGHTS_PREFIX,
-    ray_shutdown_delay: float = 5.0,
 ) -> list[T]:
     """Run the pipeline with the given pipeline spec.
 
@@ -204,7 +203,6 @@ def run_pipeline(
         input_tasks: A list of pipeline tasks to process.
         stages: A list of stages.
         execution_mode: "STREAMING" or "BATCH".
-        ray_shutdown_delay: Number of seconds to wait before shutting down Ray.
         model_weights_prefix: Prefix for model weights in local or cloud storage.
 
     Returns:
@@ -255,6 +253,7 @@ def run_pipeline(
             return []
         return output_tasks
     finally:
+        ray_shutdown_delay = 5
         logger.info(f"Disconnecting from Ray cluster in {ray_shutdown_delay} seconds")
         time.sleep(ray_shutdown_delay)
         ray.shutdown()
