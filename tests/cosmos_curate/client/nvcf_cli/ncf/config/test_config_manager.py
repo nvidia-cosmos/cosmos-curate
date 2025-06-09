@@ -23,7 +23,7 @@ from _pytest.monkeypatch import MonkeyPatch
 from typer.testing import CliRunner
 
 from cosmos_curate.client.cli import cosmos_curator  # type: ignore[import-untyped]
-from cosmos_curate.client.nvcf_cli.ncf.common import NvcfBase
+from cosmos_curate.client.nvcf_cli.ncf.common import NvcfBase  # type: ignore[import-untyped]
 
 runner = CliRunner()
 _TIMEOUT = 30
@@ -178,7 +178,7 @@ def test_nvcf_config_set_in_parts(monkeypatch: MonkeyPatch, tmp_path: Path) -> N
     assert data["gpu"] == "TESTGPU"
 
 
-def _test_nvcf_config_fail_set(monkeypatch: MonkeyPatch, caplog: pytest.LogCaptureFixture, tmp_path: Path) -> None:
+def test_nvcf_config_fail_set(monkeypatch: MonkeyPatch, caplog: pytest.LogCaptureFixture, tmp_path: Path) -> None:
     """Test nvcf config set command throws error if missing --key or --org.
 
     Args:
@@ -188,7 +188,9 @@ def _test_nvcf_config_fail_set(monkeypatch: MonkeyPatch, caplog: pytest.LogCaptu
 
     """
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
-    # Define temp directory for config file
+    # Remove env vars for testing
+    monkeypatch.delenv("NGC_NVCF_API_KEY", raising=False)
+    monkeypatch.delenv("NGC_NVCF_ORG", raising=False)
     config_dir = tmp_path / ".config/cosmos_curate"
     config_dir.mkdir(parents=True, exist_ok=True)
     fname = config_dir / NvcfBase.CLIENT_NAME
