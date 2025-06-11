@@ -33,7 +33,7 @@ from cosmos_curate.models import (
     qwen_vl,
     t5_encoder,
 )
-from cosmos_curate.pipelines.video.utils import egomotion_decoder, windowing_utils
+from cosmos_curate.pipelines.video.utils import windowing_utils
 from cosmos_curate.pipelines.video.utils.data_model import (
     ShardPipeTask,
     SplitPipeTask,
@@ -79,21 +79,16 @@ _ENHANCE_PROMPTS = {
 def _get_prompt(
     prompt_variant: str,
     prompt_text: str | None,
-    trajectory: str | None = None,
     *,
     verbose: bool = False,
 ) -> str:
     if prompt_text is not None:
         prompt = prompt_text
     else:
-        if trajectory:
-            prompt_variant = f"{prompt_variant}-trajectory"
         if prompt_variant not in _PROMPTS:
             error_msg = f"Invalid prompt variant: {prompt_variant}"
             raise ValueError(error_msg)
         prompt = _PROMPTS[prompt_variant]
-    if trajectory:
-        prompt = prompt.format(trajectory=trajectory)
     if verbose:
         logger.debug(f"Captioning prompt: {prompt}")
     return prompt
@@ -306,25 +301,15 @@ class QwenInputPreparationStage(CuratorStage):
                             num_threads=max(int(self.resources.cpus), 1),
                         ),
                     ):
-                        if clip.egomotion:
-                            trajectory = egomotion_decoder.decode(
-                                clip.egomotion,
-                                window_frame_info.start,
-                                window_frame_info.end,
-                            )
-                        else:
-                            trajectory = None
                         prompt = _get_prompt(
                             self._prompt_variant,
                             self._prompt_text,
-                            trajectory=trajectory,
                             verbose=self._verbose,
                         )
                         try:
                             llm_input = self.qwen_utils.generate_llm_inputs(
                                 prompt=prompt,
                                 video_inputs=window_frames,
-                                override_text_prompt=trajectory is not None,
                             )
                         except Exception as e:  # noqa: BLE001
                             logger.error(f"Error in Qwen input preparation: {e}")

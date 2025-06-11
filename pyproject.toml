@@ -182,7 +182,6 @@ exclude = [
     "cosmos_curate/models/internvideo2_multi_modality/",
     "cosmos_curate/pipelines/video/utils/vision_process.py",
     "cosmos_curate/pipelines/video/utils/nvcodec_utils.py",
-    "cosmos_curate/pipelines/video/utils/egomotion_decoder.py",
     "cosmos_curate/pipelines/video/dedup_pipeline.py",
 ]
 
