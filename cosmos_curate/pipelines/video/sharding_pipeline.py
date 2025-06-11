@@ -199,6 +199,7 @@ def shard(args: argparse.Namespace) -> None:
         args.annotation_version,
         verbose=args.verbose,
     )
+    logger.info(f"Found {len(samples)} samples under input path {args.input_clip_path}.")
 
     if args.input_semantic_dedup_path is not None:
         samples = filter_shard_tasks_by_semantic_dedup(
@@ -208,6 +209,7 @@ def shard(args: argparse.Namespace) -> None:
             args.semantic_dedup_epsilon,
             verbose=args.verbose,
         )
+        logger.info(f"After semantic deduplication, {len(samples)} samples remain.")
 
     tasks, all_bins, num_dropped_samples = _group_samples_into_tasks(
         samples,
@@ -215,7 +217,7 @@ def shard(args: argparse.Namespace) -> None:
         output_path=output_dataset_path,
         output_s3_profile_name=args.output_s3_profile_name,
     )
-    logger.info(f"Found {len(samples)} samples, dropped {num_dropped_samples} of them.")
+    logger.info(f"Dropped {num_dropped_samples} samples during sharding process.")
     if len(tasks) == 0:
         logger.warning("No tasks to process. Exiting ...")
         return

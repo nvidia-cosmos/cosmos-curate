@@ -170,9 +170,20 @@ Today the shard-dataset pipeline produces the following artifacts under the path
 Below are a few key options for shard-dataset pipeline:
 - `--input-clip-path`: specifies the path inside the container or on cloud storage that holds all all the clips, captions, and metadatas. If you need to use a local path, the directory `~/cosmos_curate_local_workspace/` is mounted to `/config/`.
 - `--output-dataset-path`: specifies where the output dataset will be stored.It functions similarly to `--input-clip-path` in terms of mounts.
-- `--annotation-version`: specifies the annotation version to use for the clip metadata. This helps in scenarios where another process updates the clip metadata (e.g., captions) to a newer version (e.g., v1) after the splitting pipeline produced version v0.
+- `--annotation-version`: specifies the annotation version to use for the clip metadata. This helps in scenarios where another process updates the clip metadata (e.g., captions) to a newer version (e.g., `v1`) after the splitting pipeline produced version `v0`.
 
-A full list of options can be seen from the help message
+An example command is as follows assuming you have not update the clip metadata to a new version:
+
+```bash
+cosmos-curate local launch \
+    --image-name cosmos-curate --image-tag 1.0.0 --curator-path . \
+    -- python3 -m cosmos_curate.pipelines.video.run_pipeline shard --help
+    --input-clip-path <local or s3 path to store clips and metadatas produced by split-annotate pipeline> \
+    --output-dataset-path <local or s3 path to store output dataset> \
+    --annotation-version v0
+```
+
+Again, a full list of options can be seen from the help message
 
 ```bash
 cosmos-curate local launch \
