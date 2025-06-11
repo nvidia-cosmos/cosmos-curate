@@ -3,8 +3,8 @@
 - [Cosmos-Curate Documentation](#cosmos-curate-documentation)
   - [Documentation Structure](#documentation-structure)
     - [1. End User Guide and Reference Pipelines Guide](#1-end-user-guide-and-reference-pipelines-guide)
-    - [3. Architecture Guide and Pipeline Design Guide](#3-architecture-guide-and-pipeline-design-guide)
-    - [2. Developer Guide](#2-developer-guide)
+    - [2. Architecture Guide and Pipeline Design Guide](#2-architecture-guide-and-pipeline-design-guide)
+    - [3. Developer Guide](#3-developer-guide)
   - [Guide Relationships](#guide-relationships)
   - [Getting Started](#getting-started)
   - [Support](#support)
@@ -26,7 +26,7 @@ The end user guide is designed for users who want to use the Cosmos-Curate to pr
 - If you want to run existing pipelines
 - If you need help with basic operations
 
-### 3. [Architecture Guide](curator/ARCHITECTURE_GUIDE.md) and [Pipeline Design Guide](curator/PIPELINE_DESIGN_GUIDE.md)
+### 2. [Architecture Guide](curator/ARCHITECTURE_GUIDE.md) and [Pipeline Design Guide](curator/PIPELINE_DESIGN_GUIDE.md)
 The architecture and pipeline design guides are for developers who want to create new pipelines or modify existing ones. It covers:
 - Core architecture
 - Pipeline development
@@ -38,7 +38,7 @@ The architecture and pipeline design guides are for developers who want to creat
 - If you're modifying an existing pipeline
 - If you need to understand the pipeline architecture
 
-### 2. [Developer Guide](DEVELOPER_GUIDE.md)
+### 3. [Developer Guide](DEVELOPER_GUIDE.md)
 The developer guide is for contributors who want to work on the Cosmos-Curate codebase. It covers:
 - Development environment setup
 - Code quality standards

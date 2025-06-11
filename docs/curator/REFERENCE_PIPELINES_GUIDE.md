@@ -10,13 +10,21 @@
     - [Shard-Dataset Pipeline Output Format](#shard-dataset-pipeline-output-format)
     - [Shard-Dataset Pipeline Configurable Options](#shard-dataset-pipeline-configurable-options)
 
-Today two video pipelines are included as reference pipelines.
+Today two video pipelines are included as reference pipelines:
 - **Split-annotate pipeline** that can generate
   - clips and captions for training text-to-video and vision-language models;
   - video embeddings for semantic search and deduplication across the dataset;
   - various metadata for video analytics.
 - **Shard-dataset pipeline** that can generate
   - ready-to-train `webdataset` for Cosmos fine-tunning from the output of split-annotate pipeline.
+
+One work-in-progress pipeline is also included:
+- **Dedup pipeline** that can performance deduplication based on video embeddings generated from `split-annotate pipeline`.
+  - More details on this pipeline will be added soon.
+
+The overall workflow is described in the diagram below:
+
+![Pipelines](../assets/cosmos-curate-pipelines.png)
 
 ## Split-Annotate Pipeline
 
