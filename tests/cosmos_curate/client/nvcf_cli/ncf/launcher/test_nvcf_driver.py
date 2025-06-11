@@ -134,7 +134,10 @@ def test_deploy_function_success(mock_cc: MagicMock, tmp_path: Path) -> None:
     ]
 
     result = runner.invoke(cosmos_curator, args)
-    mock_instance.console.print.assert_called_with("Function with id '1234' and version '5678' deployed")
+    mock_instance.console.print.assert_called_with(
+        "Function with id '1234' and version '5678' is being deployed; "
+        "to check status: cosmos-curate nvcf function get-deployment-detail"
+    )
     assert result.exit_code == 0
 
 

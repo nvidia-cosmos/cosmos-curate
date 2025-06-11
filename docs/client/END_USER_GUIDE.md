@@ -165,7 +165,7 @@ This section of the instructions references the concept of local paths. Note tha
    - This could take up to 45 minutes for a fresh new build.
 
 ```bash
-cosmos-curate image build --image-name cosmos-curate --image-tag 1.0.0 --envs unified,video_splitting,vllm
+cosmos-curate image build --image-name cosmos-curate --image-tag 1.0.0 --envs text_curator,unified,video_splitting,vllm
 ```
 
 2. **Download model weights from Hugging Face.**

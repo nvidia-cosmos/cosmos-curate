@@ -1,0 +1,7 @@
+{
+    "pipeline": "semantic-dedup",
+    "args": {
+        "input_embeddings_path": "FILL_IN",
+        "output_path": "FILL_IN"
+    }
+}

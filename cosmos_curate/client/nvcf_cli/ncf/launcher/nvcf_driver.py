@@ -442,7 +442,10 @@ def nvcf_deploy_function(  # noqa: PLR0913
             data_file,
             instance_count,
         )
-        nvcf_hdl.console.print(f"Function with id '{funcid}' and version '{version}' deployed")
+        nvcf_hdl.console.print(
+            f"Function with id '{funcid}' and version '{version}' is being deployed; "
+            "to check status: cosmos-curate nvcf function get-deployment-detail"
+        )
 
     except Exception as e:
         error_msg = f"Could not deploy function: {e!s}"

@@ -15,7 +15,7 @@
 """Deduplication pipeline for video clips."""
 
 import argparse
-import pathlib
+import os
 import time
 from typing import TYPE_CHECKING, Any
 
@@ -68,7 +68,7 @@ def setup_clustering_semantic(
         random_state=semantic_config.random_state,
         # i/o args
         storage_options=storage_options,
-        clustering_output_dir=str(pathlib.Path(output_dir) / semantic_config.clustering_save_loc),
+        clustering_output_dir=str(os.path.join(output_dir, semantic_config.clustering_save_loc)),  # noqa: PTH118
         clustering_input_partition_size=semantic_config.clustering_input_partition_size,
         logger="./",
         profile_dir=None,
@@ -81,8 +81,8 @@ def setup_clustering_semantic(
         n_clusters=semantic_config.n_clusters,
         # i/o args
         # TODO: get rid of so many directory variables
-        emb_by_clust_dir=str(pathlib.Path(output_dir) / semantic_config.clustering_save_loc / "embs_by_nearest_center"),
-        output_dir=str(pathlib.Path(output_dir) / "extraction"),
+        emb_by_clust_dir=str(os.path.join(output_dir, semantic_config.clustering_save_loc, "embs_by_nearest_center")),  # noqa: PTH118
+        output_dir=str(os.path.join(output_dir, "extraction")),  # noqa: PTH118
         storage_options=storage_options,
         # column args
         id_column=id_column,

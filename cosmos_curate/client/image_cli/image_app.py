@@ -80,7 +80,7 @@ def build(  # noqa: PLR0913
             ),
             rich_help_panel="conda_envs",
         ),
-    ] = "unified,video_splitting,vllm",
+    ] = "text_curator,unified,video_splitting,vllm",
     dockerfile_output_path: Annotated[
         str | None,
         Option(

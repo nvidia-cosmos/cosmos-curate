@@ -3,6 +3,7 @@
     "args": {
         "input_clip_path": "FILL_IN",
         "output_dataset_path": "FILL_IN",
+        "input_semantic_dedup_path": null,
         "annotation_version": "v0"
     }
 }

@@ -3,7 +3,7 @@
     "args": {
         "input_video_path": "FILL_IN",
         "output_clip_path": "FILL_IN",
-        "generate_embeddings": false,
+        "generate_embeddings": true,
         "generate_previews": false,
         "generate_captions": true,
         "splitting_algorithm": "transnetv2",

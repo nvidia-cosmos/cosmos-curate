@@ -830,13 +830,17 @@ import sys
 import pickle
 import os
 
+# add CONTAINER_PATHS_CODE_DIR to sys.path
+sys.path.append('{CONTAINER_PATHS_CODE_DIR}')
+
 def run_func():
     mod = __import__('{func.__module__}', fromlist=['{func.__name__}'])
     func = getattr(mod, '{func.__name__}')
     pipeline_args = pickle.loads({pickle.dumps(pipeline_args)!r})
     func(pipeline_args)
 
-run_func()
+if __name__ == '__main__':
+    run_func()
 """)
     # Create a subprocess that runs the function
     cmd = [

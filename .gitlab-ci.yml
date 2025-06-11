@@ -50,9 +50,11 @@ variables:
   AWS_ACCESS_KEY_ID: "$AWS_ACCESS_KEY_ID"
   AWS_SECRET_ACCESS_KEY: "$AWS_SECRET_ACCESS_KEY"
   AWS_DEFAULT_REGION: "$AWS_DEFAULT_REGION"
-  S3_INPUT_VIDEO_PATH: "s3://${AWS_S3_BUCKET_NAME}/cicd-curator-oss/raw_videos/NBA_sample"
+  S3_INPUT_VIDEO_PATH: "s3://${AWS_S3_BUCKET_NAME}/cicd-curator-oss/raw_videos/samples"
   S3_OUTPUT_PATH: "s3://${AWS_S3_BUCKET_NAME}/cicd-curator-oss/output/${CI_PIPELINE_ID}"
   S3_OUTPUT_CLIP_PATH: "${S3_OUTPUT_PATH}/cosmos-curator-nvcf-helm/raw_clips"
+  S3_OUTPUT_DEDUP_PATH: "${S3_OUTPUT_PATH}/cosmos-curator-nvcf-helm/dedup_results"
+  S3_OUTPUT_DATASET_PATH: "${S3_OUTPUT_PATH}/cosmos-curator-nvcf-helm/datasets"
 
   # HELM configuration
   HELM_THANOS_RECEIVER_URL: "$HELM_THANOS_RECEIVER_URL"
@@ -371,10 +373,18 @@ nvcf-helm:
           fi
         done
       # Invoke NVCF function
+      # Create S3 credentials file
       - awk -v ak="$AWS_ACCESS_KEY_ID" -v sk="$AWS_SECRET_ACCESS_KEY" -v rg="$AWS_DEFAULT_REGION"  '/aws_access_key_id/ {$0 = "aws_access_key_id = " ak} /aws_secret_access_key/ {$0 = "aws_secret_access_key = " sk} /region/ {$0 = "region = " rg} {print}' examples/nvcf/creds/aws_credentials > aws_credentials
       - sed -i '/^endpoint/d' aws_credentials
-      - cat examples/nvcf/function/invoke_video_split_full.json | jq --arg output_clip_path "$S3_OUTPUT_CLIP_PATH" --arg input_video_path "$S3_INPUT_VIDEO_PATH" '.args.output_clip_path = $output_clip_path | .args.input_video_path = $input_video_path' > invoke_file.json
-      - cosmos-curate nvcf function invoke-function --data-file invoke_file.json --s3-config-file aws_credentials
+      # Split-annotate pipeline
+      - cat examples/nvcf/function/invoke_video_split_full.json | jq --arg output_clip_path "$S3_OUTPUT_CLIP_PATH" --arg input_video_path "$S3_INPUT_VIDEO_PATH" '.args.output_clip_path = $output_clip_path | .args.input_video_path = $input_video_path' > invoke_split.json
+      - cosmos-curate nvcf function invoke-function --data-file invoke_split.json --s3-config-file aws_credentials
+      # Dedup pipeline
+      - cat examples/nvcf/function/invoke_video_dedup.json | jq --arg output_path "$S3_OUTPUT_DEDUP_PATH" --arg input_embeddings_path "$S3_OUTPUT_CLIP_PATH/iv2_embd_parquet/" '.args.output_path = $output_path | .args.input_embeddings_path = $input_embeddings_path' > invoke_dedup.json
+      - cosmos-curate nvcf function invoke-function --data-file invoke_dedup.json --s3-config-file aws_credentials
+      # Shard-dataset pipeline
+      - cat examples/nvcf/function/invoke_video_shard.json | jq --arg output_dataset_path "$S3_OUTPUT_DATASET_PATH" --arg input_clip_path "$S3_OUTPUT_CLIP_PATH" --arg input_semantic_dedup_path "$S3_OUTPUT_DEDUP_PATH" '.args.output_dataset_path = $output_dataset_path | .args.input_clip_path = $input_clip_path | .args.input_semantic_dedup_path = $input_semantic_dedup_path' > invoke_shard.json
+      - cosmos-curate nvcf function invoke-function --data-file invoke_shard.json --s3-config-file aws_credentials
   after_script:
     - *activate_micromamba
     - |
@@ -386,7 +396,9 @@ nvcf-helm:
   artifacts:
     when: always
     paths:
-      - "invoke_file.json"
+      - "invoke_split.json"
+      - "invoke_dedup.json"
+      - "invoke_shard.json"
       - "trace.log"
       - "/tmp/*.log"
 
@@ -400,7 +412,9 @@ nvcf-helm-validate:
   tags:
     - build-runner  # Override to Docker executor
   variables:
-    S3_FILE: "${S3_OUTPUT_CLIP_PATH}/summary.json"
+    S3_FILE_SPLIT_SUMMARY: "${S3_OUTPUT_CLIP_PATH}/summary.json"
+    S3_FILE_DEDUP_SUMMARY: "${S3_OUTPUT_DEDUP_PATH}/extraction/dedup_summary_0.01.csv"
+    S3_FILE_SHARD_SUMMARY: "${S3_OUTPUT_DATASET_PATH}/v0/wdinfo_list.csv"
   before_script:
     - *setup_micromamba
     - pip3 install awscli --upgrade --user
@@ -421,12 +435,12 @@ nvcf-helm-validate:
       max=10
       file_found=false
       while [ $i -lt $max ]; do
-          if aws s3 ls "${S3_FILE}" &> /dev/null; then
-              echo "Found S3 caption data: ${S3_FILE}"
+          if aws s3 ls "${S3_FILE_SPLIT_SUMMARY}" &> /dev/null; then
+              echo "Found S3 split-annotate summary file: ${S3_FILE_SPLIT_SUMMARY}"
               file_found=true
               break
           else
-              echo "Waiting for S3 data in ${S3_FILE} ... ($i of $max, retrying in 5 seconds)"
+              echo "Waiting for S3 data in ${S3_FILE_SPLIT_SUMMARY} ... ($i of $max, retrying in 5 seconds)"
               sleep 5
               ((i++))
           fi
@@ -437,11 +451,11 @@ nvcf-helm-validate:
           exit 1
       fi
     - |
-      echo "Validating $S3_FILE ..."
+      echo "Validating $S3_FILE_SPLIT_SUMMARY ..."
       SUMMARY_KEYWORDS=("num_input_videos" "num_processed_videos")
-      JSON_CONTENT=$(aws s3 cp "$S3_FILE" - 2>/dev/null)
+      JSON_CONTENT=$(aws s3 cp "$S3_FILE_SPLIT_SUMMARY" - 2>/dev/null)
       if [ $? -ne 0 ]; then
-          echo "Error reading from S3: $S3_FILE"
+          echo "Error reading from S3: $S3_FILE_SPLIT_SUMMARY"
           exit 1
       fi
       if ! jq empty <<< "$JSON_CONTENT" 2>/dev/null; then
@@ -455,7 +469,51 @@ nvcf-helm-validate:
               exit 1
           fi
       done
-      echo "Validation successful"
+      echo "Split-annotate pipeline validation successful"
+    - |
+      set +e  # Disable exit on error
+      i=0
+      max=10
+      file_found=false
+      while [ $i -lt $max ]; do
+          if aws s3 ls "${S3_FILE_DEDUP_SUMMARY}" &> /dev/null; then
+              echo "Found S3 dedup summary file: ${S3_FILE_DEDUP_SUMMARY}"
+              file_found=true
+              break
+          else
+              echo "Waiting for S3 data in ${S3_FILE_DEDUP_SUMMARY} ... ($i of $max, retrying in 5 seconds)"
+              sleep 5
+              ((i++))
+          fi
+      done
+      set -e
+      if [ "$file_found" = false ]; then
+          echo "S3 command failed, retry limit exceeded."
+          exit 1
+      fi
+      echo "Dedup pipeline validation successful"
+    - |
+      set +e  # Disable exit on error
+      i=0
+      max=10
+      file_found=false
+      while [ $i -lt $max ]; do
+          if aws s3 ls "${S3_FILE_SHARD_SUMMARY}" &> /dev/null; then
+              echo "Found S3 dedup summary file: ${S3_FILE_SHARD_SUMMARY}"
+              file_found=true
+              break
+          else
+              echo "Waiting for S3 data in ${S3_FILE_SHARD_SUMMARY} ... ($i of $max, retrying in 5 seconds)"
+              sleep 5
+              ((i++))
+          fi
+      done
+      set -e
+      if [ "$file_found" = false ]; then
+          echo "S3 command failed, retry limit exceeded."
+          exit 1
+      fi
+      echo "Shard-dataset pipeline validation successful"
 
 get_mr_id:
   stage: post-merge
