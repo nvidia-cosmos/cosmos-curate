@@ -511,3 +511,21 @@ promote_to_prod:
     - PROD_IMAGE="${NVCF_PROD_IMAGE}:${STAGING_TAG}"
     - echo "Copying $STAGING_IMAGE -> $PROD_IMAGE"
     - docker buildx imagetools create --tag "$PROD_IMAGE" "$STAGING_IMAGE"
+
+build-packages:
+  stage: post-merge
+  rules: *schedule_rules
+  before_script:
+    - *setup_micromamba
+    - TIMESTAMP=$(date -d ${CI_COMMIT_TIMESTAMP} +%s)
+    - VERSION=$(grep -m 1 'version = ' pyproject.toml | cut -d'"' -f2)
+    - PKG_VERSION="${VERSION}.dev${TIMESTAMP}"
+    - echo "Building package for ${PKG_VERSION}"
+    - pip install twine --disable-pip-version-check
+    - poetry version "${PKG_VERSION}"
+    - poetry build --no-interaction
+  script:
+    - twine upload --skip-existing -u gitlab-ci-token -p ${CI_JOB_TOKEN} --repository-url
+      "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/pypi" dist/*
+    - twine upload --skip-existing -u ${ARTIFACTORY_USER} -p ${ARTIFACTORY_TOKEN} --repository-url
+      "${ARTIFACTORY_URL}" dist/*
