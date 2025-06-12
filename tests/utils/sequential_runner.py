@@ -29,6 +29,8 @@ def run_pipeline(
     """Run a sequence of stages sequentially on the provided tasks and return the final tasks."""
     for stage in stages:
         stage.stage_setup()
+
+    for stage in stages:
         tasks = stage.process_data(tasks)
         stage.destroy()
     return tasks

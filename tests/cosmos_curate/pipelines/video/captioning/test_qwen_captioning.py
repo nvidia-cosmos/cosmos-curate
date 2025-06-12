@@ -30,6 +30,7 @@ from cosmos_curate.pipelines.video.clipping.clip_extraction_stages import (  # t
     ClipTranscodingStage,
 )
 from cosmos_curate.pipelines.video.utils.data_model import Clip, SplitPipeTask, Video  # type: ignore[import-untyped]
+from tests.utils.sequential_runner import run_pipeline
 
 _THRESHOLD = 0.8
 _NUM_CLIPS = 2
@@ -97,17 +98,12 @@ def sample_captioning_task(sample_video_data: bytes) -> SplitPipeTask:
 @pytest.mark.env("vllm")
 def test_generate_embedding(sample_captioning_task: SplitPipeTask) -> None:
     """Test the QwenCaptioning result."""
-    transcoding_stage = ClipTranscodingStage(encoder="libopenh264")
-    input_preparation_stage = QwenInputPreparationStage(sampling_fps=2.0)
-    captioning_stage = QwenCaptionStage()
-
-    transcoding_stage.stage_setup()
-    input_preparation_stage.stage_setup()
-    captioning_stage.stage_setup()
-
-    tasks = transcoding_stage.process_data([sample_captioning_task])
-    tasks = input_preparation_stage.process_data([sample_captioning_task])
-    tasks = captioning_stage.process_data(tasks)
+    stages = [
+        ClipTranscodingStage(encoder="libopenh264"),
+        QwenInputPreparationStage(sampling_fps=2.0),
+        QwenCaptionStage(),
+    ]
+    tasks = run_pipeline([sample_captioning_task], stages)
 
     # Validate that captions were generated
     assert tasks is not None
