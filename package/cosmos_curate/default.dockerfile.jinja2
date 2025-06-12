@@ -96,14 +96,6 @@ RUN mkdir -p /tmp && chmod 1777 /tmp && \
     rm -rf /tmp/nv-codec-headers* && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# Install mamba
-ENV PATH="/root/miniforge3/bin:${PATH}"
-ARG PATH="/root/miniforge3/bin:${PATH}"
-ARG MAMBA_INSTALLER_FILENAME="Miniforge3-Linux-x86_64.sh"
-RUN wget https://github.com/conda-forge/miniforge/releases/download/23.3.1-1/${MAMBA_INSTALLER_FILENAME} \
-    && bash ${MAMBA_INSTALLER_FILENAME} -b \
-    && rm -f ${MAMBA_INSTALLER_FILENAME}
-
 # Install micromamba
 ENV MAMBA_ROOT_PREFIX="/cosmos_curate/conda_envs"
 ARG MICROMAMBA_RELEASE_URL="https://github.com/mamba-org/micromamba-releases/releases/download/2.0.4-0/micromamba-linux-64"
@@ -162,6 +154,10 @@ ENV CONDA_PREFIX="" \
     CUDA_HOME=""
 {% endfor %}
 
+# Activate the cosmos_curate env
+ENV PATH="/cosmos_curate/conda_envs/envs/cosmos_curate/bin:$PATH" \
+    CONDA_PREFIX="/cosmos_curate/conda_envs/envs/cosmos_curate"
+
 # This has to be done *after* the home variable has been set for silly conda reasons.
 RUN conda config --add envs_dirs /cosmos_curate/conda_envs/envs/
 # Backup option for conda envs path
@@ -169,10 +165,6 @@ ENV CONDA_ENVS_PATH=/cosmos_curate/conda_envs/envs
 
 # Needed for setting up conda envs within a docker image for some reason
 RUN conda config --set remote_read_timeout_secs 300
-
-# Activate the cosmos_curate env
-ENV PATH="/cosmos_curate/conda_envs/envs/cosmos_curate/bin:$PATH" \
-    CONDA_PREFIX="/cosmos_curate/conda_envs/envs/cosmos_curate"
 
 # Conda does some insane stuff with certs sometimes. We force it to use the docker certs
 ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt \
