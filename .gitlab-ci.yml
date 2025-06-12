@@ -10,12 +10,15 @@ workflow:
     - if: $TEST_END_TO_END == "True"
     # Skip everything else
     - when: never
+  auto_cancel:
+    on_new_commit: interruptible
 
 default:
   tags:
     - vm-builder  # Default to shell executor
   before_script:
     - set -x
+  interruptible: true
 
 variables:
   # Versions
@@ -169,7 +172,6 @@ ruff:
   script:
     - ruff format --check
     - ruff check
-  interruptible: true
 
 mypy:
   stage: lint
@@ -182,7 +184,6 @@ mypy:
     - *setup_curator
     - mypy --pretty
     - *teardown_micromamba
-  interruptible: true
 
 build_deploy_curator:
   stage: build
@@ -214,7 +215,6 @@ build_deploy_curator:
   retry:
     max: 2
     when: always
-  interruptible: true
 
 unit_tests:
   stage: test
@@ -231,7 +231,6 @@ unit_tests:
     when: always
     reports:
       junit: report.xml
-  interruptible: true
 
 # Run GPU tests on SLURM cluster
 gpu_tests:
@@ -292,7 +291,6 @@ gpu_tests:
     reports:
       junit:
         - "*-report.xml"
-  interruptible: true
 
 # SAST jobs
 include:
@@ -306,7 +304,6 @@ semgrep-sast:
     GIT_SUBMODULE_STRATEGY: none
     SAST_EXCLUDED_PATHS: "cosmos-xenna/**"
   rules: *pre_merge_rules
-  interruptible: true
 
 # Run end-to-end tests on NVCF cluster
 nvcf-helm:
