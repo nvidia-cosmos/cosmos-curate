@@ -373,7 +373,7 @@ class QwenCaptionStage(CuratorStage):
         self._disable_mmcache = disable_mmcache
         self._verbose = verbose
         self._log_stats = log_stats
-        self._use_async_engine = True
+        self._use_async_engine = False  # disable async engine because it is not clean on failure
         self._raw_model = qwen_vl.QwenVL(
             model_variant,
             fp8=fp8_enable,

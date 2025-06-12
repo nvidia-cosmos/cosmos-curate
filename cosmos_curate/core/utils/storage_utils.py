@@ -120,7 +120,7 @@ def read_bytes(
             assert client is not None
             return client.download_object_as_bytes(filepath)
 
-        return do_with_retries(func_to_call)
+        return do_with_retries(func_to_call, backoff_factor=4.0, max_wait_time_s=256.0)
     # Handle local paths
     with filepath.open("rb") as fp:
         return fp.read()
