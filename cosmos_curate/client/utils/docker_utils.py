@@ -92,7 +92,6 @@ def generate_dockerfile(  # noqa: PLR0913
 
 def build(  # noqa: PLR0913
     *,
-    base_image: str,
     curator_path: pathlib.Path,
     dockerfile_path: pathlib.Path,
     image: str | None = None,
@@ -103,7 +102,6 @@ def build(  # noqa: PLR0913
     """Build a Docker image variables and a Dockerfile template.
 
     Args:
-        base_image: The base name to use.
         curator_path (pathlib.Path): The path to the curator directory.
         dockerfile_path (pathlib.Path): The path to the Dockerfile.
         image (Optional[str]): The name and tag of the Docker image. Default is None.
@@ -127,8 +125,6 @@ def build(  # noqa: PLR0913
         [
             f"--progress={'plain' if verbose else 'auto'}",
             "--network=host",
-            "--build-arg",
-            f"BASE_IMAGE={base_image}",
             "-f",
             str(dockerfile_path),
             "-t",

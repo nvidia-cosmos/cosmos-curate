@@ -6,10 +6,11 @@
 # - https://uwekorn.com/2021/03/01/deploying-conda-environments-in-docker-how-to-do-it-right.html
 # - https://cloud.google.com/architecture/best-practices-for-building-containers
 
-ARG BASE_IMAGE=nvcr.io/nvidia/pytorch:25.05-py3
 ARG DEBIAN_FRONTEND=noninteractive
 
-FROM ${BASE_IMAGE} AS main
+FROM nvidia/cuda:12.9.0-devel-ubuntu24.04 AS main
+
+SHELL ["/bin/bash", "-c"]
 
 ENV TZ=America/Los_Angeles
 # Get system level packages
@@ -19,6 +20,10 @@ RUN apt-get update \
     libsm6 libxext6 \
     # Needed because the certs age out sometimes?
     ca-certificates \
+    # Needed for installing micromamba \
+    wget \
+    # Needed for pip install \
+    git \
     --option=Dpkg::Options::=--force-confdef \
     && update-ca-certificates \
     && apt-get clean \
@@ -38,23 +43,18 @@ RUN mkdir -p /tmp && chmod 1777 /tmp && \
     libaom-dev \
     libass-dev \
     libdav1d-dev \
+    libdrm-dev \
+    libfreetype6-dev \
+    libgnutls28-dev \
+    libnuma-dev \
+    libopenh264-dev \
+    libtool \
+    libva-dev \
     libvorbis-dev \
     libvpx-dev \
     libwebp-dev \
-    libfreetype6-dev \
-    libgnutls28-dev \
-    libtool \
-    libnuma1 \
-    libnuma-dev \
-    libopenh264-dev \
-    libvorbis-dev \
-    libdrm-dev \
-    libva-dev \
-    libva-drm2 \
-    libva-x11-2 \
     pkg-config \
     texinfo \
-    wget \
     vainfo \
     yasm \
     zlib1g-dev && \

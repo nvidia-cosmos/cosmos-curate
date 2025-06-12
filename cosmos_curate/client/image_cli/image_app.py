@@ -71,13 +71,6 @@ def build(  # noqa: PLR0913
             rich_help_panel="docker",
         ),
     ] = "1.0.0",
-    base_image: Annotated[
-        str,
-        Option(
-            help=("Base image to build the docker from."),
-            rich_help_panel="docker",
-        ),
-    ] = "nvcr.io/nvidia/pytorch:25.05-py3",
     envs: Annotated[
         str,
         Option(
@@ -187,7 +180,6 @@ def build(  # noqa: PLR0913
 
     image_label = get_image_label(image_name, image_tag)
     docker_utils.build(
-        base_image=base_image,
         curator_path=_curator_path,
         dockerfile_path=dockerfile_path,
         image=image_label,

@@ -14,7 +14,7 @@ loguru
 ngcsdk==3.64.4
 numpy<2.0.0
 nvtx
-opencv-python
+opencv-python-headless
 pandas<=2.1.4
 Pillow
 prometheus_client==0.21.1
