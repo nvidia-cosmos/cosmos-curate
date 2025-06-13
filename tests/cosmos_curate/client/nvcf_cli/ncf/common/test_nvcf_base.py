@@ -14,6 +14,7 @@
 # limitations under the License.
 """Test nvcf base functionality."""
 
+import json
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -21,6 +22,11 @@ from _pytest.monkeypatch import MonkeyPatch
 from typer.testing import CliRunner
 
 from cosmos_curate.client.nvcf_cli.ncf.common import base_callback  # type: ignore[import-untyped]
+from cosmos_curate.client.nvcf_cli.ncf.common.nvcf_base import (  # type: ignore[import-untyped]
+    NvcfBase,
+    cc_client_instances,
+    register_instance,
+)
 
 runner = CliRunner()
 
@@ -62,3 +68,156 @@ def test_base_callback(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
     assert fake_ctx.obj["key"] is None
     assert fake_ctx.obj["org"] is None
     assert fake_ctx.obj["timeout"] == _TIMEOUT
+
+
+def test_get_hf_token_from_config(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
+    """Test that get_hf_token_from_config function gets the token from the config file.
+
+    Args:
+        monkeypatch: The monkeypatch object.
+        tmp_path: The tmp_path object.
+
+    """
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    nvcf_base = NvcfBase(url="", nvcf_url="", key="", org="", timeout=15)
+
+    # Test that None is returned if the file is not found
+    token = nvcf_base.get_hf_token_from_config()
+    assert token is None
+
+    # Define fake config.yaml file
+    config_dir = tmp_path / ".config/cosmos_curate"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    fname = config_dir / "config.yaml"
+    with Path.open(fname, "w") as fc:
+        json.dump({"huggingface": {"api_key": "fake_token"}}, fc)
+
+    nvcf_base = NvcfBase(url="", nvcf_url="", key="", org="", timeout=15)
+    token = nvcf_base.get_hf_token_from_config()
+
+    assert token == "fake_token"  # noqa: S105
+
+
+def test_load_config(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
+    """Test that load_config function loads the config file.
+
+    Args:
+        monkeypatch: The monkeypatch object.
+        tmp_path: The tmp_path object.
+
+    """
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    nvcf_base = NvcfBase(url="", nvcf_url="", key="", org="", timeout=15)
+
+    # Test that None is returned if the file is not found
+    config = nvcf_base.load_config()
+    assert config is None
+
+    config_dir = tmp_path / ".config/cosmos_curate"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    fname = config_dir / "client.json"
+    with Path.open(fname, "w") as fc:
+        json.dump(
+            {
+                "url": "https://api.ngc.nvidia.com",
+                "key": "FAKEKEY",
+                "org": "FAKEORG",
+                "nvcf_url": "https://api.nvcf.nvidia.com",
+                "backend": None,
+                "gpu": None,
+                "instance": None,
+                "timeout": 15,
+            },
+            fc,
+        )
+
+    config = nvcf_base.load_config()
+
+    assert config == {
+        "url": "https://api.ngc.nvidia.com",
+        "key": "FAKEKEY",
+        "org": "FAKEORG",
+        "nvcf_url": "https://api.nvcf.nvidia.com",
+        "backend": None,
+        "gpu": None,
+        "instance": None,
+        "timeout": 15,
+    }
+
+
+def test_save_config() -> None:
+    """Test that save_config function saves the config file."""
+    nvcf_base = NvcfBase(url="", nvcf_url="", key="", org="", timeout=15)
+
+    config = nvcf_base.save_config(
+        url="https://api.ngc.nvidia.com",
+        nvcf_url="https://api.nvcf.nvidia.com",
+        key="FAKEKEY",
+        org="FAKEORG",
+        backend="FAKEBACKEND",
+        instance="FAKEINSTANCE",
+        gpu="FAKEGPU",
+        timeout=15,
+    )
+
+    assert config == {
+        "url": "https://api.ngc.nvidia.com",
+        "key": "FAKEKEY",
+        "org": "FAKEORG",
+        "nvcf_url": "https://api.nvcf.nvidia.com",
+        "backend": "FAKEBACKEND",
+        "instance": "FAKEINSTANCE",
+        "gpu": "FAKEGPU",
+        "timeout": 15,
+    }
+
+
+def test_get_cluster() -> None:
+    """Test that get_cluster function gets the cluster configuration from the context or config."""
+    nvcf_base = NvcfBase(url="", nvcf_url="", key="", org="", timeout=15)
+
+    # Test none context first
+    ctx_none = MagicMock()
+    ctx_none.obj.get.return_value = None
+
+    success, backend, gpu, instance = nvcf_base.get_cluster(ctx_none, None, None, None)
+    assert not success
+    assert backend is None
+    assert gpu is None
+    assert instance is None
+
+    # Test context with config
+    ctx = MagicMock()
+    ctx.obj = {"config": {"backend": "FAKEBACKEND", "gpu": "FAKEGPU", "instance": "FAKEINSTANCE"}}
+
+    # Test with context and no backend, gpu, instance
+    success, backend, gpu, instance = nvcf_base.get_cluster(ctx, None, None, None)
+    assert success
+    assert backend == "FAKEBACKEND"
+    assert gpu == "FAKEGPU"
+    assert instance == "FAKEINSTANCE"
+
+    # Test with context and backend, gpu, instance
+    success, backend, gpu, instance = nvcf_base.get_cluster(ctx, "FAKEBACKEND", "FAKEGPU", "FAKEINSTANCE")
+    assert success
+    assert backend == "FAKEBACKEND"
+    assert gpu == "FAKEGPU"
+    assert instance == "FAKEINSTANCE"
+
+
+def test_register_instance() -> None:
+    """Test that register_instance function registers a new instance."""
+    ins_name = "FAKEINSTANCE"
+    ins_help = "FAKEHELP"
+    ins_type = NvcfBase
+    ins_app = MagicMock()
+
+    register_instance(ins_name, ins_help, ins_type, ins_app)
+
+    instances = cc_client_instances()
+    assert instances[ins_name] == {"help": ins_help, "type": ins_type, "app": ins_app}
+
+    # Test that the instance is not registered again
+    register_instance(ins_name, ins_help, ins_type, ins_app)
+    instances = cc_client_instances()
+    assert instances[ins_name] == {"help": ins_help, "type": ins_type, "app": ins_app}
