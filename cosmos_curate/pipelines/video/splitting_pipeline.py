@@ -426,6 +426,7 @@ def split(args: argparse.Namespace) -> None:  # noqa: C901
                         generate_stage2_caption=args.qwen_stage2_caption,
                         stage2_prompt_text=args.qwen_stage2_prompt_text,
                         disable_mmcache=not args.qwen_use_vllm_mmcache,
+                        use_async_engine=args.qwen_use_async_engine,
                         verbose=args.verbose,
                         log_stats=args.perf_profile,
                     ),
@@ -840,6 +841,18 @@ def _setup_parser(parser: argparse.ArgumentParser) -> None:  # noqa: PLR0915
         help="Controls number of frames sampled per second from input clip for captioning model",
     )
     parser.add_argument(
+        "--qwen-preprocess-dtype",
+        type=str,
+        default="float16",
+        choices=[
+            "float32",
+            "float16",
+            "bfloat16",
+            "uint8",
+        ],
+        help="Precision for tensor preprocess operations in QwenInputPreparationStage.",
+    )
+    parser.add_argument(
         "--qwen-model-does-preprocess",
         dest="qwen_model_does_preprocess",
         action="store_true",
@@ -860,28 +873,10 @@ def _setup_parser(parser: argparse.ArgumentParser) -> None:  # noqa: PLR0915
         help="Specify the input prompt used to generate stage2 Qwen captions",
     )
     parser.add_argument(
-        "--qwen-preprocess-dtype",
-        type=str,
-        default="float16",
-        choices=[
-            "float32",
-            "float16",
-            "bfloat16",
-            "uint8",
-        ],
-        help="Precision for tensor preprocess operations in QwenInputPreparationStage.",
-    )
-    parser.add_argument(
         "--qwen-batch-size",
         type=int,
         default=8,
         help="Batch size for Qwen captioning stage.",
-    )
-    parser.add_argument(
-        "--qwen-use-vllm-mmcache",
-        action="store_true",
-        default=False,
-        help="vLLM 0.7.2 MultiModal Cache Usage, default disabled for better performance and GPU Utilization",
     )
     parser.add_argument(
         "--qwen-use-fp8-weights",
@@ -894,6 +889,18 @@ def _setup_parser(parser: argparse.ArgumentParser) -> None:  # noqa: PLR0915
         type=int,
         default=512,
         help="Max number of output tokens requested from captioning model",
+    )
+    parser.add_argument(
+        "--qwen-use-vllm-mmcache",
+        action="store_true",
+        default=False,
+        help="vLLM 0.7.2 MultiModal Cache Usage, default disabled for better performance and GPU Utilization",
+    )
+    parser.add_argument(
+        "--qwen-use-async-engine",
+        action="store_true",
+        default=False,
+        help="Whether to use async engine for Qwen VL model or not.",
     )
     parser.add_argument(
         "--enhance-captions",

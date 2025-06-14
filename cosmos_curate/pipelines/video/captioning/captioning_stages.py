@@ -15,6 +15,7 @@
 """Captioning stage."""
 
 import asyncio
+from collections.abc import Iterable
 from itertools import zip_longest
 
 import nvtx  # type: ignore[import-untyped]
@@ -37,6 +38,7 @@ from cosmos_curate.pipelines.video.utils import windowing_utils
 from cosmos_curate.pipelines.video.utils.data_model import (
     ShardPipeTask,
     SplitPipeTask,
+    Video,
     _Window,
 )
 
@@ -349,6 +351,7 @@ class QwenCaptionStage(CuratorStage):
         generate_stage2_caption: bool = False,
         stage2_prompt_text: str | None = None,
         disable_mmcache: bool = False,
+        use_async_engine: bool = False,
         verbose: bool = False,
         log_stats: bool = False,
     ) -> None:
@@ -363,6 +366,7 @@ class QwenCaptionStage(CuratorStage):
             generate_stage2_caption: Whether to generate second stage captions.
             stage2_prompt_text: Custom prompt for second stage.
             disable_mmcache: Whether to disable model cache.
+            use_async_engine: Whether to use the asynchronous engine for processing.
             verbose: Whether to print verbose logs.
             log_stats: Whether to log performance statistics.
 
@@ -371,9 +375,9 @@ class QwenCaptionStage(CuratorStage):
         self._batch_size = batch_size
         self._generate_stage2_caption = generate_stage2_caption
         self._disable_mmcache = disable_mmcache
+        self._use_async_engine = use_async_engine
         self._verbose = verbose
         self._log_stats = log_stats
-        self._use_async_engine = False  # disable async engine because it is not clean on failure
         self._raw_model = qwen_vl.QwenVL(
             model_variant,
             fp8=fp8_enable,
@@ -414,7 +418,7 @@ class QwenCaptionStage(CuratorStage):
         """
         return self._raw_model
 
-    def process_data_sync(self, tasks: list[SplitPipeTask]) -> list[SplitPipeTask]:  # noqa: C901
+    def process_data_sync(self, tasks: list[SplitPipeTask]) -> list[SplitPipeTask]:
         """Process the data for the Qwen caption generation stage.
 
         Args:
@@ -451,21 +455,7 @@ class QwenCaptionStage(CuratorStage):
                     batch_size=self._batch_size,
                 )
 
-                for idx, result in enumerate(captions):
-                    clip_idx, window_idx = mapping[idx]
-                    video.clips[clip_idx].windows[window_idx].caption["qwen"] = result
-                    if self._verbose:
-                        logger.info(f"Caption for clip {video.clips[clip_idx].uuid} window {window_idx}: {result}")
-
-                logger.info(
-                    f"Generated {len(captions)} captions for video {video.input_path} "
-                    f"chunk-{video.clip_chunk_index} with {len(video.clips)} clips",
-                )
-
-                for clip in video.clips:
-                    for window in clip.windows:
-                        window.qwen_llm_input = None
-                        window.mp4_bytes = None
+                self._assgin_captions(video, mapping, enumerate(captions))
 
             if self._log_stats:
                 stage_name, stage_perf_stats = self._timer.log_stats()
@@ -473,7 +463,7 @@ class QwenCaptionStage(CuratorStage):
 
         return tasks
 
-    async def _process_data_async(self, tasks: list[SplitPipeTask]) -> list[SplitPipeTask]:  # noqa: C901
+    async def _process_data_async(self, tasks: list[SplitPipeTask]) -> list[SplitPipeTask]:
         for task in tasks:
             self._timer.reinit(self, task.get_major_size())
             video = task.video
@@ -504,29 +494,36 @@ class QwenCaptionStage(CuratorStage):
 
                 # Wait for all VLLM tasks to complete
                 vllm_captions = await asyncio.gather(*vllm_tasks)
-
-                # Organize results
-                for req_id, caption in vllm_captions:
-                    clip_idx, window_idx = mapping[req_id]
-                    video.clips[clip_idx].windows[window_idx].caption["qwen"] = caption
-                    if self._verbose:
-                        logger.info(f"Caption for clip {video.clips[clip_idx].uuid} window {window_idx}: {caption}")
-
-                logger.info(
-                    f"Generated {len(vllm_captions)} captions for video {video.input_path} "
-                    f"chunk-{video.clip_chunk_index} with {len(video.clips)} clips",
-                )
-
-                for clip in video.clips:
-                    for window in clip.windows:
-                        window.qwen_llm_input = None
-                        window.mp4_bytes = None
+                # Assign captions to the corresponding clip/window
+                self._assgin_captions(video, mapping, vllm_captions)
 
             if self._log_stats:
                 stage_name, stage_perf_stats = self._timer.log_stats()
                 task.stage_perf[stage_name] = stage_perf_stats
 
         return tasks
+
+    def _assgin_captions(
+        self,
+        video: Video,
+        mapping: dict[int, tuple[int, int]],
+        captions: Iterable[tuple[int, str]],
+    ) -> None:
+        for req_id, caption in captions:
+            clip_idx, window_idx = mapping[req_id]
+            video.clips[clip_idx].windows[window_idx].caption["qwen"] = caption
+            if self._verbose:
+                logger.info(f"Caption for clip {video.clips[clip_idx].uuid} window {window_idx}: {caption}")
+
+        logger.info(
+            f"Generated {len(list(captions))} captions for video {video.input_path} "
+            f"chunk-{video.clip_chunk_index} with {len(video.clips)} clips",
+        )
+
+        for clip in video.clips:
+            for window in clip.windows:
+                window.qwen_llm_input = None
+                window.mp4_bytes = None
 
     def get_asyncio_loop(self) -> asyncio.AbstractEventLoop:
         """Get the asyncio event loop.

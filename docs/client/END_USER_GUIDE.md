@@ -43,7 +43,8 @@ Cosmos-Curate is a powerful tool for video curation and processing. This guide w
 
 #### Software Requirement
 - Ubuntu >= 22.04
-- Python >=3.10 and <3.13
+- Python >=3.10 on your host
+  - We will require a specific version in your virtual environment below.
 - [Docker](https://docs.docker.com/engine/install/)
 - [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)
 
