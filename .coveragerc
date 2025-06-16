@@ -1,0 +1,22 @@
+[run]
+branch = True
+omit =
+    */__init__.py
+    */examples/*
+parallel = True
+relative_files = True
+source = cosmos_curate
+
+[report]
+exclude_lines =
+    @(?:abc\.)?abstractmethod
+    @overload
+    def __getattr__
+    def __repr__
+    def __str__
+    if (?:typing\.)?TYPE_CHECKING:
+    if __name__ == .__main__.:
+    pragma: no cover
+    raise AssertionError
+    raise NotImplementedError
+precision = 2

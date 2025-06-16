@@ -191,7 +191,7 @@ ENV HF_HOME="${DEFAULT_WORKSPACE_LOC}/weights/hf_home/" \
 COPY cosmos_curate {{code_dir_str}}/cosmos_curate
 COPY cosmos-xenna/cosmos_xenna {{code_dir_str}}/cosmos_xenna
 COPY tests {{code_dir_str}}/tests
-COPY pytest.ini {{code_dir_str}}/
+COPY pytest.ini .coveragerc {{code_dir_str}}/
 
 # Copy additional code paths into the container
 {% for code_path in code_paths %}

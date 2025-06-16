@@ -220,17 +220,29 @@ unit_tests:
   stage: test
   needs: []
   variables:
-    PYTEST_ADDOPTS: "--junitxml=report.xml"
+    PYTEST_ADDOPTS: >-
+      --junitxml=report.xml
+      --cov=cosmos_curate
+      --cov-report=term
+      --cov-report=xml:unit-coverage.xml
+      --cov-report=html:unit-htmlcov
   rules: *pre_merge_rules
   script:
     - *setup_micromamba
     - *setup_curator
     - pytest
+    # Save the raw coverage data file
+    - cp .coverage .coverage.unit_tests || true
     - *teardown_micromamba
   artifacts:
     when: always
     reports:
       junit: report.xml
+    paths:
+      - unit-htmlcov/
+      - unit-coverage.xml
+      - .coverage.unit_tests
+    expire_in: 1 week
 
 # Run GPU tests on SLURM cluster
 gpu_tests:
@@ -265,10 +277,21 @@ gpu_tests:
       #!/bin/bash
       set -e
 
-      # Run tests for each environment with unique report files
+      # Run tests for each environment with unique report files and coverage
       for env in cosmos_curate video_splitting unified vllm; do
         echo "Running tests for $env environment"
-        micromamba run -n $env pytest -m env --junitxml="/config/project/$env-report.xml" tests/cosmos_curate/pipelines
+        micromamba run -n $env pytest -m env \
+          --junitxml="/config/project/$env-report.xml" \
+          --cov=cosmos_curate \
+          --cov-report=term \
+          --cov-report=xml:/config/project/$env-coverage.xml \
+          --cov-report=html:/config/project/$env-htmlcov \
+          tests/cosmos_curate/pipelines
+        
+        # Save the coverage data file for each environment
+        if [ -f .coverage ]; then
+          cp .coverage /config/project/.coverage.gpu_$env
+        fi
       done
       EOL
     - chmod +x run_env_tests.sh
@@ -291,6 +314,50 @@ gpu_tests:
     reports:
       junit:
         - "*-report.xml"
+    paths:
+      - "*-coverage.xml"
+      - "*-htmlcov/"
+      - "*-report.xml"
+      - ".coverage.gpu_*"
+    expire_in: 1 week
+
+# Combine coverage from unit tests and GPU tests
+# This job runs after both unit_tests and gpu_tests complete, combining coverage data from:
+# - unit_tests: .coverage.unit_tests
+# - gpu_tests: .coverage.gpu_*
+# This provides a complete picture of test coverage across all test suites and environments.
+# The coverage badge and MR coverage stats will use data from this job.
+combine_coverage:
+  variables:
+    GIT_SUBMODULE_STRATEGY: none
+  stage: end-to-end
+  needs: ["unit_tests", "gpu_tests"]
+  rules: *pre_merge_rules
+  image: python:3.10
+  tags:
+    - build-runner  # Override to Docker executor
+  script:
+    - pip install coverage
+    # Combine coverage data from both jobs
+    - echo "Combining coverage from unit_tests and gpu_tests..."
+    - echo "Available coverage files:"
+    - ls -la .coverage.* || true
+    - coverage combine .coverage.unit_tests .coverage.gpu_*
+    # Generate final combined reports
+    - coverage report
+    - coverage xml
+    - coverage html
+  coverage: '/^TOTAL.*\s+(\d+\.\d+%)/'
+  artifacts:
+    when: always
+    reports:
+      coverage_report:
+        coverage_format: cobertura
+        path: coverage.xml
+    paths:
+      - coverage.xml
+      - htmlcov/
+    expire_in: 1 week
 
 # SAST jobs
 include:

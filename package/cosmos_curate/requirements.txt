@@ -26,6 +26,7 @@ pynvml==11.5.3
 pyproj
 pytest
 pytest-asyncio
+pytest-cov
 ray[default]==2.46.0
 requests==2.32.3
 scikit-image
