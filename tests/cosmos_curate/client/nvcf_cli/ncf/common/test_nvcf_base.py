@@ -15,9 +15,12 @@
 """Test nvcf base functionality."""
 
 import json
+import logging
 from pathlib import Path
 from unittest.mock import MagicMock
 
+import pytest
+import typer
 from _pytest.monkeypatch import MonkeyPatch
 from typer.testing import CliRunner
 
@@ -68,6 +71,66 @@ def test_base_callback(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
     assert fake_ctx.obj["key"] is None
     assert fake_ctx.obj["org"] is None
     assert fake_ctx.obj["timeout"] == _TIMEOUT
+
+
+def test_base_callback_errors(caplog: pytest.LogCaptureFixture) -> None:
+    """Test that base_callback function errors.
+
+    Args:
+        caplog: The caplog object.
+
+    """
+    fake_ctx = MagicMock()
+    fake_ctx.command.name = None
+    fake_ctx.obj = {
+        "url": None,
+        "nvcf_url": None,
+        "key": "BASE",
+        "org": "NVIDIA",
+        "timeout": None,
+        "config": None,
+        "nvcfHdl": None,
+    }
+
+    with caplog.at_level(logging.ERROR), pytest.raises(typer.Exit) as e:  # noqa: PT012
+        base_callback(ctx=fake_ctx)
+        assert "FATAL: Instance None not registered" in caplog.text
+    assert e.value.exit_code == 1
+
+
+def test_base_callback_no_config(caplog: pytest.LogCaptureFixture) -> None:
+    """Test base_callback when config is None and instance is not 'config'.
+
+    Args:
+        caplog: The caplog object.
+
+    """
+    # Create a mock class that will be returned when ins_type is called
+    mock_instance = MagicMock()
+    mock_instance.config = None
+    mock_instance.exe = "test_exe"
+    mock_instance.logger = MagicMock()
+
+    mock_ins_type = MagicMock(return_value=mock_instance)
+
+    register_instance("test_instance", "Test instance", mock_ins_type, typer.Typer())
+
+    fake_ctx = MagicMock()
+    fake_ctx.command.name = "test_instance"
+    fake_ctx.obj = {
+        "url": "https://api.ngc.nvidia.com",
+        "nvcf_url": "https://api.nvcf.nvidia.com",
+        "key": None,
+        "org": None,
+        "timeout": 15,
+        "config": None,
+        "nvcfHdl": None,
+    }
+
+    with caplog.at_level(logging.ERROR), pytest.raises(typer.Exit) as e:  # noqa: PT012
+        base_callback(ctx=fake_ctx)
+        assert "No Configurations found, Please run 'test_exe nvcf config set' to create configuration" in caplog.text
+    assert e.value.exit_code == 1
 
 
 def test_get_hf_token_from_config(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
