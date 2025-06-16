@@ -292,5 +292,4 @@ For small models, sometimes it is difficult to push up the GPU utilization.
 One way is to request a fraction of GPU and allow multiple stage workers to be allocated on the same GPU.
 The GPU memory usage metric above would help define this fractional number to maximize the GPU usage while avoiding CUDA OOM.
 
-In the reference pipeline, `AestheticFilterStage` in [cosmos_curate/pipelines/video/filtering/aesthetics/aesthetic_filter_stages.py](../../cosmos_curate/pipelines/video/filtering/aesthetics/aesthetic_filter_stages.py) requests 0.25 GPUs per worker.
-
+In the reference video pipeline, `AestheticFilterStage` in [cosmos_curate/pipelines/video/filtering/aesthetics/aesthetic_filter_stages.py](../../cosmos_curate/pipelines/video/filtering/aesthetics/aesthetic_filter_stages.py) requests 0.25 GPUs per worker.

@@ -207,7 +207,7 @@ At a high level, this pipeline
 - generates one descriptive caption for each 256-frame window in each clip
 - stores the mp4 clips and metadatas to the specified `output_clip_path`
 
-For more details, please refer to [Split-Annotate Pipeline](../curator/REFERENCE_PIPELINES_GUIDE.md#split-annotate-pipeline) section in [Reference Pipelines Guide](../curator/REFERENCE_PIPELINES_GUIDE.md).
+For more details, please refer to [Split-Annotate Pipeline](../curator/REFERENCE_PIPELINES_VIDEO.md#split-annotate-pipeline) section in [Reference Pipelines Guide](../curator/REFERENCE_PIPELINES_VIDEO.md).
 
 4. **Optionally, Run the Split-Annotate Pipeline via API Endpoint**
 

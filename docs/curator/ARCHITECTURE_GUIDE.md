@@ -92,7 +92,7 @@ An auto-scaler works out an allocation plan to balance the throughputs of all st
 ### How to handle large variation in input data?
 
 The memory consumption and processing time for a video curation pipeline is very input data dependent.
-Take the [split-annotate pipeline](./REFERENCE_PIPELINES_GUIDE.md#shard-dataset-pipeline) as an example,
+Take the [split-annotate pipeline](./REFERENCE_PIPELINES_VIDEO.md#shard-dataset-pipeline) as an example,
 the input video can be either 1-min long or 5-hour long.
 plus the pipeline might only knows this after a video finishes the first `VideoDownloader` stage.
 

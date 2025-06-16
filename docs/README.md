@@ -2,7 +2,7 @@
 
 - [Cosmos-Curate Documentation](#cosmos-curate-documentation)
   - [Documentation Structure](#documentation-structure)
-    - [1. End User Guide and Reference Pipelines Guide](#1-end-user-guide-and-reference-pipelines-guide)
+    - [1. End User Guide and Reference Pipelines Guide for Video \& AV](#1-end-user-guide-and-reference-pipelines-guide-for-video--av)
     - [2. Architecture Guide and Pipeline Design Guide](#2-architecture-guide-and-pipeline-design-guide)
     - [3. Developer Guide](#3-developer-guide)
   - [Guide Relationships](#guide-relationships)
@@ -14,7 +14,7 @@ Welcome to the Cosmos-Curate documentation. This documentation is organized into
 
 ## Documentation Structure
 
-### 1. [End User Guide](client/END_USER_GUIDE.md) and [Reference Pipelines Guide](curator/REFERENCE_PIPELINES_GUIDE.md)
+### 1. [End User Guide](client/END_USER_GUIDE.md) and Reference Pipelines Guide for [Video](curator/REFERENCE_PIPELINES_VIDEO.md) & [AV](curator/REFERENCE_PIPELINES_AV.md)
 The end user guide is designed for users who want to use the Cosmos-Curate to process and curate videos. It covers:
 - Prerequisites and environment setup
 - Basic usage instructions
@@ -65,7 +65,8 @@ graph TD
 
 1. **New Users**:
    - Start with the [End User Guide](client/END_USER_GUIDE.md) to learn how to use the system
-   - Refer to the [Reference Pipeline Guide](curator/REFERENCE_PIPELINES_GUIDE.md) to explore the many options to configure the reference pipeline
+   - Refer to the [Reference Video Pipelines Guide](curator/REFERENCE_PIPELINES_VIDEO.md) to explore the many options to configure the reference pipelines targeting general videos
+   - Refer to the [Reference AV Pipelines Guide](curator/REFERENCE_PIPELINES_VIDEO.md) to explore the many options to configure the reference pipelines targeting autonomous vehicle
 2. **Developers**:
    - Begin with the [Developer Guide](DEVELOPER_GUIDE.md) to set up your development environment
    - Read the [Architecture Guide](curator/ARCHITECTURE_GUIDE.md) to understand the big picture

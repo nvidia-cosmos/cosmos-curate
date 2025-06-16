@@ -117,7 +117,7 @@ tests/cosmos_curate/pipelines/video/filtering/aesthetics/test_aesthetic_filter.p
 
 ### End-to-End Pipeline Tests
 
-Run the reference pipeline based on instructions in [Run the Split-Annotate Pipeline](./client/END_USER_GUIDE.md#run-the-reference-video-pipeline) section to make sure everything works.
+Run the reference video pipeline based on instructions in [Run the Split-Annotate Pipeline](./client/END_USER_GUIDE.md#run-the-reference-video-pipeline) section to make sure everything works.
 
 The CI will test more scenarios.
 

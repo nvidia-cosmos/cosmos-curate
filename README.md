@@ -29,7 +29,8 @@ Comprehensive documentation is available under [docs/](docs/README.md) directory
 
 ### User Documentation
 - [End User Guide](docs/client/END_USER_GUIDE.md) - For user to run video processing pipelines
-- [Reference Pipelines Guide](docs/curator/REFERENCE_PIPELINES_GUIDE.md) - For user to configure video processing pipelines
+- [Reference Video Pipelines Guide](docs/curator/REFERENCE_PIPELINES_VIDEO.md) - general video processing pipelines
+- [Reference AV Pipelines Guide](docs/curator/REFERENCE_PIPELINES_AV.md) - multi-camera video, and (upcoming) GPS & LiDAR processing pipelines for autonomous vehicle (AV)
 
 ### Developer Documentation
 - [Developer Guide](docs/DEVELOPER_GUIDE.md) - For contributors

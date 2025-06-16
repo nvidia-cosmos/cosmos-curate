@@ -1,6 +1,6 @@
-# Cosmos-Curate - Reference Pipelines
+# Cosmos-Curate - Reference Video Pipelines
 
-- [Cosmos-Curate - Reference Pipelines](#cosmos-curate---reference-pipelines)
+- [Cosmos-Curate - Reference Video Pipelines](#cosmos-curate---reference-video-pipelines)
   - [Split-Annotate Pipeline](#split-annotate-pipeline)
     - [Split-Annotate Pipeline Stages](#split-annotate-pipeline-stages)
     - [Split-Annotate Pipeline Output Format](#split-annotate-pipeline-output-format)
@@ -10,7 +10,7 @@
     - [Shard-Dataset Pipeline Output Format](#shard-dataset-pipeline-output-format)
     - [Shard-Dataset Pipeline Configurable Options](#shard-dataset-pipeline-configurable-options)
 
-Today two video pipelines are included as reference pipelines:
+Today two video pipelines are included as reference video pipelines:
 - **Split-annotate pipeline** that can generate
   - clips and captions for training text-to-video and vision-language models;
   - video embeddings for semantic search and deduplication across the dataset;
