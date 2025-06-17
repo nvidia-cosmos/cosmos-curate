@@ -108,14 +108,20 @@ stages:
     - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
     - when: never
 
-  # Rules for scheduled (cron) jobs
-  schedule_rules: &schedule_rules
-    - if: '$CI_PIPELINE_SOURCE == "schedule"'
-    - when: never
-
   # Rules for merge result pipelines only
   merge_result_rules: &merge_result_rules
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_EVENT_TYPE != "merge_train"'
+    - when: never
+
+  # Rules for jobs that should run both before and after merging
+  pre_post_merge_rules: &pre_post_merge_rules
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" || $TEST_END_TO_END == "True"'
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+    - when: never
+
+  # Rules for scheduled (cron) jobs
+  schedule_rules: &schedule_rules
+    - if: '$CI_PIPELINE_SOURCE == "schedule"'
     - when: never
 
   # Configure Docker authentication for GitLab/NVCF registries
@@ -188,37 +194,6 @@ mypy:
     - mypy --pretty
     - *teardown_micromamba
 
-build_deploy_curator:
-  stage: build
-  rules: *pre_merge_rules
-  script:
-    # Set up environment
-    - *docker_login
-    - *setup_micromamba
-    - *setup_curator_cli
-    - IMAGE_TAG="mr_${CI_MERGE_REQUEST_IID}_${CI_COMMIT_SHORT_SHA}"
-    - |
-      cosmos-curate image build \
-      --curator-path . \
-      --image-name ${CURATOR_IMAGE} \
-      --image-tag ${IMAGE_TAG}
-    - FULL_IMAGE=${CURATOR_IMAGE}:${IMAGE_TAG}
-    - echo "Built image ${FULL_IMAGE} from curator commit [${CI_COMMIT_SHA}]"
-    - docker push ${FULL_IMAGE}
-    - echo "Pushed image ${FULL_IMAGE} to GitLab registry"
-    - NVCF_IMAGE=${NVCF_DEV_IMAGE}:${IMAGE_TAG}
-    - docker buildx imagetools create -t ${NVCF_IMAGE} ${FULL_IMAGE}
-    - echo "Copied to image ${NVCF_IMAGE} from curator commit [${CI_COMMIT_SHA}]"
-    # Also create a floating tag for the image so it can be promoted to staging
-    - NVCF_FLOATING_IMAGE="${NVCF_DEV_IMAGE}:mr_${CI_MERGE_REQUEST_IID}"
-    - docker buildx imagetools create -t ${NVCF_FLOATING_IMAGE} ${NVCF_IMAGE}
-    - echo "Copied to image ${NVCF_FLOATING_IMAGE} from curator commit [$CI_COMMIT_SHA]"
-    # Cleanup
-    - *teardown_micromamba
-  retry:
-    max: 2
-    when: always
-
 unit_tests:
   stage: test
   needs: []
@@ -229,7 +204,7 @@ unit_tests:
       --cov-report=term
       --cov-report=xml:unit-coverage.xml
       --cov-report=html:unit-htmlcov
-  rules: *pre_merge_rules
+  rules: *pre_post_merge_rules
   script:
     - *setup_micromamba
     - *setup_curator
@@ -247,10 +222,37 @@ unit_tests:
       - .coverage.unit_tests
     expire_in: 1 week
 
+build_deploy_curator:
+  stage: build
+  rules: *pre_post_merge_rules
+  script:
+    # Set up environment
+    - *docker_login
+    - *setup_micromamba
+    - *setup_curator_cli
+    - IMAGE_TAG="${CI_COMMIT_TIMESTAMP%%T*}_${CI_COMMIT_SHORT_SHA}"
+    - |
+      cosmos-curate image build \
+      --curator-path . \
+      --image-name ${CURATOR_IMAGE} \
+      --image-tag ${IMAGE_TAG}
+    - FULL_IMAGE=${CURATOR_IMAGE}:${IMAGE_TAG}
+    - echo "Built image ${FULL_IMAGE} from curator commit [${CI_COMMIT_SHA}]"
+    - docker push ${FULL_IMAGE}
+    - echo "Pushed image ${FULL_IMAGE} to GitLab registry"
+    - NVCF_IMAGE=${NVCF_DEV_IMAGE}:${IMAGE_TAG}
+    - docker buildx imagetools create -t ${NVCF_IMAGE} ${FULL_IMAGE}
+    - echo "Copied to image ${NVCF_IMAGE} from curator commit [${CI_COMMIT_SHA}]"
+    # Cleanup
+    - *teardown_micromamba
+  retry:
+    max: 2
+    when: always
+
 # Run GPU tests on SLURM cluster
 gpu_tests:
   stage: end-to-end
-  rules: *pre_merge_rules
+  rules: *pre_post_merge_rules
   needs: [ "build_deploy_curator" ]
   tags:
     - ${SLURM_RUNNER_TAG}
@@ -264,7 +266,7 @@ gpu_tests:
     - echo "machine ${CI_REGISTRY/:5005/} login gitlab-ci-token password ${CI_JOB_TOKEN}" > $ENROOT_CONFIG_PATH/.credentials
 
     # Pull the specific image version to test
-    - IMAGE_TAG="mr_${CI_MERGE_REQUEST_IID}_${CI_COMMIT_SHORT_SHA}"
+    - IMAGE_TAG="${CI_COMMIT_TIMESTAMP%%T*}_${CI_COMMIT_SHORT_SHA}"
     - FULL_IMAGE=${CURATOR_IMAGE}:${IMAGE_TAG}
     - BUILD_IMAGE_NAME_SBATCH="${FULL_IMAGE/:5005\///}"
     # Submit SLURM job using the Docker image
@@ -335,7 +337,7 @@ combine_coverage:
     GIT_SUBMODULE_STRATEGY: none
   stage: end-to-end
   needs: ["unit_tests", "gpu_tests"]
-  rules: *pre_merge_rules
+  rules: *pre_post_merge_rules
   image: python:3.10
   tags:
     - build-runner  # Override to Docker executor
@@ -402,7 +404,7 @@ nvcf-helm:
           # this can be overridden by passing the HELM_IMAGE_TAG var in cicd variables
           export HELM_IMAGE_TAG=${HELM_IMAGE_TAG:-$(cosmos-curate nvcf image list-image-detail --iname $NVCF_DEV_BASE_IMAGE |grep latestTag |sed "s/['│,]//g" |awk '{print $2}')}
         else
-          export HELM_IMAGE_TAG="mr_${CI_MERGE_REQUEST_IID}_${CI_COMMIT_SHORT_SHA}"
+          export HELM_IMAGE_TAG="${CI_COMMIT_TIMESTAMP%%T*}_${CI_COMMIT_SHORT_SHA}"
         fi
       - NVCF_IMAGE=${NVCF_DEV_IMAGE}:$HELM_IMAGE_TAG
       # NOTE: create_helm_file.json will now contain keys/certificates so do not print its contents
@@ -582,41 +584,17 @@ nvcf-helm-validate:
       fi
       echo "Shard-dataset pipeline validation successful"
 
-get_mr_id:
-  stage: post-merge
-  variables:
-    GIT_STRATEGY: none
-  rules: *post_merge_rules
-  script:
-    # Find the merge-request IID that introduced this commit
-    - |
-      MR_IID=$(curl --silent --header "PRIVATE-TOKEN: $READ_API_TOKEN" \
-        "$CI_API_V4_URL/projects/$CI_PROJECT_ID/repository/commits/$CI_COMMIT_SHA/merge_requests" \
-        | jq -r '.[0].iid')
-      if [ -z "$MR_IID" ] || [ "$MR_IID" = "null" ]; then
-        echo "Unable to map commit $CI_COMMIT_SHA to a merge request"
-        exit 1
-      fi
-    - DEV_TAG="mr_${MR_IID}"
-    - echo "DEV_TAG=$DEV_TAG" >> $CI_JOB_NAME.env
-  artifacts:
-    reports:
-      dotenv: $CI_JOB_NAME.env
-
 promote_to_staging:
   stage: post-merge
   variables:
     GIT_STRATEGY: none
   rules: *post_merge_rules
-  needs:
-    - job: get_mr_id
-      artifacts: true
   script:
-    - echo "Promoting to staging from $DEV_TAG"
+    - IMAGE_TAG="${CI_COMMIT_TIMESTAMP%%T*}_${CI_COMMIT_SHORT_SHA}"
+    - echo "Promoting to staging from $IMAGE_TAG"
     - *docker_login
-    - STAGING_TAG="${CI_COMMIT_TIMESTAMP%%T*}_${CI_COMMIT_SHORT_SHA}"
-    - DEV="${NVCF_DEV_IMAGE}:${DEV_TAG}"
-    - STAGING="${NVCF_STAGING_IMAGE}:${STAGING_TAG}"
+    - DEV="${NVCF_DEV_IMAGE}:${IMAGE_TAG}"
+    - STAGING="${NVCF_STAGING_IMAGE}:${IMAGE_TAG}"
     - docker buildx imagetools create --tag "${STAGING}" "${DEV}"
 
 # Promote the latest staging image to prod on a nightly schedule
