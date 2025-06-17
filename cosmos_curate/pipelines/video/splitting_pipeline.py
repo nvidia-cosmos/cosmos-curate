@@ -75,6 +75,10 @@ from cosmos_curate.pipelines.video.embedding.internvideo2_stages import (
 from cosmos_curate.pipelines.video.filtering.aesthetics.aesthetic_filter_stages import (
     AestheticFilterStage,
 )
+from cosmos_curate.pipelines.video.filtering.aesthetics.qwen_filter_stages import (
+    QwenFilteringStage,
+    QwenInputPreparationStageFiltering,
+)
 from cosmos_curate.pipelines.video.filtering.motion.motion_filter_stages import (
     MotionFilterStage,
     MotionVectorDecodeStage,
@@ -236,7 +240,7 @@ def get_embedding_stages(args: argparse.Namespace) -> list[CuratorStage | Curato
     return stages
 
 
-def split(args: argparse.Namespace) -> None:  # noqa: C901
+def split(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912
     """Run the split pipeline.
 
     This function orchestrates the entire pipeline, from input validation to output generation.
@@ -377,6 +381,37 @@ def split(args: argparse.Namespace) -> None:  # noqa: C901
                 num_gpus_per_worker=args.aesthetic_gpus_per_worker,
                 verbose=args.verbose,
                 log_stats=args.perf_profile,
+            ),
+        ]
+
+    if args.qwen_filter != "disable":
+        stages += [
+            QwenInputPreparationStageFiltering(
+                model_variant=args.qwen_filter_model_variant,
+                filter_categories=args.qwen_filter_categories,
+                prompt_variant=args.qwen_filter_prompt_variant,
+                sampling_fps=args.captioning_sampling_fps,
+                window_size=args.captioning_window_size,
+                remainder_threshold=args.captioning_remainder_threshold,
+                preprocess_dtype=args.qwen_preprocess_dtype,
+                model_does_preprocess=args.qwen_model_does_preprocess,
+                generate_previews=args.generate_previews,
+                verbose=args.verbose,
+                log_stats=args.perf_profile,
+            ),
+            CuratorStageSpec(
+                QwenFilteringStage(
+                    model_variant=args.qwen_filter_model_variant,
+                    rejection_threshold=args.qwen_filter_rejection_threshold,
+                    user_prompt=args.qwen_filter_categories,
+                    batch_size=args.qwen_filter_batch_size,
+                    fp8_enable=args.qwen_filter_fp8_enable,
+                    max_output_tokens=args.qwen_filter_max_output_tokens,
+                    disable_mmcache=not args.qwen_use_vllm_mmcache,
+                    score_only=args.qwen_filter == "score-only",
+                    verbose=args.verbose,
+                    log_stats=args.perf_profile,
+                ),
             ),
         ]
 
@@ -791,6 +826,62 @@ def _setup_parser(parser: argparse.ArgumentParser) -> None:  # noqa: PLR0915
         type=float,
         default=0.25,
         help="Number of GPUs per worker allocated to aesthetic filter.",
+    )
+    parser.add_argument(
+        "--qwen-filter",
+        choices=["enable", "disable", "score-only"],
+        default="disable",
+        help=(
+            "Whether to enable Qwen-based content filtering for video clips.\n"
+            "  - enable: Automatically filter clips based on Qwen-based content filtering.\n"
+            "  - disable: Disable Qwen-based content filtering.\n"
+            "  - score-only: Calculate Qwen-based content filtering results without filtering clips."
+        ),
+    )
+    parser.add_argument(
+        "--qwen-filter-prompt-variant",
+        type=str,
+        default="default",
+        choices=[
+            "default",
+        ],
+        help="Prompt variant for Qwen filtering stage.",
+    )
+    parser.add_argument(
+        "--qwen-filter-categories",
+        type=str,
+        default=None,
+        help="Comma-separated list of categories to filter out. If not provided, default categories will be filtered.",
+    )
+    parser.add_argument(
+        "--qwen-filter-rejection-threshold",
+        type=float,
+        default=0.5,
+        help="Threshold for Qwen filtering stage. If not provided, the default threshold of .5 will be used.",
+    )
+    parser.add_argument(
+        "--qwen-filter-batch-size",
+        type=int,
+        default=16,
+        help="Batch size for Qwen filtering stage.",
+    )
+    parser.add_argument(
+        "--qwen-filter-model-variant",
+        type=str,
+        default="qwen",
+        help="Model variant to use for Qwen filtering.",
+    )
+    parser.add_argument(
+        "--qwen-filter-fp8-enable",
+        action="store_true",
+        default=False,
+        help="Whether to use FP8 weights for Qwen filtering model.",
+    )
+    parser.add_argument(
+        "--qwen-filter-max-output-tokens",
+        type=int,
+        default=512,
+        help="Max number of output tokens for Qwen filtering model.",
     )
     parser.add_argument(
         "--embedding-gpus-per-worker",

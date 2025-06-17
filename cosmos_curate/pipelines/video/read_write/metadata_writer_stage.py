@@ -456,6 +456,14 @@ class ClipWriterStage(CuratorStage):
             data["errors"] = list(clip.errors)
         has_caption = False
         data["windows"] = []
+        data["filtered_windows"] = []
+        for window in clip.filter_windows:
+            curr_filter_window: dict[str, Any] = {
+                "start_frame": window.start_frame,
+                "end_frame": window.end_frame,
+            }
+            curr_filter_window["qwen_rejection_reasons"] = window.caption["qwen_rejection_reasons"]
+            data["filtered_windows"].append(curr_filter_window)
         for window in clip.windows:
             curr_window: dict[str, Any] = {
                 "start_frame": window.start_frame,

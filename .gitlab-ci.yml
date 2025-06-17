@@ -34,6 +34,9 @@ variables:
   # GitLab container registry
   CURATOR_IMAGE: ${CI_REGISTRY_IMAGE}/curator
 
+  #Pytest configuration
+  PYTEST_XDIST_WORKERS: 4
+
   # NVCF configuration
   NVCF_ORG_ID: "$NVCF_ORG_ID"
   NVCF_DEV_BASE_IMAGE: "dev-cosmos-curator"  # Base name for NVCF dev images
@@ -280,7 +283,7 @@ gpu_tests:
       # Run tests for each environment with unique report files and coverage
       for env in cosmos_curate video_splitting unified vllm; do
         echo "Running tests for $env environment"
-        micromamba run -n $env pytest -m env \
+        micromamba run -n $env pytest -m env -n ${PYTEST_XDIST_WORKERS} \
           --junitxml="/config/project/$env-report.xml" \
           --cov=cosmos_curate \
           --cov-report=term \

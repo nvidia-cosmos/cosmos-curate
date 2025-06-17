@@ -25,6 +25,7 @@ pyarrow
 pynvml==11.5.3
 pyproj
 pytest
+pytest-xdist
 pytest-asyncio
 pytest-cov
 ray[default]==2.46.0

@@ -237,7 +237,7 @@ class QwenInputPreparationStage(CuratorStage):
         self._timer = StageTimer(self)
         self._verbose = verbose
         self._log_stats = log_stats
-        self.qwen_utils = qwen_vl.QwenUtils(model_variant)
+        self._qwen_utils = qwen_vl.QwenUtils(model_variant)
         self._prompt_variant = prompt_variant
         self._prompt_text = prompt_text
         self._sampling_fps = sampling_fps
@@ -269,7 +269,7 @@ class QwenInputPreparationStage(CuratorStage):
 
     def stage_setup(self) -> None:
         """Initialize stage resources and configuration."""
-        self.qwen_utils.setup()
+        self._qwen_utils.setup()
 
     @nvtx.annotate("QwenInputPreparationStage")  # type: ignore[misc]
     def process_data(self, tasks: list[SplitPipeTask]) -> list[SplitPipeTask] | None:
@@ -309,7 +309,7 @@ class QwenInputPreparationStage(CuratorStage):
                             verbose=self._verbose,
                         )
                         try:
-                            llm_input = self.qwen_utils.generate_llm_inputs(
+                            llm_input = self._qwen_utils.generate_llm_inputs(
                                 prompt=prompt,
                                 video_inputs=window_frames,
                             )

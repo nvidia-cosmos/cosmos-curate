@@ -101,6 +101,7 @@ class Clip:
     intern_video_2_embedding: npt.NDArray[np.float32] | None = None
     # captioning
     windows: list[_Window] = attrs.Factory(list)
+    filter_windows: list[_Window] = attrs.Factory(list)
     # for testing
     cosmos_embed1_text_match: tuple[str, float] | None = None
     intern_video_2_text_match: tuple[str, float] | None = None
