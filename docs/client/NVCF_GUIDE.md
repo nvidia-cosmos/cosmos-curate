@@ -30,7 +30,7 @@ export NVCF_BACKEND=<your_backend_cluster_name>
 export NVCF_GPU_TYPE=<your_cluster_gpu_type>
 export NVCF_INSTANCE_TYPE=<your_instance_type>
 
-# Save above configuration settings to `~/.config/cosmos_curate/config.json`
+# Save above configuration settings to `~/.config/cosmos_curate/client.json`
 cosmos-curate nvcf config set
 ```
 
