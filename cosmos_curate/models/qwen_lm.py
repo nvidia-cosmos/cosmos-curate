@@ -22,7 +22,7 @@ from cosmos_curate.core.utils import conda_utils, model_utils
 
 _QWEN_LM_MODEL_ID = "Qwen/Qwen2.5-14B-Instruct"
 
-if conda_utils.is_running_in_env("vllm"):
+if conda_utils.is_running_in_env("unified"):
     from transformers import AutoTokenizer
     from vllm import LLM, SamplingParams
 
@@ -50,7 +50,7 @@ class QwenLM(ModelInterface):
             The conda environment name.
 
         """
-        return "vllm"
+        return "unified"
 
     @property
     def model_id_names(self) -> list[str]:

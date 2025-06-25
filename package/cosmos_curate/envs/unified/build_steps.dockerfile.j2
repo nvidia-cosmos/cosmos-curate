@@ -3,56 +3,62 @@ RUN {{cache_mount_str}} <<EOF
 set -euxo pipefail
 
 # pin to a specific CUDA version
-export CONDA_OVERRIDE_CUDA="12.6.3"
-
-# dependencies that we have to lock version
-micromamba install -c conda-forge\
- transformers==4.50.0\
+export CONDA_OVERRIDE_CUDA="12.9.1"
 
 # keep the package list sorted
 micromamba install -c conda-forge\
- azure-identity>=1.0.0\
  azure-storage-blob>=12.0.0\
  boto3\
  cattrs\
  deepspeed\
  easydict\
+ einops\
  flash-attn-fused-dense\
  flash-attn-layer-norm\
  flash-attn\
  hydra-core\
  loguru\
  numpy\<2.0.0\
- nvidia/label/cuda-${CONDA_OVERRIDE_CUDA}::cuda-version\
+ nvidia/label/cuda-${CONDA_OVERRIDE_CUDA}::cuda-compiler\
+ nvidia/label/cuda-${CONDA_OVERRIDE_CUDA}::cuda-libraries-dev\
+ nvidia/label/cuda-${CONDA_OVERRIDE_CUDA}::cuda-libraries\
  nvtx\
- open-clip-torch\
  peft\
  psycopg2\
- pytest\
+ pynvml=11.5.3\
  pytest-asyncio\
- pytest-xdist\
  pytest-cov\
+ pytest-xdist\
+ pytest\
  python=3.10.14\
  pytorch[cuda]\
  scipy\
  sqlalchemy\
  tabulate\
  tenacity\
- timm\
 
-# only for packages not available in conda
-# av conda-forge package installs ffmpeg
-# ray conda-forge package has a protobuf version conflict with pytorch
-# torchvision conda-forge package pulls in x11 dependencies
+# Only for packages not available in conda.
+# av: conda-forge package installs ffmpeg
+# azure-identity: conda-forge package pulls in x11 dependencies
+# ngcsdk: no conda-forge package
+# open-clip-torch: conda-forge package pulls in torchvision
+# opencv-python-headless: no conda-forge package
+# ray: conda-forge package has a protobuf version conflict with pytorch
+# s2wrapper: no conda-forge package
+# timm: conda-forge package pulls in torchvision
+# torchvision: conda-forge package pulls in x11 dependencies
+# vllm: no conda-forge package
 pip install --no-cache-dir\
  av\
+ azure-identity\
  ngcsdk==3.64.4\
+ open-clip-torch\
  opencv-python-headless\
- pynvml==11.5.3\
  ray[default]==2.46.0\
  s2wrapper@git+https://github.com/bfshi/scaling_on_scales\
+ timm\
  torchvision\
- einops\
+ vllm==0.9.1\
 
 pip install --no-cache-dir --no-deps\
  git+https://github.com/NVlabs/VILA.git\

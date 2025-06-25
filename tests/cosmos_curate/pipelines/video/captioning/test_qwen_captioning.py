@@ -95,7 +95,7 @@ def sample_captioning_task(sample_video_data: bytes) -> SplitPipeTask:
     )
 
 
-@pytest.mark.env("vllm")
+@pytest.mark.env("unified")
 def test_generate_embedding(sample_captioning_task: SplitPipeTask) -> None:
     """Test the QwenCaptioning result."""
     stages = [

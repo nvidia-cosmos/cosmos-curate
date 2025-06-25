@@ -23,7 +23,7 @@ from cosmos_curate.core.utils import conda_utils
 from cosmos_curate.core.utils.runtime.operation_utils import make_pipeline_named_temporary_file
 from cosmos_curate.pipelines.video.utils.decoder_utils import get_frame_count
 
-if conda_utils.is_running_in_env("vllm"):
+if conda_utils.is_running_in_env("unified"):
     from cosmos_curate.pipelines.video.utils.vision_process import fetch_video
 
 

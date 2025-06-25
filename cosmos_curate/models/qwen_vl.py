@@ -39,7 +39,7 @@ Ensure the description is clear, precise, and paints a compelling picture of the
 """
 
 # pyright: reportMissingImports=false
-if conda_utils.is_running_in_env("vllm"):
+if conda_utils.is_running_in_env("unified"):
     from transformers import AutoProcessor
     from vllm import LLM, AsyncEngineArgs, AsyncLLMEngine, SamplingParams
     from vllm.sampling_params import RequestOutputKind
@@ -205,7 +205,7 @@ class QwenVL(ModelInterface):
             The conda environment name.
 
         """
-        return "vllm"
+        return "unified"
 
     @property
     def model_id_names(self) -> list[str]:

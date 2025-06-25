@@ -290,7 +290,7 @@ def _setup_internvideo2(config: EasyDict) -> _InternVideo2Stage2:
         torch.set_float32_matmul_precision("high")
         model = torch.compile(model)  # type: ignore[assignment]
 
-    model = model.to(torch.device(config.device))
+    model = model.to_empty(device=config.device)
     model_without_ddp = model
 
     if (
