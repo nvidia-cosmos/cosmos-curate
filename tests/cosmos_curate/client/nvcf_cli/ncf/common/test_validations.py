@@ -67,6 +67,8 @@ def test_validate_in() -> None:
         validate_in(r)(0)
     with pytest.raises(BadParameter):
         validate_in(r)(10)
+    with pytest.raises(BadParameter):
+        validate_in(r, [5])(VALID_VALUE)
 
 
 def test_validate_address() -> None:

@@ -16,11 +16,16 @@
 """Test the NVCF Helper Module."""
 
 import json
+from io import StringIO
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 from _pytest.monkeypatch import MonkeyPatch
+from rich.console import Console
+from rich.table import Table
 
+from cosmos_curate.client.nvcf_cli.ncf.common import NotFoundError, NVCFResponse  # type: ignore[import-untyped]
 from cosmos_curate.client.nvcf_cli.ncf.launcher.nvcf_helper import (  # type: ignore[import-untyped]
     NvcfHelper,
     _raise_runtime_err,
@@ -104,3 +109,760 @@ def test_id_version(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
 
     assert nvcf_helper.id_version(None, "test_version") == (True, "test_id", "test_version")
     assert nvcf_helper.id_version("test_id", "test_version") == (True, "test_id", "test_version")
+
+
+def test_nvcf_helper_list_clusters_success(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
+    """Test that nvcf_helper_list_clusters returns the expected table on success.
+
+    Args:
+        monkeypatch: The monkeypatch object.
+        tmp_path: The temporary path object.
+
+    Returns:
+        None
+
+    """
+    # Mock the response data
+    mock_response_data = {
+        "status": 200,
+        "clusterGroups": [
+            {
+                "name": "test-backend",
+                "gpus": [
+                    {"name": "H100", "instanceTypes": [{"name": "instance-1"}, {"name": "instance-2"}]},
+                    {"name": "H100", "instanceTypes": [{"name": "instance-3"}]},
+                ],
+                "clusters": [{"name": "cluster-1"}, {"name": "cluster-2"}],
+            },
+            {
+                "name": "test-backend-2",
+                "gpus": [{"name": "H100", "instanceTypes": [{"name": "instance-4"}]}],
+                "clusters": [{"name": "cluster-3"}],
+            },
+        ],
+    }
+
+    # Mock the response
+    mock_response = NVCFResponse(mock_response_data)
+
+    mock_ncg_client = MagicMock()
+    mock_ncg_client.get.return_value = mock_response
+
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    nvcf_helper = NvcfHelper(url="", nvcf_url="", key="", org="", timeout=15)
+    nvcf_helper.ncg_api_hdl = mock_ncg_client
+
+    # Get the results
+    result = nvcf_helper.nvcf_helper_list_clusters()
+
+    # Asserts for testing the result
+    assert result is not None
+    assert isinstance(result, Table)
+    assert result.title == "Cluster Groups"
+
+    columns = [col.header for col in result.columns]
+    assert "Backend Name" in columns
+    assert "GPU-Types Inst-Types" in columns
+    assert "Clusters" in columns
+
+    mock_ncg_client.get.assert_called_once_with("/v2/nvcf/clusterGroups")
+
+    output_str = StringIO()
+    console = Console(file=output_str, width=400, record=True)
+    console.print(result)
+
+    # Asserts for testing content of table
+    assert "test-backend" in output_str.getvalue()
+    assert "test-backend-2" in output_str.getvalue()
+    assert "H100" in output_str.getvalue()
+    assert "instance-1" in output_str.getvalue()
+    assert "instance-2" in output_str.getvalue()
+    assert "instance-3" in output_str.getvalue()
+    assert "instance-4" in output_str.getvalue()
+    assert "cluster-1" in output_str.getvalue()
+    assert "cluster-3" in output_str.getvalue()
+
+
+def test_nvcf_helper_list_clusters_failure(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
+    """Test that nvcf_helper_list_clusters returns None on failure.
+
+    Args:
+        monkeypatch: The monkeypatch object.
+        tmp_path: The temporary path object.
+
+    Returns:
+        None
+
+    """
+    mock_ncg_client = MagicMock()
+    mock_ncg_client.get.return_value = None
+
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    nvcf_helper = NvcfHelper(url="", nvcf_url="", key="", org="", timeout=15)
+    nvcf_helper.ncg_api_hdl = mock_ncg_client
+    with pytest.raises(RuntimeError):
+        nvcf_helper.nvcf_helper_list_clusters()
+
+    mock_response_data = {
+        "status": 500,
+    }
+    mock_response = NVCFResponse(mock_response_data)
+    mock_ncg_client.get.return_value = mock_response
+    nvcf_helper.ncg_api_hdl = mock_ncg_client
+
+    with pytest.raises(RuntimeError):
+        nvcf_helper.nvcf_helper_list_clusters()
+
+
+def test_nvcf_helper_list_functions_success(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
+    """Test that nvcf_helper_list_clusters returns the expected table on success.
+
+    Args:
+        monkeypatch: The monkeypatch object.
+        tmp_path: The temporary path object.
+
+    Returns:
+        None
+
+    """
+    # Mock the response data
+    mock_response_data = {
+        "status": 200,
+        "functions": [
+            {
+                "name": "test-function",
+                "status": "active",
+                "id": "test-id",
+                "versionId": "test-version",
+                "containerImage": "test-image",
+                "inferenceUrl": "test-endpoint",
+            },
+            {
+                "name": "test-function-2",
+                "status": "active",
+                "id": "test-id-2",
+                "versionId": "test-version-2",
+                "containerImage": "test-image-2",
+                "inferenceUrl": "test-endpoint-2",
+            },
+        ],
+    }
+
+    # Mock the response
+    mock_response = NVCFResponse(mock_response_data)
+
+    mock_ncg_client = MagicMock()
+    mock_ncg_client.get.return_value = mock_response
+
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    nvcf_helper = NvcfHelper(url="", nvcf_url="", key="", org="", timeout=15)
+    nvcf_helper.ncg_api_hdl = mock_ncg_client
+
+    # Get the results
+    result = nvcf_helper.nvcf_helper_list_functions()
+
+    # Asserts for testing the result
+    assert result is not None
+    assert isinstance(result, Table)
+    assert result.title == "Functions"
+
+    columns = [col.header for col in result.columns]
+    assert "Name" in columns
+    assert "Status" in columns
+    assert "Id" in columns
+    assert "Version" in columns
+    assert "Image" in columns
+    assert "Endpoint" in columns
+
+    mock_ncg_client.get.assert_called_once_with("/v2/nvcf/functions")
+
+    output_str = StringIO()
+    console = Console(file=output_str, width=400, record=True)
+    console.print(result)
+
+    # Asserts for testing content of table
+    assert "test-function" in output_str.getvalue()
+    assert "test-function-2" in output_str.getvalue()
+    assert "test-id" in output_str.getvalue()
+    assert "test-id-2" in output_str.getvalue()
+    assert "test-version" in output_str.getvalue()
+    assert "test-version-2" in output_str.getvalue()
+    assert "test-image" in output_str.getvalue()
+    assert "test-image-2" in output_str.getvalue()
+    assert "None:test-endpoint" in output_str.getvalue()
+    assert "None:test-endpoint-2" in output_str.getvalue()
+
+
+def test_nvcf_helper_list_functions_failure(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
+    """Test that nvcf_helper_list_functions returns None on failure.
+
+    Args:
+        monkeypatch: The monkeypatch object.
+        tmp_path: The temporary path object.
+
+    Returns:
+        None
+
+    """
+    mock_ncg_client = MagicMock()
+    mock_ncg_client.get.return_value = None
+
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    nvcf_helper = NvcfHelper(url="", nvcf_url="", key="", org="", timeout=15)
+    nvcf_helper.ncg_api_hdl = mock_ncg_client
+    with pytest.raises(RuntimeError):
+        nvcf_helper.nvcf_helper_list_functions()
+
+    mock_response_data = {
+        "status": 500,
+    }
+    mock_response = NVCFResponse(mock_response_data)
+    mock_ncg_client.get.return_value = mock_response
+    nvcf_helper.ncg_api_hdl = mock_ncg_client
+
+    with pytest.raises(RuntimeError):
+        nvcf_helper.nvcf_helper_list_functions()
+
+
+def test_nvcf_helper_list_function_detail(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
+    """Test that nvcf_helper_list_function_detail returns the expected table on success.
+
+    Args:
+        monkeypatch: The monkeypatch object.
+        tmp_path: The temporary path object.
+
+    Returns:
+        None
+
+    """
+    # Mock the response data
+    mock_response_data = {
+        "status": 200,
+        "functions": [
+            {
+                "name": "test-function",
+                "status": "active",
+                "id": "test-id",
+                "versionId": "test-version",
+                "containerImage": "test-image",
+                "inferenceUrl": "test-endpoint",
+            },
+            {
+                "name": "test-function-2",
+                "status": "active",
+                "id": "test-id-2",
+                "versionId": "test-version-2",
+                "containerImage": "test-image-2",
+                "inferenceUrl": "test-endpoint-2",
+            },
+        ],
+    }
+
+    # Mock the response
+    mock_response = NVCFResponse(mock_response_data)
+
+    mock_ncg_client = MagicMock()
+    mock_ncg_client.get.return_value = mock_response
+
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    nvcf_helper = NvcfHelper(url="", nvcf_url="", key="", org="", timeout=15)
+    nvcf_helper.ncg_api_hdl = mock_ncg_client
+
+    # Get the results
+    result = nvcf_helper.nvcf_helper_list_function_detail("test-function")
+
+    # Asserts for testing the result
+    assert result is not None
+
+    mock_ncg_client.get.assert_called_once_with("/v2/nvcf/functions")
+
+    assert result is not None
+    assert len(result) == 1
+    assert result[0]["Status"] == "active"
+    assert result[0]["Id"] == "test-id"
+    assert result[0]["Version"] == "test-version"
+    assert result[0]["Image"] == "test-image"
+    assert result[0]["Endpoint"] == "None:test-endpoint"
+
+    with pytest.raises(NotFoundError):
+        nvcf_helper.nvcf_helper_list_function_detail("test-function-not-here")
+
+
+def test_nvcf_helper_list_function_detail_failures(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
+    """Test that nvcf_helper_list_function_detail returns the expected table on success.
+
+    Args:
+        monkeypatch: The monkeypatch object.
+        tmp_path: The temporary path object.
+
+    Returns:
+        None
+
+    """
+    # Mock the response
+    mock_response = None
+
+    mock_ncg_client = MagicMock()
+    mock_ncg_client.get.return_value = mock_response
+
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    nvcf_helper = NvcfHelper(url="", nvcf_url="", key="", org="", timeout=15)
+    nvcf_helper.ncg_api_hdl = mock_ncg_client
+
+    # Get the results for None response
+    with pytest.raises(RuntimeError):
+        nvcf_helper.nvcf_helper_list_function_detail("test-function")
+
+    # Get the results for error response
+    mock_response_data = {
+        "status": 500,
+    }
+    mock_response = NVCFResponse(mock_response_data)
+    mock_ncg_client.get.return_value = mock_response
+    nvcf_helper.ncg_api_hdl = mock_ncg_client
+
+    with pytest.raises(RuntimeError):
+        nvcf_helper.nvcf_helper_list_function_detail("test-function")
+
+
+def test_nvcf_helper_create_function_no_data(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
+    """Test that nvcf_helper_create_function returns the expected dictionary on success.
+
+    Args:
+        monkeypatch: The monkeypatch object.
+        tmp_path: The temporary path object.
+
+    Returns:
+        None
+
+    """
+    mock_ncg_client = MagicMock()
+    mock_ncg_client.post.return_value = NVCFResponse(
+        {"status": 200, "function": {"id": "test-id", "versionId": "test-version"}}
+    )
+
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    nvcf_helper = NvcfHelper(url="", nvcf_url="", key="", org="", timeout=15)
+    nvcf_helper.ncg_api_hdl = mock_ncg_client
+
+    result = nvcf_helper.nvcf_helper_create_function(
+        name="test-function",
+        image="test-image",
+        inference_ep="test-endpoint",
+        inference_port=8080,
+        health_ep="test-health-endpoint",
+        health_port=8081,
+        args="test-args",
+        data_file=None,
+        helm_chart="test-helm-chart",
+        helm_service_name="test-helm-service-name",
+    )
+    call_data = {
+        "name": "test-function",
+        "inferenceUrl": "test-endpoint",
+        "inferencePort": 8080,
+        "health": {
+            "protocol": "HTTP",
+            "uri": "test-health-endpoint",
+            "port": 8081,
+            "timeout": "PT10S",
+            "expectedStatusCode": 200,
+        },
+        "functionType": "DEFAULT",
+        "description": "Video Curation Service",
+        "apiBodyFormat": "PREDICT_V2",
+        "helmChart": None,
+        "helmChartServiceName": None,
+        "containerImage": "test-image",
+        "containerArgs": "test-args",
+    }
+    mock_ncg_client.post.assert_called_once_with("/v2/nvcf/functions", data=call_data)
+
+    assert result == {"id": "test-id", "version": "test-version"}
+
+
+def test_nvcf_helper_create_function_with_data(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
+    """Test that nvcf_helper_create_function returns the expected dictionary on success.
+
+    Args:
+        monkeypatch: The monkeypatch object.
+        tmp_path: The temporary path object.
+
+    Returns:
+        None
+
+    """
+    mock_ncg_client = MagicMock()
+    mock_ncg_client.post.return_value = NVCFResponse(
+        {"status": 200, "function": {"id": "test-id", "versionId": "test-version"}}
+    )
+
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    nvcf_helper = NvcfHelper(url="", nvcf_url="", key="", org="", timeout=15)
+    nvcf_helper.ncg_api_hdl = mock_ncg_client
+
+    tmp_dir = tmp_path / "test-data"
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+    tmp_file = tmp_dir / "test-data.json"
+    with Path.open(tmp_file, "w") as f:
+        json.dump(
+            {
+                "models": ["test-model"],
+                "tags": ["test-tag"],
+                "resources": ["test-resource"],
+                "secrets": [{"key": "test-secret-key", "value": "test-secret-value"}],
+                "envs": ["test-env"],
+            },
+            f,
+        )
+
+    result = nvcf_helper.nvcf_helper_create_function(
+        name="test-function",
+        image="test-image",
+        inference_ep="test-endpoint",
+        inference_port=8080,
+        health_ep="test-health-endpoint",
+        health_port=8081,
+        args="test-args",
+        data_file=str(tmp_file),
+        helm_chart="test-helm-chart",
+        helm_service_name="test-helm-service-name",
+    )
+
+    call_data = {
+        "name": "test-function",
+        "inferenceUrl": "test-endpoint",
+        "inferencePort": 8080,
+        "health": {
+            "protocol": "HTTP",
+            "uri": "test-health-endpoint",
+            "port": 8081,
+            "timeout": "PT10S",
+            "expectedStatusCode": 200,
+        },
+        "functionType": "DEFAULT",
+        "description": "Video Curation Service",
+        "apiBodyFormat": "PREDICT_V2",
+        "helmChart": None,
+        "helmChartServiceName": None,
+        "containerImage": "test-image",
+        "containerArgs": "test-args",
+        "models": ["test-model"],
+        "tags": ["test-tag"],
+        "resources": ["test-resource"],
+        "secrets": [{"key": "test-secret-key", "value": "test-secret-value"}],
+        "containerEnvironment": ["test-env"],
+    }
+
+    mock_ncg_client.post.assert_called_once_with("/v2/nvcf/functions", data=call_data)
+    assert result == {"id": "test-id", "version": "test-version"}
+
+
+def test_nvcf_helper_create_function_fail(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
+    """Test that nvcf_helper_create_function returns the expected dictionary on success.
+
+    Args:
+        monkeypatch: The monkeypatch object.
+        tmp_path: The temporary path object.
+
+    Returns:
+        None
+
+    """
+    mock_ncg_client = MagicMock()
+    mock_ncg_client.post.return_value = None
+
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    nvcf_helper = NvcfHelper(url="", nvcf_url="", key="", org="", timeout=15)
+    nvcf_helper.ncg_api_hdl = mock_ncg_client
+
+    with pytest.raises(RuntimeError):
+        nvcf_helper.nvcf_helper_create_function(
+            name="test-function",
+            image="test-image",
+            inference_ep="test-endpoint",
+            inference_port=8080,
+            health_ep="test-health-endpoint",
+            health_port=8081,
+            args="test-args",
+            data_file=None,
+            helm_chart="test-helm-chart",
+            helm_service_name="test-helm-service-name",
+        )
+
+    mock_ncg_client.post.return_value = NVCFResponse({"status": 500})
+    nvcf_helper.ncg_api_hdl = mock_ncg_client
+
+    with pytest.raises(RuntimeError):
+        nvcf_helper.nvcf_helper_create_function(
+            name="test-function",
+            image="test-image",
+            inference_ep="test-endpoint",
+            inference_port=8080,
+            health_ep="test-health-endpoint",
+            health_port=8081,
+            args="test-args",
+            data_file=None,
+            helm_chart="test-helm-chart",
+            helm_service_name="test-helm-service-name",
+        )
+
+
+def test_nvcf_helper_deploy_function_no_data(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
+    """Test that nvcf_helper_deploy_function returns the expected dictionary on success.
+
+    Args:
+        monkeypatch: The monkeypatch object.
+        tmp_path: The temporary path object.
+
+    Returns:
+        None
+
+    """
+    mock_ncg_client = MagicMock()
+    mock_ncg_client.post.return_value = NVCFResponse(
+        {"status": 200, "deployment": {"id": "test-id", "version": "test-version"}}
+    )
+
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    nvcf_helper = NvcfHelper(url="", nvcf_url="", key="", org="", timeout=15)
+    nvcf_helper.ncg_api_hdl = mock_ncg_client
+
+    result = nvcf_helper.nvcf_helper_deploy_function(
+        funcid="test-id",
+        version="test-version",
+        backend="test-backend",
+        gpu="test-gpu",
+        instance="test-instance",
+        data_file=None,
+        min_instances=1,
+        max_instances=2,
+        max_concurrency=3,
+    )
+
+    assert result is not None
+    assert result["id"] == "test-id"
+    assert result["version"] == "test-version"
+    assert result["status"] == ""
+    assert result["errors"] == []
+
+    call_data = {
+        "deploymentSpecifications": [
+            {
+                "gpu": "test-gpu",
+                "backend": "test-backend",
+                "maxInstances": 2,
+                "minInstances": 1,
+                "instanceType": "test-instance",
+                "instanceCount": 1,
+                "maxRequestConcurrency": 3,
+                "preferredOrder": 99,
+            }
+        ]
+    }
+    mock_ncg_client.post.assert_called_once_with(
+        "/v2/nvcf/deployments/functions/test-id/versions/test-version", data=call_data
+    )
+
+
+def test_nvcf_helper_deploy_function_with_data(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
+    """Test that nvcf_helper_deploy_function returns the expected dictionary on success.
+
+    Args:
+        monkeypatch: The monkeypatch object.
+        tmp_path: The temporary path object.
+
+    Returns:
+        None
+
+    """
+    mock_ncg_client = MagicMock()
+    mock_ncg_client.post.return_value = NVCFResponse(
+        {"status": 200, "deployment": {"id": "test-id", "version": "test-version"}}
+    )
+
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    nvcf_helper = NvcfHelper(url="", nvcf_url="", key="", org="", timeout=15)
+    nvcf_helper.ncg_api_hdl = mock_ncg_client
+
+    tmp_dir = tmp_path / "test-data"
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+    tmp_file = tmp_dir / "test-data.json"
+    with Path.open(tmp_file, "w") as f:
+        json.dump(
+            {
+                "availabilityZones": ["test-availability-zone"],
+                "configuration": {
+                    "replicas": 1,
+                    "metrics": {
+                        "extraExternalLabels": {
+                            "backend": "test-backend",
+                            "function_id": "test-id",
+                            "version_id": "test-version",
+                            "gpu": "test-gpu",
+                            "org": "test-org",
+                        }
+                    },
+                },
+                "clusters": ["test-cluster"],
+                "regions": ["test-region"],
+                "attributes": {"test-attribute": "test-attribute-value"},
+            },
+            f,
+        )
+
+    result = nvcf_helper.nvcf_helper_deploy_function(
+        funcid="test-id",
+        version="test-version",
+        backend="test-backend",
+        gpu="test-gpu",
+        instance="test-instance",
+        data_file=str(tmp_file),
+        min_instances=1,
+        max_instances=2,
+        max_concurrency=3,
+    )
+
+    call_data = {
+        "deploymentSpecifications": [
+            {
+                "gpu": "test-gpu",
+                "backend": "test-backend",
+                "maxInstances": 2,
+                "minInstances": 1,
+                "instanceType": "test-instance",
+                "instanceCount": 1,
+                "maxRequestConcurrency": 3,
+                "preferredOrder": 99,
+                "availabilityZones": ["test-availability-zone"],
+                "configuration": {
+                    "replicas": 1,
+                    "metrics": {
+                        "extraExternalLabels": {
+                            "backend": "test-backend",
+                            "function_id": "test-id",
+                            "version_id": "test-version",
+                            "gpu": "test-gpu",
+                            "org": "",
+                        }
+                    },
+                },
+                "clusters": ["test-cluster"],
+                "regions": ["test-region"],
+                "attributes": {"test-attribute": "test-attribute-value"},
+            }
+        ]
+    }
+
+    assert result is not None
+
+    mock_ncg_client.post.assert_called_once_with(
+        "/v2/nvcf/deployments/functions/test-id/versions/test-version", data=call_data
+    )
+
+
+def test_nvcf_helper_deploy_function_fail(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
+    """Test that nvcf_helper_deploy_function returns the expected dictionary on success.
+
+    Args:
+        monkeypatch: The monkeypatch object.
+        tmp_path: The temporary path object.
+
+    Returns:
+        None
+
+    """
+    mock_ncg_client = MagicMock()
+    mock_ncg_client.post.return_value = None
+
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    nvcf_helper = NvcfHelper(url="", nvcf_url="", key="", org="", timeout=15)
+    nvcf_helper.ncg_api_hdl = mock_ncg_client
+
+    with pytest.raises(RuntimeError):
+        nvcf_helper.nvcf_helper_deploy_function(
+            funcid="test-id",
+            version="test-version",
+            backend="test-backend",
+            gpu="test-gpu",
+            instance="test-instance",
+            data_file=None,
+            min_instances=1,
+            max_instances=2,
+            max_concurrency=3,
+        )
+
+    mock_ncg_client.post.return_value = NVCFResponse({"status": 500})
+    nvcf_helper.ncg_api_hdl = mock_ncg_client
+
+    with pytest.raises(RuntimeError):
+        nvcf_helper.nvcf_helper_deploy_function(
+            funcid="test-id",
+            version="test-version",
+            backend="test-backend",
+            gpu="test-gpu",
+            instance="test-instance",
+            data_file=None,
+            min_instances=1,
+            max_instances=2,
+            max_concurrency=3,
+        )
+
+
+def test_nvcf_helper_s3cred_function(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
+    """Test that nvcf_helper_s3cred_function returns the expected dictionary on success.
+
+    Args:
+        monkeypatch: The monkeypatch object.
+        tmp_path: The temporary path object.
+
+    Returns:
+        None
+
+    """
+    mock_ncg_client = MagicMock()
+    mock_ncg_client.put.return_value = None
+
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    nvcf_helper = NvcfHelper(url="", nvcf_url="", key="", org="", timeout=15)
+    nvcf_helper.ncg_api_hdl = mock_ncg_client
+
+    tmp_dir = tmp_path / "test-data"
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+    tmp_file = tmp_dir / "test-data.json"
+    with Path.open(tmp_file, "w") as f:
+        json.dump(
+            {
+                "test-key": "test-value",
+            },
+            f,
+        )
+
+    with pytest.raises(RuntimeError):
+        nvcf_helper.nvcf_helper_s3cred_function(
+            funcid="test-id",
+            version="test-version",
+            s3credfile=str(tmp_file),
+        )
+
+    mock_ncg_client.put.return_value = NVCFResponse({"status": 500})
+
+    with pytest.raises(RuntimeError):
+        nvcf_helper.nvcf_helper_s3cred_function(
+            funcid="test-id",
+            version="test-version",
+            s3credfile=str(tmp_file),
+        )
+
+    mock_ncg_client.put.return_value = NVCFResponse({"status": 200})
+    nvcf_helper.ncg_api_hdl = mock_ncg_client
+
+    nvcf_helper.nvcf_helper_s3cred_function(
+        funcid="test-id",
+        version="test-version",
+        s3credfile=str(tmp_file),
+    )
+
+    mock_ncg_client.put.assert_called_with(
+        "/v2/orgs//nvcf/secrets/functions/test-id/versions/test-version", data={"test-key": "test-value"}
+    )

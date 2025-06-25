@@ -106,6 +106,9 @@ def test_nvcf_response_get_error() -> None:
     response = NVCFResponse()
     assert response.get_error("test") == "unexpected empty response"
 
+    response = NVCFResponse({"status": 500, "requestStatus": {"statusDescription": "extra"}})
+    assert "requestStatus::statusDescription='extra': extra" in response.get_error("test")
+
 
 def test_get_success() -> None:
     """Test nvcf client get."""

@@ -112,6 +112,41 @@ def test_success_list_own_image() -> None:
     assert "v2" not in output
 
 
+def test_image_details_two() -> None:
+    """Test that your org images are displayed correctly."""
+    # Define some fake images
+    mock_image = Mock()
+    fake_items = [
+        [Mock(toDict=lambda: {"name": "image1", "latestTag": "v1", "sharedWithOrgs": "1"})],
+        [Mock(toDict=lambda: {"name": "image2", "latestTag": "v2", "sharedWithOrgs": "2"})],
+    ]
+    mock_registry = Mock(image=mock_image)
+    # Mock the client instance
+    mock_client_instance = Mock(registry=mock_registry)
+    mock_image.list.return_value = fake_items
+    mock_image.info.return_value = (
+        Mock(toDict=lambda: {"name": "image1", "latestTag": "v1", "sharedWithOrgs": "1"}),
+        3,
+    )
+
+    # show all images
+    args = [
+        "nvcf",
+        "image",
+        "--org",
+        "1",
+        "list-image-detail",
+        "--iname",
+        "image1",
+    ]
+    with patch("cosmos_curate.client.nvcf_cli.ncf.image.image_manager.Client", return_value=mock_client_instance):
+        result = runner.invoke(cosmos_curator, args)
+    output = result.stdout
+    assert "image1" in output
+    assert "v1" in output
+    assert "1" in output
+
+
 def test_upload_image(monkeypatch: MonkeyPatch, caplog: pytest.LogCaptureFixture, tmp_path: Path) -> None:
     """Test that your org images are displayed correctly."""
     # Define some fake images

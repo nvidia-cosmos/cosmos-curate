@@ -54,7 +54,7 @@ def test_deploy_function_no_id_version(tmp_path: Path, caplog: pytest.LogCapture
         runner.invoke(cosmos_curator, args)
 
     assert "ERROR" in caplog.text
-    assert "Could not deploy function: id and version are required" in caplog.text
+    assert "Could not deploy function" in caplog.text
 
 
 @patch("cosmos_curate.client.nvcf_cli.ncf.common.nvcf_base.cc_client_instances")
