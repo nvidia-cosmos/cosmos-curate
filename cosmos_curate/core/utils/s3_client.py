@@ -90,9 +90,20 @@ class S3Prefix(StoragePrefix):
         # Remove 's3://' prefix if present
         self._input = self._input.removeprefix("s3://")
 
-        # Validate input format
-        if not re.match(r"^[a-zA-Z0-9.\-_/]{1,1023}$", self._input):
-            error_msg = f"Invalid S3 path format: {self._input}"
+        # Split into bucket and key
+        parts = self._input.split("/", 1)
+        bucket = parts[0]
+        key = parts[1] if len(parts) > 1 else ""
+
+        # Validate bucket name: 3-63 chars, lowercase letters, numbers, dots, hyphens, start/end alphanumeric
+        if not re.match(r"^[a-z0-9][a-z0-9\-.]{1,61}[a-z0-9]$", bucket):
+            error_msg = f"Invalid S3 bucket name: {bucket}"
+            raise ValueError(error_msg)
+
+        # Validate object key characters and length: allow letters, digits, dot, hyphen, underscore, slash, space;
+        # max 1024 chars
+        if key and not re.match(r"^[A-Za-z0-9.\-_/ ,]{1,1024}$", key):
+            error_msg = f"Invalid S3 object key: {key}"
             raise ValueError(error_msg)
 
     @property
