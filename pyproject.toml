@@ -75,8 +75,6 @@ local = [
     "boto3",
     "cattrs",
     "click<8.2.0",
-    "dask",
-    "dask-cudf-cu12==24.4.1",
     "easydict",
     "fastapi",
     "gpustat",
