@@ -1,0 +1,39 @@
+{
+    "#comment": "# to remove commented attributes, except for this line",
+    "#availabilityZones": [
+        "zone1"
+    ],
+    "configuration": {
+        "image": {
+            "tag": null,
+            "repository": null
+        },
+        "resources": {
+            "requests": {
+                "nvidia.com/gpu": "8"
+            },
+            "limits": {
+                "nvidia.com/gpu": "8"
+            }
+        },
+        "shmem": {
+            "limit": "800Gi"
+        },
+        "metrics": {
+            "remoteWrite": {
+                "endpoint": null
+            }
+        },
+        "#commentScratch": "path to additional node storage on host",
+        "#scratchDir": "/scratch"
+    },
+    "#clusters": [
+        "cluster1"
+    ],
+    "#regions": [
+        "region1"
+    ],
+    "#attributes": [
+        "attr1"
+    ]
+}
