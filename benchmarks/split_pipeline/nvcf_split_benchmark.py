@@ -9,73 +9,60 @@
 # its affiliates is strictly prohibited.
 """Benchmark tests for the split pipeline using NVCF."""
 
-# ruff: noqa: S603
 import argparse
 import json
-import os
 import tempfile
 from pathlib import Path
+from typing import Any
 
-import attrs
+import smart_open  # type: ignore[import-untyped]
 from loguru import logger
+from rich import print_json
 
+from benchmarks.cloudevent import make_cloudevent, push_cloudevent
+from benchmarks.secrets import KratosSecrets, NvcfSecrets, S3Secrets
+from benchmarks.summary import make_summary_metrics
 from cosmos_curate.client.nvcf_cli.ncf.launcher.nvcf_driver import _get_s3_config_str
 from cosmos_curate.client.nvcf_cli.ncf.launcher.nvcf_function import NvcfFunction, NvcfFunctionAlreadyDeployedError
 
 
-def _get_secrets_from_env(env_vars: dict[str, str]) -> dict[str, str]:
-    """Get secrets from environment variables."""
-    missing = [var_name for var_name, env_name in env_vars.items() if os.getenv(env_name) is None]
-    if missing:
-        msg = f"Environment variables {', '.join(missing)} are not set"
-        raise ValueError(msg)
-    return {var_name: os.environ[env_name] for var_name, env_name in env_vars.items()}
+def process_and_report_summary_metrics(  # noqa: PLR0913
+    summary_path: str,
+    transport_params: dict[str, Any],
+    num_nodes: int,
+    gpus_per_node: int,
+    *,
+    caption: bool,
+    kratos_metrics_endpoint: str,
+    kratos_secrets: KratosSecrets,
+) -> None:
+    """Process summary data from the pipeline and report metrics.
 
+    Args:
+        summary_path: path to summary.json file.
+        transport_params: smart_open transport parameters.
+        num_nodes: Number of nodes used in the benchmark.
+        gpus_per_node: Number of GPUs per node.
+        caption: Whether captions are enabled.
+        kratos_metrics_endpoint: Endpoint for sending metrics.
+        kratos_secrets: Authentication secrets for metrics endpoint.
 
-@attrs.define
-class S3Secrets:
-    """S3 secrets."""
+    """
+    logger.info(f"Getting summary metrics from {summary_path}")
 
-    aws_access_key_id: str
-    aws_secret_access_key: str
-    aws_region: str
+    with smart_open.open(summary_path, transport_params=transport_params) as f:
+        summary_data = json.load(f)
 
-    @classmethod
-    def from_env(
-        cls,
-        aws_access_key_id_env: str,
-        aws_secret_access_key_env: str,
-        aws_region_env: str,
-    ) -> "S3Secrets":
-        """Get secrets from environment variables."""
-        env_vars = {
-            "aws_access_key_id": aws_access_key_id_env,
-            "aws_secret_access_key": aws_secret_access_key_env,
-            "aws_region": aws_region_env,
-        }
+    summary_metrics = make_summary_metrics(summary_data, num_nodes, gpus_per_node, caption=caption, env="nvcf")
 
-        return cls(**_get_secrets_from_env(env_vars))
+    cloudevent = make_cloudevent(summary_metrics)
+    logger.info("Metrics to send to Kratos:")
+    print_json(json.dumps(cloudevent, indent=2))
 
-
-@attrs.define
-class NvcfSecrets:
-    """NVCF and AWS secrets."""
-
-    ngc_org: str
-    ngc_key: str
-
-    @classmethod
-    def from_env(
-        cls,
-        ngc_org_env: str,
-        ngc_key_env: str,
-    ) -> "NvcfSecrets":
-        """Get secrets from environment variables."""
-        env_vars = {
-            "ngc_org": ngc_org_env,
-            "ngc_key": ngc_key_env,
-        }
-        return cls(**_get_secrets_from_env(env_vars))
+    logger.info(f"Pushing metrics to {kratos_metrics_endpoint}")
+    response = push_cloudevent(cloudevent, kratos_metrics_endpoint, kratos_secrets)
+    logger.info("Response:")
+    print_json(json.dumps(response, indent=2))
 
 
 def nvcf_split_benchmark(  # noqa: PLR0913
@@ -83,6 +70,8 @@ def nvcf_split_benchmark(  # noqa: PLR0913
     version: str,
     nvcf_secrets: NvcfSecrets,
     s3_secrets: S3Secrets,
+    kratos_metrics_token_env: str,
+    kratos_bearer_url: str,
     image_repository: str,
     image_tag: str,
     metrics_endpoint: str,
@@ -95,6 +84,8 @@ def nvcf_split_benchmark(  # noqa: PLR0913
     limit: int,
     caption: int,
     num_nodes: int,
+    gpus_per_node: int,
+    kratos_metrics_endpoint: str,
 ) -> None:
     """Run benchmark tests."""
     nvcf_function = NvcfFunction(
@@ -124,7 +115,7 @@ def nvcf_split_benchmark(  # noqa: PLR0913
             "input_video_path": s3_input_prefix,
             "output_clip_path": s3_output_prefix,
             "qwen_preprocess_dtype": "uint8" if caption == 1 else "float16",
-            "generate_captions": "true" if caption == 1 else "false",
+            "generate_captions": caption == 1,
             "limit": limit,
         }
     )
@@ -135,6 +126,15 @@ aws_access_key_id = {s3_secrets.aws_access_key_id}
 aws_secret_access_key = {s3_secrets.aws_secret_access_key}
 aws_region = {s3_secrets.aws_region}
 """
+
+    transport_params = {
+        "client_kwargs": {
+            "aws_access_key_id": s3_secrets.aws_access_key_id,
+            "aws_secret_access_key": s3_secrets.aws_secret_access_key,
+            "region_name": s3_secrets.aws_region,
+        }
+    }
+    summary_path = s3_output_prefix + "/summary.json"
 
     with tempfile.TemporaryDirectory() as tmpdir:
         logger.info(f"Benchmarking with {caption=} {num_nodes=}, input: {s3_input_prefix}, output: {s3_output_prefix}")
@@ -149,9 +149,30 @@ aws_region = {s3_secrets.aws_region}
         s3_config_file.write_text(s3_config)
         s3_config_str = _get_s3_config_str(s3_config_file)
 
+        if s3_config_str is None:
+            msg = "Failed to get S3 config string"
+            raise ValueError(msg)
+
         try:
             with nvcf_function.deploy(backend, gpu, instance_type, deploy_config, num_nodes, max_concurrency):
                 nvcf_function.invoke(invoke_config, s3_config_str, out_dir=tmpdir_path)
+
+            # Get secrets immediately before reporting - benchmarking time may exceed the token's expiration date.
+            kratos_secrets = KratosSecrets.from_env(
+                kratos_metrics_token_env,
+                kratos_bearer_url,
+            )
+
+            process_and_report_summary_metrics(
+                summary_path,
+                transport_params,
+                num_nodes,
+                gpus_per_node,
+                caption=bool(caption),
+                kratos_metrics_endpoint=kratos_metrics_endpoint,
+                kratos_secrets=kratos_secrets,
+            )
+
         except NvcfFunctionAlreadyDeployedError:
             logger.error("Function is already deployed, this should not happen, previous benchmark may be running.")
 
@@ -207,6 +228,26 @@ def _parse_args() -> argparse.Namespace:
         "--aws-region-env", type=str, required=False, default="PERF_AWS_REGION", help="AWS region environment variable."
     )
     parser.add_argument("--limit", type=int, required=True, default=5000, help="Limit the number of videos to process.")
+    parser.add_argument(
+        "--kratos-metrics-endpoint",
+        type=str,
+        required=True,
+        help="URL of destination for the metrics to push to Kratos.",
+    )
+    parser.add_argument(
+        "--kratos-bearer-url",
+        type=str,
+        required=True,
+        help="URL of the bearer token endpoint for Kratos.",
+    )
+    parser.add_argument(
+        "--kratos-metrics-token-env",
+        type=str,
+        required=False,
+        default="PERF_KRATOS_METRICS_TOKEN",
+        help="Environment variable that contains the token to use to push metrics to Kratos.",
+    )
+    parser.add_argument("--gpus-per-node", type=int, required=True, default=8, help="Number of GPUs per node.")
     return parser.parse_args()
 
 
@@ -229,6 +270,8 @@ def main() -> None:
         version=args.version,
         nvcf_secrets=nvcf_secrets,
         s3_secrets=s3_secrets,
+        kratos_metrics_token_env=args.kratos_metrics_token_env,
+        kratos_bearer_url=args.kratos_bearer_url,
         image_repository=args.image_repository,
         image_tag=args.image_tag,
         metrics_endpoint=args.metrics_endpoint,
@@ -241,6 +284,8 @@ def main() -> None:
         limit=args.limit,
         caption=args.caption,
         num_nodes=args.num_nodes,
+        gpus_per_node=args.gpus_per_node,
+        kratos_metrics_endpoint=args.kratos_metrics_endpoint,
     )
 
 
