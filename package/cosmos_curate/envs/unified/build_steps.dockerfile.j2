@@ -3,7 +3,9 @@ RUN {{cache_mount_str}} <<EOF
 set -euxo pipefail
 
 # pin to a specific CUDA version
-export CONDA_OVERRIDE_CUDA="12.9.1"
+# need to fix flash-attn-fused-dense, flash-attn-layer-norm to be compliant 
+# with rest of cuda
+export CONDA_OVERRIDE_CUDA="12.9.0"
 
 # keep the package list sorted
 micromamba install -c conda-forge\
@@ -19,9 +21,7 @@ micromamba install -c conda-forge\
  hydra-core\
  loguru\
  numpy\<2.0.0\
- nvidia/label/cuda-${CONDA_OVERRIDE_CUDA}::cuda-compiler\
  nvidia/label/cuda-${CONDA_OVERRIDE_CUDA}::cuda-libraries-dev\
- nvidia/label/cuda-${CONDA_OVERRIDE_CUDA}::cuda-libraries\
  nvtx\
  peft\
  psycopg2\
@@ -30,9 +30,8 @@ micromamba install -c conda-forge\
  pytest-cov\
  pytest-xdist\
  pytest\
- python=3.10.14\
- pytorch[cuda]\
  scipy\
+ setuptools=79.0.1\
  sqlalchemy\
  tabulate\
  tenacity\
@@ -57,7 +56,9 @@ pip install --no-cache-dir\
  ray[default]==2.46.0\
  s2wrapper@git+https://github.com/bfshi/scaling_on_scales\
  timm\
+ torch==2.7.0\
  torchvision\
+ transformers==4.51.1\
  vllm==0.9.1\
 
 pip install --no-cache-dir --no-deps\

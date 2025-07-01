@@ -88,14 +88,14 @@ class CosmosEmbed1(ModelInterface):
             exception = f"Weights directory {self._weights_dir} not found!"
             raise FileNotFoundError(exception)
         if not self._utils_only:
-            self._model = AutoModel.from_pretrained(  # type: ignore[no-untyped-call]
+            self._model = AutoModel.from_pretrained(
                 self._weights_dir,
                 trust_remote_code=True,
                 local_files_only=True,
             ).to("cuda", dtype=torch.bfloat16)
             assert self._model is not None
             self._model.eval()  # type: ignore[attr-defined]
-        self._processor = AutoProcessor.from_pretrained(
+        self._processor = AutoProcessor.from_pretrained(  # type: ignore[no-untyped-call]
             self._weights_dir,
             trust_remote_code=True,
             local_files_only=True,

@@ -1,14 +1,14 @@
 RUN {{cache_mount_str}} micromamba install -c nvidia/label/cuda-12.1.1 -c conda-forge \
-    python=3.10.14 pip=23.2 cuda cuda-nvcc cuda-toolkit cuda-runtime pycuda
+    cuda cuda-nvcc cuda-toolkit cuda-runtime pycuda
 
 RUN {{cache_mount_str}} pip install accelerate==0.32.1 av==13.1.0 packaging==24.0 ninja==1.11.1.1 \
-    torch==2.2.1 torchvision torchaudio transformers==4.42.3 \
+    torch==2.7.0 torchvision torchaudio transformers==4.51.1 \
     PyNvVideoCodec==1.0.2 timm==0.9.12 bitstring==4.3.0
 RUN {{cache_mount_str}} wget --no-check-certificate -P /tmp/ https://github.com/CVCUDA/CV-CUDA/releases/download/v0.11.0-beta/cvcuda_cu12-0.11.0b0-cp310-cp310-linux_x86_64.whl \
     && pip install /tmp/cvcuda_cu12-0.11.0b0-cp310-cp310-linux_x86_64.whl \
     && rm -f /tmp/cvcuda_cu12-0.11.0b0-cp310-cp310-linux_x86_64.whl
-RUN {{cache_mount_str}} wget --no-check-certificate -P /tmp/ https://github.com/Dao-AILab/flash-attention/releases/download/v2.6.1/flash_attn-2.6.1+cu123torch2.2cxx11abiFALSE-cp310-cp310-linux_x86_64.whl \
-    && pip install /tmp/flash_attn-2.6.1+cu123torch2.2cxx11abiFALSE-cp310-cp310-linux_x86_64.whl --no-build-isolation \
-    && rm -f /tmp/flash_attn-2.6.1+cu123torch2.2cxx11abiFALSE-cp310-cp310-linux_x86_64.whl
+RUN {{cache_mount_str}} wget --no-check-certificate -P /tmp/ https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.0.post2/flash_attn-2.8.0.post2+cu12torch2.7cxx11abiTRUE-cp310-cp310-linux_x86_64.whl \
+    && pip install /tmp/flash_attn-2.8.0.post2+cu12torch2.7cxx11abiTRUE-cp310-cp310-linux_x86_64.whl --no-build-isolation \
+    && rm -f /tmp/flash_attn-2.8.0.post2+cu12torch2.7cxx11abiTRUE-cp310-cp310-linux_x86_64.whl
 
 {{install_regular_cosmos_curator_deps_str}}

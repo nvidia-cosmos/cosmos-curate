@@ -164,8 +164,8 @@ to have the recipes for building this conda environment. For example,
 
 ```dockerfile
 # /transformers/build_steps.dockerfile.j2
-RUN {{cache_mount_str}} micromamba install python=3.10.14 -y
-RUN {{cache_mount_str}} pip install torch==2.3.1 transformers==4.41.2
+RUN {{cache_mount_str}} micromamba install python=3.10.18 -y
+RUN {{cache_mount_str}} pip install torch==2.7.0 transformers==4.51.1
 
 {{install_regular_cosmos_curator_deps_str}}
 ```

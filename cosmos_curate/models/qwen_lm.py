@@ -86,7 +86,7 @@ class QwenLM(ModelInterface):
             max_tokens=self.max_output_tokens,
             stop_token_ids=[],
         )
-        self.tokenizer = AutoTokenizer.from_pretrained(self.weight_file)
+        self.tokenizer = AutoTokenizer.from_pretrained(self.weight_file)  # type: ignore[no-untyped-call]
 
     @nvtx.annotate("Qwen-LM Generate tokens")  # type: ignore[misc]
     def generate(

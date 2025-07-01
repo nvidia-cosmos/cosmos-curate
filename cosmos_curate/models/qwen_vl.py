@@ -18,7 +18,7 @@
 import logging
 import os
 import re
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import torch
 from loguru import logger
@@ -43,6 +43,9 @@ if conda_utils.is_running_in_env("unified"):
     from transformers import AutoProcessor
     from vllm import LLM, AsyncEngineArgs, AsyncLLMEngine, SamplingParams
     from vllm.sampling_params import RequestOutputKind
+
+    if TYPE_CHECKING:
+        from vllm.model_executor.layers.quantization import QuantizationMethods
 
     vllm_logger = logging.getLogger("vllm")
     vllm_logger.setLevel(logging.ERROR)  # Suppress warnings and info from vLLM
@@ -72,7 +75,7 @@ class QwenUtils:
         It also sets up the image processor for preprocessing video frames if needed.
 
         """
-        self.processor = AutoProcessor.from_pretrained(self.weight_file)
+        self.processor = AutoProcessor.from_pretrained(self.weight_file)  # type: ignore[no-untyped-call]
 
     @staticmethod
     def create_message(
@@ -232,7 +235,7 @@ class QwenVL(ModelInterface):
             "do_normalize": self.model_does_preprocess,
         }
 
-        quantization = None
+        quantization: QuantizationMethods | None = None
         if self.fp8:
             quantization = "fp8"
 

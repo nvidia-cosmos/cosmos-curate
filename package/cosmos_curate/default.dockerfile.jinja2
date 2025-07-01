@@ -8,7 +8,7 @@
 
 ARG DEBIAN_FRONTEND=noninteractive
 
-FROM nvidia/cuda:12.9.0-devel-ubuntu24.04 AS main
+FROM nvidia/cuda:12.8.0-cudnn-devel-ubuntu24.04 AS main
 
 SHELL ["/bin/bash", "-c"]
 
@@ -120,21 +120,21 @@ ENV OLD_PATH="$PATH" \
     OLD_CUDA_HOME="$CUDA_HOME"
 
 # Create cosmos_curate env. Install conda so that Ray can use models from our envs
-RUN {{cache_mount_str}} micromamba create --always-copy -n cosmos_curate python=3.10.14 pip conda -c conda-forge
+RUN {{cache_mount_str}} micromamba create --always-copy -n cosmos_curate python=3.10.18 pip conda -c conda-forge
 # Install the cosmos-curate core deps for the cosmos_curate env
 RUN {{cache_mount_str}} micromamba -n cosmos_curate run pip install {{regular_cosmos_curator_deps_string}}
 
 # Loop through all the envs, if any are set.
 {% for env in envs %}
 # ------------------------------------Install the env-----------------------------
-RUN {{cache_mount_str}} micromamba create --always-copy -n {{env.name}} -y
+RUN {{cache_mount_str}} micromamba create --always-copy -n {{env.name}} python=3.10.18 pip -y
 
 # Activate the env
 ENV CONDA_PREFIX="/cosmos_curate/conda_envs/envs/{{env.name}}" \
-    PATH="/cosmos_curate/conda_envs/envs/{{env.name}}/bin:$PATH" \
-    LD_LIBRARY_PATH="/cosmos_curate/conda_envs/envs/{{env.name}}/lib:/cosmos_curate/conda_envs/envs/{{env.name}}/lib/python3.10/site-packages/torch/lib:$LD_LIBRARY_PATH" \
+    PATH="/cosmos_curate/conda_envs/envs/{{env.name}}/bin:/usr/local/cuda/bin:$PATH" \
+    LD_LIBRARY_PATH="/cosmos_curate/conda_envs/envs/{{env.name}}/lib/python3.10/site-packages/nvidia/cuda_runtime/lib:/cosmos_curate/conda_envs/envs/{{env.name}}/lib:/cosmos_curate/conda_envs/envs/{{env.name}}/lib/python3.10/site-packages/torch/lib:/usr/local/cuda/lib64:$LD_LIBRARY_PATH" \
     LIBRARY_PATH="/cosmos_curate/conda_envs/envs/{{env.name}}/lib:$LIBRARY_PATH" \
-    CUDA_HOME="/cosmos_curate/conda_envs/envs/{{env.name}}/"
+    CUDA_HOME="/usr/local/cuda"
 
 # Add some shell scripts which we run when this env is activated or deactivated.
 RUN mkdir -p /cosmos_curate/conda_envs/envs/{{env.name}}/etc/conda/activate.d && \

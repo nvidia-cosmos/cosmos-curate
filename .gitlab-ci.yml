@@ -22,7 +22,7 @@ default:
 
 variables:
   # Versions
-  PYTHON_VERSION: "3.10.14"
+  PYTHON_VERSION: "3.10.18"
   RUFF_VERSION: "0.11.8"
 
   # Git config

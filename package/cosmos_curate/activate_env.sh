@@ -15,6 +15,6 @@ export OLD_CUDA_HOME=$CUDA_HOME
 # Add the conda/lib to LD library path to link against any .so file in there.
 # Also, (and this is critical) add torch's special /lib folder as well. If we don't do this,
 # Torch will link against system installed torch, which is not what we want.
-export LD_LIBRARY_PATH=$CONDA_PREFIX/lib:$CONDA_PREFIX/lib/python3.10/site-packages/torch/lib:$LD_LIBRARY_PATH
-export LIBRARY_PATH=$CONDA_PREFIX/lib:$LIBRARY_PATH
-export CUDA_HOME="$CONDA_PREFIX/"
+export LD_LIBRARY_PATH=$CONDA_PREFIX/lib:$CONDA_PREFIX/lib/python3.10/site-packages/torch/lib:/usr/local/cuda/lib64:$LD_LIBRARY_PATH
+export LIBRARY_PATH=$CONDA_PREFIX/lib:/usr/local/cuda/lib64:$LIBRARY_PATH
+export CUDA_HOME=/usr/local/cuda

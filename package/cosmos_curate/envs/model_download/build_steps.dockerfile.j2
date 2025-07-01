@@ -1,5 +1,4 @@
-RUN {{cache_mount_str}} micromamba install python=3.10.14 -y && \
-                        pip install \
+RUN {{cache_mount_str}} pip install \
                             azure-identity>=1.0.0 \
                             azure-storage-blob>=12.0.0 \
                             cattrs \

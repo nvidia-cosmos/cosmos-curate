@@ -114,7 +114,7 @@ The overall workflow is as follows:
 
 ```bash
 # 1. Create virtual environment (using micromamba as an example)
-micromamba create -n cosmos-curate -c conda-forge python=3.10.14 poetry
+micromamba create -n cosmos-curate -c conda-forge python=3.10.18 poetry
 micromamba activate cosmos-curate
 
 # 2. Clone the repository and update `cosmos-xenna` submodule
