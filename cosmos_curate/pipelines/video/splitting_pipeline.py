@@ -402,6 +402,7 @@ def split(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912
             CuratorStageSpec(
                 QwenFilteringStage(
                     model_variant=args.qwen_filter_model_variant,
+                    filter_variant=args.qwen_filter_prompt_variant,
                     rejection_threshold=args.qwen_filter_rejection_threshold,
                     user_prompt=args.qwen_filter_categories,
                     batch_size=args.qwen_filter_batch_size,
@@ -409,6 +410,7 @@ def split(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912
                     max_output_tokens=args.qwen_filter_max_output_tokens,
                     disable_mmcache=not args.qwen_use_vllm_mmcache,
                     score_only=args.qwen_filter == "score-only",
+                    use_async_engine=args.qwen_use_async_engine,
                     verbose=args.verbose,
                     log_stats=args.perf_profile,
                 ),

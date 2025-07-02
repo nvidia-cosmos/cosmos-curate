@@ -96,6 +96,32 @@ _PROMPTS = {
 }""",
 }
 
+"""
+The default filter criteria are listed below.
+When using a custom prompt with "--qwen-filter-categories" the criteria will be generated automatically.
+If you wish to create and save a longer custom prompt above,
+add the criteria list to the _FILTER_CRITERIA dictionary below.
+Ensure the name of the custom prompt matches the name of the created criteria list.
+"""
+
+_FILTER_CRITERIA = {
+    "default": [
+        "slideshow",
+        "synthetic video",
+        "visual filter",
+        "post-production text",
+        "video in video",
+        "photographic artifacts",
+        "distorted view",
+        "rotated view",
+        "low resolution",
+        "blurred region",
+        "abrupt camera motion",
+        "fast zoom",
+        "unnatural speed",
+    ],
+}
+
 
 def _get_prompt(
     prompt_variant: str,
@@ -276,6 +302,7 @@ class QwenFilteringStage(CuratorStage):
         model_variant: str = "qwen",
         batch_size: int = 16,
         user_prompt: str | None = None,
+        filter_variant: str = "default",
         rejection_threshold: float = 0.5,
         *,
         fp8_enable: bool = False,
@@ -285,6 +312,7 @@ class QwenFilteringStage(CuratorStage):
         model_does_preprocess: bool = False,
         disable_mmcache: bool = False,
         score_only: bool = False,
+        use_async_engine: bool = False,
     ) -> None:
         """Initialize the Qwen filtering stage.
 
@@ -298,17 +326,20 @@ class QwenFilteringStage(CuratorStage):
             model_does_preprocess: Whether model handles preprocessing.
             disable_mmcache: Whether to disable model cache.
             user_prompt: Custom prompt categories as a list if provided.
+            filter_variant: Variant of filter criteria to use.
             rejection_threshold: Threshold for clip rejection.
             score_only: Whether to only calculate Qwen-based content filtering scores without filtering clips.
+            use_async_engine: Whether to use the async engine.
 
         """
         self._timer = StageTimer(self)
+        self._filter_variant = filter_variant
         self._rejection_threshold = rejection_threshold
         self._batch_size = batch_size
         self._user_prompt = user_prompt
         self._verbose = verbose
         self._log_stats = log_stats
-        self._use_async_engine = False
+        self._use_async_engine = use_async_engine
         self._score_only = score_only
         self._model_does_preprocess = model_does_preprocess
         self._disable_mmcache = disable_mmcache
@@ -532,31 +563,21 @@ class QwenFilteringStage(CuratorStage):
                     continue
 
                 if self._user_prompt is None:
-                    filter_criteria = [
-                        "slideshow",
-                        "synthetic video",
-                        "visual filter",
-                        "post-production text",
-                        "video in video",
-                        "photographic artifacts",
-                        "distorted view",
-                        "rotated view",
-                        "low resolution",
-                        "blurred region",
-                        "abrupt camera motion",
-                        "fast zoom",
-                        "unnatural speed",
-                    ]
+                    filter_criteria = _FILTER_CRITERIA[self._filter_variant]
                 else:
                     filter_criteria = self._user_prompt.split(",")
 
                 # Check if the window passes the filter
+                window_specific_issues = {}
                 for criterion in filter_criteria:
                     if filtering_dict.get(criterion, "no") == "yes":
                         all_issues.add(criterion)
                         rejected_windows.add(window_idx)
+                        window_specific_issues[criterion] = filtering_dict.get(criterion, "no")
 
-                video.clips[clip_idx].filter_windows[window_idx].caption["qwen_rejection_reasons"] = str(filtering_dict)
+                video.clips[clip_idx].filter_windows[window_idx].caption["qwen_rejection_reasons"] = str(
+                    window_specific_issues
+                )
 
             if not self._score_only:  # noqa: SIM102
                 # Reject the clip if more than half of the windows are rejected

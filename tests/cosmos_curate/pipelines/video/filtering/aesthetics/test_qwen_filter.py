@@ -53,7 +53,7 @@ def sample_filtering_task(sample_video_data: bytes) -> SplitPipeTask:
     )
 
 
-@pytest.mark.env("vllm")
+@pytest.mark.env("unified")
 def test_generate_embedding(sample_filtering_task: SplitPipeTask) -> None:
     """Test the QwenCaptioning result."""
     filtering_prompt = "blue car"

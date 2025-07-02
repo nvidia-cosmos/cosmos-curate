@@ -35,7 +35,7 @@ variables:
   CURATOR_IMAGE: ${CI_REGISTRY_IMAGE}/curator
 
   #Pytest configuration
-  PYTEST_XDIST_WORKERS: 4
+  PYTEST_XDIST_WORKERS: 1
 
   # NVCF configuration
   NVCF_ORG_ID: "$NVCF_ORG_ID"
