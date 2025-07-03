@@ -1,13 +1,35 @@
 # A unified conda environment intended for most video/image pipelines.
+#
+# Implementation notes:
+#
+# This environment is precariously balanced on a knife's edge of compatibility.
+# DO NOT CHANGE ANYTHING UNLESS YOU KNOW EXACTLY WHAT YOU ARE DOING.
+#
+# The long chain of reasoning for this setup is as follows:
+# 1. We need the two flash-attn extensions for InternVideo2. There are no PyPi packages or pre-built wheels for these,
+#    and they take a long time to build from source on a beefy machine. The only pre-built packages available are on
+#    conda-forge.
+# 2. The flash-attn extensions depend on flash-attn, which depends on PyTorch on conda-forge. Therefore, we cannot use
+#    the official PyTorch package on PyPi.
+# 3. vLLM pins to a specific version of PyTorch but doesn't have a conda-forge package, so we have to match that version
+#    manually instead of relying on the solver.
+# 4. The current vLLM version 0.9.1 pins to PyTorch 2.7.0, but unfortunately the conda-forge package for it pins to
+#    setuptools 75.8.2, which has security vulnerabilities. We have to manually upgrade setuptools to a newer version.
+#    This should go away once we upgrade vLLM to a version that uses a newer PyTorch version.
+#
+# Because of these constraints, we have to rely on conda-forge for most packages, but we also have to install some
+# packages from PyPi, either because they are not available on conda-forge or because the conda-forge package has
+# various issues (e.g. pulling in X11 dependencies in our headless environment, or having a protobuf version conflict
+# with PyTorch).
+
 RUN {{cache_mount_str}} <<EOF
 set -euxo pipefail
 
 # pin to a specific CUDA version
-# need to fix flash-attn-fused-dense, flash-attn-layer-norm to be compliant 
-# with rest of cuda
-export CONDA_OVERRIDE_CUDA="12.9.0"
+export CONDA_OVERRIDE_CUDA="12.6.0"
 
 # keep the package list sorted
+# note: vllm 0.9.1 pins to pytorch 2.7.0, and is not compatible with transformers 4.53
 micromamba install -c conda-forge\
  azure-storage-blob>=12.0.0\
  boto3\
@@ -30,11 +52,17 @@ micromamba install -c conda-forge\
  pytest-cov\
  pytest-xdist\
  pytest\
+ pytorch=2.7.0[cuda]\
  scipy\
- setuptools=79.0.1\
  sqlalchemy\
  tabulate\
  tenacity\
+ transformers=4.52.4\
+
+# Make security scanning happy.
+# Note: pytorch 2.7.0 on conda-forge is pinned to setuptools 75.8.2.
+# It's fixed in pytorch 2.7.1. We can remove this hack once we upgrade vllm which upgrades pytorch.
+pip install --no-cache-dir --no-deps --force-reinstall setuptools==80.9.0
 
 # Only for packages not available in conda.
 # av: conda-forge package installs ffmpeg
@@ -47,7 +75,7 @@ micromamba install -c conda-forge\
 # timm: conda-forge package pulls in torchvision
 # torchvision: conda-forge package pulls in x11 dependencies
 # vllm: no conda-forge package
-pip install --no-cache-dir\
+pip install --no-cache-dir --extra-index-url https://download.pytorch.org/whl/cu126\
  av\
  azure-identity\
  ngcsdk==3.64.4\
@@ -56,9 +84,7 @@ pip install --no-cache-dir\
  ray[default]==2.46.0\
  s2wrapper@git+https://github.com/bfshi/scaling_on_scales\
  timm\
- torch==2.7.0\
  torchvision\
- transformers==4.51.1\
  vllm==0.9.1\
 
 pip install --no-cache-dir --no-deps\
