@@ -32,6 +32,7 @@ dependencies = [
     "huggingface_hub",
     "jinja2",
     "loguru",
+    "multidict==6.6.3",
     "ngcsdk==3.64.4",
     "pyopenssl",
     "pyyaml==6.0.2",

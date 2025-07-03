@@ -21,6 +21,7 @@ test filtering for running tests only in their respective conda environments.
 import os
 
 import pytest
+import torch
 
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
@@ -60,3 +61,56 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
     if deselected:
         config.hook.pytest_deselected(items=deselected)
         items[:] = selected
+
+
+def _get_available_gpus() -> int:
+    """Get the number of available GPUs dynamically."""
+    if torch.cuda.is_available():
+        return torch.cuda.device_count()
+    return 0
+
+
+def pytest_configure_node(node) -> None:  # noqa: ANN001
+    """Configure pytest-xdist worker setup with improved GPU isolation.
+
+    This hook is called on the main process to configure each worker node.
+    It assigns each worker to a specific GPU to avoid memory conflicts and
+    ensures proper GPU memory management.
+
+    Args:
+        node: The pytest-xdist worker node object
+
+    """
+    # Extract worker ID from node name (e.g., "gw0", "gw1")
+    worker_id = node.gateway.id
+    num_gpus = _get_available_gpus()
+
+    if num_gpus == 0:
+        node.workerinput["cuda_visible_devices"] = ""
+        return
+
+    # Assign GPU based on worker ID
+    gpu_id = int(worker_id.replace("gw", "")) % num_gpus
+
+    # Pass the GPU assignment to the worker process
+    node.workerinput["cuda_visible_devices"] = str(gpu_id)
+    node.workerinput["worker_id"] = worker_id
+    node.workerinput["num_gpus"] = num_gpus
+
+
+def pytest_configure(config) -> None:  # noqa: ANN001
+    """Configure pytest for GPU distribution when running with xdist.
+
+    This hook is called once per worker process and sets the CUDA_VISIBLE_DEVICES
+    environment variable based on the worker configuration.
+
+    Args:
+        config: The pytest configuration object
+
+    """
+    # Only apply GPU distribution when running with xdist
+    if hasattr(config, "workerinput"):
+        cuda_device = config.workerinput.get("cuda_visible_devices")
+
+        if cuda_device is not None and cuda_device != "":
+            os.environ["CUDA_VISIBLE_DEVICES"] = cuda_device
