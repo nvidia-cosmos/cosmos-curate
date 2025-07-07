@@ -29,7 +29,7 @@ from cosmos_curate.core.utils import s3_client
 from cosmos_curate.core.utils.database_types import PostgresDB
 from cosmos_curate.core.utils.runtime.performance_utils import StageTimer
 from cosmos_curate.core.utils.s3_client import is_s3path
-from cosmos_curate.core.utils.s3_utils import read_bytes
+from cosmos_curate.core.utils.storage_utils import read_bytes
 from cosmos_curate.core.utils.writer_utils import write_bytes, write_json
 from cosmos_curate.pipelines.av.utils.av_data_info import CAMERA_MAPPING
 from cosmos_curate.pipelines.av.utils.av_data_model import AvShardingTask

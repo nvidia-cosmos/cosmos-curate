@@ -22,9 +22,7 @@ if TYPE_CHECKING:
     from cosmos_curate.core.interfaces.stage_interface import CuratorStage, CuratorStageSpec
 from cosmos_curate.core.utils import args_utils
 from cosmos_curate.core.utils.database_types import EnvType, PostgresDB
-from cosmos_curate.core.utils.s3_utils import (
-    verify_path,
-)
+from cosmos_curate.core.utils.storage_utils import verify_path
 from cosmos_curate.pipelines.av.pipeline_args import add_common_args
 from cosmos_curate.pipelines.av.utils.av_data_model import (
     AvSessionVideoIngestTask,
