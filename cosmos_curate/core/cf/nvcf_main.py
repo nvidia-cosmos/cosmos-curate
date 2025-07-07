@@ -58,6 +58,10 @@ from cosmos_curate.core.cf.nvcf_utils import (
 )
 from cosmos_curate.core.utils.environment import CONTAINER_PATHS_CODE_DIR
 from cosmos_curate.core.utils.file_lock import file_lock
+from cosmos_curate.core.utils.presigned_s3_zip_utils import (
+    gather_and_upload_outputs,
+    handle_presigned_urls,
+)
 from cosmos_curate.pipelines.video.dedup_pipeline import nvcf_run_semdedup
 from cosmos_curate.pipelines.video.sharding_pipeline import nvcf_run_shard
 from cosmos_curate.pipelines.video.splitting_pipeline import nvcf_run_split
@@ -653,6 +657,7 @@ async def curate_video(request: Request) -> JSONResponse:  # noqa: C901, PLR0912
     stop_event = None
     progress_thread = None
     nvcf_output_dir = None
+    pipeline_args = None
 
     try:
         nvcf_output_dir = get_asset_output_path(request)
@@ -695,7 +700,15 @@ async def curate_video(request: Request) -> JSONResponse:  # noqa: C901, PLR0912
         invoke_args = await request.json()
 
         pipeline_args = argparse.Namespace(**(invoke_args.get("args", {})))
-        if "s3_config" in pipeline_args:
+
+        # Handle any presigned URL processing and ensure we now have a concrete Namespace
+        pipeline_args = handle_presigned_urls(pipeline_args)
+
+        # At this point `pipeline_args` **must** be a populated Namespace object.
+        # Add an explicit runtime assertion so static type-checkers understand this.
+        assert isinstance(pipeline_args, argparse.Namespace)
+
+        if hasattr(pipeline_args, "s3_config"):
             did_init_s3_profile = create_s3_profile(pipeline_args.s3_config)
             # set it to redacted so that it cannot be saved in script file
             # the pipeline script dont need it once the profile is created
@@ -704,22 +717,20 @@ async def curate_video(request: Request) -> JSONResponse:  # noqa: C901, PLR0912
         pipeline_type = invoke_args.get("pipeline", "unknown")
         logger.info(f"Launching pipeline {pipeline_type} with args: {pipeline_args}")
         if pipeline_type in {"split"}:
-            # handle possible assets
-            if input_assets_present(request):
+            # handle possible assets. Do not override presigned URL paths.
+            if not getattr(pipeline_args, "input_presigned_s3_url", None) and input_assets_present(request):
                 pipeline_args.input_video_path = get_asset_input_dir(request)
+
+            if not getattr(pipeline_args, "output_presigned_s3_url", None) and input_assets_present(request):
                 pipeline_args.output_clip_path = get_asset_output_path(request)
-            if (not hasattr(pipeline_args, "output_clip_path")) or pipeline_args.output_clip_path is None:
+            if not getattr(pipeline_args, "output_clip_path", None):
                 pipeline_args.output_clip_path = get_asset_output_path(request)
 
-            # Validate that we have either a direct path or a presigned URL for both input and output.
-            missing_input_path = (
-                not hasattr(pipeline_args, "input_video_path")
-            ) or pipeline_args.input_video_path is None
+            # Validate that we have either a direct path or a presigned URL for both input and output
+            missing_input_path = not getattr(pipeline_args, "input_video_path", None)
             missing_input_url = not getattr(pipeline_args, "input_presigned_s3_url", None)
 
-            missing_output_path = (
-                not hasattr(pipeline_args, "output_clip_path")
-            ) or pipeline_args.output_clip_path is None
+            missing_output_path = not getattr(pipeline_args, "output_clip_path", None)
             missing_output_url = not getattr(pipeline_args, "output_presigned_s3_url", None)
 
             if missing_input_path and missing_input_url:
@@ -810,6 +821,8 @@ async def curate_video(request: Request) -> JSONResponse:  # noqa: C901, PLR0912
             progress_thread.join()
         if did_init_s3_profile:
             remove_s3_profile()
+        if pipeline_args is not None:
+            gather_and_upload_outputs(pipeline_args)
         if manager:
             manager.shutdown()
 

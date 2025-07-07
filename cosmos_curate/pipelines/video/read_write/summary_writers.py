@@ -61,14 +61,15 @@ class ProcessedVideoMetadata:
 
 def _worker_read_video_metadata(  # noqa: C901
     output_path: str,
-    output_s3_profile_name: str,
+    output_s3_profile_name: str | None,
     input_videos_relative: list[str],
     limit: int,
     *,
     verbose: bool = False,
 ) -> dict[str, ProcessedVideoMetadata]:
     all_video_data: dict[str, ProcessedVideoMetadata] = {}
-    client = storage_utils.get_storage_client(output_path, profile_name=output_s3_profile_name)
+    profile_name = output_s3_profile_name or "default"
+    client = storage_utils.get_storage_client(output_path, profile_name=profile_name)
     for input_video in input_videos_relative:
         video_metadata_path = get_full_path(
             ClipWriterStage.get_output_path_processed_videos(output_path),
@@ -150,49 +151,37 @@ def _write_split_result_summary(  # noqa: PLR0913
     for key in clip_stats_keys:
         summary_data[f"total_{key}"] = 0
 
-    all_window_captions_data: dict[str, dict[str, str]] = {}
-    futures = []
-    with ThreadPoolExecutor(max_workers=32) as executor:
-        futures.extend(
-            [
-                executor.submit(
-                    _worker_read_video_metadata,
-                    output_path,
-                    output_s3_profile_name,
-                    input_video_chunk,
-                    limit,
-                )
-                for input_video_chunk in grouping.split_into_n_chunks(input_videos_relative, 32)
-            ],
-        )
-        for future in futures:
-            for input_video, data in future.result().items():
-                summary_data[input_video] = {
-                    "source_video": str(get_full_path(input_path, input_video)),
-                }
-                if data.video_metadata is None:
-                    summary_data[input_video]["processed"] = False
-                    continue
+    all_video_data = _read_all_video_metadata_parallel(
+        output_path,
+        output_s3_profile_name,
+        input_videos_relative,
+        limit,
+    )
+    for input_video, data in all_video_data.items():
+        summary_data[input_video] = {
+            "source_video": str(get_full_path(input_path, input_video)),
+        }
+        if data.video_metadata is None:
+            summary_data[input_video]["processed"] = False
+            continue
 
-                summary_data[input_video]["num_total_clips"] = data.video_metadata.get("num_total_clips", "N/A")
-                summary_data[input_video]["clips"] = []
-                summary_data[input_video]["filtered_clips"] = []
-                for key in clip_stats_keys:
-                    summary_data[input_video][key] = 0
-                all_window_captions_data[input_video] = {}
-                for clip_chunk in data.clip_chunks:
-                    for key in clip_stats_keys:
-                        summary_data[input_video][key] += clip_chunk.get(key, 0)
-                        summary_data[f"total_{key}"] += clip_chunk.get(key, 0)
-                    summary_data[input_video]["clips"].extend(clip_chunk.get("clips", []))
-                    summary_data[input_video]["filtered_clips"].extend(clip_chunk.get("filtered_clips", []))
-                    all_window_captions_data[input_video].update(clip_chunk.get("all_windows", {}))
-                    summary_data["total_clip_duration"] += clip_chunk.get("total_clip_duration", 0)
-                    summary_data["max_clip_duration"] = max(
-                        summary_data["max_clip_duration"],
-                        clip_chunk.get("max_clip_duration", 0),
-                    )
-                summary_data["total_video_duration"] += data.video_metadata.get("duration", 0)
+        summary_data[input_video]["num_total_clips"] = data.video_metadata.get("num_total_clips", "N/A")
+        summary_data[input_video]["clips"] = []
+        summary_data[input_video]["filtered_clips"] = []
+        for key in clip_stats_keys:
+            summary_data[input_video][key] = 0
+        for clip_chunk in data.clip_chunks:
+            for key in clip_stats_keys:
+                summary_data[input_video][key] += clip_chunk.get(key, 0)
+                summary_data[f"total_{key}"] += clip_chunk.get(key, 0)
+            summary_data[input_video]["clips"].extend(clip_chunk.get("clips", []))
+            summary_data[input_video]["filtered_clips"].extend(clip_chunk.get("filtered_clips", []))
+            summary_data["total_clip_duration"] += clip_chunk.get("total_clip_duration", 0)
+            summary_data["max_clip_duration"] = max(
+                summary_data["max_clip_duration"],
+                clip_chunk.get("max_clip_duration", 0),
+            )
+        summary_data["total_video_duration"] += data.video_metadata.get("duration", 0)
 
     def func_write_summary() -> None:
         summary_dest = get_full_path(output_path, "summary.json")
@@ -208,19 +197,13 @@ def _write_split_result_summary(  # noqa: PLR0913
 
     do_with_retries(func_write_summary)
 
-    def func_write_captions() -> None:
-        all_window_captions_dest = get_full_path(output_path, "v0", "all_window_captions.json")
-        write_json(
-            all_window_captions_data,
-            all_window_captions_dest,
-            "all window captions",
-            "all videos",
-            verbose=True,
-            client=client_output,
-            backup_and_overwrite=True,
-        )
-
-    do_with_retries(func_write_captions)
+    _write_all_window_captions(
+        output_path,
+        output_s3_profile_name,
+        input_videos_relative,
+        limit,
+        client_output,
+    )
 
 
 def write_split_summary(  # noqa: PLR0913
@@ -339,3 +322,85 @@ def write_shard_summary(  # noqa: PLR0913
             raw_output_path,
             output_s3_profile_name,
         )
+
+
+def _read_all_video_metadata_parallel(
+    output_path: str,
+    output_s3_profile_name: str | None,
+    input_videos_relative: list[str],
+    limit: int,
+) -> dict[str, ProcessedVideoMetadata]:
+    """Read per-video metadata using a thread pool for better IO throughput."""
+    all_video_data: dict[str, ProcessedVideoMetadata] = {}
+    futures = []
+    with ThreadPoolExecutor(max_workers=32) as executor:
+        futures = [
+            executor.submit(
+                _worker_read_video_metadata,
+                output_path,
+                output_s3_profile_name,
+                chunk,
+                limit,
+            )
+            for chunk in grouping.split_into_n_chunks(input_videos_relative, 32)
+        ]
+        for fut in futures:
+            all_video_data.update(fut.result())
+    return all_video_data
+
+
+def get_all_window_captions_data(
+    output_path: str,
+    output_s3_profile_name: str | None,
+    input_videos_relative: list[str],
+    limit: int,
+) -> dict[str, Any]:
+    """Return a nested dict of all window->caption mappings for all videos."""
+    all_video_data = _read_all_video_metadata_parallel(
+        output_path,
+        output_s3_profile_name,
+        input_videos_relative,
+        limit,
+    )
+
+    all_window_captions_data: dict[str, Any] = {}
+    for input_video, data in all_video_data.items():
+        if data.video_metadata is None:
+            continue
+        all_window_captions_data[input_video] = {}
+        for clip_chunk in data.clip_chunks:
+            for clip_id, clip_data in clip_chunk.get("all_windows", {}).items():
+                if clip_id not in all_window_captions_data[input_video]:
+                    all_window_captions_data[input_video][clip_id] = {}
+                all_window_captions_data[input_video][clip_id].update(clip_data)
+    return all_window_captions_data
+
+
+def _write_all_window_captions(
+    output_path: str,
+    output_s3_profile_name: str | None,
+    input_videos_relative: list[str],
+    limit: int,
+    client_output: storage_client.StorageClient | None,
+) -> None:
+    """Gather all window captions data and write it to a JSON file."""
+    captions_data = get_all_window_captions_data(
+        output_path,
+        output_s3_profile_name,
+        input_videos_relative,
+        limit,
+    )
+
+    def _write() -> None:
+        dest = get_full_path(output_path, "v0", "all_window_captions.json")
+        write_json(
+            captions_data,
+            dest,
+            "all window captions",
+            "all videos",
+            verbose=True,
+            client=client_output,
+            backup_and_overwrite=True,
+        )
+
+    do_with_retries(_write)

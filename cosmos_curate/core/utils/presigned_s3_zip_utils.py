@@ -33,18 +33,42 @@ URLs specifically. Imports using the old name should be updated accordingly.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:  # pragma: no cover
+    import argparse
 import contextlib
 import os
 import shutil
 import tempfile
+import time
+import uuid
 import zipfile
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
+from typing import Any
 
+import ray
 import requests
 from loguru import logger
 
+from cosmos_curate.core.utils.runtime.ray_cluster_utils import (
+    get_node_name,
+    init_or_connect_to_cluster,
+)
+from cosmos_curate.core.utils.storage_utils import (
+    get_files_relative,
+    get_storage_client,
+)
+from cosmos_curate.pipelines.video.read_write.summary_writers import (
+    _write_all_window_captions,
+)
+
 __all__ = [
     "download_and_extract_zip",
+    "gather_and_upload_outputs",
+    "gather_outputs_from_all_nodes",
+    "handle_presigned_urls",
     "zip_and_upload_directory",
 ]
 
@@ -80,7 +104,10 @@ def _download_file(url: str, dst_path: Path) -> None:
     logger.info("Download completed.")
 
 
-def download_and_extract_zip(presigned_url: str, tmp_dir: str | None = None) -> str:
+def _download_and_extract_zip_single_node(
+    presigned_url: str,
+    tmp_dir: str | None = None,
+) -> str:
     """Download a presigned zip archive and extract its contents.
 
     The downloaded archive is saved into a temporary directory (or *tmp_dir* if
@@ -132,7 +159,7 @@ def download_and_extract_zip(presigned_url: str, tmp_dir: str | None = None) -> 
 
 
 def zip_and_upload_directory(directory: str, presigned_url: str) -> None:
-    """Create a zip archive from *directory* and upload it via *presigned_url*.
+    """Create a zip archive from *directory* and upload it to *presigned_url*.
 
     Args:
         directory: Local directory whose contents should be archived.
@@ -179,3 +206,185 @@ def zip_and_upload_directory(directory: str, presigned_url: str) -> None:
             archive_path.unlink(missing_ok=True)
 
     logger.info("Upload completed successfully.")
+
+
+# Reserve CPU resources for Ray actors
+_ZIP_DOWNLOADER_CPU_REQUEST: float = 1.0  # full core per node for download
+_OUTPUT_GATHERER_CPU_REQUEST: float = 0.1  # fractional core for lightweight gather tasks
+
+
+def _download_and_extract_zip_impl(presigned_url: str, base_tmp_dir: str) -> str:
+    """Download *presigned_url* to *base_tmp_dir* and extract its contents."""
+    tmp_dir = Path(base_tmp_dir)
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+
+    zip_path = tmp_dir / "archive.zip"
+    _download_file(presigned_url, zip_path)
+
+    extract_dir = tmp_dir / "extracted"
+    extract_dir.mkdir(parents=True, exist_ok=True)
+
+    logger.info("Extracting downloaded archive …")
+    with zipfile.ZipFile(zip_path, "r") as zf:
+        zf.extractall(extract_dir)
+
+    # If the archive contains a single top-level directory, return that; else the extraction dir
+    top_items = list(extract_dir.iterdir())
+    if len(top_items) == 1 and top_items[0].is_dir():
+        return str(top_items[0])
+    return str(extract_dir)
+
+
+@ray.remote(num_cpus=_ZIP_DOWNLOADER_CPU_REQUEST)
+class _ZipDownloader:
+    """Ray actor that performs a single download/extract on its node."""
+
+    def __init__(self) -> None:
+        self._node = get_node_name()
+
+    def run(self, url: str, base_tmp_dir: str) -> tuple[str, str]:
+        path = _download_and_extract_zip_impl(url, base_tmp_dir)
+        return self._node, path
+
+
+def _download_and_extract_on_all_nodes(url: str, base_tmp_dir: str) -> str:
+    """Ensure the archive is downloaded & extracted once per Ray node."""
+    bundles = [{"CPU": _ZIP_DOWNLOADER_CPU_REQUEST} for _ in ray.nodes()]
+    pg = ray.util.placement_group(bundles=bundles, strategy="STRICT_SPREAD")
+    ray.get(pg.ready())
+
+    actors = [_ZipDownloader.options(placement_group=pg).remote() for _ in bundles]  # type: ignore[attr-defined]
+    results = ray.get([a.run.remote(url, base_tmp_dir) for a in actors])
+
+    for node, path in results:
+        logger.info(f"Archive extracted on node {node} at {path}")
+
+    # Path is identical across nodes
+    return str(Path(base_tmp_dir) / "extracted")
+
+
+def _worker_download_and_extract(url: str, base_tmp_dir: str) -> str:
+    init_or_connect_to_cluster()
+    extracted = _download_and_extract_on_all_nodes(url, base_tmp_dir)
+    time.sleep(1)  # Let Ray flush logs
+    ray.shutdown()
+    return extracted
+
+
+def download_and_extract_zip(presigned_url: str) -> str:
+    """Download & extract input videos on **all** Ray nodes, returning driver path."""
+    base_tmp_dir = str(Path(tempfile.gettempdir()) / f"input_videos_{uuid.uuid4().hex}")
+    with ProcessPoolExecutor(max_workers=1) as exe:
+        fut = exe.submit(_worker_download_and_extract, presigned_url, base_tmp_dir)
+        return fut.result()
+
+
+def handle_presigned_urls(pipeline_args: argparse.Namespace) -> argparse.Namespace:
+    """Update *pipeline_args* in-place based on any presigned URLs present."""
+    if getattr(pipeline_args, "input_presigned_s3_url", None):
+        logger.info("Input presigned URL detected - downloading …")
+        extracted_path = download_and_extract_zip(pipeline_args.input_presigned_s3_url)
+        pipeline_args.input_video_path = extracted_path
+        logger.info(f"Extracted to temporary directory: {extracted_path}")
+
+    if getattr(pipeline_args, "output_presigned_s3_url", None) and not getattr(pipeline_args, "output_clip_path", None):
+        pipeline_args.output_clip_path = tempfile.mkdtemp(prefix="output_clips_")
+        logger.warning(
+            f"No output_clip_path provided; using temporary directory {pipeline_args.output_clip_path}",
+        )
+    return pipeline_args
+
+
+@ray.remote(num_cpus=_OUTPUT_GATHERER_CPU_REQUEST)
+class _OutputGatherer:
+    """Actor that zips local output directory and returns bytes."""
+
+    def run(self, output_dir: str) -> tuple[str, Any | None]:
+        node = get_node_name()
+        out_path = Path(output_dir)
+        if not out_path.exists():
+            return node, None
+        if sum(len(files) for _, _, files in os.walk(out_path)) == 0:
+            return node, None
+
+        fd, zip_path_str = tempfile.mkstemp(prefix="node_output_", suffix=".zip")
+        os.close(fd)
+        zip_path = Path(zip_path_str)
+        shutil.make_archive(zip_path.with_suffix("").as_posix(), "zip", output_dir)
+        zip_file = zip_path.with_suffix(".zip")
+        with zip_file.open("rb") as fh:
+            data = fh.read()
+        zip_file.unlink(missing_ok=True)
+        return node, ray.put(data)
+
+
+def _extract_zip_bytes(buf: bytes, dest_dir: str) -> None:
+    with tempfile.NamedTemporaryFile(suffix=".zip", delete=False) as tmp:
+        tmp.write(buf)
+        tmp_path = Path(tmp.name)
+    with zipfile.ZipFile(tmp_path, "r") as zf:
+        zf.extractall(dest_dir)
+    tmp_path.unlink(missing_ok=True)
+
+
+def _gather_outputs_on_all_nodes(output_dir: str) -> None:
+    bundles = [{"CPU": _OUTPUT_GATHERER_CPU_REQUEST} for _ in ray.nodes()]
+    pg = ray.util.placement_group(bundles=bundles, strategy="STRICT_SPREAD")
+    ray.get(pg.ready())
+    actors = [_OutputGatherer.options(placement_group=pg).remote() for _ in bundles]  # type: ignore[attr-defined]
+    results = ray.get([a.run.remote(output_dir) for a in actors])
+
+    for node, obj in results:
+        if obj is None:
+            logger.info(f"No output data on node {node}")
+            continue
+        data = ray.get(obj)
+        _extract_zip_bytes(data, output_dir)
+        logger.info(f"Merged output from node {node}")
+
+
+def _worker_gather_outputs(output_dir: str) -> None:
+    ray.init(address="auto", ignore_reinit_error=True, log_to_driver=True)
+    _gather_outputs_on_all_nodes(output_dir)
+    time.sleep(1)
+    ray.shutdown()
+
+
+def gather_outputs_from_all_nodes(output_directory: str) -> None:
+    """Collect outputs from all Ray nodes into *output_directory*."""
+    with ProcessPoolExecutor(max_workers=1) as exe:
+        fut = exe.submit(_worker_gather_outputs, output_directory)
+        try:
+            fut.result(timeout=300)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"Gather outputs failed: {exc}")
+
+
+def gather_and_upload_outputs(args: argparse.Namespace) -> None:
+    """Gather outputs, write metadata, zip, and upload via presigned URL."""
+    if not (getattr(args, "output_presigned_s3_url", None) and getattr(args, "output_clip_path", None)):
+        return
+
+    try:
+        logger.info("Gathering per-node outputs …")
+        gather_outputs_from_all_nodes(args.output_clip_path)
+
+        logger.info("Writing consolidated window-captions metadata …")
+        input_client = get_storage_client(args.input_video_path)
+        output_client = get_storage_client(args.output_clip_path, can_overwrite=True)
+        _write_all_window_captions(
+            args.output_clip_path,
+            None,
+            get_files_relative(args.input_video_path, input_client),
+            0,
+            output_client,
+        )
+
+        logger.info("Uploading zipped outputs …")
+        zip_and_upload_directory(args.output_clip_path, args.output_presigned_s3_url)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception(f"Failed to gather/upload outputs: {exc}")
+    finally:
+        if "output_clips_" in str(getattr(args, "output_clip_path", "")):
+            with contextlib.suppress(OSError):
+                shutil.rmtree(args.output_clip_path)

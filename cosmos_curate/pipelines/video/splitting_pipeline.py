@@ -25,19 +25,13 @@ Which:
 from __future__ import annotations
 
 import argparse
-import tempfile
 import time
 
-import requests
 from loguru import logger
 
 from cosmos_curate.core.interfaces.pipeline_interface import run_pipeline
 from cosmos_curate.core.interfaces.stage_interface import CuratorStage, CuratorStageSpec
 from cosmos_curate.core.utils import args_utils
-from cosmos_curate.core.utils.presigned_s3_zip_utils import (
-    download_and_extract_zip,
-    zip_and_upload_directory,
-)
 from cosmos_curate.core.utils.storage_utils import (
     create_path,
     is_path_nested,
@@ -113,20 +107,6 @@ def build_input_data(
         - The number of processed videos.
 
     """
-    # Handle presigned input URL if provided - download and extract the zip
-    if getattr(args, "input_presigned_s3_url", None):
-        logger.info("Input presigned URL detected, downloading and extracting ...")
-        extracted_path = download_and_extract_zip(args.input_presigned_s3_url)
-        # Override input_video_path for downstream pipeline stages
-        args.input_video_path = extracted_path
-        logger.info(f"Extracted input videos to temporary directory: {extracted_path}")
-
-    # If an output presigned URL is provided, ensure output_clip_path exists
-    if getattr(args, "output_presigned_s3_url", None):
-        # Use a temporary directory which will later be zipped and uploaded
-        args.output_clip_path = tempfile.mkdtemp(prefix="output_clips_")
-        logger.warning(f"No output_clip_path provided, using temporary directory {args.output_clip_path}")
-
     # validate input arguments
     verify_path(args.input_video_path)
     verify_path(args.output_clip_path, level=1)
@@ -159,7 +139,10 @@ def build_input_data(
 
 
 def write_summary(
-    args: argparse.Namespace, input_videos: list[str], output_tasks: list[SplitPipeTask], pipeline_run_time: float
+    args: argparse.Namespace,
+    input_videos: list[str],
+    output_tasks: list[SplitPipeTask],
+    pipeline_run_time: float,
 ) -> float:
     """Write a summary of the pipeline run.
 
@@ -525,9 +508,6 @@ def split(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912
         f"{pipeline_run_time=:.2f} / {summary_run_time=:.2f} mins processing "
         f"time for {total_video_length=:.3f} hours of raw videos",
     )
-
-    # If the caller provided an output presigned URL, create a zip archive and upload the results.
-    _maybe_upload_output_zip(args)
 
 
 def _setup_parser(parser: argparse.ArgumentParser) -> None:  # noqa: PLR0915
@@ -1125,16 +1105,3 @@ def add_split_command(
     parser.set_defaults(func=cli_run_split)
     _setup_parser(parser)
     return parser  # type: ignore[no-any-return]
-
-
-def _maybe_upload_output_zip(args: argparse.Namespace) -> None:
-    """Zip the output directory and upload it if a presigned URL is provided."""
-    if getattr(args, "output_presigned_s3_url", None):
-        try:
-            logger.info(
-                "Zipping output clips directory and uploading to presigned URL ...",
-            )
-            zip_and_upload_directory(args.output_clip_path, args.output_presigned_s3_url)
-            logger.info("Upload completed successfully.")
-        except (ValueError, requests.RequestException, OSError) as exc:
-            logger.exception(f"Failed to upload zipped output via presigned URL: {exc}")
