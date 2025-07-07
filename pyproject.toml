@@ -88,7 +88,8 @@ local = [
     "ngcsdk==3.64.4",
     "numpy<2.0.0",
     "nvtx==0.2.11",
-    "opencv-python-headless",
+    # opencv-python-headless>=4.12 requires numpy>=2, which breaks our stack
+    "opencv-python-headless==4.11.0.86",
     "pandas<=2.1.4",
     "Pillow",
     "prometheus_client==0.21.1",

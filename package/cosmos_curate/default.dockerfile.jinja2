@@ -122,7 +122,7 @@ ENV OLD_PATH="$PATH" \
 # Create cosmos_curate env. Install conda so that Ray can use models from our envs
 RUN {{cache_mount_str}} micromamba create --always-copy -n cosmos_curate python=3.10.18 pip conda -c conda-forge
 # Install the cosmos-curate core deps for the cosmos_curate env
-RUN {{cache_mount_str}} micromamba -n cosmos_curate run pip install {{regular_cosmos_curator_deps_string}}
+RUN {{cache_mount_str}} micromamba -n cosmos_curate run pip install {{core_cosmos_curator_deps_string}} {{regular_cosmos_curator_deps_string}}
 
 # Loop through all the envs, if any are set.
 {% for env in envs %}

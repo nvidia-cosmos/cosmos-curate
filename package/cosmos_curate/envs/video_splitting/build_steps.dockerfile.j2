@@ -11,4 +11,4 @@ RUN {{cache_mount_str}} wget --no-check-certificate -P /tmp/ https://github.com/
     && pip install /tmp/flash_attn-2.8.0.post2+cu12torch2.7cxx11abiTRUE-cp310-cp310-linux_x86_64.whl --no-build-isolation \
     && rm -f /tmp/flash_attn-2.8.0.post2+cu12torch2.7cxx11abiTRUE-cp310-cp310-linux_x86_64.whl
 
-{{install_regular_cosmos_curator_deps_str}}
+RUN {{cache_mount_str}} pip install {{core_cosmos_curator_deps_string}} {{regular_cosmos_curator_deps_string}}

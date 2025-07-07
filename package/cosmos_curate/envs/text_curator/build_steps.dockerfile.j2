@@ -8,16 +8,12 @@ RUN {{cache_mount_str}} pip install --extra-index-url https://pypi.nvidia.com \
 RUN {{cache_mount_str}} pip install --upgrade protobuf==4.25.8 && rm -rf /root/.cache/pip
 
 RUN {{cache_mount_str}} pip install \
-    ngcsdk \
-    loguru \
-    ray[default]==2.46.0 \
-    && rm -rf /root/.cache/pip
-
-RUN {{cache_mount_str}} pip install \
     av \
     cattrs \
     easydict \
-    opencv-python-headless \
+    loguru \
     pulp \
     tabulate \
-    webdataset
+    webdataset \
+    {{core_cosmos_curator_deps_string}} \
+    && rm -rf /root/.cache/pip

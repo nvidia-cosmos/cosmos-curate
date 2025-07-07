@@ -1,8 +1,6 @@
 astral
 attrs
 av
-azure-identity>=1.0.0
-azure-storage-blob>=12.0.0
 boto3
 cattrs
 easydict
@@ -11,11 +9,7 @@ gpustat
 huggingface_hub
 jinja2
 loguru
-ngcsdk==3.64.4
-numpy<2.0.0
 nvtx
-opencv-python-headless
-pandas<=2.1.4
 Pillow
 prometheus_client==0.21.1
 psutil==7.0.0
@@ -28,7 +22,6 @@ pytest
 pytest-xdist
 pytest-asyncio
 pytest-cov
-ray[default]==2.46.0
 requests==2.32.3
 scikit-image
 scipy

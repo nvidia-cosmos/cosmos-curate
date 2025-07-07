@@ -31,8 +31,8 @@ class CosmosCuratorDeps:
     These need to be installed into the main docker image as well as any conda envs.
     """
 
+    core: list[str]
     regular: list[str]
-    optional: list[str]
 
     @classmethod
     def make(cls, curator_path: Path) -> "CosmosCuratorDeps":
@@ -45,14 +45,17 @@ class CosmosCuratorDeps:
             A CosmosCuratorDeps instance with the dependencies loaded from the requirements.txt file.
 
         """
-        requirements_file = curator_path / "package" / "cosmos_curate" / "requirements.txt"
-        if not requirements_file.exists():
-            error_msg = f"Could not find requirements file at {requirements_file}"
-            raise FileNotFoundError(error_msg)
-        with Path(requirements_file).open() as f:
-            video_deps = [line.strip() for line in f]
+        requirements_file_path = curator_path / "package" / "cosmos_curate"
+        video_deps = {}
+        for variant in ("core", "regular"):
+            requirements_file = requirements_file_path / f"requirements-{variant}.txt"
+            if not requirements_file.exists():
+                error_msg = f"Could not find requirements file at {requirements_file}"
+                raise FileNotFoundError(error_msg)
+            with Path(requirements_file).open() as f:
+                video_deps[variant] = [line.strip() for line in f if line.strip() and not line.strip().startswith("#")]
 
-        return CosmosCuratorDeps(sorted(video_deps), [])
+        return CosmosCuratorDeps(sorted(video_deps["core"]), sorted(video_deps["regular"]))
 
 
 @attrs.define
@@ -64,9 +67,9 @@ class CondaEnv:
     build_steps_str: str
 
 
-_INSTALL_REGULAR_COSMOS_CURATOR_DEPS_TEMPLATE = jinja2.Template(
+_INSTALL_COSMOS_CURATOR_DEPS_TEMPLATE = jinja2.Template(
     """
-RUN {{cache_mount_str}} pip install {{regular_cosmos_curator_deps_string}}
+RUN {{cache_mount_str}} pip install {{cosmos_curator_deps_string}}
 """.strip(),
 )
 
@@ -75,12 +78,12 @@ RUN {{cache_mount_str}} pip install {{regular_cosmos_curator_deps_string}}
 class CommonTemplateParams:
     """Template params that are in common between env templates."""
 
+    # Core deps
+    core_cosmos_curator_deps_string: str
     # Regular deps
     regular_cosmos_curator_deps_string: str
-    # Optional deps
-    optional_cosmos_curator_deps_string: str
 
-    # This is a string which will pip install all the needed cosmos-curate deps.
+    install_core_cosmos_curator_deps_str: str
     install_regular_cosmos_curator_deps_str: str
 
     # This is a string that is needed to put after "RUN" when installing things via conda or pip.
@@ -102,16 +105,22 @@ class CommonTemplateParams:
 
         """
         deps = CosmosCuratorDeps.make(curator_path)
+        core_cosmos_curator_deps_string = " ".join([f'"{x}"' for x in deps.core])
         regular_cosmos_curator_deps_string = " ".join([f'"{x}"' for x in deps.regular])
-        optional_cosmos_curator_deps_string = " ".join([f'"{x}"' for x in deps.optional])
 
         out = CommonTemplateParams(
+            core_cosmos_curator_deps_string,
             regular_cosmos_curator_deps_string,
-            optional_cosmos_curator_deps_string,
+            "",
             "",
         )
-        out.install_regular_cosmos_curator_deps_str = _INSTALL_REGULAR_COSMOS_CURATOR_DEPS_TEMPLATE.render(
-            **attrs.asdict(out),
+        out.install_core_cosmos_curator_deps_str = _INSTALL_COSMOS_CURATOR_DEPS_TEMPLATE.render(
+            cache_mount_str=out.cache_mount_str,
+            cosmos_curator_deps_string=out.core_cosmos_curator_deps_string,
+        )
+        out.install_regular_cosmos_curator_deps_str = _INSTALL_COSMOS_CURATOR_DEPS_TEMPLATE.render(
+            cache_mount_str=out.cache_mount_str,
+            cosmos_curator_deps_string=out.regular_cosmos_curator_deps_string,
         )
         return out
 

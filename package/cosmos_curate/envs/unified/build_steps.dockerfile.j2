@@ -31,7 +31,6 @@ export CONDA_OVERRIDE_CUDA="12.6.0"
 # keep the package list sorted
 # note: vllm 0.9.1 pins to pytorch 2.7.0, and is not compatible with transformers 4.53
 micromamba install -c conda-forge\
- azure-storage-blob>=12.0.0\
  boto3\
  cattrs\
  deepspeed\
@@ -42,7 +41,6 @@ micromamba install -c conda-forge\
  flash-attn\
  hydra-core\
  loguru\
- numpy\<2.0.0\
  nvidia/label/cuda-${CONDA_OVERRIDE_CUDA}::cuda-libraries-dev\
  nvtx\
  peft\
@@ -66,26 +64,19 @@ pip install --no-cache-dir --no-deps --force-reinstall setuptools==80.9.0
 
 # Only for packages not available in conda.
 # av: conda-forge package installs ffmpeg
-# azure-identity: conda-forge package pulls in x11 dependencies
-# ngcsdk: no conda-forge package
 # open-clip-torch: conda-forge package pulls in torchvision
-# opencv-python-headless: no conda-forge package
-# ray: conda-forge package has a protobuf version conflict with pytorch
 # s2wrapper: no conda-forge package
 # timm: conda-forge package pulls in torchvision
 # torchvision: conda-forge package pulls in x11 dependencies
 # vllm: no conda-forge package
 pip install --no-cache-dir --extra-index-url https://download.pytorch.org/whl/cu126\
  av\
- azure-identity\
- ngcsdk==3.64.4\
  open-clip-torch\
- opencv-python-headless\
- ray[default]==2.46.0\
  s2wrapper@git+https://github.com/bfshi/scaling_on_scales\
  timm\
  torchvision\
  vllm==0.9.1\
+ {{core_cosmos_curator_deps_string}}\
 
 pip install --no-cache-dir --no-deps\
  git+https://github.com/NVlabs/VILA.git\

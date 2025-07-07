@@ -1,0 +1,8 @@
+azure-identity>=1.0.0
+azure-storage-blob>=12.0.0
+ngcsdk==3.64.4
+numpy<2.0.0
+# opencv-python-headless>=4.12 requires numpy>=2, which overrides the numpy<2.0.0 requirement above
+opencv-python-headless==4.11.0.86
+pandas==2.1.4
+ray[default]==2.46.0

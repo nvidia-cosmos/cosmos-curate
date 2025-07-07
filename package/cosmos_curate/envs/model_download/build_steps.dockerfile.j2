@@ -1,12 +1,8 @@
 RUN {{cache_mount_str}} pip install \
-                            azure-identity>=1.0.0 \
-                            azure-storage-blob>=12.0.0 \
                             cattrs \
                             huggingface_hub \
                             loguru \
-                            ngcsdk==3.64.4 \
-                            pandas \
                             pynvml \
-                            ray[default]==2.46.0 \
                             scipy \
-                            tabulate
+                            tabulate \
+                            {{core_cosmos_curator_deps_string}}
