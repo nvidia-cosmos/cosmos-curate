@@ -222,6 +222,7 @@ class VideoMetadata:
     pixel_format: str | None = None
     audio_codec: str | None = None
     bit_rate_k: int | None = None
+    format_name: str | None = None
 
 
 @attrs.define
@@ -281,6 +282,7 @@ class Video:
         self.metadata.pixel_format = extracted_metadata.pixel_format
         self.metadata.audio_codec = extracted_metadata.audio_codec
         self.metadata.bit_rate_k = extracted_metadata.bit_rate_k
+        self.metadata.format_name = extracted_metadata.format_name
 
     @property
     def fraction(self) -> float:
@@ -393,6 +395,7 @@ class SplitPipeTask(PipelineTask):
 
     video: Video
     stage_perf: dict[str, StagePerfStats] = attrs.Factory(dict)
+    error: str | None = None
 
     @property
     def fraction(self) -> float:

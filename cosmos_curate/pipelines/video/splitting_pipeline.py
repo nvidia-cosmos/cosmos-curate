@@ -80,6 +80,7 @@ from cosmos_curate.pipelines.video.filtering.motion.motion_filter_stages import 
 from cosmos_curate.pipelines.video.preview.preview_stages import PreviewStage
 from cosmos_curate.pipelines.video.read_write.download_stages import VideoDownloader
 from cosmos_curate.pipelines.video.read_write.metadata_writer_stage import ClipWriterStage
+from cosmos_curate.pipelines.video.read_write.remux_stages import RemuxStage
 from cosmos_curate.pipelines.video.read_write.summary_writers import (
     write_split_summary,
 )
@@ -246,6 +247,10 @@ def split(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912
             ),
             num_workers_per_node=args.num_download_workers_per_node,
             num_run_attempts_python=5,
+        ),
+        RemuxStage(
+            verbose=args.verbose,
+            log_stats=args.perf_profile,
         ),
     ]
 

@@ -65,6 +65,7 @@ class VideoMetadata:
     video_codec: str
     pixel_format: str
     video_duration: float
+    format_name: str = "unknown"
     audio_codec: str | None = None
     bit_rate_k: int | None = None
 
@@ -170,6 +171,8 @@ def extract_video_metadata(video: str | bytes) -> VideoMetadata:
         raise KeyError(error_msg)
     num_frames = int(video_duration * fps)
 
+    format_name = video_info.get("format", {}).get("format_name", "unknown").lower()
+
     # store bit_rate if available
     bit_rate_k = 2000  # default to 2000K (2M) bit rate
     if "bit_rate" in video_stream:
@@ -183,6 +186,7 @@ def extract_video_metadata(video: str | bytes) -> VideoMetadata:
         video_codec=video_stream["codec_name"],
         pixel_format=video_stream["pix_fmt"],
         audio_codec=audio_codec,
+        format_name=format_name,
         video_duration=video_duration,
         bit_rate_k=bit_rate_k,
     )

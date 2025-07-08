@@ -16,6 +16,9 @@
 
 import pathlib
 import uuid
+from collections.abc import Generator
+from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 import requests
@@ -89,6 +92,26 @@ def sample_splitting_task(sample_video_data: bytes) -> SplitPipeTask:
         video=video,
         stage_perf={},
     )
+
+
+@pytest.fixture(autouse=True)
+def mock_get_tmp_dir(tmp_path: Path) -> Generator[None, None, None]:
+    """Automatically mock get_tmp_dir to use pytest's tmp_path for all tests.
+
+    This prevents permission errors when tests try to create temp files in
+    system directories that may not be writable in CI/CD environments.
+
+    By default, get_tmp_dir will return /config/tmp in CI/CD environments,
+    which is not writable. This fixture will mock get_tmp_dir to return the
+    pytest tmp_path, which is writable, is guaranteed to be unique for each
+    test, and will be cleaned up automatically.
+
+    Args:
+        tmp_path: pytest's temporary directory fixture
+
+    """
+    with patch("cosmos_curate.core.utils.runtime.operation_utils.get_tmp_dir", return_value=tmp_path):
+        yield
 
 
 @pytest.fixture
