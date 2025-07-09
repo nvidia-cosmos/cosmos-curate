@@ -37,6 +37,7 @@ from cosmos_curate.core.utils.storage_utils import (
     is_path_nested,
     verify_path,
 )
+from cosmos_curate.models.all_models import get_all_models_by_id
 from cosmos_curate.pipelines.pipeline_args import (
     add_common_args,
 )
@@ -412,8 +413,14 @@ def split(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912
             ),
         ]
 
+    embedding_model_version: str = "unspecified"
     if args.generate_embeddings:
         stages += get_embedding_stages(args)
+        embedding_stage: CuratorStage = stages[-1].stage if isinstance(stages[-1], CuratorStageSpec) else stages[-1]  # type: ignore[assignment]
+        assert embedding_stage.model is not None, "Embedding stage model should be set"
+        embedding_model_id = embedding_stage.model.model_id_names[0]
+        embedding_model_version = get_all_models_by_id().get(embedding_model_id, {}).get("version", "unspecified")  # type: ignore[assignment]
+        logger.debug(f"Embedding model id={embedding_model_id} version={embedding_model_version}")
 
     if args.generate_captions:
         # windowing
@@ -487,9 +494,11 @@ def split(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912
                 output_s3_profile_name=args.output_s3_profile_name,
                 upload_clips=args.upload_clips,
                 upload_clip_info_in_chunks=args.upload_clip_info_in_chunks,
+                upload_cvds_parquet=args.upload_cvds_parquet,
                 dry_run=args.dry_run,
                 generate_embeddings=args.generate_embeddings,
                 embedding_algorithm=args.embedding_algorithm,
+                embedding_model_version=embedding_model_version,
                 generate_previews=args.generate_previews,
                 caption_models=[args.captioning_algorithm],
                 enhanced_caption_models=["qwen_lm"],
@@ -612,6 +621,13 @@ def _setup_parser(parser: argparse.ArgumentParser) -> None:  # noqa: PLR0915
             "Whether to group clip metadata in chunks as jsonl and "
             "skip writing per-clip embedding pickles, i.e. grouped clip embeddings as parquet only."
         ),
+    )
+    parser.add_argument(
+        "--upload-cvds-parquet",
+        dest="upload_cvds_parquet",
+        action="store_true",
+        default=False,
+        help="Whether to upload parquet files for CVDS.",
     )
     parser.add_argument(
         "--splitting-algorithm",

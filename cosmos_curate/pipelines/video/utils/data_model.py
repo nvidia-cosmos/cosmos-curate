@@ -108,6 +108,18 @@ class Clip:
     # for debugging
     errors: dict[str, str] = attrs.Factory(dict)
 
+    def get_all_captions(self) -> list[str]:
+        """Get all captions from the clip's windows.
+
+        Returns:
+            A list of all captions from the clip's windows.
+
+        """
+        captions: list[str] = []
+        for window in self.windows:
+            captions.extend(window.caption.values())
+        return captions
+
     def extract_metadata(self) -> dict[str, Any] | None:
         """Extract metadata from the clip's buffer.
 
