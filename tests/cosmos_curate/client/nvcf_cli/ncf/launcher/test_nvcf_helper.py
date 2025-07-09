@@ -866,3 +866,326 @@ def test_nvcf_helper_s3cred_function(monkeypatch: MonkeyPatch, tmp_path: Path) -
     mock_ncg_client.put.assert_called_with(
         "/v2/orgs//nvcf/secrets/functions/test-id/versions/test-version", data={"test-key": "test-value"}
     )
+
+
+def test_nvcf_helper_invoke_batch_fail(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
+    """Test that nvcf_helper_invoke_batch fails in the correct places.
+
+    Args:
+        monkeypatch: The monkeypatch object.
+        tmp_path: The temporary path object.
+
+    Returns:
+        None
+
+    """
+    mock_ncg_client = MagicMock()
+    mock_ncg_client.post.return_value = None
+
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    nvcf_helper = NvcfHelper(url="", nvcf_url="", key="", org="", timeout=15)
+    nvcf_helper.ncg_api_hdl = mock_ncg_client
+
+    tmp_dir = tmp_path / "test-data"
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+    tmp_file = tmp_dir / "test-data.json"
+
+    with pytest.raises(ValueError):  # noqa: PT011
+        nvcf_helper.nvcf_helper_invoke_batch(
+            data_file=str(tmp_file),
+            id_file=None,
+            job_variant_file=None,
+            ddir=None,
+            s3_config=None,
+            legacy_cf=False,
+            retry_cnt=2,
+            retry_delay=300,
+        )
+
+
+@pytest.mark.parametrize(
+    ("response", "exception"),
+    [
+        (None, RuntimeError),
+        (NVCFResponse({"status": 500}), RuntimeError),
+        (NVCFResponse({"status": 400, "timeout": True}), TimeoutError),
+        (NVCFResponse({"status": 400, "detail": "test-detail"}), RuntimeError),
+        (NVCFResponse({"status": 200, "headers": {}}), RuntimeError),
+    ],
+)
+def test_nvcf_helper_invoke_function_failures(
+    monkeypatch: MonkeyPatch, tmp_path: Path, response: NVCFResponse | None, exception: type[Exception]
+) -> None:
+    """Test that nvcf_helper_invoke_function fails in the correct places.
+
+    Args:
+        monkeypatch: The monkeypatch object.
+        tmp_path: The temporary path object.
+        response: The response object.
+        exception: The exception to expect.
+
+    Returns:
+        None
+
+    """
+    mock_nvcf_client = MagicMock()
+    mock_nvcf_client.post.return_value = response
+
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    nvcf_helper = NvcfHelper(url="", nvcf_url="", key="", org="", timeout=15)
+    nvcf_helper.nvcf_api_hdl = mock_nvcf_client
+
+    with pytest.raises(exception):
+        nvcf_helper.nvcf_helper_invoke_function(
+            funcid="test-id",
+            ddir=None,
+            version=None,
+            data_file=None,
+            prompt_file=None,
+            asset_id=None,
+            s3_config=None,
+        )
+
+
+def test_nvcf_helper_invoke_function_success(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
+    """Test that nvcf_helper_invoke_function returns the expected dictionary on success.
+
+    Args:
+        monkeypatch: The monkeypatch object.
+        tmp_path: The temporary path object.
+
+    Returns:
+        None
+
+    """
+    mock_nvcf_client = MagicMock()
+    mock_nvcf_client.post.return_value = NVCFResponse(
+        {
+            "status": 200,
+            "headers": {"test-header": "test-value", "reqid": "test-reqid", "pct": "test-pct", "status": "test-status"},
+        }
+    )
+
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    nvcf_helper = NvcfHelper(url="", nvcf_url="", key="", org="", timeout=15)
+    nvcf_helper.nvcf_api_hdl = mock_nvcf_client
+
+    tmp_dir = tmp_path / "test-data"
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+    tmp_file = tmp_dir / "test-data.json"
+    with Path.open(tmp_file, "w") as f:
+        json.dump(
+            {
+                "test-key": "test-value",
+                "args": {
+                    "captioning_prompt_text": "A photo of a cat",
+                },
+            },
+            f,
+        )
+
+    tmp_prompt_file = tmp_dir / "test-prompt.json"
+    with Path.open(tmp_prompt_file, "w") as f:
+        json.dump(
+            {
+                "test-prompt": "test-prompt",
+            },
+            f,
+        )
+
+    result = nvcf_helper.nvcf_helper_invoke_function(
+        funcid="test-id",
+        ddir=str(tmp_dir),
+        version=None,
+        data_file=str(tmp_file),
+        prompt_file=str(tmp_prompt_file),
+        asset_id=None,
+        s3_config=None,
+    )
+
+    assert result is not None
+    assert result["status"] == "test-status"
+    assert result["reqid"] == "test-reqid"
+    assert mock_nvcf_client.post.call_args[0][0] == "/v2/nvcf/pexec/functions/test-id"
+    assert mock_nvcf_client.post.call_args[1]["extra_head"] is None
+    assert mock_nvcf_client.post.call_args[1]["addl_headers"]
+    assert mock_nvcf_client.post.call_args[1]["enable_504"]
+
+    # Test with location
+    mock_nvcf_client.post.return_value = NVCFResponse(
+        {
+            "status": 200,
+            "headers": {
+                "test-header": "test-value",
+                "reqid": "test-reqid",
+                "pct": "test-pct",
+                "status": "test-status",
+                "location": "test-location",
+            },
+        }
+    )
+
+    mock_nvcf_client.download.return_value = None
+
+    result = nvcf_helper.nvcf_helper_invoke_function(
+        funcid="test-id",
+        ddir=str(tmp_dir),
+        version=None,
+        data_file=str(tmp_file),
+        prompt_file=None,
+        asset_id=None,
+        s3_config=None,
+    )
+
+    mock_nvcf_client.download.assert_called_once()
+
+
+def test_nvcf_helper_get_request_status_failures(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
+    """Test that nvcf_helper_get_request_status fails in the correct places.
+
+    Args:
+        monkeypatch: The monkeypatch object.
+        tmp_path: The temporary path object.
+
+    Returns:
+        None
+
+    """
+    mock_nvcf_client = MagicMock()
+    mock_nvcf_client.get.return_value = None
+
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    nvcf_helper = NvcfHelper(url="", nvcf_url="", key="", org="", timeout=15)
+    nvcf_helper.nvcf_api_hdl = mock_nvcf_client
+
+    # Fail with None
+    with pytest.raises(RuntimeError):
+        nvcf_helper.nvcf_helper_get_request_status(reqid="test-reqid", ddir=None)
+
+    # Timeout error
+    mock_nvcf_client.get.return_value = NVCFResponse({"status": 500, "timeout": True})
+    with pytest.raises(TimeoutError):
+        nvcf_helper.nvcf_helper_get_request_status(reqid="test-reqid", ddir=None)
+
+    # Fail with detail (Response error)
+    mock_nvcf_client.get.return_value = NVCFResponse({"status": 500, "detail": "test-detail"})
+    with pytest.raises(RuntimeError):
+        nvcf_helper.nvcf_helper_get_request_status(reqid="test-reqid", ddir=None)
+
+    mock_nvcf_client.get.return_value = NVCFResponse(
+        {
+            "status": 200,
+            "detail": "test-detail",
+            "issue": {"requestStatus": {"statusCode": 500, "statusDescription": "test-status-description"}},
+        }
+    )
+    result = nvcf_helper.nvcf_helper_get_request_status(reqid="test-reqid", ddir=None)
+    assert result is None
+
+    mock_nvcf_client.get.return_value = NVCFResponse({"status": 200, "detail": "test-detail", "issue": {}})
+    result = nvcf_helper.nvcf_helper_get_request_status(reqid="test-reqid", ddir=None)
+    assert result is None
+
+
+def test_nvcf_helper_get_request_status_success(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
+    """Test that nvcf_helper_get_request_status returns the expected dictionary on success.
+
+    Args:
+        monkeypatch: The monkeypatch object.
+        tmp_path: The temporary path object.
+
+    Returns:
+        None
+
+    """
+    mock_nvcf_client = MagicMock()
+    mock_nvcf_client.get.return_value = NVCFResponse(
+        {
+            "status": 200,
+            "headers": {
+                "test-header": "test-value",
+                "reqid": "test-reqid",
+                "pct": "test-pct",
+                "status": "test-status",
+                "location": "test-location",
+            },
+        }
+    )
+
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    nvcf_helper = NvcfHelper(url="", nvcf_url="", key="", org="", timeout=15)
+    nvcf_helper.nvcf_api_hdl = mock_nvcf_client
+    mock_nvcf_client.download.return_value = None
+
+    result = nvcf_helper.nvcf_helper_get_request_status(reqid="test-reqid", ddir=str(tmp_path))
+    assert result is not None
+    assert result["status"] == "test-status"
+    assert result["reqid"] == "test-reqid"
+    assert mock_nvcf_client.get.call_args[0][0] == "/v2/nvcf/pexec/status/test-reqid"
+    mock_nvcf_client.download.assert_called_once()
+
+
+def test_nvcf_helper_invoke_batch_success(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
+    """Test that nvcf_helper_invoke_batch runs successfully.
+
+    Args:
+        monkeypatch: The monkeypatch object.
+        tmp_path: The temporary path object.
+
+    Returns:
+        None
+
+    """
+    mock_nvcf_client = MagicMock()
+    mock_nvcf_client.post.return_value = NVCFResponse(
+        {
+            "status": 200,
+            "headers": {
+                "test-header": "test-value",
+                "reqid": "test-reqid",
+                "pct": "test-pct",
+                "status": "test-status",
+                "location": "test-location",
+            },
+        }
+    )
+
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    nvcf_helper = NvcfHelper(url="", nvcf_url="", key="", org="", timeout=15)
+    nvcf_helper.nvcf_api_hdl = mock_nvcf_client
+
+    tmp_dir = tmp_path / "test-data"
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+    tmp_file = tmp_dir / "test-data.json"
+    with Path.open(tmp_file, "w") as f:
+        json.dump(
+            {
+                "test-key": "test-value",
+            },
+            f,
+        )
+
+    tmp_id_file = tmp_dir / "test-id.json"
+    with Path.open(tmp_id_file, "w") as f:
+        json.dump(
+            [{"func": "function-id-1", "vers": "version-1"}, {"func": "function-id-2", "vers": "version-2"}],
+            f,
+        )
+
+    tmp_job_variant_file = tmp_dir / "test-job-variant.json"
+    with Path.open(tmp_job_variant_file, "w") as f:
+        json.dump(
+            [
+                {"input_file": "video1.mp4", "output_format": "mp4", "quality": "high"},
+                {"input_file": "video2.mp4", "output_format": "avi", "quality": "medium"},
+                {"input_file": "video3.mp4", "output_format": "mp4", "quality": "low"},
+            ],
+            f,
+        )
+
+    nvcf_helper.nvcf_helper_invoke_batch(
+        data_file=str(tmp_file),
+        id_file=str(tmp_id_file),
+        job_variant_file=str(tmp_job_variant_file),
+        ddir=str(tmp_dir),
+    )

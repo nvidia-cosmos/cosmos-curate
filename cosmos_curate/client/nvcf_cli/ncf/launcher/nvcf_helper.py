@@ -690,8 +690,8 @@ class NvcfHelper(NvcfBase):
             # Distribute the id/version(id_len) to the job_list
             for idx, item in enumerate(job_list):
                 target = id_list[idx % id_len]
-                item[idx]["id"] = target["func"]
-                item[idx]["version"] = target["vers"]
+                item["funcid"] = target["func"]
+                item["version"] = target["vers"]
 
         except ValueError:
             raise
