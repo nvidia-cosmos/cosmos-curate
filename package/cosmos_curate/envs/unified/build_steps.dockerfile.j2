@@ -13,7 +13,7 @@
 #    the official PyTorch package on PyPi.
 # 3. vLLM pins to a specific version of PyTorch but doesn't have a conda-forge package, so we have to match that version
 #    manually instead of relying on the solver.
-# 4. The current vLLM version 0.9.1 pins to PyTorch 2.7.0, but unfortunately the conda-forge package for it pins to
+# 4. The current vLLM version 0.9.2 pins to PyTorch 2.7.0, but unfortunately the conda-forge package for it pins to
 #    setuptools 75.8.2, which has security vulnerabilities. We have to manually upgrade setuptools to a newer version.
 #    This should go away once we upgrade vLLM to a version that uses a newer PyTorch version.
 #
@@ -29,7 +29,7 @@ set -euxo pipefail
 export CONDA_OVERRIDE_CUDA="12.6.0"
 
 # keep the package list sorted
-# note: vllm 0.9.1 pins to pytorch 2.7.0, and is not compatible with transformers 4.53
+# note: vllm 0.9.2 pins to pytorch 2.7.0, and is not compatible with transformers 4.53
 micromamba install -c conda-forge\
  boto3\
  cattrs\
@@ -75,7 +75,7 @@ pip install --no-cache-dir --extra-index-url https://download.pytorch.org/whl/cu
  s2wrapper@git+https://github.com/bfshi/scaling_on_scales\
  timm\
  torchvision\
- vllm==0.9.1\
+ vllm==0.9.2\
  {{core_cosmos_curator_deps_string}}\
 
 pip install --no-cache-dir --no-deps\

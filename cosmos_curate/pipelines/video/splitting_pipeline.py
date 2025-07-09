@@ -984,7 +984,7 @@ def _setup_parser(parser: argparse.ArgumentParser) -> None:  # noqa: PLR0915
         "--qwen-use-vllm-mmcache",
         action="store_true",
         default=False,
-        help="vLLM 0.7.2 MultiModal Cache Usage, default disabled for better performance and GPU Utilization",
+        help="vLLM MultiModal Cache Usage, default disabled for better performance and GPU Utilization",
     )
     parser.add_argument(
         "--qwen-use-async-engine",
