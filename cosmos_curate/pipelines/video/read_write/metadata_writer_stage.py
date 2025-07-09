@@ -14,7 +14,6 @@
 # limitations under the License.
 """Write metadata for clips to DB."""
 
-import hashlib
 import io
 import pathlib
 import pickle
@@ -22,13 +21,14 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
+import pandas as pd
 from loguru import logger
 
 from cosmos_curate.core.interfaces.stage_interface import CuratorStage, CuratorStageResource
 from cosmos_curate.core.utils import storage_client, storage_utils
 from cosmos_curate.core.utils.runtime.performance_utils import StageTimer
 from cosmos_curate.core.utils.storage_utils import get_full_path
-from cosmos_curate.core.utils.writer_utils import write_bytes, write_json, write_parquet
+from cosmos_curate.core.utils.writer_utils import write_bytes, write_json, write_jsonl, write_parquet
 from cosmos_curate.pipelines.video.utils.data_model import (
     Clip,
     ClipStats,
@@ -52,10 +52,11 @@ class ClipWriterStage(CuratorStage):
         output_s3_profile_name: str,
         *,
         upload_clips: bool,
+        upload_clip_info_in_chunks: bool,
         dry_run: bool,
         generate_embeddings: bool,
+        embedding_algorithm: str,
         generate_previews: bool,
-        embedding_algorithm: str = "cosmos-embed1",
         caption_models: list[str] | None = None,
         enhanced_caption_models: list[str] | None = None,
         verbose: bool = False,
@@ -67,10 +68,11 @@ class ClipWriterStage(CuratorStage):
         if enhanced_caption_models is None:
             enhanced_caption_models = []
         self._timer = StageTimer(self)
-        self.set_input_path(input_path)
-        self.set_output_path(output_path)
+        self._set_input_path(input_path)
+        self._set_output_path(output_path)
         self._output_s3_profile_name = output_s3_profile_name
         self._upload_clips = upload_clips
+        self._upload_clip_info_in_chunks = upload_clip_info_in_chunks
         self._dry_run = dry_run
         self._generate_embeddings = generate_embeddings
         self._embedding_algorithm = embedding_algorithm
@@ -79,17 +81,19 @@ class ClipWriterStage(CuratorStage):
         self._enhanced_caption_models = enhanced_caption_models
         self._verbose = verbose
         self._log_stats = log_stats
-        self._iv2_embedding_buffer: list[dict[str, Any]] = []
-        self._ce1_embedding_buffer: list[dict[str, Any]] = []
+        self._embedding_buffer: list[dict[str, Any]] = []
+        self._metadata_buffer: list[dict[str, Any]] = []
         self._max_workers = 4
 
     def stage_setup(self) -> None:
         """Initialize stage resources and configuration."""
         self._storage_client = storage_utils.get_storage_client(
-            self._output_path, profile_name=self._output_s3_profile_name
+            self._output_path,
+            profile_name=self._output_s3_profile_name,
+            can_overwrite=True,
         )
 
-    def set_input_path(self, input_path: str) -> None:
+    def _set_input_path(self, input_path: str) -> None:
         """Set the input path for the stage.
 
         Args:
@@ -98,7 +102,7 @@ class ClipWriterStage(CuratorStage):
         """
         self._input_path = input_path.rstrip("/") + "/"
 
-    def set_output_path(self, output_path: str) -> None:
+    def _set_output_path(self, output_path: str) -> None:
         """Set the output path for the stage.
 
         Args:
@@ -150,29 +154,34 @@ class ClipWriterStage(CuratorStage):
         return ClipWriterStage._get_output_path(output_path, f"metas/{version}")
 
     @staticmethod
-    def get_output_path_iv2_embd(output_path: str) -> str:
+    def get_output_path_meta_jsonls(output_path: str, version: str) -> str:
+        """Get path to store clip metadata in a jsonl file."""
+        return ClipWriterStage._get_output_path(output_path, f"metas_jsonl/{version}")
+
+    @staticmethod
+    def get_output_path_embds(output_path: str, embedding_algorithm: str) -> str:
         """Get path to store generated clips."""
-        return ClipWriterStage._get_output_path(output_path, "iv2_embd")
+        if embedding_algorithm == "internvideo2":
+            return ClipWriterStage._get_output_path(output_path, "iv2_embd")
+        if embedding_algorithm == "cosmos-embed1":
+            return ClipWriterStage._get_output_path(output_path, "ce1_embd")
+        # should not happen
+        logger.error(f"Unknown embedding algorithm: {embedding_algorithm}")
+        return ClipWriterStage._get_output_path(output_path, f"{embedding_algorithm}_embd")
 
     @staticmethod
-    def get_output_path_iv2_embd_parquet(output_path: str) -> str:
+    def get_output_path_embd_parquets(output_path: str, embedding_algorithm: str) -> str:
         """Get path to store generated clip embeddings in a parquet file."""
-        return ClipWriterStage._get_output_path(output_path, "iv2_embd_parquet")
+        if embedding_algorithm == "internvideo2":
+            return ClipWriterStage._get_output_path(output_path, "iv2_embd_parquet")
+        if embedding_algorithm == "cosmos-embed1":
+            return ClipWriterStage._get_output_path(output_path, "ce1_embd_parquet")
+        return ClipWriterStage._get_output_path(output_path, f"{embedding_algorithm}_embd_parquet")
 
     @staticmethod
-    def get_output_path_ce1_embd(output_path: str) -> str:
-        """Get path to store generated clip embeddings of Cosmos-Embed1."""
-        return ClipWriterStage._get_output_path(output_path, "ce1_embd")
-
-    @staticmethod
-    def get_output_path_ce1_embd_parquet(output_path: str) -> str:
-        """Get path to store generated clip embeddings of Cosmos-Embed1 in a parquet file."""
-        return ClipWriterStage._get_output_path(output_path, "ce1_embd_parquet")
-
-    @staticmethod
-    def calculate_sha256(buffer: bytes) -> str:
-        """Get sha256 of byte array."""
-        return hashlib.sha256(buffer).hexdigest()
+    def get_video_uuid(input_video_path: str) -> uuid.UUID:
+        """Get a UUID for the video based on its input path."""
+        return uuid.uuid5(uuid.NAMESPACE_URL, f"{input_video_path}")
 
     def _write_data(
         self,
@@ -192,48 +201,47 @@ class ClipWriterStage(CuratorStage):
     ) -> None:
         write_json(data, dest, desc, source_video, verbose=self._verbose, client=self._storage_client)
 
-    def process_data(self, tasks: list[SplitPipeTask]) -> list[SplitPipeTask] | None:  # type: ignore[override]  # noqa: C901
+    def process_data(self, tasks: list[SplitPipeTask]) -> list[SplitPipeTask] | None:  # type: ignore[override]
         """Save bytes to blobstore and metadata to postgres."""
         for task in tasks:
             self._timer.reinit(self, task.get_major_size())
             video = task.video
             with ThreadPoolExecutor(max_workers=self._max_workers) as executor:
                 with self._timer.time_process(len(video.clips)):
-                    # collect all embeddings for a single video in a buffer sequentially
+                    # collect all embeddings/metadatas for a chunk of clips from a video
                     for clip in video.clips:
-                        self._write_clip_embedding_to_buffer(clip)
+                        self._add_clip_embedding_to_buffer(clip)
+                        self._add_clip_metadata_to_buffer(clip, video.metadata)
 
-                    # schedule all write tasks for a single video and wait for them to complete
+                    # schedule all clip-level writes for a chunk of clips from a single video and wait
                     futures_clips = []
-                    for clip in video.clips:
-                        futures_clips += [
-                            executor.submit(self._write_clip_mp4, clip),
-                            executor.submit(self._write_clip_window_webp, clip),
-                            executor.submit(self._write_clip_embedding, clip),
-                            executor.submit(self._write_clip_metadata, clip, video.metadata),
-                        ]
+                    futures_clips += [executor.submit(self._write_clip_mp4, clip) for clip in video.clips]
+                    futures_clips += [executor.submit(self._write_clip_window_webp, clip) for clip in video.clips]
+                    futures_clips += [executor.submit(self._write_clip_embedding, clip) for clip in video.clips]
+                    futures_clips += [
+                        executor.submit(self._write_clip_metadata, clip, video.metadata) for clip in video.clips
+                    ]
 
-                    for clip in video.filtered_clips:
-                        futures_clips += [
-                            executor.submit(self._write_clip_mp4, clip, filtered=True),
-                            executor.submit(
-                                self._write_clip_metadata,
-                                clip,
-                                video.metadata,
-                                filtered=True,
-                            ),
-                        ]
+                    futures_clips += [
+                        executor.submit(self._write_clip_mp4, clip, filtered=True) for clip in video.filtered_clips
+                    ]
+                    futures_clips += [
+                        executor.submit(self._write_clip_metadata, clip, video.metadata, filtered=True)
+                        for clip in video.filtered_clips
+                    ]
 
+                    # wait for all clip-level tasks to finish
                     for future_c in futures_clips:
                         result = future_c.result()
                         if result is not None:
                             video.clip_stats.combine(result)
 
-                # write video-level embeddings and metadata after all clip-level tasks are done
-                futures_videos = [
-                    executor.submit(self._write_video_embeddings_to_parquet, video),
-                    executor.submit(self._write_video_metadata, video),
-                ]
+                # write video-level metadata after all clip-level tasks are done
+                futures_videos = [executor.submit(self._write_video_metadata, video)]
+                # write buffered embeddings and metadata
+                futures_videos += [executor.submit(self._write_grouped_embeddings_to_parquet, video)]
+                futures_videos += [executor.submit(self._write_grouped_metadata_to_jsonl, video)]
+
                 for future_v in futures_videos:
                     future_v.result()
                 # clean up intermediate data
@@ -254,38 +262,44 @@ class ClipWriterStage(CuratorStage):
 
         return tasks
 
-    def _write_video_embeddings_to_parquet(self, video: Video) -> None:
-        if self._iv2_embedding_buffer and not self._dry_run:
-            path = self._get_clip_uri(
-                uuid.uuid5(uuid.NAMESPACE_URL, f"{video.input_path}_{video.clip_chunk_index}"),
-                self.get_output_path_iv2_embd_parquet(self._output_path),
+    def _write_grouped_embeddings_to_parquet(self, video: Video) -> None:
+        if self._embedding_buffer and not self._dry_run:
+            path = self._get_grouped_clips_uri(
+                self.get_video_uuid(video.input_path),
+                video.clip_chunk_index,
+                self.get_output_path_embd_parquets(self._output_path, self._embedding_algorithm),
                 "parquet",
             )
+            pdf = pd.DataFrame(self._embedding_buffer)
             write_parquet(
-                self._iv2_embedding_buffer,
+                pdf,
                 path,
                 "embedding",
                 video.input_path,
                 verbose=self._verbose,
                 client=self._storage_client,
+                overwrite=True,
             )
-            self._iv2_embedding_buffer.clear()
+            self._embedding_buffer.clear()
 
-        if self._ce1_embedding_buffer and not self._dry_run:
-            path = self._get_clip_uri(
-                uuid.uuid5(uuid.NAMESPACE_URL, f"{video.input_path}_{video.clip_chunk_index}"),
-                self.get_output_path_ce1_embd_parquet(self._output_path),
-                "parquet",
+    def _write_grouped_metadata_to_jsonl(self, video: Video) -> None:
+        if self._metadata_buffer and not self._dry_run:
+            path = self._get_grouped_clips_uri(
+                self.get_video_uuid(video.input_path),
+                video.clip_chunk_index,
+                self.get_output_path_meta_jsonls(self._output_path, "v0"),
+                "jsonl",
             )
-            write_parquet(
-                self._ce1_embedding_buffer,
+            write_jsonl(
+                self._metadata_buffer,
                 path,
-                "embedding",
+                "metadata",
                 video.input_path,
                 verbose=self._verbose,
                 client=self._storage_client,
+                overwrite=True,
             )
-            self._ce1_embedding_buffer.clear()
+            self._metadata_buffer.clear()
 
     def _get_window_uri(
         self,
@@ -305,6 +319,16 @@ class ClipWriterStage(CuratorStage):
     ) -> storage_client.StoragePrefix | pathlib.Path:
         output_clip_file = f"{video_span_uuid}.{file_type}"
         return get_full_path(path_prefix, output_clip_file)
+
+    def _get_grouped_clips_uri(
+        self,
+        video_uuid: uuid.UUID,
+        chunk_index: int,
+        path_prefix: str,
+        file_type: str,
+    ) -> storage_client.StoragePrefix | pathlib.Path:
+        output_clip_chunk_file = f"{video_uuid}_{chunk_index}.{file_type}"
+        return get_full_path(path_prefix, output_clip_chunk_file)
 
     def _get_video_uri(self, input_video_path: str) -> storage_client.StoragePrefix | pathlib.Path:
         assert input_video_path.startswith(self._input_path)
@@ -362,71 +386,58 @@ class ClipWriterStage(CuratorStage):
             clip_stats.num_passed += 1
         return clip_stats
 
-    def _write_clip_embedding_to_buffer(self, clip: Clip) -> ClipStats:
-        clip_stats = ClipStats()
-        if clip.intern_video_2_embedding is not None:
-            self._iv2_embedding_buffer.append(
-                {
-                    "id": str(clip.uuid),
-                    "embedding": clip.intern_video_2_embedding.reshape(-1).tolist(),
-                },
-            )
-        elif self._generate_embeddings and self._embedding_algorithm == "internvideo2":
-            logger.error(
-                f"Clip {clip.uuid} from {clip.source_video} has no InternVideo2 embedding, skip adding to buffer"
-            )
-        if clip.cosmos_embed1_embedding is not None:
-            self._ce1_embedding_buffer.append(
-                {
-                    "id": str(clip.uuid),
-                    "embedding": clip.cosmos_embed1_embedding.reshape(-1).tolist(),
-                },
-            )
-        elif self._generate_embeddings and self._embedding_algorithm == "cosmos-embed1":
-            logger.error(
-                f"Clip {clip.uuid} from {clip.source_video} has no Cosmos-Embed1 embedding, skip adding to buffer"
-            )
+    def _add_clip_embedding_to_buffer(self, clip: Clip) -> None:
+        if self._embedding_algorithm == "internvideo2":
+            embedding_to_write = clip.intern_video_2_embedding
+        elif self._embedding_algorithm == "cosmos-embed1":
+            embedding_to_write = clip.cosmos_embed1_embedding
+        else:
+            embedding_to_write = None
 
-        return clip_stats
+        if embedding_to_write is not None:
+            self._embedding_buffer.append(
+                {
+                    "id": str(clip.uuid),
+                    "embedding": embedding_to_write.reshape(-1).tolist(),
+                },
+            )
+        elif self._generate_embeddings:
+            logger.error(
+                f"Clip {clip.uuid} from {clip.source_video} has no {self._embedding_algorithm} embedding, "
+                "skip adding to buffer"
+            )
 
     def _write_clip_embedding(self, clip: Clip) -> ClipStats:
         clip_stats = ClipStats()
-        if clip.intern_video_2_embedding is not None:
-            buffer = io.BytesIO()
-            pickle.dump(clip.intern_video_2_embedding, buffer)
-            dest = self._get_clip_uri(
-                clip.uuid,
-                self.get_output_path_iv2_embd(self._output_path),
-                "pickle",
-            )
-            if not self._dry_run:
-                self._write_data(buffer.getvalue(), dest, f"embedding {clip.uuid}", clip.source_video)
-            clip_stats.num_with_embeddings += 1
-        elif self._generate_embeddings and self._embedding_algorithm == "internvideo2":
-            logger.error(
-                f"Clip {clip.uuid} from {clip.source_video} has no InternVideo2 embedding, skip uploading to s3"
-            )
+        if self._embedding_algorithm == "internvideo2":
+            embedding = clip.intern_video_2_embedding
+        elif self._embedding_algorithm == "cosmos-embed1":
+            embedding = clip.cosmos_embed1_embedding
+        else:
+            embedding = None
 
-        if clip.cosmos_embed1_embedding is not None:
+        if embedding is not None:
             buffer = io.BytesIO()
-            pickle.dump(clip.cosmos_embed1_embedding, buffer)
+            pickle.dump(embedding, buffer)
             dest = self._get_clip_uri(
                 clip.uuid,
-                self.get_output_path_ce1_embd(self._output_path),
+                self.get_output_path_embds(self._output_path, self._embedding_algorithm),
                 "pickle",
             )
-            if not self._dry_run:
+            if not self._dry_run and not self._upload_clip_info_in_chunks:
                 self._write_data(buffer.getvalue(), dest, f"embedding {clip.uuid}", clip.source_video)
             clip_stats.num_with_embeddings += 1
-        elif self._generate_embeddings and self._embedding_algorithm == "cosmos-embed1":
+        elif self._generate_embeddings:
             logger.error(
-                f"Clip {clip.uuid} from {clip.source_video} has no Cosmos-Embed1 embedding, skip uploading to s3"
+                f"Clip {clip.uuid} from {clip.source_video} has no {self._embedding_algorithm} embedding, "
+                "skip uploading"
             )
 
         return clip_stats
 
-    def _write_clip_metadata(self, clip: Clip, video_metadata: VideoMetadata, *, filtered: bool = False) -> ClipStats:  # noqa: C901
-        clip_stats = ClipStats()
+    def _make_clip_metadata(  # noqa: C901
+        self, clip: Clip, video_metadata: VideoMetadata, *, filtered: bool = False
+    ) -> dict[str, Any]:
         data: dict[str, Any] = {
             "span_uuid": str(clip.uuid),
             "source_video": str(clip.source_video),
@@ -478,10 +489,25 @@ class ClipWriterStage(CuratorStage):
                     curr_window[f"{model}_enhanced_caption"] = window.enhanced_caption[model]
             data["windows"].append(curr_window)
         data["valid"] = bool(clip.buffer and len(clip.windows) > 0)
+        data["has_caption"] = has_caption
+
+        return data
+
+    def _add_clip_metadata_to_buffer(
+        self, clip: Clip, video_metadata: VideoMetadata, *, filtered: bool = False
+    ) -> None:
+        if self._upload_clip_info_in_chunks:
+            data = self._make_clip_metadata(clip, video_metadata, filtered=filtered)
+            if data:
+                self._metadata_buffer.append(data)
+
+    def _write_clip_metadata(self, clip: Clip, video_metadata: VideoMetadata, *, filtered: bool = False) -> ClipStats:
+        clip_stats = ClipStats()
+        data = self._make_clip_metadata(clip, video_metadata, filtered=filtered)
         dest = self._get_clip_uri(clip.uuid, self.get_output_path_metas(self._output_path, "v0"), "json")
-        if not self._dry_run:
+        if not self._dry_run and not self._upload_clip_info_in_chunks:
             self._write_json_data(data, dest, f"metadata {clip.uuid}", clip.source_video)
-        clip_stats.num_with_caption += 1 if has_caption else 0
+        clip_stats.num_with_caption += 1 if data.get("has_caption", False) else 0
         clip_duration = clip.span[1] - clip.span[0]
         clip_stats.total_clip_duration += clip_duration
         clip_stats.max_clip_duration = max(clip_stats.max_clip_duration, clip_duration)
@@ -507,6 +533,7 @@ class ClipWriterStage(CuratorStage):
                 "audio_format": video.metadata.audio_codec,
                 "num_total_clips": video.num_total_clips,
                 "num_clip_chunks": video.num_clip_chunks,
+                "video_uuid": self.get_video_uuid(input_video_path),
             }
             dest = self._get_video_uri(input_video_path)
             self._write_json_data(data, dest, "video metadata", input_video_path)

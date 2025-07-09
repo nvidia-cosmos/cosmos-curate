@@ -479,10 +479,12 @@ def split(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912
                 input_path=args.input_video_path,
                 output_s3_profile_name=args.output_s3_profile_name,
                 upload_clips=args.upload_clips,
+                upload_clip_info_in_chunks=args.upload_clip_info_in_chunks,
                 dry_run=args.dry_run,
                 generate_embeddings=args.generate_embeddings,
                 embedding_algorithm=args.embedding_algorithm,
                 generate_previews=args.generate_previews,
+                caption_models=[args.captioning_algorithm],
                 enhanced_caption_models=["qwen_lm"],
                 verbose=args.verbose,
                 log_stats=args.perf_profile,
@@ -593,6 +595,16 @@ def _setup_parser(parser: argparse.ArgumentParser) -> None:  # noqa: PLR0915
         action="store_false",
         default=True,
         help="Whether to upload clips to output path.",
+    )
+    parser.add_argument(
+        "--upload-clip-info-in-chunks",
+        dest="upload_clip_info_in_chunks",
+        action="store_true",
+        default=False,
+        help=(
+            "Whether to group clip metadata in chunks as jsonl and "
+            "skip writing per-clip embedding pickles, i.e. grouped clip embeddings as parquet only."
+        ),
     )
     parser.add_argument(
         "--splitting-algorithm",

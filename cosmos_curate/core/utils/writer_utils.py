@@ -118,7 +118,7 @@ def write_bytes(  # noqa: C901, PLR0912, PLR0913
 
 
 def write_parquet(  # noqa: PLR0913
-    data: list[dict[str, str]],
+    pdf: pd.DataFrame,
     dest: storage_client.StoragePrefix | pathlib.Path,
     desc: str,
     source_video: str,
@@ -131,7 +131,7 @@ def write_parquet(  # noqa: PLR0913
     """Write parquet to S3 or local path.
 
     Args:
-        data: Data to write.
+        pdf: Data to write.
         dest: Destination to write.
         desc: Description of the write.
         source_video: Source video.
@@ -141,9 +141,6 @@ def write_parquet(  # noqa: PLR0913
         overwrite: Whether to overwrite existing file.
 
     """
-    # Convert list of dicts to DataFrame
-    pdf = pd.DataFrame(data)
-
     # Write DataFrame to a Parquet file in memory
     parquet_buffer = io.BytesIO()
     pdf.to_parquet(parquet_buffer, index=False)
@@ -188,6 +185,44 @@ def write_json(  # noqa: PLR0913
     json_bytes = io.BytesIO(updated_json.encode("utf-8"))
     write_bytes(
         json_bytes.getvalue(),
+        dest,
+        desc,
+        source_video,
+        verbose=verbose,
+        client=client,
+        backup_and_overwrite=backup_and_overwrite,
+        overwrite=overwrite,
+    )
+
+
+def write_jsonl(  # noqa: PLR0913
+    data: list[dict[str, Any]],
+    dest: storage_client.StoragePrefix | pathlib.Path,
+    desc: str,
+    source_video: str,
+    *,
+    verbose: bool,
+    client: storage_client.StorageClient | None,
+    backup_and_overwrite: bool = False,
+    overwrite: bool = False,
+) -> None:
+    """Write jsonl to S3 or local path.
+
+    Args:
+        data: Data to write.
+        dest: Destination to write.
+        desc: Description of the write.
+        source_video: Source video.
+        verbose: Verbosity.
+        client: Storage client.
+        backup_and_overwrite: Backup and overwrite.
+        overwrite: Overwrite.
+
+    """
+    updated_jsonl = "\n".join(json.dumps(item, cls=JsonEncoderCustom) for item in data)
+    jsonl_bytes = io.BytesIO(updated_jsonl.encode("utf-8"))
+    write_bytes(
+        jsonl_bytes.getvalue(),
         dest,
         desc,
         source_video,

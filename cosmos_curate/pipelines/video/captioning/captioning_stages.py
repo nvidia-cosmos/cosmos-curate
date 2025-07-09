@@ -509,14 +509,15 @@ class QwenCaptionStage(CuratorStage):
         mapping: dict[int, tuple[int, int]],
         captions: Iterable[tuple[int, str]],
     ) -> None:
-        for req_id, caption in captions:
+        _captions = list(captions)
+        for req_id, caption in _captions:
             clip_idx, window_idx = mapping[req_id]
             video.clips[clip_idx].windows[window_idx].caption["qwen"] = caption
             if self._verbose:
                 logger.info(f"Caption for clip {video.clips[clip_idx].uuid} window {window_idx}: {caption}")
 
         logger.info(
-            f"Generated {len(list(captions))} captions for video {video.input_path} "
+            f"Generated {len(_captions)} captions for video {video.input_path} "
             f"chunk-{video.clip_chunk_index} with {len(video.clips)} clips",
         )
 
