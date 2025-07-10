@@ -168,16 +168,17 @@ class _NvcfMiscRunner:
 
     def create_s3_profile(self, contents: str) -> bool:
         try:
-            boto3_path = pathlib.Path(environment.S3_PROFILE_PATH).expanduser()
-            # Create the directory if it does not exist. Lock it down if we're making it.
-            if not boto3_path.exists():
-                pathlib.Path(boto3_path.parent).mkdir(
-                    parents=True,
-                    exist_ok=True,
-                )
-            with boto3_path.open("wb") as boto_config_file:
-                boto_config_file.write(base64.b64decode(contents))
-            boto3_path.chmod(0o600)
+            for profile_path in [environment.S3_PROFILE_PATH, environment.AZURE_PROFILE_PATH]:
+                _profile_path = pathlib.Path(profile_path).expanduser()
+                # Create the directory if it does not exist. Lock it down if we're making it.
+                if not _profile_path.exists():
+                    pathlib.Path(_profile_path.parent).mkdir(
+                        parents=True,
+                        exist_ok=True,
+                    )
+                with _profile_path.open("wb") as config_file:
+                    config_file.write(base64.b64decode(contents))
+                _profile_path.chmod(0o600)
         except Exception as e:  # noqa: BLE001
             logger.error(f"{self._node_name} failed to create s3 profile: {e}")
             return False
@@ -187,6 +188,7 @@ class _NvcfMiscRunner:
     def remove_s3_profile(self) -> bool:
         try:
             pathlib.Path(environment.S3_PROFILE_PATH).expanduser().unlink()
+            pathlib.Path(environment.AZURE_PROFILE_PATH).expanduser().unlink()
         except Exception as e:  # noqa: BLE001
             logger.error(f"{self._node_name} failed to remove s3 profile: {e}")
             return False
