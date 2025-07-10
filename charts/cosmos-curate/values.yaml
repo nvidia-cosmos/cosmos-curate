@@ -1,0 +1,193 @@
+# Default values for multi-node-test.
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+
+# Override the chart name used in pod/service names without affecting the release name
+nameOverride: "cosmos-curate"
+
+service:
+  type: ClusterIP
+
+# To be injected by NVCF
+helmChartServiceName: "cosmos-curate"
+ngcImagePullSecretName: "inference-container-pull-secret"
+
+# Maps to NODES_PER_INSTANCE environment variable in the container
+replicas: 1
+
+image:
+  repository: nvcr.io/FILL_IN/cosmos-curate
+  pullPolicy: Always
+  # Overrides the image tag whose default is the chart appVersion.
+  tag: ""
+
+podAnnotations: {}
+
+podSecurityContext: {}
+
+securityContext: {}
+
+# Optional scratch directory for temporary files
+scratchDir: ""
+
+# Optional custom environment variables
+customEnvVars: {}
+
+# Default resource requirements
+resources:
+#  limits:
+#    cpu: "4"
+#    memory: "8Gi"
+#    nvidia.com/gpu: 1
+  requests:
+    cpu: "8"
+    memory: "10Gi"
+    nvidia.com/gpu: 1
+
+# Overly broad - but too much variation in the various GPU node taints
+tolerations:
+  - operator: Exists
+
+affinity: {}
+
+rayPorts:
+  gcsServerPort: 6379
+  dashboardPort: 8265
+  objectManagerPort: 8076
+  nodeManagerPort: 8077
+
+readiness:
+  initialDelaySeconds: 5  # With the startup probe, no need to delay significantly
+
+huggingFaceHubToken: ""
+curate:
+  port: 8000
+health:
+  endpoint: /api/local_raylet_healthz
+  port: 52365
+shmem:
+  limit: 55Gi
+command:
+  - "python"
+args:
+  - "/opt/cosmos-curate/cosmos_curate/scripts/onto_nvcf.py"
+  - "--helm"
+  - "True"
+s3:
+  credsPath: "/dev/shm/aws.config"
+  secret:
+    enabled: false
+    name: "s3-config"
+    data: ""
+metrics:
+  enabled: true
+  # Whether to use the init container to extract NVCF secrets
+  extractNVCFSecrets: true
+  # Static external labels that will be added to all metrics
+  externalLabels:
+    service: "cosmos-curate"
+  # Additional external labels that can be added without overriding the static ones
+  extraExternalLabels: {}
+  prometheus:
+    scrapeConfigs:
+      - job_name: "ray-service-metrics"
+        scrape_interval: 30s
+        sample_limit: 10000
+        label_limit: 30
+        metric_relabel_configs:
+          - source_labels:
+              - __name__
+            regex: ray_tasks
+            action: drop
+          - source_labels:
+              - __name__
+            regex: ray_actors
+            action: drop
+          - source_labels:
+              - __name__
+            regex: ray_grpc_server_.*
+            action: drop
+          - source_labels:
+              - __name__
+            regex: ray_object_store_memory|ray_object_store_dist_bucket
+            action: drop
+          - source_labels:
+              - __name__
+            regex: ray_total_lineage_bytes
+            action: drop
+          - source_labels:
+              - __name__
+            regex: ray_gcs_.*
+            action: drop
+          - source_labels:
+              - __name__
+            regex: ray_scheduler_.*
+            action: drop
+          - source_labels:
+              - __name__
+            regex: ray_pull_manager_.*
+            action: drop
+        # static-config.targets will be generated in the config map template based on service name and replica count
+  remoteWrite:
+    endpoint: "https://FILL_IN/api/v1/receive"
+    certPath: "/etc/curate-remote-write/certs/tls.crt"
+    keyPath: "/etc/curate-remote-write/certs/tls.key"
+
+opentelemetry-collector:
+  mode: deployment
+  image:
+    tag: "0.127.0"
+    repository: ghcr.io/open-telemetry/opentelemetry-collector-releases/opentelemetry-collector-contrib
+    #nvcr.io/FILL_IN
+  extraEnvs:
+    - name: POD_NS
+      valueFrom:
+        fieldRef:
+          fieldPath: metadata.namespace
+  initContainers:
+    - name: secret-extractor
+      image: nvcr.io/nvidia/distroless/python:3.13-v3.0.10
+      command: ["python"]
+      args: ["/scripts/extractor.py"]
+      volumeMounts:
+        - name: secret-extractor-script
+          mountPath: /scripts
+        - name: cert-store
+          mountPath: /etc/curate-remote-write/certs
+        - name: input-secrets
+          mountPath: /var/secrets
+  extraVolumes:
+    - name: secret-extractor-script
+      configMap:
+        name: secret-extractor
+        defaultMode: 0755
+    - name: cert-store
+      emptyDir:
+        medium: Memory
+        sizeLimit: 5Mi
+    - name: input-secrets
+      secret:
+        secretName: nvcf-secrets
+  extraVolumeMounts:
+    - name: cert-store
+      mountPath: /etc/curate-remote-write/certs
+  service:
+    enabled: false
+  ports:
+    otlp:
+      enabled: false
+    otlp-http:
+      enabled: false
+    jaeger-compact:
+      enabled: false
+    jaeger-thrift:
+      enabled: false
+    jaeger-grpc:
+      enabled: false
+    zipkin:
+      enabled: false
+  configMap:
+    existingName: otel-collector-config
+    create: false
+  serviceAccount:
+    create: false

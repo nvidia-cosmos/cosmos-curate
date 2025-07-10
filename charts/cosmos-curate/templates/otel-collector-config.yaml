@@ -1,0 +1,67 @@
+{{- if .Values.metrics.enabled }}
+{{- $replicas := .Values.replicas | int }}
+{{- $svc := .Values.helmChartServiceName }}
+{{- $targets := list }}
+{{- range $i, $e := until $replicas }}
+  {{- $targets = append $targets (printf "%s-%d.%s-headless:9002" $svc $i $svc) }}
+{{- end }} 
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: otel-collector-config
+data:
+  relay: |
+    receivers:
+      prometheus:
+        config:
+          scrape_configs:
+            {{- toYaml .Values.metrics.prometheus.scrapeConfigs | nindent 12 }}
+              static_configs:
+              - targets: 
+{{- range $t := $targets }}
+                - {{ $t | quote }}
+{{- end }}
+
+    exporters:
+      prometheusremotewrite:
+        endpoint: {{ .Values.metrics.remoteWrite.endpoint | quote }}
+        tls:
+          cert_file: {{ .Values.metrics.remoteWrite.certPath | quote }}
+          key_file: {{ .Values.metrics.remoteWrite.keyPath | quote }}
+        external_labels:
+          {{- $labels := deepCopy .Values.metrics.extraExternalLabels }}
+          {{- $labels := merge $labels .Values.metrics.externalLabels }}
+          {{- $labels := set $labels "namespace" "${POD_NS}" }}
+          {{- toYaml $labels | nindent 10 }}
+        write_buffer_size: 524288
+        timeout: 30s
+        max_batch_request_parallelism: 4 
+        remote_write_queue:
+          queue_size: 10000
+        retry_on_failure:
+          enabled: true
+          initial_interval: 5s
+          max_interval: 30s
+          max_elapsed_time: 300s
+    extensions:
+      health_check:
+        endpoint: ${env:MY_POD_IP}:13133          
+    processors:
+      batch: {}
+      memory_limiter:
+        check_interval: 5s
+        limit_percentage: 80
+        spike_limit_percentage: 25
+    service:
+      extensions:
+      - health_check
+      pipelines:
+        metrics:
+          receivers: [prometheus]
+          processors: [batch]
+          exporters: [prometheusremotewrite]
+      telemetry:
+        logs:
+          level: "info"
+{{- end }}
+

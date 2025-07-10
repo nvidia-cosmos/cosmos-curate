@@ -1,0 +1,164 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "curate-ray.name" . }}
+  labels:
+    {{- include "curate-ray.labels" . | nindent 4 }}
+spec:
+  serviceName: {{ include "curate-ray.name" . }}-headless
+  podManagementPolicy: Parallel
+  replicas: {{ .Values.replicas }}
+  selector:
+    matchLabels:
+      {{- include "curate-ray.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+      {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "curate-ray.selectorLabels" . | nindent 8 }}
+    spec:
+      volumes:
+        - name: dshm
+          emptyDir:
+            medium: Memory
+            sizeLimit: {{ .Values.shmem.limit }}
+        - name: temp
+          emptyDir: {}
+      {{- if .Values.scratchDir }}
+        - name: scratch
+          hostPath:
+            path: {{ .Values.scratchDir }}
+            type: Directory
+      {{- end }}
+      {{- if .Values.s3.secret.enabled }}
+        - name: s3config
+          projected:
+            defaultMode: 420
+            sources:
+            - secret:
+                name: {{ .Values.s3.secret.name }}
+      {{- end }}
+        - name: curate-config
+          configMap:
+            name: curate-config
+      {{- if .Values.ngcImagePullSecretName }}
+      imagePullSecrets:
+      - name: {{ .Values.ngcImagePullSecretName }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      subdomain: {{ include "curate-ray.name" . }}-headless
+      containers:
+        - name: {{ include "curate-ray.name" . }}
+          volumeMounts:
+            - mountPath: /dev/shm
+              name: dshm
+            - mountPath: /tmp
+              name: temp
+           {{- if .Values.scratchDir }}
+            - mountPath: /config
+              name: scratch
+           {{- end }}
+           {{- if .Values.s3.secret.enabled }}
+            - mountPath: /s3config
+              name: s3config
+           {{- end }}
+          command:
+{{/* Allow for newline and proper indent */}}
+          {{- toYaml .Values.command | indent 10 }}
+          {{- if .Values.args }}
+          args:
+          {{- toYaml .Values.args | nindent 10 }}
+          {{- end }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            - name: NODES_PER_INSTANCE
+              value: {{ .Values.replicas | quote }}
+            - name: HEADLESS_SERVICE_NAME
+              value: {{ include "curate-ray.name" . }}-headless
+            - name: RAY_GCS_SERVER_PORT
+              value: {{ .Values.rayPorts.gcsServerPort | quote }}
+            - name: RAY_DASHBOARD_PORT
+              value: {{ .Values.rayPorts.dashboardPort | quote }}
+            - name: RAY_OBJECT_MANAGER_PORT
+              value: {{ .Values.rayPorts.objectManagerPort | quote }}
+            - name: RAY_NODE_MANAGER_PORT
+              value: {{ .Values.rayPorts.nodeManagerPort | quote }}
+            {{- if .Values.huggingFaceHubToken }}
+            - name: HUGGING_FACE_HUB_TOKEN
+              value: {{ .Values.huggingFaceHubToken | quote }}
+            {{- end }}
+          envFrom:
+          - configMapRef:
+              name: curate-config
+          ports:
+            - name: health
+              containerPort: {{ .Values.health.port }}
+              protocol: TCP
+            - name: vllm
+              containerPort: {{ .Values.curate.port }}
+              protocol: TCP
+            - name: ray-gcs
+              containerPort: {{ .Values.rayPorts.gcsServerPort }}
+            - name: ray-dashboard
+              containerPort: {{ .Values.rayPorts.dashboardPort }}
+            - name: ray-obj-mgr
+              containerPort: {{ .Values.rayPorts.objectManagerPort }}
+            - name: ray-node-mgr
+              containerPort: {{ .Values.rayPorts.nodeManagerPort }}
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.health.endpoint }}
+              port: {{ .Values.health.port }} 
+            initialDelaySeconds: 5
+            periodSeconds: 60
+            timeoutSeconds: 15 
+            failureThreshold: 5
+            successThreshold: 1
+
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.health.endpoint }}
+              port: {{ .Values.health.port }}
+            initialDelaySeconds: {{ .Values.readiness.initialDelaySeconds }}
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+            successThreshold: 1
+          startupProbe:
+            httpGet:
+              path: {{ .Values.health.endpoint }}
+              port: {{ .Values.health.port }}
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 120
+            successThreshold: 1
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
