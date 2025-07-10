@@ -207,11 +207,18 @@ def get_embedding_stages(args: argparse.Namespace) -> list[CuratorStage | Curato
                 ),
             ]
         )
-    elif args.embedding_algorithm == "cosmos-embed1":
+    elif args.embedding_algorithm.startswith("cosmos-embed1-"):
+        variant = args.embedding_algorithm.split("-")[-1]
         stages.extend(
             [
-                CosmosEmbed1FrameCreationStage(target_fps=2.0, verbose=args.verbose, log_stats=args.perf_profile),
+                CosmosEmbed1FrameCreationStage(
+                    variant,
+                    target_fps=2.0,
+                    verbose=args.verbose,
+                    log_stats=args.perf_profile,
+                ),
                 CosmosEmbed1EmbeddingStage(
+                    variant,
                     num_gpus_per_worker=args.embedding_gpus_per_worker,
                     verbose=args.verbose,
                     log_stats=args.perf_profile,
@@ -572,7 +579,7 @@ def _setup_parser(parser: argparse.ArgumentParser) -> None:  # noqa: PLR0915
         "--embedding-algorithm",
         type=str,
         default="internvideo2",
-        choices=["cosmos-embed1", "internvideo2"],
+        choices=["cosmos-embed1-224p", "cosmos-embed1-336p", "cosmos-embed1-448p", "internvideo2"],
         help="Embedding algorithm to use.",
     )
     parser.add_argument(

@@ -21,6 +21,8 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
+import numpy as np
+import numpy.typing as npt
 import pandas as pd
 from loguru import logger
 
@@ -163,7 +165,7 @@ class ClipWriterStage(CuratorStage):
         """Get path to store generated clips."""
         if embedding_algorithm == "internvideo2":
             return ClipWriterStage._get_output_path(output_path, "iv2_embd")
-        if embedding_algorithm == "cosmos-embed1":
+        if embedding_algorithm.startswith("cosmos-embed1"):
             return ClipWriterStage._get_output_path(output_path, "ce1_embd")
         # should not happen
         logger.error(f"Unknown embedding algorithm: {embedding_algorithm}")
@@ -174,7 +176,7 @@ class ClipWriterStage(CuratorStage):
         """Get path to store generated clip embeddings in a parquet file."""
         if embedding_algorithm == "internvideo2":
             return ClipWriterStage._get_output_path(output_path, "iv2_embd_parquet")
-        if embedding_algorithm == "cosmos-embed1":
+        if embedding_algorithm.startswith("cosmos-embed1"):
             return ClipWriterStage._get_output_path(output_path, "ce1_embd_parquet")
         return ClipWriterStage._get_output_path(output_path, f"{embedding_algorithm}_embd_parquet")
 
@@ -386,14 +388,15 @@ class ClipWriterStage(CuratorStage):
             clip_stats.num_passed += 1
         return clip_stats
 
-    def _add_clip_embedding_to_buffer(self, clip: Clip) -> None:
+    def _get_clip_embedding(self, clip: Clip) -> npt.NDArray[np.float32] | None:
         if self._embedding_algorithm == "internvideo2":
-            embedding_to_write = clip.intern_video_2_embedding
-        elif self._embedding_algorithm == "cosmos-embed1":
-            embedding_to_write = clip.cosmos_embed1_embedding
-        else:
-            embedding_to_write = None
+            return clip.intern_video_2_embedding
+        if self._embedding_algorithm.startswith("cosmos-embed1"):
+            return clip.cosmos_embed1_embedding
+        return None
 
+    def _add_clip_embedding_to_buffer(self, clip: Clip) -> None:
+        embedding_to_write = self._get_clip_embedding(clip)
         if embedding_to_write is not None:
             self._embedding_buffer.append(
                 {
@@ -409,13 +412,7 @@ class ClipWriterStage(CuratorStage):
 
     def _write_clip_embedding(self, clip: Clip) -> ClipStats:
         clip_stats = ClipStats()
-        if self._embedding_algorithm == "internvideo2":
-            embedding = clip.intern_video_2_embedding
-        elif self._embedding_algorithm == "cosmos-embed1":
-            embedding = clip.cosmos_embed1_embedding
-        else:
-            embedding = None
-
+        embedding = self._get_clip_embedding(clip)
         if embedding is not None:
             buffer = io.BytesIO()
             pickle.dump(embedding, buffer)
