@@ -425,6 +425,8 @@ nvcf-helm:
         echo "*************************************"
       # Create NVCF function
       - cosmos-curate nvcf function create-function --name "${HELM_FUNCTION_NAME}" --health-ep /api/local_raylet_healthz --health-port 52365 --helm-chart https://helm.ngc.nvidia.com/${NVCF_ORG_ID}/charts/${CICD_HELM_CHART_NAME}-${CICD_HELM_CHART_VERSION}.tgz --data-file create_helm_file.json
+      # Copy funcid.json from ~/.config to working directory
+      - cp ~/.config/cosmos_curate/funcid.json funcid_working.json
       # Deploy NVCF function
       - cosmos-curate nvcf function deploy-function --data-file deploy_helm_file.json --max-concurrency $NVCF_MAX_CONCURRENCY --instance-count $NVCF_INSTANCE_COUNT
       - |
@@ -456,8 +458,14 @@ nvcf-helm:
       - cosmos-curate nvcf function invoke-function --data-file invoke_shard.json --s3-config-file aws_credentials
   after_script:
     - *activate_micromamba
+    - cosmos-curate nvcf config set --org $NVCF_ORG_ID --key $NVCF_KEY
     - |
       if [[ "$HELM_DEBUG_KEEP_FAILED_DEPLOYMENTS" =~ "False" ]]; then
+        if [ ! -f ~/.config/cosmos_curate/funcid.json ]; then
+          echo "~/.config/cosmos_curate/funcid.json not found, using working directory copy"
+          mkdir -p ~/.config/cosmos_curate/
+          cp funcid_working.json ~/.config/cosmos_curate/funcid.json
+        fi
         cosmos-curate nvcf function delete-function
       else
         echo "Intentionally leaving deployment behind for debugging. This must be manually cleaned up later."
