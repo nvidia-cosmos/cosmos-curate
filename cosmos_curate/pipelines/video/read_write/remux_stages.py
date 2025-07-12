@@ -106,7 +106,11 @@ def remux_if_needed(video: Video, threads: int) -> None:
         msg = "Video source bytes are not set"
         raise ValueError(msg)
 
-    if video.metadata is None or video.metadata.format_name is None or "mp4" not in video.metadata.format_name.lower():
+    if not video.metadata:
+        logger.warning(f"Video {video.input_video} has no metadata, skipping remux")
+        return
+
+    if video.metadata.format_name is None or "mp4" not in video.metadata.format_name.lower():
         format_name = video.metadata.format_name if video.metadata else "unknown"
         logger.info(f"Video {video.input_video} is in {format_name} format, remuxing to mp4")
         video.source_bytes = remux_to_mp4(video.source_bytes, threads=threads)
