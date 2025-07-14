@@ -8,4 +8,4 @@ dependencies:
 description: A Helm chart for Kubernetes to deploy cosmos-curate
 name: cosmos-curate
 type: application
-version: 2.0.3
+version: 2.0.4

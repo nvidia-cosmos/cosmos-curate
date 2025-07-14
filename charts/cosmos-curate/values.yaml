@@ -144,9 +144,11 @@ opentelemetry-collector:
       valueFrom:
         fieldRef:
           fieldPath: metadata.namespace
+  imagePullSecrets:
+  - name: inference-container-pull-secret
   initContainers:
     - name: secret-extractor
-      image: nvcr.io/nvidia/distroless/python:3.13-v3.0.10
+      image: nvcr.io/nvidia/distroless/python:3.13-v3.0.11
       command: ["python"]
       args: ["/scripts/extractor.py"]
       volumeMounts:
