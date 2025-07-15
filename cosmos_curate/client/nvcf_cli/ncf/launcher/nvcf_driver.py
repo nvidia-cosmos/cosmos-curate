@@ -1201,7 +1201,7 @@ def nvcf_import_function(
     """
     nvcf_hdl = ctx.obj["nvcfHdl"]
     try:
-        resp = nvcf_hdl.ncgApiHdl.post(
+        resp = nvcf_hdl.ncg_api_hdl.post(
             "/v2/nvcf/functions/import",
             {
                 "id": funcid,

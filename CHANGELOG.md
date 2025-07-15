@@ -1,5 +1,11 @@
 # Changelog
 
+
+## [1.0.2]
+
+### Fixed
+- Fix import-function in cosmos-curate CLI
+
 ## [1.0.1]
 
 ### Released
