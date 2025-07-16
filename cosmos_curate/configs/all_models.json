@@ -82,21 +82,21 @@
         "precision": "FP32",
         "nvcf_model_id": "sn4kehead_transnetv2"
     },
-    "_cosmos_embed1_224p": {
+    "cosmos_embed1_224p": {
         "model_id": "nvidia/Cosmos-Embed1-224p",
         "version": "85f56274be7ce439175b4587fa6e3525556d4832",
         "filelist": null,
         "precision": "BF16",
         "nvcf_model_id": "cosmos_embed1_224p"
     },
-    "_cosmos_embed1_336p": {
+    "cosmos_embed1_336p": {
         "model_id": "nvidia/Cosmos-Embed1-336p",
         "version": "5d8309dd5c9ec8f856b16d589693004c907c9a57",
         "filelist": null,
         "precision": "BF16",
         "nvcf_model_id": "cosmos_embed1_336p"
     },
-    "_cosmos_embed3_448p": {
+    "cosmos_embed1_448p": {
         "model_id": "nvidia/Cosmos-Embed1-448p",
         "version": "9f4ff4d8d3df0968276b2191806344000d6752a9",
         "filelist": null,
