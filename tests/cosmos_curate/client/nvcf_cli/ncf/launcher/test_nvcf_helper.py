@@ -1039,51 +1039,39 @@ def test_nvcf_helper_invoke_function_success(monkeypatch: MonkeyPatch, tmp_path:
     mock_nvcf_client.download.assert_called_once()
 
 
-def test_nvcf_helper_get_request_status_failures(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("response", "exception"),
+    [
+        (None, RuntimeError),
+        (NVCFResponse({"status": 500}), RuntimeError),
+        (NVCFResponse({"status": 400, "timeout": True}), TimeoutError),
+        (NVCFResponse({"status": 400, "detail": "test-detail"}), RuntimeError),
+    ],
+)
+def test_nvcf_helper_get_request_status_failures(
+    monkeypatch: MonkeyPatch, tmp_path: Path, response: NVCFResponse | None, exception: type[Exception]
+) -> None:
     """Test that nvcf_helper_get_request_status fails in the correct places.
 
     Args:
         monkeypatch: The monkeypatch object.
         tmp_path: The temporary path object.
+        response: The response object.
+        exception: The exception to expect.
 
     Returns:
         None
 
     """
     mock_nvcf_client = MagicMock()
-    mock_nvcf_client.get.return_value = None
+    mock_nvcf_client.get.return_value = response
 
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
     nvcf_helper = NvcfHelper(url="", nvcf_url="", key="", org="", timeout=15)
     nvcf_helper.nvcf_api_hdl = mock_nvcf_client
 
-    # Fail with None
-    with pytest.raises(RuntimeError):
+    with pytest.raises(exception):
         nvcf_helper.nvcf_helper_get_request_status(reqid="test-reqid", ddir=None)
-
-    # Timeout error
-    mock_nvcf_client.get.return_value = NVCFResponse({"status": 500, "timeout": True})
-    with pytest.raises(TimeoutError):
-        nvcf_helper.nvcf_helper_get_request_status(reqid="test-reqid", ddir=None)
-
-    # Fail with detail (Response error)
-    mock_nvcf_client.get.return_value = NVCFResponse({"status": 500, "detail": "test-detail"})
-    with pytest.raises(RuntimeError):
-        nvcf_helper.nvcf_helper_get_request_status(reqid="test-reqid", ddir=None)
-
-    mock_nvcf_client.get.return_value = NVCFResponse(
-        {
-            "status": 200,
-            "detail": "test-detail",
-            "issue": {"requestStatus": {"statusCode": 500, "statusDescription": "test-status-description"}},
-        }
-    )
-    result = nvcf_helper.nvcf_helper_get_request_status(reqid="test-reqid", ddir=None)
-    assert result is None
-
-    mock_nvcf_client.get.return_value = NVCFResponse({"status": 200, "detail": "test-detail", "issue": {}})
-    result = nvcf_helper.nvcf_helper_get_request_status(reqid="test-reqid", ddir=None)
-    assert result is None
 
 
 def test_nvcf_helper_get_request_status_success(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
@@ -1188,3 +1176,354 @@ def test_nvcf_helper_invoke_batch_success(monkeypatch: MonkeyPatch, tmp_path: Pa
         job_variant_file=str(tmp_job_variant_file),
         ddir=str(tmp_dir),
     )
+
+
+@pytest.mark.parametrize(
+    ("response", "exception"),
+    [
+        (NVCFResponse({"status": 500}), RuntimeError),
+        (NVCFResponse({"status": 400, "timeout": True}), TimeoutError),
+        (NVCFResponse({"status": 400, "detail": "test-detail"}), RuntimeError),
+    ],
+)
+def test_nvcf_helper_get_request_status_with_wait_get_failures(
+    monkeypatch: MonkeyPatch, tmp_path: Path, response: NVCFResponse | None, exception: type[Exception]
+) -> None:
+    """Test that nvcf_helper_get_request_status_with_wait fails in the correct places.
+
+    Args:
+        monkeypatch: The monkeypatch object.
+        tmp_path: The temporary path object.
+        response: The response object.
+        exception: The exception to expect.
+
+    Returns:
+        None
+
+    """
+    mock_nvcf_client = MagicMock()
+    mock_nvcf_client.get.return_value = response
+
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    nvcf_helper = NvcfHelper(url="", nvcf_url="", key="", org="", timeout=15)
+    nvcf_helper.nvcf_api_hdl = mock_nvcf_client
+
+    with pytest.raises(exception):
+        nvcf_helper.nvcf_helper_get_request_status_with_wait(reqid="test-reqid", ddir=None)
+
+
+def test_nvcf_helper_get_request_status_with_wait_success(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
+    """Test that nvcf_helper_get_request_status_with_wait functions on success.
+
+    Args:
+        monkeypatch: The monkeypatch object.
+        tmp_path: The temporary path object.
+
+    """
+    mock_nvcf_client = MagicMock()
+    mock_nvcf_client.get.return_value = NVCFResponse(
+        {
+            "status": 200,
+            "headers": {
+                "test-header": "test-value",
+                "reqid": "test-reqid",
+                "pct": "test-pct",
+                "status": "test-status",
+                "location": "test-location",
+                "zip": "test-zip",
+            },
+        }
+    )
+
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    nvcf_helper = NvcfHelper(url="", nvcf_url="", key="", org="", timeout=15)
+    nvcf_helper.nvcf_api_hdl = mock_nvcf_client
+
+    # Happy Path
+    nvcf_helper.nvcf_helper_get_request_status_with_wait(reqid="test-reqid", ddir=str(tmp_path), wait=False)
+    mock_nvcf_client.get.assert_called_once()
+
+
+@pytest.mark.parametrize(
+    ("response", "exception"),
+    [
+        (None, RuntimeError),
+        (NVCFResponse({"status": 500, "detail": "test-detail"}), RuntimeError),
+        (NVCFResponse({"status": 400, "timeout": True}), TimeoutError),
+    ],
+)
+def test_nvcf_helper_terminate_request_failures(
+    monkeypatch: MonkeyPatch, tmp_path: Path, response: NVCFResponse | None, exception: type[Exception]
+) -> None:
+    """Test that nvcf_helper_terminate_request fails in the correct places.
+
+    Args:
+        monkeypatch: The monkeypatch object.
+        tmp_path: The temporary path object.
+        response: The response object.
+        exception: The exception to expect.
+
+    """
+    mock_nvcf_client = MagicMock()
+    mock_nvcf_client.post.return_value = response
+
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    nvcf_helper = NvcfHelper(url="", nvcf_url="", key="", org="", timeout=15)
+    nvcf_helper.nvcf_api_hdl = mock_nvcf_client
+
+    with pytest.raises(exception):
+        nvcf_helper.nvcf_helper_terminate_request(reqid="test-reqid", funcid="test-funcid", version="test-version")
+
+
+def test_nvcf_helper_terminate_request_success(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
+    """Test that nvcf_helper_terminate_request functions on success.
+
+    Args:
+        monkeypatch: The monkeypatch object.
+        tmp_path: The temporary path object.
+
+    """
+    mock_nvcf_client = MagicMock()
+    mock_nvcf_client.post.return_value = NVCFResponse(
+        {
+            "status": 200,
+            "headers": {
+                "test-header": "test-value",
+                "reqid": "test-reqid",
+                "pct": "test-pct",
+                "status": "test-status",
+                "location": "test-location",
+            },
+        }
+    )
+
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    nvcf_helper = NvcfHelper(url="", nvcf_url="", key="", org="", timeout=15)
+    nvcf_helper.nvcf_api_hdl = mock_nvcf_client
+
+    result = nvcf_helper.nvcf_helper_terminate_request(reqid="test-reqid", funcid="test-funcid", version="test-version")
+    assert result == {"reqid": "test-reqid could not get termination status, please check logs"}
+
+
+@pytest.mark.parametrize(
+    ("response", "exception"),
+    [
+        (None, RuntimeError),
+        (NVCFResponse({"status": 500, "detail": "test-detail"}), RuntimeError),
+        (NVCFResponse({}), RuntimeError),
+    ],
+)
+def test_nvcf_helper_delete_function(
+    monkeypatch: MonkeyPatch, tmp_path: Path, response: NVCFResponse | None, exception: type[Exception]
+) -> None:
+    """Test that nvcf_helper_delete_function fails in the correct places.
+
+    Args:
+        monkeypatch: The monkeypatch object.
+        tmp_path: The temporary path object.
+        response: The response object.
+        exception: The exception to expect.
+
+    """
+    mock_ncg_client = MagicMock()
+    mock_ncg_client.delete.return_value = response
+
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    nvcf_helper = NvcfHelper(url="", nvcf_url="", key="", org="", timeout=15)
+    nvcf_helper.ncg_api_hdl = mock_ncg_client
+
+    with pytest.raises(exception):
+        nvcf_helper.nvcf_helper_delete_function(funcid="test-funcid", version="test-version")
+
+
+@pytest.mark.parametrize(
+    ("response", "exception"),
+    [
+        (None, RuntimeError),
+        (NVCFResponse({"status": 500, "detail": "test-detail"}), RuntimeError),
+        (NVCFResponse({}), RuntimeError),
+    ],
+)
+def test_nvcf_helper_get_deployment_detail_failures(
+    monkeypatch: MonkeyPatch, tmp_path: Path, response: NVCFResponse | None, exception: type[Exception]
+) -> None:
+    """Test that nvcf_helper_get_deployment_detail fails in the correct places.
+
+    Args:
+        monkeypatch: The monkeypatch object.
+        tmp_path: The temporary path object.
+        response: The response object.
+        exception: The exception to expect.
+
+
+    """
+    mock_ncg_client = MagicMock()
+    mock_ncg_client.get.return_value = response
+
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    nvcf_helper = NvcfHelper(url="", nvcf_url="", key="", org="", timeout=15)
+    nvcf_helper.ncg_api_hdl = mock_ncg_client
+
+    with pytest.raises(exception):
+        nvcf_helper.nvcf_helper_get_deployment_detail(funcid="test-funcid", version="test-version")
+
+
+def test_nvcf_helper_get_deployment_detail_success(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
+    """Test that nvcf_helper_get_deployment_detail functions on success.
+
+    Args:
+        monkeypatch: The monkeypatch object.
+        tmp_path: The temporary path object.
+
+    """
+    mock_ncg_client = MagicMock()
+    mock_ncg_client.get.return_value = NVCFResponse(
+        {
+            "status": 200,
+            "deployment": {
+                "functionName": "test-function-name",
+                "functionId": "test-function-id",
+                "functionVersionId": "test-version",
+                "functionStatus": "test-status",
+                "sisRequestId": "test-sis-request-status",
+                "error": "test-error",
+            },
+        }
+    )
+
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    nvcf_helper = NvcfHelper(url="", nvcf_url="", key="", org="", timeout=15)
+    nvcf_helper.ncg_api_hdl = mock_ncg_client
+
+    result = nvcf_helper.nvcf_helper_get_deployment_detail(funcid="test-funcid", version="test-version")
+    assert result == {
+        "Name": "test-function-name",
+        "Id": "test-function-id",
+        "Version": "test-version",
+        "Status": "test-status",
+        "Detail": [],
+    }
+
+
+@pytest.mark.parametrize(
+    ("response", "exception"),
+    [
+        (None, RuntimeError),
+        (NVCFResponse({"status": 500, "detail": "test-detail"}), RuntimeError),
+        (NVCFResponse({}), RuntimeError),
+    ],
+)
+def test_nvcf_helper_undeploy_function_failures(
+    monkeypatch: MonkeyPatch, tmp_path: Path, response: NVCFResponse | None, exception: type[Exception]
+) -> None:
+    """Test that nvcf_helper_undeploy_function fails in the correct places.
+
+    Args:
+        monkeypatch: The monkeypatch object.
+        tmp_path: The temporary path object.
+        response: The response object.
+        exception: The exception to expect.
+
+    """
+    mock_ncg_client = MagicMock()
+    mock_ncg_client.delete.return_value = response
+
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    nvcf_helper = NvcfHelper(url="", nvcf_url="", key="", org="", timeout=15)
+    nvcf_helper.ncg_api_hdl = mock_ncg_client
+
+    with pytest.raises(exception):
+        nvcf_helper.nvcf_helper_undeploy_function(funcid="test-funcid", version="test-version", graceful=False)
+
+
+def test_nvcf_helper_undeploy_function_success(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
+    """Test that nvcf_helper_undeploy_function functions on success.
+
+    Args:
+        monkeypatch: The monkeypatch object.
+        tmp_path: The temporary path object.
+
+    """
+    mock_ncg_client = MagicMock()
+    mock_ncg_client.delete.return_value = NVCFResponse(
+        {
+            "status": 200,
+            "function": {
+                "name": "test-function-name",
+                "status": "test-status",
+            },
+        }
+    )
+
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    nvcf_helper = NvcfHelper(url="", nvcf_url="", key="", org="", timeout=15)
+    nvcf_helper.ncg_api_hdl = mock_ncg_client
+
+    result = nvcf_helper.nvcf_helper_undeploy_function(funcid="test-funcid", version="test-version", graceful=False)
+    assert result == ("test-function-name", "test-status")
+
+
+@pytest.mark.parametrize(
+    ("response", "exception"),
+    [
+        (None, RuntimeError),
+        (NVCFResponse({"status": 500, "detail": "test-detail"}), RuntimeError),
+        (NVCFResponse({"status": 400, "timeout": True}), TimeoutError),
+    ],
+)
+def test_nvcf_helper_get_request_status_new_failures(
+    monkeypatch: MonkeyPatch, tmp_path: Path, response: NVCFResponse | None, exception: type[Exception]
+) -> None:
+    """Test that nvcf_helper_get_request_status_new fails in the correct places.
+
+    Args:
+        monkeypatch: The monkeypatch object.
+        tmp_path: The temporary path object.
+        response: The response object.
+        exception: The exception to expect.
+
+    """
+    mock_nvcf_client = MagicMock()
+    mock_nvcf_client.post.return_value = response
+
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    nvcf_helper = NvcfHelper(url="", nvcf_url="", key="", org="", timeout=15)
+    nvcf_helper.nvcf_api_hdl = mock_nvcf_client
+
+    with pytest.raises(exception):
+        nvcf_helper._nvcf_helper_get_request_status_new(  # noqa: SLF001
+            reqid="test-reqid", funcid="test-funcid", version="test-version"
+        )
+
+
+def test_nvcf_helper_get_request_status_new_success(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
+    """Test that _nvcf_helper_get_request_status_new functions on success.
+
+    Args:
+        monkeypatch: The monkeypatch object.
+        tmp_path: The temporary path object.
+
+    """
+    mock_nvcf_client = MagicMock()
+    mock_nvcf_client.post.return_value = NVCFResponse(
+        {
+            "status": 200,
+            "headers": {
+                "test-header": "test-value",
+                "reqid": "test-reqid",
+                "pct": 100,
+                "status": "test-status",
+            },
+        }
+    )
+
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    nvcf_helper = NvcfHelper(url="", nvcf_url="", key="", org="", timeout=15)
+    nvcf_helper.nvcf_api_hdl = mock_nvcf_client
+
+    result = nvcf_helper._nvcf_helper_get_request_status_new(  # noqa: SLF001
+        reqid="test-reqid", funcid="test-funcid", version="test-version"
+    )
+    assert result is not None
+    assert result["reqid"] == "test-reqid"
+    assert result["status"] == "test-status"
