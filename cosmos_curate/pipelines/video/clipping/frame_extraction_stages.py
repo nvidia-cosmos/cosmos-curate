@@ -104,6 +104,7 @@ class VideoFrameExtractionStage(CuratorStage):
         output_hw: tuple[int, int] = (27, 48),
         decoder_mode: str = "ffmpeg_cpu",
         *,
+        raise_on_pynvc_error_without_cpu_fallback: bool = False,
         verbose: bool = False,
         log_stats: bool = False,
     ) -> None:
@@ -112,8 +113,8 @@ class VideoFrameExtractionStage(CuratorStage):
         Args:
             output_hw: (tuple) output height and width of frame array.
                 Default is (27, 48), which is the default for TransNetV2 and AutoShot models.
-            use_gpu: (bool) whether to use GPU acceleration. Default False.
             decoder_mode: (str) decoder mode
+            raise_on_pynvc_error_without_cpu_fallback: (bool) raise an exception if PyNvCodec fails without CPU fallback
             log_stats: (bool) whether to log stats
             verbose: (bool) verbose
 
@@ -121,6 +122,7 @@ class VideoFrameExtractionStage(CuratorStage):
         super().__init__()
         self.output_hw = output_hw
         self.decoder_mode = decoder_mode
+        self._raise_on_pynvc_error_without_cpu_fallback = raise_on_pynvc_error_without_cpu_fallback
         self._verbose = verbose
         self._log_stats = log_stats
         self._timer = StageTimer(self)
@@ -171,14 +173,19 @@ class VideoFrameExtractionStage(CuratorStage):
                 if self.decoder_mode == "pynvc":
                     try:
                         video.frame_array = self.pynvc_frame_extractor(video_path).cpu().numpy().astype(np.uint8)
-                    except Exception as e:  # noqa: BLE001
-                        logger.warning(f"Got exception {e} with PyNvVideoCodec decode, trying ffmpeg CPU fallback")
-                        video.frame_array = get_frames_from_ffmpeg(
-                            video_path,
-                            width=width,
-                            height=height,
-                            use_gpu=False,
-                        )
+                    except Exception as e:
+                        if not self._raise_on_pynvc_error_without_cpu_fallback:
+                            logger.warning(f"Got exception {e} with PyNvVideoCodec decode, trying ffmpeg CPU fallback")
+                            video.frame_array = get_frames_from_ffmpeg(
+                                video_path,
+                                width=width,
+                                height=height,
+                                use_gpu=False,
+                            )
+                        else:
+                            # for CI to test PyNvCodec path without CPU fallback
+                            msg = f"PyNvCodec decode failed for {video.input_path}. "
+                            raise RuntimeError(msg) from e
                 else:
                     video.frame_array = get_frames_from_ffmpeg(
                         video_path,

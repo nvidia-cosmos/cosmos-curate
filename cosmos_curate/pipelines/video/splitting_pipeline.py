@@ -286,6 +286,7 @@ def split(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912
                 CuratorStageSpec(
                     VideoFrameExtractionStage(
                         decoder_mode=args.transnetv2_frame_decoder_mode,
+                        raise_on_pynvc_error_without_cpu_fallback=args.transnetv2_frame_decode_raise_on_pynvc_error,
                         verbose=args.verbose,
                         log_stats=args.perf_profile,
                     ),
@@ -659,6 +660,13 @@ def _setup_parser(parser: argparse.ArgumentParser) -> None:  # noqa: PLR0915
         choices=["ffmpeg_cpu", "ffmpeg_gpu", "pynvc"],
         default="ffmpeg_cpu",
         help="Choose between ffmpeg on CPU or GPU or PyNvVideoCodec for video decode.",
+    )
+    parser.add_argument(
+        "--transnetv2-frame-decode-raise-on-pynvc-error",
+        dest="transnetv2_frame_decode_raise_on_pynvc_error",
+        action="store_true",
+        default=False,
+        help="Disable CPU ffmpeg fallback from PyNvVideoCodec and raise exception (for testing).",
     )
     parser.add_argument(
         "--transnetv2-threshold",
