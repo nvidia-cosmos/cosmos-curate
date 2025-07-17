@@ -650,7 +650,7 @@ def test_nvcf_helper_deploy_function_no_data(monkeypatch: MonkeyPatch, tmp_path:
         "deploymentSpecifications": [
             {
                 "gpu": "test-gpu",
-                "backend": "test-backend",
+                "clusters": ["test-backend"],
                 "maxInstances": 2,
                 "minInstances": 1,
                 "instanceType": "test-instance",
@@ -704,7 +704,7 @@ def test_nvcf_helper_deploy_function_with_data(monkeypatch: MonkeyPatch, tmp_pat
                         }
                     },
                 },
-                "clusters": ["test-cluster"],
+                "clusters": ["test-backend"],
                 "regions": ["test-region"],
                 "attributes": {"test-attribute": "test-attribute-value"},
             },
@@ -727,7 +727,6 @@ def test_nvcf_helper_deploy_function_with_data(monkeypatch: MonkeyPatch, tmp_pat
         "deploymentSpecifications": [
             {
                 "gpu": "test-gpu",
-                "backend": "test-backend",
                 "maxInstances": 2,
                 "minInstances": 1,
                 "instanceType": "test-instance",
@@ -747,7 +746,7 @@ def test_nvcf_helper_deploy_function_with_data(monkeypatch: MonkeyPatch, tmp_pat
                         }
                     },
                 },
-                "clusters": ["test-cluster"],
+                "clusters": ["test-backend"],
                 "regions": ["test-region"],
                 "attributes": {"test-attribute": "test-attribute-value"},
             }

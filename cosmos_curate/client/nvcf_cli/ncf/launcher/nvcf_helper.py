@@ -453,7 +453,8 @@ class NvcfHelper(NvcfBase):
         Args:
             funcid (str): Function ID to deploy.
             version (str): Function version to deploy.
-            backend (str): Backend name for deployment.
+            backend (str): Cluster group to deploy to (will be sent as the single-element list
+                           `clusters=[backend]` in the deployment spec).
             gpu (str): GPU type to use.
             instance (str): Instance type to use.
             min_instances (int): Minimum number of instances to run.
@@ -475,7 +476,7 @@ class NvcfHelper(NvcfBase):
         deploy_list: dict[str, Any] = {"deploymentSpecifications": []}
         deploy_data: dict[str, Any] = {
             "gpu": gpu,
-            "backend": backend,
+            "clusters": [backend],
             "maxInstances": max_instances,
             "minInstances": min_instances,
             "instanceType": instance,
