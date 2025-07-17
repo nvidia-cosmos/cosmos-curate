@@ -187,8 +187,9 @@ class VideoFrameExtractionStage(CuratorStage):
                         use_gpu=self.decoder_mode == "ffmpeg_gpu",
                     )
                 if video.frame_array is None:
-                    logger.error("Frame extraction failed, exiting...")
-                    return None
+                    logger.error(f"Video frame extraction failed on {video.input_video}, skipping ...")
+                    video.errors["frame_extraction"] = "null"
+                    continue
                 if self._verbose:
                     logger.info(f"Loaded video as numpy uint8 array with shape {video.frame_array.shape}")
 

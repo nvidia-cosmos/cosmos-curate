@@ -24,10 +24,11 @@ from tests.utils.sequential_runner import run_pipeline
 
 @pytest.mark.env("cosmos_curate")
 def test_transnetv2_requires_frame_extraction(sample_splitting_task: SplitPipeTask) -> None:
-    """Test that TransNetV2 stage raises error if frames are not extracted."""
-    # Expect error when running TransNetV2 without prior frame extraction
-    with pytest.raises(ValueError, match="FrameExtractionStage"):
-        run_pipeline([sample_splitting_task], [TransNetV2ClipExtractionStage()])
+    """Test that TransNetV2 stage skips processing (yields zero clips) if frames were not extracted."""
+    # Run TransNetV2 without prior frame extraction: it should skip processing
+    result_tasks = run_pipeline([sample_splitting_task], [TransNetV2ClipExtractionStage()])
+    assert len(result_tasks) == 1
+    assert len(result_tasks[0].video.clips) == 0
 
 
 @pytest.mark.env("cosmos_curate")

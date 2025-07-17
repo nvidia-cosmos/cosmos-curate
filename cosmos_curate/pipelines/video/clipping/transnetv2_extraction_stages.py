@@ -146,12 +146,12 @@ class TransNetV2ClipExtractionStage(CuratorStage):
                 logger.warning(f"Incomplete metadata for {video.input_video}. Skipping...")
                 continue
             assert video.metadata.framerate  # silence mypy
+            if video.frame_array is None:
+                logger.warning(f"No frame array for {video.input_video}. Skipping...")
+                continue
 
             with self._timer.time_process():
                 frames = video.frame_array
-                if frames is None:
-                    error_msg = "Run `FrameExtractionStage` stage prior to `TransNetV2ClipExtractionStage`!"
-                    raise ValueError(error_msg)
                 if tuple(frames.shape[1:4]) != (27, 48, 3):
                     error_msg = f"Expected frames of shape 27x48x3, got {frames.shape[1:4]}."
                     raise ValueError(error_msg)
