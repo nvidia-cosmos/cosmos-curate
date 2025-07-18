@@ -187,6 +187,9 @@ ENV DEFAULT_WORKSPACE_LOC="/config/default_workspace"
 ENV HF_HOME="${DEFAULT_WORKSPACE_LOC}/weights/hf_home/" \
     LAION_CACHE_HOME="${DEFAULT_WORKSPACE_LOC}/weights/laion_cache/"
 
+# Set the NVIDIA_DRIVER_CAPABILITIES env var
+ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility,video
+
 # Copy the video pipeline code
 COPY cosmos_curate {{code_dir_str}}/cosmos_curate
 COPY cosmos-xenna/cosmos_xenna {{code_dir_str}}/cosmos_xenna
