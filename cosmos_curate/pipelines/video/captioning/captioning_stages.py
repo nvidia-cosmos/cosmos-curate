@@ -30,6 +30,7 @@ from cosmos_curate.core.utils.runtime.gpu_start_helper import (
 )
 from cosmos_curate.core.utils.runtime.performance_utils import StageTimer
 from cosmos_curate.models import (
+    phi_vl,
     qwen_lm,
     qwen_vl,
     t5_encoder,
@@ -555,6 +556,301 @@ class QwenCaptionStage(CuratorStage):
             asyncio_loop = self.get_asyncio_loop()
             return asyncio_loop.run_until_complete(self._process_data_async(tasks))
         return self.process_data_sync(tasks)
+
+
+class PhiInputPreparationStage(CuratorStage):
+    """Stage that prepares video windows for Phi-4 multimodal model processing.
+
+    This stage handles the preparation of video windows and prompts for the Phi-4 vision-language
+    model, including frame sampling, preprocessing, and input formatting.
+    """
+
+    def __init__(  # noqa: PLR0913
+        self,
+        model_variant: str = "phi4",
+        prompt_variant: str = "default",
+        prompt_text: str | None = None,
+        sampling_fps: float = 1.0,
+        window_size: int = 256,
+        remainder_threshold: int = 128,
+        preprocess_dtype: str = "float32",
+        *,
+        model_does_preprocess: bool = False,
+        generate_previews: bool = True,
+        verbose: bool = False,
+        log_stats: bool = False,
+    ) -> None:
+        """Initialize the Phi input preparation stage.
+
+        Args:
+            model_variant: Name of the model variant to use.
+            prompt_variant: Type of prompt to use.
+            prompt_text: Custom prompt text if provided.
+            sampling_fps: Frames per second for sampling.
+            window_size: Size of each window in frames.
+            remainder_threshold: Minimum frames required for a remainder window.
+            preprocess_dtype: Data type for preprocessing.
+            model_does_preprocess: Whether model handles preprocessing.
+            generate_previews: Whether to generate previews.
+            verbose: Whether to print verbose logs.
+            log_stats: Whether to log performance statistics.
+
+        """
+        self._timer = StageTimer(self)
+        self._verbose = verbose
+        self._log_stats = log_stats
+        self._phi_utils = phi_vl.PhiUtils(model_variant)
+        self._prompt_variant = prompt_variant
+        self._prompt_text = prompt_text
+        self._sampling_fps = sampling_fps
+        self._window_size = window_size
+        self._remainder_threshold = remainder_threshold
+        self._preprocess_dtype = preprocess_dtype
+        self._model_does_preprocess = model_does_preprocess
+        self._generate_previews = generate_previews
+
+    @property
+    def resources(self) -> CuratorStageResource:
+        """Get the resource requirements for this stage.
+
+        Returns:
+            The resource requirements for this stage.
+
+        """
+        return CuratorStageResource(cpus=4.0)
+
+    @property
+    def conda_env_name(self) -> str:
+        """Get the conda environment name.
+
+        Returns:
+            The conda environment name.
+
+        """
+        return "phi"
+
+    def stage_setup(self) -> None:
+        """Initialize stage resources and configuration."""
+        self._phi_utils.setup()
+
+    @nvtx.annotate("PhiInputPreparationStage")  # type: ignore[misc]
+    def process_data(self, tasks: list[SplitPipeTask]) -> list[SplitPipeTask] | None:
+        """Process the data for the Phi-4 input preparation stage.
+
+        Args:
+            tasks: The tasks to process.
+
+        Returns:
+            The processed tasks.
+
+        """
+        for task in tasks:
+            self._timer.reinit(self, task.get_major_size())
+            video = task.video
+            for clip in video.clips:
+                if clip.buffer is None:
+                    logger.warning(f"Clip {clip.uuid} has no buffer.")
+                    clip.errors["buffer"] = "empty"
+                    continue
+                with self._timer.time_process():
+                    for window_bytes, window_frames, window_frame_info in zip(
+                        *windowing_utils.split_video_into_windows(
+                            clip.buffer,
+                            window_size=self._window_size,
+                            remainder_threshold=self._remainder_threshold,
+                            sampling_fps=self._sampling_fps,
+                            model_does_preprocess=self._model_does_preprocess,
+                            preprocess_dtype=self._preprocess_dtype,
+                            return_bytes=self._generate_previews,
+                            num_threads=max(int(self.resources.cpus), 1),
+                        ),
+                        strict=True,
+                    ):
+                        prompt = _get_prompt(
+                            self._prompt_variant,
+                            self._prompt_text,
+                            verbose=self._verbose,
+                        )
+                        try:
+                            llm_input = self._phi_utils.generate_llm_inputs(
+                                prompt=prompt,
+                                video_inputs=window_frames,
+                            )
+                            clip.windows.append(
+                                _Window(
+                                    window_frame_info.start,
+                                    window_frame_info.end,
+                                    mp4_bytes=window_bytes,
+                                    phi_llm_input=llm_input,
+                                ),
+                            )
+                        except Exception as e:  # noqa: BLE001
+                            logger.exception("Error in Phi input preparation")
+                            clip.errors["phi_input"] = str(e)
+
+            if self._log_stats:
+                stage_name, stage_perf_stats = self._timer.log_stats()
+                task.stage_perf[stage_name] = stage_perf_stats
+
+        return tasks
+
+
+class PhiCaptionStage(CuratorStage):
+    """Stage that generates captions for video windows using the Phi-4 multimodal model.
+
+    This stage processes prepared video windows through the Phi-4 multimodal vision-language model to
+    generate descriptive captions, with support for both synchronous processing.
+    """
+
+    def __init__(  # noqa: PLR0913
+        self,
+        model_variant: str = "phi4",
+        batch_size: int = 16,
+        *,
+        fp8_enable: bool = False,
+        max_output_tokens: int = 512,
+        model_does_preprocess: bool = False,  # noqa: ARG002, we are likely to use this in the future
+        disable_mmcache: bool = False,
+        use_async_engine: bool = False,
+        verbose: bool = False,
+        log_stats: bool = False,
+    ) -> None:
+        """Initialize the Phi caption generation stage.
+
+        Args:
+            model_variant: Name of the model variant to use.
+            batch_size: Number of samples to process in parallel.
+            fp8_enable: Whether to enable FP8 precision.
+            max_output_tokens: Maximum number of tokens to generate.
+            model_does_preprocess: Whether model handles preprocessing.
+            disable_mmcache: Whether to disable model cache.
+            use_async_engine: Whether to use the asynchronous engine for processing.
+            verbose: Whether to print verbose logs.
+            log_stats: Whether to log performance statistics.
+
+        """
+        self._timer = StageTimer(self)
+        self._model_variant = model_variant
+        self._batch_size = batch_size
+        self._disable_mmcache = disable_mmcache
+        self._use_async_engine = use_async_engine
+        self._verbose = verbose
+        self._log_stats = log_stats
+        self._raw_model = phi_vl.PhiVL(
+            model_variant,
+            fp8=fp8_enable,
+            max_output_tokens=max_output_tokens,
+            disable_mmcache=self._disable_mmcache,
+        )
+
+    def stage_setup(self) -> None:
+        """Initialize stage resources and configuration."""
+        gpu_stage_startup(self.__class__.__name__, self.resources.gpus, pre_setup=True)
+        self._raw_model.setup()
+        gpu_stage_startup(self.__class__.__name__, self.resources.gpus, pre_setup=False)
+
+    def destroy(self) -> None:
+        """Clean up resources."""
+        gpu_stage_cleanup(self.__class__.__name__)
+
+    @property
+    def resources(self) -> CuratorStageResource:
+        """Get the resource requirements for this stage.
+
+        Returns:
+            The resource requirements for this stage.
+
+        """
+        return CuratorStageResource(gpus=1.0)
+
+    @property
+    def model(self) -> ModelInterface:
+        """Get the model.
+
+        Returns:
+            The model.
+
+        """
+        return self._raw_model
+
+    @nvtx.annotate("PhiCaptionStage")  # type: ignore[misc]
+    def process_data(self, tasks: list[SplitPipeTask]) -> list[SplitPipeTask] | None:
+        """Process the data for the Phi caption generation stage.
+
+        Args:
+            tasks: The tasks to process.
+
+        Returns:
+            The processed tasks.
+
+        """
+        for task in tasks:
+            self._timer.reinit(self, task.get_major_size())
+            video = task.video
+            inputs = []
+            mapping: dict[int, tuple[int, int]] = {}
+            idx = 0
+            with self._timer.time_process(len(video.clips)):
+                for clip_idx, clip in enumerate(video.clips):
+                    if len(clip.windows) == 0:
+                        logger.warning(f"Clip {clip.uuid} has no windows.")
+                        clip.errors["windows"] = "empty"
+                    for window_idx, window in enumerate(clip.windows):
+                        if window.phi_llm_input is None:
+                            logger.error(f"Clip {clip.uuid} window {window_idx} has no prepared inputs.")
+                            clip.errors[f"window-{window_idx}"] = "empty"
+                            continue
+                        mapping[idx] = (clip_idx, window_idx)
+                        assert window.phi_llm_input is not None
+                        inputs.append(window.phi_llm_input)
+                        idx += 1
+
+                captions = self._raw_model.generate(
+                    inputs,
+                    batch_size=self._batch_size,
+                )
+
+                self._assign_captions(video, mapping, enumerate(captions))
+
+            if self._log_stats:
+                stage_name, stage_perf_stats = self._timer.log_stats()
+                task.stage_perf[stage_name] = stage_perf_stats
+
+        return tasks
+
+    def _assign_captions(
+        self,
+        video: Video,
+        mapping: dict[int, tuple[int, int]],
+        captions: Iterable[tuple[int, str]],
+    ) -> None:
+        total_captions = 0
+        for req_id, caption in captions:
+            total_captions += 1
+            clip_idx, window_idx = mapping[req_id]
+            video.clips[clip_idx].windows[window_idx].caption[self._model_variant] = caption
+            if self._verbose:
+                logger.info(f"Caption for clip {video.clips[clip_idx].uuid} window {window_idx}: {caption}")
+
+        logger.info(
+            f"Generated {total_captions} captions for video {video.input_path} "
+            f"chunk-{video.clip_chunk_index} with {len(video.clips)} clips",
+        )
+
+        for clip in video.clips:
+            for window in clip.windows:
+                window.phi_llm_input = None
+                window.mp4_bytes = None
+
+    @property
+    def conda_env_name(self) -> str:
+        """Get the conda environment name.
+
+        Returns:
+            The conda environment name.
+
+        """
+        return "phi"
 
 
 class T5Stage(CuratorStage):

@@ -50,6 +50,8 @@ class _Window:
     mp4_bytes: bytes | None = None
     # Qwen LLM input for this window
     qwen_llm_input: dict[str, Any] | None = None
+    # Phi LLM input for this window
+    phi_llm_input: dict[str, Any] | None = None
     # X1 model input for this window
     x1_input: Any | None = None
     # `caption: {model_name: caption}`
@@ -69,6 +71,7 @@ class _Window:
         total_size += len(self.mp4_bytes) if self.mp4_bytes else 0
         # TODO: this is probably inaccurate
         total_size += sys.getsizeof(self.qwen_llm_input) if self.qwen_llm_input else 0
+        total_size += sys.getsizeof(self.phi_llm_input) if self.phi_llm_input else 0
         total_size += sys.getsizeof(self.caption)
         total_size += sys.getsizeof(self.enhanced_caption)
         total_size += len(self.webp_bytes) if self.webp_bytes else 0

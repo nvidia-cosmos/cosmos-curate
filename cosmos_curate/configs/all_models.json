@@ -49,6 +49,13 @@
         "precision": "BF16",
         "nvcf_model_id": "internvideo2_stage2_1b_224p_f4"
     },
+    "phi_4": {
+        "model_id": "microsoft/Phi-4-multimodal-instruct",
+        "version": "33e62acdd07cd7d6635badd529aa0a3467bb9c6a",
+        "filelist": null,
+        "precision": "BF16",
+        "nvcf_model_id": "phi_4_multimodal_instruct"
+    },
     "qwen2.5_lm": {
         "model_id": "Qwen/Qwen2.5-14B-Instruct",
         "version": "cf98f3b3bbb457ad9e2bb7baf9a0125b6b88caa8",

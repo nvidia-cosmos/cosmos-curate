@@ -43,6 +43,8 @@ from cosmos_curate.pipelines.pipeline_args import (
 )
 from cosmos_curate.pipelines.video.captioning.captioning_stages import (
     EnhanceCaptionStage,
+    PhiCaptionStage,
+    PhiInputPreparationStage,
     QwenCaptionStage,
     QwenInputPreparationStage,
 )
@@ -232,7 +234,7 @@ def get_embedding_stages(args: argparse.Namespace) -> list[CuratorStage | Curato
     return stages
 
 
-def split(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912
+def split(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912, PLR0915
     """Run the split pipeline.
 
     This function orchestrates the entire pipeline, from input validation to output generation.
@@ -441,6 +443,19 @@ def split(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912
                     log_stats=args.perf_profile,
                 ),
             ]
+        elif "phi4" in args.captioning_algorithm.lower():
+            stages += [
+                PhiInputPreparationStage(
+                    model_variant=args.captioning_algorithm,
+                    prompt_variant=args.captioning_prompt_variant,
+                    prompt_text=args.captioning_prompt_text,
+                    sampling_fps=args.captioning_sampling_fps,
+                    window_size=args.captioning_window_size,
+                    remainder_threshold=args.captioning_remainder_threshold,
+                    verbose=args.verbose,
+                    log_stats=args.perf_profile,
+                ),
+            ]
 
         # preview
         if args.generate_previews:
@@ -472,9 +487,19 @@ def split(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912
                     ),
                 ),
             ]
+        elif "phi4" in args.captioning_algorithm.lower():
+            stages += [
+                CuratorStageSpec(
+                    PhiCaptionStage(
+                        model_variant=args.captioning_algorithm,
+                        verbose=args.verbose,
+                        log_stats=args.perf_profile,
+                    ),
+                ),
+            ]
 
         # enhance caption
-        if args.enhance_captions:
+        if args.enhance_captions and args.captioning_algorithm != "phi4":
             stages += [
                 EnhanceCaptionStage(
                     batch_size=args.qwen_lm_batch_size,
@@ -923,7 +948,7 @@ def _setup_parser(parser: argparse.ArgumentParser) -> None:  # noqa: PLR0915
         "--captioning-algorithm",
         type=str,
         default="qwen",
-        choices=["qwen"],
+        choices=["qwen", "phi4"],
         help="Captioning algorithm to use in annotation pipeline.",
     )
     parser.add_argument(
