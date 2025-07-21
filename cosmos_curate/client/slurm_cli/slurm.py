@@ -163,6 +163,7 @@ class SlurmJobSpec:
     time_limit: str | None = None
     stop_retries_after: int = 600
     exclude_nodes: list[str] | None = None
+    comment: str | None = None
 
 
 def _render_sbatch_script(spec: SlurmJobSpec) -> str:
@@ -208,6 +209,7 @@ def _render_sbatch_script(spec: SlurmJobSpec) -> str:
         stop_retries_after=spec.stop_retries_after,
         exclude_nodes=spec.exclude_nodes,
         log_dir=str(spec.log_dir),
+        comment=spec.comment,
     )
 
 
@@ -566,6 +568,10 @@ def submit_cli(  # noqa: PLR0913
         Path | None,
         Option(help="Path to the log directory", rich_help_panel="cluster"),
     ] = None,
+    comment: Annotated[
+        str | None,
+        Option(help="Comment to add to the job", rich_help_panel="cluster"),
+    ] = None,
 ) -> None:
     """Submit a job to a SLURM cluster."""
     if not command:
@@ -601,6 +607,7 @@ def submit_cli(  # noqa: PLR0913
         time_limit=time,
         stop_retries_after=stop_retries_after,
         exclude_nodes=exclude_nodes_list,
+        comment=comment,
     )
 
     job_id = curator_submit(slurm_job_spec)

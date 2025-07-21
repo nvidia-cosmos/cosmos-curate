@@ -86,7 +86,12 @@ class SlurmEnv:
     num_nodes: int
     head_node: str
     nodename: str
+    procid: int
     stop_retries_after: int
+
+    def is_head_node(self) -> bool:
+        """Check if the current node is the head node."""
+        return self.nodename == self.head_node
 
     @classmethod
     def from_env(cls) -> SlurmEnv:
@@ -99,7 +104,7 @@ class SlurmEnv:
             ValueError: If any of the environment variables are not set.
 
         """
-        REQUIRED_VARS = ["SLURM_NNODES", "HEAD_NODE_ADDR", "SLURMD_NODENAME", "RAY_STOP_RETRIES_AFTER"]
+        REQUIRED_VARS = ["SLURM_NNODES", "HEAD_NODE_ADDR", "SLURMD_NODENAME", "RAY_STOP_RETRIES_AFTER", "SLURM_PROCID"]
         for var in REQUIRED_VARS:
             if var not in os.environ:
                 error_message = f"Error: environment variable {var} is not set."
@@ -109,6 +114,7 @@ class SlurmEnv:
             num_nodes=int(os.environ["SLURM_NNODES"]),
             head_node=os.environ["HEAD_NODE_ADDR"],
             nodename=os.environ["SLURMD_NODENAME"],
+            procid=int(os.environ["SLURM_PROCID"]),
             stop_retries_after=int(os.environ["RAY_STOP_RETRIES_AFTER"]),
         )
 
@@ -454,32 +460,41 @@ def main() -> None:
     ray_config = RayConfig.from_env()
     display_nvidia_smi()
 
-    if slurm_env.nodename == slurm_env.head_node:
-        start_ray(ray_config, stop_retries_after=slurm_env.stop_retries_after)
-        wait_for_workers(slurm_env.num_nodes)
-        logger.info("Adding cosmos_curate environment directories to conda config")
-        asyncio.run(
-            run_subprocess_async(
-                [
-                    "micromamba",
-                    "run",
-                    "-n",
-                    "cosmos_curate",
-                    "conda",
-                    "config",
-                    "--add",
-                    "envs_dirs",
-                    "/cosmos_curate/conda_envs/envs/",
-                ]
+    logger.info("slurm_env: %s", slurm_env)
+
+    if slurm_env.is_head_node():
+        if slurm_env.procid == 0:
+            start_ray(ray_config, stop_retries_after=slurm_env.stop_retries_after)
+            wait_for_workers(slurm_env.num_nodes)
+            logger.info("Adding cosmos_curate environment directories to conda config")
+            asyncio.run(
+                run_subprocess_async(
+                    [
+                        "micromamba",
+                        "run",
+                        "-n",
+                        "cosmos_curate",
+                        "conda",
+                        "config",
+                        "--add",
+                        "envs_dirs",
+                        "/cosmos_curate/conda_envs/envs/",
+                    ]
+                )
             )
-        )
-        logger.info("Running: %s", " ".join(sys.argv[1:]))
-        asyncio.run(run_subprocess_async(["micromamba", "run", "-n", "cosmos_curate"] + sys.argv[1:]))
-        # It's not clear why this is needed. If we get to this point, ray is stopping on its own.
-        logger.info("Stopping Ray")
-        asyncio.run(run_subprocess_async(["ray", "stop"]))
-        logger.info("Sleeping for 30 seconds")
-        time.sleep(30)
+            logger.info("Running: %s", " ".join(sys.argv[1:]))
+            asyncio.run(run_subprocess_async(["micromamba", "run", "-n", "cosmos_curate"] + sys.argv[1:]))
+            # It's not clear why this is needed. If we get to this point, ray is stopping on its own.
+            logger.info("Stopping Ray")
+            asyncio.run(run_subprocess_async(["ray", "stop"]))
+            logger.info("Sleeping for 30 seconds")
+            time.sleep(30)
+        else:
+            # This is a sanity check to ensure that only one task is scheduled on each node.
+            # It's possible to run multiple tasks per node with slurm. This is not expected
+            # to work correctly with Ray.
+            msg = "Multiple slurm tasks per node detected. This is not supported."
+            raise RuntimeError(msg)
     else:
         start_ray(ray_config, slurm_env.head_node, stop_retries_after=slurm_env.stop_retries_after)
 

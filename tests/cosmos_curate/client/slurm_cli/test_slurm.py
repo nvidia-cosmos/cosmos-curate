@@ -36,6 +36,7 @@ from cosmos_curate.client.slurm_cli.slurm import (
     submit_cli,
     upload_text,
 )
+from cosmos_curate.scripts.onto_slurm import SlurmEnv
 
 MODULE_NAME = "cosmos_curate.client.slurm_cli.slurm"
 GRES = "gpu:8"
@@ -96,6 +97,7 @@ def test_render_sbatch_script(exclude_nodes: list[str] | None) -> None:
         log_dir=pathlib.Path("/logs"),
         stop_retries_after=100,
         exclude_nodes=exclude_nodes,
+        comment="test_comment",
     )
     sbatch_script = _render_sbatch_script(job_spec)
     expected_exclude_nodes = ",".join(job_spec.exclude_nodes) if job_spec.exclude_nodes else None
@@ -113,6 +115,7 @@ def test_render_sbatch_script(exclude_nodes: list[str] | None) -> None:
     else:
         assert "--exclude=" not in sbatch_script
     assert f"--output={job_spec.log_dir!s}" in sbatch_script
+    assert f'--comment="{job_spec.comment}"' in sbatch_script
 
 
 class TestSubmitCmd(unittest.TestCase):
@@ -460,3 +463,24 @@ class TestLaunch:
                 container_mounts="invalid_mounts",
             )
         mock_curator_submit.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("num_nodes", "head_node", "nodename", "procid", "stop_retries_after", "is_head_node"),
+    [
+        (1, "head_node", "head_node", 0, 100, True),
+        (1, "head_node", "worker_node", 1, 100, False),
+    ],
+)
+def test_head_node_is_head_node(  # noqa: PLR0913
+    num_nodes: int, head_node: str, nodename: str, procid: int, stop_retries_after: int, *, is_head_node: bool
+) -> None:
+    """Test that the head node is the head node."""
+    slurm_env = SlurmEnv(
+        num_nodes=num_nodes,
+        head_node=head_node,
+        nodename=nodename,
+        procid=procid,
+        stop_retries_after=stop_retries_after,
+    )
+    assert slurm_env.is_head_node() == is_head_node

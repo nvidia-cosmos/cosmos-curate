@@ -21,10 +21,10 @@ import os
 import socket
 import subprocess
 import sys
-from contextlib import nullcontext
+from contextlib import AbstractContextManager, nullcontext
 from io import StringIO
 from pathlib import Path
-from typing import TextIO, TypedDict
+from typing import Any, TextIO, TypedDict
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import attrs
@@ -83,17 +83,21 @@ class TestSlurmEnv:
         """
         SLURM_NNODES = 4
         RAY_STOP_RETRIES_AFTER = 2
+        SLURM_PROCID = 1
         # Set environment variables
         monkeypatch.setenv("SLURM_NNODES", str(SLURM_NNODES))
         monkeypatch.setenv("HEAD_NODE_ADDR", "head-node")
         monkeypatch.setenv("SLURMD_NODENAME", "worker1")
         monkeypatch.setenv("RAY_STOP_RETRIES_AFTER", str(RAY_STOP_RETRIES_AFTER))
+        monkeypatch.setenv("SLURM_PROCID", str(SLURM_PROCID))
         slurm_env = SlurmEnv.from_env()
 
         assert slurm_env.num_nodes == SLURM_NNODES
         assert slurm_env.head_node == "head-node"
         assert slurm_env.nodename == "worker1"
         assert slurm_env.stop_retries_after == RAY_STOP_RETRIES_AFTER
+        assert slurm_env.procid == SLURM_PROCID
+        assert slurm_env.is_head_node() is False
 
     def test_from_env_missing_required_vars(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Test from_env with missing required vars.
@@ -102,7 +106,7 @@ class TestSlurmEnv:
             monkeypatch: The monkeypatch object.
 
         """
-        for var in ["SLURM_NNODES", "HEAD_NODE_ADDR", "SLURMD_NODENAME"]:
+        for var in ["SLURM_NNODES", "HEAD_NODE_ADDR", "SLURMD_NODENAME", "RAY_STOP_RETRIES_AFTER", "SLURM_PROCID"]:
             if var in os.environ:
                 monkeypatch.delenv(var)
 
@@ -678,18 +682,28 @@ class TestMain:
     """Test main function."""
 
     @pytest.mark.parametrize(
-        ("is_head_node"),
+        ("is_head_node", "slurm_procid", "raises"),
         [
-            (True),  # Test head node path
-            (False),  # Test worker node path
+            (True, 0, nullcontext()),  # Test head node path
+            (False, 1, nullcontext()),  # Test worker node path
+            (True, 1, pytest.raises(RuntimeError)),  # Head node, multiple tasks, should raise
         ],
     )
-    def test_main(self, monkeypatch: pytest.MonkeyPatch, *, is_head_node: bool) -> None:
+    def test_main(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        *,
+        is_head_node: bool,
+        slurm_procid: int,
+        raises: AbstractContextManager[Any],
+    ) -> None:
         """Test the main function happy path for head node and worker node scenarios.
 
         Args:
             monkeypatch: The monkeypatch object.
             is_head_node: Whether the node is a head node.
+            slurm_procid: The SLURM procid.
+            raises: The expected exception to raise.
 
         """
         test_hostname = "test-hostname"
@@ -700,6 +714,8 @@ class TestMain:
         mock_slurm_env.head_node = test_hostname if is_head_node else "head-node"
         mock_slurm_env.nodename = test_hostname
         mock_slurm_env.stop_retries_after = 2
+        mock_slurm_env.is_head_node.return_value = is_head_node
+        mock_slurm_env.procid = slurm_procid
 
         mock_ray_config = MagicMock()
         mock_ray_config.gcs_server_port = _RAY_GCS_SERVER_PORT
@@ -721,7 +737,7 @@ class TestMain:
         monkeypatch.setattr("asyncio.run", mock_asyncio_run)
         monkeypatch.setattr("time.sleep", mock_sleep)
 
-        with patch("logging.basicConfig"), patch("cosmos_curate.scripts.onto_slurm.logger"):
+        with patch("logging.basicConfig"), patch("cosmos_curate.scripts.onto_slurm.logger"), raises:
             main()
             mock_display_nvidia_smi.assert_called_once()
             mock_start_ray.assert_called_once()

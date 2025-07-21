@@ -4,10 +4,16 @@
 #SBATCH -A {{account}}
 #SBATCH -p {{partition}}
 #SBATCH --nodes={{num_nodes}}
+#SBATCH --ntasks={{num_nodes}}
 #SBATCH --ntasks-per-node=1
+#SBATCH --distribution=cyclic
 #SBATCH --exclusive
 #SBATCH --output={{log_dir}}/%x_%j.log
+{% if comment %}
+#SBATCH --comment="{{comment}}"
+{% else %}
 #SBATCH --comment=fact_off
+{% endif %}
 
 {% if time_limit_string %}
 #SBATCH --time={{time_limit_string}}
@@ -31,7 +37,6 @@ echo "Nodelist:= " $SLURM_JOB_NODELIST
 echo "Number of nodes:= " $SLURM_JOB_NUM_NODES
 echo "Ntasks per node:= " $SLURM_NTASKS_PER_NODE
 echo "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX "
-
 
 # ******************* These are read internally it seems ***********************************
 # ******** Master port, address and world size MUST be passed as variables for DDP to work
@@ -57,9 +62,10 @@ echo "This slurm script is located in folder: $SCRIPT_FOLDER"
 export {{ env_var }}="{{ value }}"
 {% endfor %}
 
-echo "HEAD_NODE_ADDR="$HEAD_NODE_ADDR
-echo "HEAD_NODE_PORT"=$HEAD_NODE_PORT
-echo "WORLD_SIZE="$WORLD_SIZE
+echo "HEAD_NODE_ADDR=${HEAD_NODE_ADDR}"
+echo "HEAD_NODE_PORT=${HEAD_NODE_PORT}"
+echo "SLURMD_NODENAME=${SLURMD_NODENAME}"
+echo "WORLD_SIZE=${WORLD_SIZE}"
 
 # Actual run command
 echo "$(date) - Calling srun..."
