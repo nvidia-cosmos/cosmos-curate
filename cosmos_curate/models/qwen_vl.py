@@ -29,9 +29,11 @@ from cosmos_curate.core.utils.misc import grouping
 from cosmos_curate.core.utils.model import conda_utils, model_utils
 
 _QWEN2_5_VL_MODEL_ID = "Qwen/Qwen2.5-VL-7B-Instruct"
+_QWEN2_5_VL_72B_MODEL_ID = "Qwen/Qwen2.5-VL-72B-Instruct"
 
 _QWEN_VARIANTS_INFO = {
     "qwen": _QWEN2_5_VL_MODEL_ID,
+    "qwen_72b": _QWEN2_5_VL_72B_MODEL_ID,
 }
 
 _DEFAULT_STAGE2_PROMPT = """
