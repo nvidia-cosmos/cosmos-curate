@@ -29,7 +29,7 @@ setuptools>=80.7.1
 sqlalchemy
 tabulate
 tenacity
-timezonefinder
+timezonefinder==6.5.9
 toml
 torch==2.7.0
 tqdm

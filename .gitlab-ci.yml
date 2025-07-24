@@ -8,6 +8,8 @@ workflow:
     - if: '$CI_PIPELINE_SOURCE == "schedule"'
     # Run pipeline for E2E testing
     - if: $TEST_END_TO_END == "True"
+    # Run manual pipeline for web-triggered runs
+    - if: '$CI_PIPELINE_SOURCE == "web"'
     # Skip everything else
     - when: never
   auto_cancel:
@@ -45,9 +47,6 @@ variables:
   NVCF_STAGING_IMAGE: "nvcr.io/${NVCF_ORG_ID}/${NVCF_STAGING_BASE_IMAGE}"  # Complete NVCF staging image path
   NVCF_PROD_BASE_IMAGE: "prod-cosmos-curator"  # Base name for NVCF prod images
   NVCF_PROD_IMAGE: "nvcr.io/${NVCF_ORG_ID}/${NVCF_PROD_BASE_IMAGE}"  # Complete NVCF prod image path
-  NVCF_BACKEND: "$NVCF_BACKEND"
-  NVCF_GPU_TYPE: L40S
-  NVCF_INSTANCE_TYPE: OCI.GPU.L40S_1x
   NGC_NVCF_ORG: $NVCF_ORG_ID  # Needed for helm deploy json template
   NVCF_MAX_CONCURRENCY: 2
   NVCF_INSTANCE_COUNT: 1
@@ -89,6 +88,17 @@ variables:
     description: "Helm chart version for the CICD pipeline"
     value: "2.0.3"
 
+  # Manual NVCF testing parameters
+  NVCF_GPU_TYPE:
+    description: "GPU type for NVCF testing (e.g., L40S, H100)"
+    value: "L40S"
+  NVCF_INSTANCE_TYPE:
+    description: "Instance type for NVCF testing (e.g., OCI.GPU.L40S_1x, OCI.GPU.H100_1x)"
+    value: "OCI.GPU.L40S_1x"
+  NVCF_CUSTOM_BACKEND:
+    description: "Custom NVCF backend for testing (overrides default GitLab CI/CD variable)"
+    value: ""
+
 stages:
   - lint
   - test
@@ -113,10 +123,23 @@ stages:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_EVENT_TYPE != "merge_train"'
     - when: never
 
+  # Rules for merge result pipelines and web triggers
+  merge_result_and_web_rules: &merge_result_and_web_rules
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_EVENT_TYPE != "merge_train"'
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+    - when: never
+
   # Rules for jobs that should run both before and after merging
   pre_post_merge_rules: &pre_post_merge_rules
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event" || $TEST_END_TO_END == "True"'
     - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+    - when: never
+
+  # Rules for jobs that should run on pre/post merge AND web triggers
+  pre_post_merge_and_web_rules: &pre_post_merge_and_web_rules
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" || $TEST_END_TO_END == "True"'
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+    - if: '$CI_PIPELINE_SOURCE == "web"'
     - when: never
 
   # Rules for scheduled (cron) jobs
@@ -224,8 +247,14 @@ unit_tests:
 
 build_deploy_curator:
   stage: build
-  rules: *pre_post_merge_rules
+  rules: *pre_post_merge_and_web_rules
   script:
+    # For web triggers, this is a no-op since we use existing images
+    - |
+      if [[ "$CI_PIPELINE_SOURCE" == "web" ]]; then
+        echo "Web trigger detected - skipping image build, using existing images"
+        exit 0
+      fi
     # Set up environment
     - *docker_login
     - *setup_micromamba
@@ -381,7 +410,7 @@ semgrep-sast:
 nvcf-helm:
   stage: end-to-end
   needs: [ "build_deploy_curator" ]
-  rules: *merge_result_rules
+  rules: *merge_result_and_web_rules
   allow_failure: false
   image: python:3.10
   tags:
@@ -399,18 +428,32 @@ nvcf-helm:
     - export HELM_BYO_METRICS_RECEIVER_CLIENT_KEY=$(echo $HELM_BYO_METRICS_RECEIVER_CLIENT_KEY_BASE64 | base64 -d | awk '{printf "%s\\n", $0}')
   script:
       - cosmos-curate nvcf config set --org $NVCF_ORG_ID --key $NVCF_KEY
+      - export NVCF_BACKEND="${NVCF_CUSTOM_BACKEND:-$NVCF_BACKEND}"
       - |
         if [[ "$TEST_END_TO_END" == "True" ]]; then
           # this can be overridden by passing the HELM_IMAGE_TAG var in cicd variables
           export HELM_IMAGE_TAG=${HELM_IMAGE_TAG:-$(cosmos-curate nvcf image list-image-detail --iname $NVCF_DEV_BASE_IMAGE |grep latestTag |sed "s/['│,]//g" |awk '{print $2}')}
+        elif [[ "$CI_PIPELINE_SOURCE" == "web" ]]; then
+          # Web triggers use staging images
+          export HELM_IMAGE_TAG=${HELM_IMAGE_TAG:-$(cosmos-curate nvcf image list-image-detail --iname $NVCF_STAGING_BASE_IMAGE |grep latestTag |sed "s/['│,]//g" |awk '{print $2}')}
         else
           export HELM_IMAGE_TAG="${CI_COMMIT_TIMESTAMP%%T*}_${CI_COMMIT_SHORT_SHA}"
         fi
-      - NVCF_IMAGE=${NVCF_DEV_IMAGE}:$HELM_IMAGE_TAG
+      - |
+        if [[ "$CI_PIPELINE_SOURCE" == "web" ]]; then
+          NVCF_IMAGE=${NVCF_STAGING_IMAGE}:$HELM_IMAGE_TAG
+        else
+          NVCF_IMAGE=${NVCF_DEV_IMAGE}:$HELM_IMAGE_TAG
+        fi
       # NOTE: create_helm_file.json will now contain keys/certificates so do not print its contents
       - cat examples/nvcf/ci/ci_create_helm_default.json.template | envsubst > create_helm_file.json
       - cat examples/nvcf/ci/ci_deploy_helm_default.json.template | envsubst > deploy_helm_file.json
-      - cat deploy_helm_file.json | jq --arg image_repository "$NVCF_DEV_IMAGE" '.configuration.image.repository = $image_repository' > deploy_helm_file.json.new
+      - |
+        if [[ "$CI_PIPELINE_SOURCE" == "web" ]]; then
+          cat deploy_helm_file.json | jq --arg image_repository "$NVCF_STAGING_IMAGE" '.configuration.image.repository = $image_repository' > deploy_helm_file.json.new
+        else
+          cat deploy_helm_file.json | jq --arg image_repository "$NVCF_DEV_IMAGE" '.configuration.image.repository = $image_repository' > deploy_helm_file.json.new
+        fi
       - mv deploy_helm_file.json.new deploy_helm_file.json
       - |
         echo "NVCF DEPLOYMENT"
@@ -447,6 +490,13 @@ nvcf-helm:
       # Create S3 credentials file
       - awk -v ak="$AWS_ACCESS_KEY_ID" -v sk="$AWS_SECRET_ACCESS_KEY" -v rg="$AWS_DEFAULT_REGION"  '/aws_access_key_id/ {$0 = "aws_access_key_id = " ak} /aws_secret_access_key/ {$0 = "aws_secret_access_key = " sk} /region/ {$0 = "region = " rg} {print}' examples/nvcf/creds/aws_credentials > aws_credentials
       - sed -i '/^endpoint/d' aws_credentials
+      # Determine whether to raise on pynvc error based on GPU type
+      - |
+        if [[ "$NVCF_GPU_TYPE" =~ (L40|GB) ]]; then
+          export DECODE_RAISE_ON_ERROR=true
+        else
+          export DECODE_RAISE_ON_ERROR=false
+        fi
       # Split-annotate pipeline
       # default config to process 1 video
       - |
@@ -457,7 +507,7 @@ nvcf-helm:
       # use GPU decoding to process 1 more video
       - |
         cat examples/nvcf/function/invoke_video_split_full.json | \
-        jq --arg output_clip_path "$S3_OUTPUT_CLIP_PATH" --arg input_video_path "$S3_INPUT_VIDEO_PATH" --argjson limit 1 --arg transnetv2_frame_decoder_mode pynvc --argjson transnetv2_frame_decode_raise_on_pynvc_error true --argjson transcode_use_hwaccel true \
+        jq --arg output_clip_path "$S3_OUTPUT_CLIP_PATH" --arg input_video_path "$S3_INPUT_VIDEO_PATH" --argjson limit 1 --arg transnetv2_frame_decoder_mode pynvc --argjson transnetv2_frame_decode_raise_on_pynvc_error "$DECODE_RAISE_ON_ERROR" --argjson transcode_use_hwaccel true \
         '.args.output_clip_path = $output_clip_path | .args.input_video_path = $input_video_path | .args.limit = $limit | .args.transnetv2_frame_decoder_mode = $transnetv2_frame_decoder_mode | .args.transnetv2_frame_decode_raise_on_pynvc_error = $transnetv2_frame_decode_raise_on_pynvc_error | .args.transcode_use_hwaccel = $transcode_use_hwaccel ' > invoke_split2.json
       - cosmos-curate nvcf function invoke-function --data-file invoke_split2.json --s3-config-file aws_credentials
       # Dedup pipeline
@@ -494,7 +544,7 @@ nvcf-helm:
 nvcf-helm-validate:
   stage: end-to-end
   needs: [ "nvcf-helm" ]
-  rules: *merge_result_rules
+  rules: *merge_result_and_web_rules
   allow_failure: false
   image: python:3.10
   tags:
