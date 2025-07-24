@@ -482,6 +482,7 @@ def split(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912, PLR0915
                         stage2_prompt_text=args.qwen_stage2_prompt_text,
                         disable_mmcache=not args.qwen_use_vllm_mmcache,
                         use_async_engine=args.qwen_use_async_engine,
+                        num_gpus_per_worker=args.qwen_num_gpus_per_worker,
                         verbose=args.verbose,
                         log_stats=args.perf_profile,
                     ),
@@ -948,7 +949,7 @@ def _setup_parser(parser: argparse.ArgumentParser) -> None:  # noqa: PLR0915
         "--captioning-algorithm",
         type=str,
         default="qwen",
-        choices=["qwen", "phi4"],
+        choices=["qwen", "qwen_72b", "phi4"],
         help="Captioning algorithm to use in annotation pipeline.",
     )
     parser.add_argument(
@@ -1047,6 +1048,12 @@ def _setup_parser(parser: argparse.ArgumentParser) -> None:  # noqa: PLR0915
         action="store_true",
         default=False,
         help="Whether to use async engine for Qwen VL model or not.",
+    )
+    parser.add_argument(
+        "--qwen-num-gpus-per-worker",
+        type=float,
+        default=1.0,
+        help="Number of GPUs per worker for Qwen captioning stage.",
     )
     parser.add_argument(
         "--enhance-captions",
