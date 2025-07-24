@@ -1007,7 +1007,7 @@ def _setup_parser(parser: argparse.ArgumentParser) -> None:  # noqa: PLR0915
         "--captioning-algorithm",
         type=str,
         default="qwen",
-        choices=["qwen", "phi4", "cosmos_r1"],
+        choices=["qwen", "qwen_72b", "phi4", "cosmos_r1"],
         help="Captioning algorithm to use in annotation pipeline.",
     )
     parser.add_argument(
