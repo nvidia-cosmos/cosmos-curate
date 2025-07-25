@@ -50,7 +50,7 @@ class AssetManager(NvcfBase):
     Provides methods to upload, delete, and list assets in the NVIDIA Cloud Function platform.
     """
 
-    def __init__(self, url: str, nvcf_url: str, key: str, org: str, timeout: int) -> None:
+    def __init__(self, url: str, nvcf_url: str, key: str, org: str, team: str, timeout: int) -> None:  # noqa: PLR0913
         """Initialize the AssetManager.
 
         Args:
@@ -58,10 +58,11 @@ class AssetManager(NvcfBase):
             nvcf_url: Base NVCF URL
             key: NGC NVCF API Key
             org: Organization ID or name
+            team: Team name within the organization
             timeout: Request timeout in seconds
 
         """
-        super().__init__(url=url, nvcf_url=nvcf_url, key=key, org=org, timeout=timeout)
+        super().__init__(url=url, nvcf_url=nvcf_url, key=key, org=org, team=team, timeout=timeout)
         self.ncg_api_hdl = NvcfClient(self.logger.getChild("ncgApiHdl"), self.url, self.key)
         self.nvcf_api_hdl = NvcfClient(self.logger.getChild("nvcfApiHdl"), self.nvcf_url, self.key)
 

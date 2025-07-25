@@ -142,7 +142,7 @@ def test_get_hf_token_from_config(monkeypatch: MonkeyPatch, tmp_path: Path) -> N
 
     """
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
-    nvcf_base = NvcfBase(url="", nvcf_url="", key="", org="", timeout=15)
+    nvcf_base = NvcfBase(url="", nvcf_url="", key="", org="", team="", timeout=15)
 
     # Test that None is returned if the file is not found
     token = nvcf_base.get_hf_token_from_config()
@@ -155,7 +155,7 @@ def test_get_hf_token_from_config(monkeypatch: MonkeyPatch, tmp_path: Path) -> N
     with Path.open(fname, "w") as fc:
         json.dump({"huggingface": {"api_key": "fake_token"}}, fc)
 
-    nvcf_base = NvcfBase(url="", nvcf_url="", key="", org="", timeout=15)
+    nvcf_base = NvcfBase(url="", nvcf_url="", key="", org="", team="", timeout=15)
     token = nvcf_base.get_hf_token_from_config()
 
     assert token == "fake_token"  # noqa: S105
@@ -170,7 +170,7 @@ def test_load_config(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
 
     """
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
-    nvcf_base = NvcfBase(url="", nvcf_url="", key="", org="", timeout=15)
+    nvcf_base = NvcfBase(url="", nvcf_url="", key="", org="", team="", timeout=15)
 
     # Test that None is returned if the file is not found
     config = nvcf_base.load_config()
@@ -210,13 +210,14 @@ def test_load_config(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
 
 def test_save_config() -> None:
     """Test that save_config function saves the config file."""
-    nvcf_base = NvcfBase(url="", nvcf_url="", key="", org="", timeout=15)
+    nvcf_base = NvcfBase(url="", nvcf_url="", key="", org="", team="", timeout=15)
 
     config = nvcf_base.save_config(
         url="https://api.ngc.nvidia.com",
         nvcf_url="https://api.nvcf.nvidia.com",
         key="FAKEKEY",
         org="FAKEORG",
+        team="FAKETEAM",
         backend="FAKEBACKEND",
         instance="FAKEINSTANCE",
         gpu="FAKEGPU",
@@ -227,6 +228,7 @@ def test_save_config() -> None:
         "url": "https://api.ngc.nvidia.com",
         "key": "FAKEKEY",
         "org": "FAKEORG",
+        "team": "FAKETEAM",
         "nvcf_url": "https://api.nvcf.nvidia.com",
         "backend": "FAKEBACKEND",
         "instance": "FAKEINSTANCE",
@@ -237,7 +239,7 @@ def test_save_config() -> None:
 
 def test_get_cluster() -> None:
     """Test that get_cluster function gets the cluster configuration from the context or config."""
-    nvcf_base = NvcfBase(url="", nvcf_url="", key="", org="", timeout=15)
+    nvcf_base = NvcfBase(url="", nvcf_url="", key="", org="", team="", timeout=15)
 
     # Test none context first
     ctx_none = MagicMock()

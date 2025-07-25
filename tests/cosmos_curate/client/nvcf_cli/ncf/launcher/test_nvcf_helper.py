@@ -60,7 +60,7 @@ def test_load_ids(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
         json.dump({"name": "test_name", "id": "test_id", "version": "test_version"}, f)
 
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
-    nvcf_helper = NvcfHelper(url="", nvcf_url="", key="", org="", timeout=15)
+    nvcf_helper = NvcfHelper(url="", nvcf_url="", key="", org="", team="", timeout=15)
     assert nvcf_helper.load_ids() == {"name": "test_name", "id": "test_id", "version": "test_version"}
 
 
@@ -70,7 +70,7 @@ def test_store_ids(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
     config_dir.mkdir(parents=True, exist_ok=True)
 
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
-    nvcf_helper = NvcfHelper(url="", nvcf_url="", key="", org="", timeout=15)
+    nvcf_helper = NvcfHelper(url="", nvcf_url="", key="", org="", team="", timeout=15)
     nvcf_helper.store_ids({"name": "test_name", "id": "test_id", "version": "test_version"})
     assert nvcf_helper.load_ids() == {"name": "test_name", "id": "test_id", "version": "test_version"}
 
@@ -84,7 +84,7 @@ def test_cleanup_ids(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
         json.dump({"name": "test_name", "id": "test_id", "version": "test_version"}, f)
 
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
-    nvcf_helper = NvcfHelper(url="", nvcf_url="", key="", org="", timeout=15)
+    nvcf_helper = NvcfHelper(url="", nvcf_url="", key="", org="", team="", timeout=15)
     nvcf_helper.cleanup_ids()
     assert not fname.exists()
 
@@ -98,7 +98,7 @@ def test_id_version(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
 
     # Check empty file first
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
-    nvcf_helper = NvcfHelper(url="", nvcf_url="", key="", org="", timeout=15)
+    nvcf_helper = NvcfHelper(url="", nvcf_url="", key="", org="", team="", timeout=15)
     assert nvcf_helper.id_version(None, None) == (False, None, None)
     assert nvcf_helper.id_version(None, "test_version") == (False, None, "test_version")
     assert nvcf_helper.id_version("test_id", "test_version") == (True, "test_id", "test_version")
@@ -149,7 +149,7 @@ def test_nvcf_helper_list_clusters_success(monkeypatch: MonkeyPatch, tmp_path: P
     mock_ncg_client.get.return_value = mock_response
 
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
-    nvcf_helper = NvcfHelper(url="", nvcf_url="", key="", org="", timeout=15)
+    nvcf_helper = NvcfHelper(url="", nvcf_url="", key="", org="", team="", timeout=15)
     nvcf_helper.ncg_api_hdl = mock_ncg_client
 
     # Get the results
@@ -198,7 +198,7 @@ def test_nvcf_helper_list_clusters_failure(monkeypatch: MonkeyPatch, tmp_path: P
     mock_ncg_client.get.return_value = None
 
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
-    nvcf_helper = NvcfHelper(url="", nvcf_url="", key="", org="", timeout=15)
+    nvcf_helper = NvcfHelper(url="", nvcf_url="", key="", org="", team="", timeout=15)
     nvcf_helper.ncg_api_hdl = mock_ncg_client
     with pytest.raises(RuntimeError):
         nvcf_helper.nvcf_helper_list_clusters()
@@ -255,7 +255,7 @@ def test_nvcf_helper_list_functions_success(monkeypatch: MonkeyPatch, tmp_path: 
     mock_ncg_client.get.return_value = mock_response
 
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
-    nvcf_helper = NvcfHelper(url="", nvcf_url="", key="", org="", timeout=15)
+    nvcf_helper = NvcfHelper(url="", nvcf_url="", key="", org="", team="", timeout=15)
     nvcf_helper.ncg_api_hdl = mock_ncg_client
 
     # Get the results
@@ -308,7 +308,7 @@ def test_nvcf_helper_list_functions_failure(monkeypatch: MonkeyPatch, tmp_path: 
     mock_ncg_client.get.return_value = None
 
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
-    nvcf_helper = NvcfHelper(url="", nvcf_url="", key="", org="", timeout=15)
+    nvcf_helper = NvcfHelper(url="", nvcf_url="", key="", org="", team="", timeout=15)
     nvcf_helper.ncg_api_hdl = mock_ncg_client
     with pytest.raises(RuntimeError):
         nvcf_helper.nvcf_helper_list_functions()
@@ -365,7 +365,7 @@ def test_nvcf_helper_list_function_detail(monkeypatch: MonkeyPatch, tmp_path: Pa
     mock_ncg_client.get.return_value = mock_response
 
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
-    nvcf_helper = NvcfHelper(url="", nvcf_url="", key="", org="", timeout=15)
+    nvcf_helper = NvcfHelper(url="", nvcf_url="", key="", org="", team="", timeout=15)
     nvcf_helper.ncg_api_hdl = mock_ncg_client
 
     # Get the results
@@ -406,7 +406,7 @@ def test_nvcf_helper_list_function_detail_failures(monkeypatch: MonkeyPatch, tmp
     mock_ncg_client.get.return_value = mock_response
 
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
-    nvcf_helper = NvcfHelper(url="", nvcf_url="", key="", org="", timeout=15)
+    nvcf_helper = NvcfHelper(url="", nvcf_url="", key="", org="", team="", timeout=15)
     nvcf_helper.ncg_api_hdl = mock_ncg_client
 
     # Get the results for None response
@@ -442,7 +442,7 @@ def test_nvcf_helper_create_function_no_data(monkeypatch: MonkeyPatch, tmp_path:
     )
 
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
-    nvcf_helper = NvcfHelper(url="", nvcf_url="", key="", org="", timeout=15)
+    nvcf_helper = NvcfHelper(url="", nvcf_url="", key="", org="", team="", timeout=15)
     nvcf_helper.ncg_api_hdl = mock_ncg_client
 
     result = nvcf_helper.nvcf_helper_create_function(
@@ -498,7 +498,7 @@ def test_nvcf_helper_create_function_with_data(monkeypatch: MonkeyPatch, tmp_pat
     )
 
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
-    nvcf_helper = NvcfHelper(url="", nvcf_url="", key="", org="", timeout=15)
+    nvcf_helper = NvcfHelper(url="", nvcf_url="", key="", org="", team="", timeout=15)
     nvcf_helper.ncg_api_hdl = mock_ncg_client
 
     tmp_dir = tmp_path / "test-data"
@@ -573,7 +573,7 @@ def test_nvcf_helper_create_function_fail(monkeypatch: MonkeyPatch, tmp_path: Pa
     mock_ncg_client.post.return_value = None
 
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
-    nvcf_helper = NvcfHelper(url="", nvcf_url="", key="", org="", timeout=15)
+    nvcf_helper = NvcfHelper(url="", nvcf_url="", key="", org="", team="", timeout=15)
     nvcf_helper.ncg_api_hdl = mock_ncg_client
 
     with pytest.raises(RuntimeError):
@@ -625,7 +625,7 @@ def test_nvcf_helper_deploy_function_no_data(monkeypatch: MonkeyPatch, tmp_path:
     )
 
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
-    nvcf_helper = NvcfHelper(url="", nvcf_url="", key="", org="", timeout=15)
+    nvcf_helper = NvcfHelper(url="", nvcf_url="", key="", org="", team="", timeout=15)
     nvcf_helper.ncg_api_hdl = mock_ncg_client
 
     result = nvcf_helper.nvcf_helper_deploy_function(
@@ -682,7 +682,7 @@ def test_nvcf_helper_deploy_function_with_data(monkeypatch: MonkeyPatch, tmp_pat
     )
 
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
-    nvcf_helper = NvcfHelper(url="", nvcf_url="", key="", org="", timeout=15)
+    nvcf_helper = NvcfHelper(url="", nvcf_url="", key="", org="", team="", timeout=15)
     nvcf_helper.ncg_api_hdl = mock_ncg_client
 
     tmp_dir = tmp_path / "test-data"
@@ -775,7 +775,7 @@ def test_nvcf_helper_deploy_function_fail(monkeypatch: MonkeyPatch, tmp_path: Pa
     mock_ncg_client.post.return_value = None
 
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
-    nvcf_helper = NvcfHelper(url="", nvcf_url="", key="", org="", timeout=15)
+    nvcf_helper = NvcfHelper(url="", nvcf_url="", key="", org="", team="", timeout=15)
     nvcf_helper.ncg_api_hdl = mock_ncg_client
 
     with pytest.raises(RuntimeError):
@@ -823,7 +823,7 @@ def test_nvcf_helper_s3cred_function(monkeypatch: MonkeyPatch, tmp_path: Path) -
     mock_ncg_client.put.return_value = None
 
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
-    nvcf_helper = NvcfHelper(url="", nvcf_url="", key="", org="", timeout=15)
+    nvcf_helper = NvcfHelper(url="", nvcf_url="", key="", org="", team="", timeout=15)
     nvcf_helper.ncg_api_hdl = mock_ncg_client
 
     tmp_dir = tmp_path / "test-data"
@@ -882,7 +882,7 @@ def test_nvcf_helper_invoke_batch_fail(monkeypatch: MonkeyPatch, tmp_path: Path)
     mock_ncg_client.post.return_value = None
 
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
-    nvcf_helper = NvcfHelper(url="", nvcf_url="", key="", org="", timeout=15)
+    nvcf_helper = NvcfHelper(url="", nvcf_url="", key="", org="", team="", timeout=15)
     nvcf_helper.ncg_api_hdl = mock_ncg_client
 
     tmp_dir = tmp_path / "test-data"
@@ -931,7 +931,7 @@ def test_nvcf_helper_invoke_function_failures(
     mock_nvcf_client.post.return_value = response
 
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
-    nvcf_helper = NvcfHelper(url="", nvcf_url="", key="", org="", timeout=15)
+    nvcf_helper = NvcfHelper(url="", nvcf_url="", key="", org="", team="", timeout=15)
     nvcf_helper.nvcf_api_hdl = mock_nvcf_client
 
     with pytest.raises(exception):
@@ -966,7 +966,7 @@ def test_nvcf_helper_invoke_function_success(monkeypatch: MonkeyPatch, tmp_path:
     )
 
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
-    nvcf_helper = NvcfHelper(url="", nvcf_url="", key="", org="", timeout=15)
+    nvcf_helper = NvcfHelper(url="", nvcf_url="", key="", org="", team="", timeout=15)
     nvcf_helper.nvcf_api_hdl = mock_nvcf_client
 
     tmp_dir = tmp_path / "test-data"
@@ -1067,7 +1067,7 @@ def test_nvcf_helper_get_request_status_failures(
     mock_nvcf_client.get.return_value = response
 
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
-    nvcf_helper = NvcfHelper(url="", nvcf_url="", key="", org="", timeout=15)
+    nvcf_helper = NvcfHelper(url="", nvcf_url="", key="", org="", team="", timeout=15)
     nvcf_helper.nvcf_api_hdl = mock_nvcf_client
 
     with pytest.raises(exception):
@@ -1100,7 +1100,7 @@ def test_nvcf_helper_get_request_status_success(monkeypatch: MonkeyPatch, tmp_pa
     )
 
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
-    nvcf_helper = NvcfHelper(url="", nvcf_url="", key="", org="", timeout=15)
+    nvcf_helper = NvcfHelper(url="", nvcf_url="", key="", org="", team="", timeout=15)
     nvcf_helper.nvcf_api_hdl = mock_nvcf_client
     mock_nvcf_client.download.return_value = None
 
@@ -1138,7 +1138,7 @@ def test_nvcf_helper_invoke_batch_success(monkeypatch: MonkeyPatch, tmp_path: Pa
     )
 
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
-    nvcf_helper = NvcfHelper(url="", nvcf_url="", key="", org="", timeout=15)
+    nvcf_helper = NvcfHelper(url="", nvcf_url="", key="", org="", team="", timeout=15)
     nvcf_helper.nvcf_api_hdl = mock_nvcf_client
 
     tmp_dir = tmp_path / "test-data"
@@ -1205,7 +1205,7 @@ def test_nvcf_helper_get_request_status_with_wait_get_failures(
     mock_nvcf_client.get.return_value = response
 
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
-    nvcf_helper = NvcfHelper(url="", nvcf_url="", key="", org="", timeout=15)
+    nvcf_helper = NvcfHelper(url="", nvcf_url="", key="", org="", team="", timeout=15)
     nvcf_helper.nvcf_api_hdl = mock_nvcf_client
 
     with pytest.raises(exception):
@@ -1236,7 +1236,7 @@ def test_nvcf_helper_get_request_status_with_wait_success(monkeypatch: MonkeyPat
     )
 
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
-    nvcf_helper = NvcfHelper(url="", nvcf_url="", key="", org="", timeout=15)
+    nvcf_helper = NvcfHelper(url="", nvcf_url="", key="", org="", team="", timeout=15)
     nvcf_helper.nvcf_api_hdl = mock_nvcf_client
 
     # Happy Path
@@ -1268,7 +1268,7 @@ def test_nvcf_helper_terminate_request_failures(
     mock_nvcf_client.post.return_value = response
 
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
-    nvcf_helper = NvcfHelper(url="", nvcf_url="", key="", org="", timeout=15)
+    nvcf_helper = NvcfHelper(url="", nvcf_url="", key="", org="", team="", timeout=15)
     nvcf_helper.nvcf_api_hdl = mock_nvcf_client
 
     with pytest.raises(exception):
@@ -1298,7 +1298,7 @@ def test_nvcf_helper_terminate_request_success(monkeypatch: MonkeyPatch, tmp_pat
     )
 
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
-    nvcf_helper = NvcfHelper(url="", nvcf_url="", key="", org="", timeout=15)
+    nvcf_helper = NvcfHelper(url="", nvcf_url="", key="", org="", team="", timeout=15)
     nvcf_helper.nvcf_api_hdl = mock_nvcf_client
 
     result = nvcf_helper.nvcf_helper_terminate_request(reqid="test-reqid", funcid="test-funcid", version="test-version")
@@ -1329,7 +1329,7 @@ def test_nvcf_helper_delete_function(
     mock_ncg_client.delete.return_value = response
 
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
-    nvcf_helper = NvcfHelper(url="", nvcf_url="", key="", org="", timeout=15)
+    nvcf_helper = NvcfHelper(url="", nvcf_url="", key="", org="", team="", timeout=15)
     nvcf_helper.ncg_api_hdl = mock_ncg_client
 
     with pytest.raises(exception):
@@ -1361,7 +1361,7 @@ def test_nvcf_helper_get_deployment_detail_failures(
     mock_ncg_client.get.return_value = response
 
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
-    nvcf_helper = NvcfHelper(url="", nvcf_url="", key="", org="", timeout=15)
+    nvcf_helper = NvcfHelper(url="", nvcf_url="", key="", org="", team="", timeout=15)
     nvcf_helper.ncg_api_hdl = mock_ncg_client
 
     with pytest.raises(exception):
@@ -1392,7 +1392,7 @@ def test_nvcf_helper_get_deployment_detail_success(monkeypatch: MonkeyPatch, tmp
     )
 
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
-    nvcf_helper = NvcfHelper(url="", nvcf_url="", key="", org="", timeout=15)
+    nvcf_helper = NvcfHelper(url="", nvcf_url="", key="", org="", team="", timeout=15)
     nvcf_helper.ncg_api_hdl = mock_ncg_client
 
     result = nvcf_helper.nvcf_helper_get_deployment_detail(funcid="test-funcid", version="test-version")
@@ -1429,7 +1429,7 @@ def test_nvcf_helper_undeploy_function_failures(
     mock_ncg_client.delete.return_value = response
 
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
-    nvcf_helper = NvcfHelper(url="", nvcf_url="", key="", org="", timeout=15)
+    nvcf_helper = NvcfHelper(url="", nvcf_url="", key="", org="", team="", timeout=15)
     nvcf_helper.ncg_api_hdl = mock_ncg_client
 
     with pytest.raises(exception):
@@ -1456,7 +1456,7 @@ def test_nvcf_helper_undeploy_function_success(monkeypatch: MonkeyPatch, tmp_pat
     )
 
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
-    nvcf_helper = NvcfHelper(url="", nvcf_url="", key="", org="", timeout=15)
+    nvcf_helper = NvcfHelper(url="", nvcf_url="", key="", org="", team="", timeout=15)
     nvcf_helper.ncg_api_hdl = mock_ncg_client
 
     result = nvcf_helper.nvcf_helper_undeploy_function(funcid="test-funcid", version="test-version", graceful=False)
@@ -1487,7 +1487,7 @@ def test_nvcf_helper_get_request_status_new_failures(
     mock_nvcf_client.post.return_value = response
 
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
-    nvcf_helper = NvcfHelper(url="", nvcf_url="", key="", org="", timeout=15)
+    nvcf_helper = NvcfHelper(url="", nvcf_url="", key="", org="", team="", timeout=15)
     nvcf_helper.nvcf_api_hdl = mock_nvcf_client
 
     with pytest.raises(exception):
@@ -1518,7 +1518,7 @@ def test_nvcf_helper_get_request_status_new_success(monkeypatch: MonkeyPatch, tm
     )
 
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
-    nvcf_helper = NvcfHelper(url="", nvcf_url="", key="", org="", timeout=15)
+    nvcf_helper = NvcfHelper(url="", nvcf_url="", key="", org="", team="", timeout=15)
     nvcf_helper.nvcf_api_hdl = mock_nvcf_client
 
     result = nvcf_helper._nvcf_helper_get_request_status_new(  # noqa: SLF001

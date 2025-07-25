@@ -173,7 +173,7 @@ class ClipViewer(NvcfBase):
     Provides methods to serve and display video clips and metadata using a local HTTP server.
     """
 
-    def __init__(self, url: str, nvcf_url: str, key: str, org: str, timeout: int) -> None:
+    def __init__(self, url: str, nvcf_url: str, key: str, org: str, team: str, timeout: int) -> None:  # noqa: PLR0913
         """Initialize the ClipViewer.
 
         Args:
@@ -181,10 +181,11 @@ class ClipViewer(NvcfBase):
             nvcf_url: Base NVCF URL
             key: NGC NVCF API Key
             org: Organization ID or name
+            team: Team name within the organization
             timeout: Request timeout in seconds
 
         """
-        super().__init__(url=url, nvcf_url=nvcf_url, key=key, org=org, timeout=timeout)
+        super().__init__(url=url, nvcf_url=nvcf_url, key=key, org=org, team=team, timeout=timeout)
         self.clip_path: str | None = None
 
     def __del__(self) -> None:

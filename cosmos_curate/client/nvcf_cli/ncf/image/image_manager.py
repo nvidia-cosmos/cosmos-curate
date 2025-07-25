@@ -46,7 +46,7 @@ class ImageManager(NvcfBase):
     Provides methods to upload, download, delete, and list container images in the NVIDIA Cloud Function platform.
     """
 
-    def __init__(self, url: str, nvcf_url: str, key: str, org: str, timeout: int) -> None:
+    def __init__(self, url: str, nvcf_url: str, key: str, org: str, team: str, timeout: int) -> None:  # noqa: PLR0913
         """Initialize the ImageManager.
 
         Args:
@@ -54,12 +54,13 @@ class ImageManager(NvcfBase):
             nvcf_url: Base NVCF URL
             key: NGC NVCF API Key
             org: Organization ID or name
+            team: Team name within the organization
             timeout: Request timeout in seconds
 
         """
-        super().__init__(url=url, nvcf_url=nvcf_url, key=key, org=org, timeout=timeout)
+        super().__init__(url=url, nvcf_url=nvcf_url, key=key, org=org, team=team, timeout=timeout)
         self.clnt: Client = Client()
-        self.clnt.configure(api_key=self.key, org_name=self.org, team_name="no-team", ace_name="no-ace")
+        self.clnt.configure(api_key=self.key, org_name=self.org, team_name=self.team, ace_name="no-ace")
         self.image: ImageAPI = self.clnt.registry.image
 
     def upload_image(self, fname: str) -> dict[str, Any] | None:
@@ -191,7 +192,7 @@ class ImageManager(NvcfBase):
                 team = ", ".join(img_id.get("sharedWithTeams", []))
                 upddt = img_id.get("updatedDate")
 
-                if not all_accessible_orgs and str(self.org) not in org:
+                if not all_accessible_orgs and str(self.org) not in org and str(self.org) not in team:
                     continue
 
                 timages.add_row(name, tag, size, desc, pub, org, team, upddt)

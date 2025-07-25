@@ -81,7 +81,7 @@ class ModelManager(NvcfBase):
 
         return __progress
 
-    def __init__(self, url: str, nvcf_url: str, key: str, org: str, timeout: int) -> None:
+    def __init__(self, url: str, nvcf_url: str, key: str, org: str, team: str, timeout: int) -> None:  # noqa: PLR0913
         """Initialize the ModelManager.
 
         Args:
@@ -89,12 +89,13 @@ class ModelManager(NvcfBase):
             nvcf_url: Base NVCF URL
             key: NGC NVCF API Key
             org: Organization ID or name
+            team: Team name within the organization
             timeout: Request timeout in seconds
 
         """
-        super().__init__(url=url, nvcf_url=nvcf_url, key=key, org=org, timeout=timeout)
+        super().__init__(url=url, nvcf_url=nvcf_url, key=key, org=org, team=team, timeout=timeout)
         self.clnt: Client = Client()
-        self.clnt.configure(api_key=self.key, org_name=self.org, team_name="no-team", ace_name="no-ace")
+        self.clnt.configure(api_key=self.key, org_name=self.org, team_name=self.team, ace_name="no-ace")
         self.model: ModelAPI = self.clnt.registry.model
 
     def upload_model(self, fname: str, src_path: str) -> dict[str, Any] | None:
@@ -358,8 +359,9 @@ class ModelManager(NvcfBase):
             mdesc = model["model_id"].split("/", 1)
             app = mdesc[0]
             desc = mdesc[1] if len(mdesc) > 1 else app
+            target = model["nvcf_model_id"] if self.team == "no-team" else f"{self.team}/{model['nvcf_model_id']}"
             descriptor = {
-                "target": model["nvcf_model_id"],
+                "target": target,
                 "version": model["version"],
                 "definition": {
                     "application": app,

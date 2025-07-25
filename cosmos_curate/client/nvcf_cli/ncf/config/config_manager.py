@@ -38,7 +38,7 @@ class ConfigManager(NvcfBase):
     Provides methods to get and set configuration for the NVIDIA Cloud Function platform.
     """
 
-    def __init__(self, url: str, nvcf_url: str, key: str, org: str, timeout: int) -> None:
+    def __init__(self, url: str, nvcf_url: str, key: str, org: str, team: str, timeout: int) -> None:  # noqa: PLR0913
         """Initialize the ConfigManager.
 
         Args:
@@ -46,10 +46,11 @@ class ConfigManager(NvcfBase):
             nvcf_url: Base NVCF URL
             key: NGC NVCF API Key
             org: Organization ID or name
+            team: Team name within the organization
             timeout: Request timeout in seconds
 
         """
-        super().__init__(url=url, nvcf_url=nvcf_url, key=key, org=org, timeout=timeout)
+        super().__init__(url=url, nvcf_url=nvcf_url, key=key, org=org, team=team, timeout=timeout)
 
     def get_config(self) -> dict[str, Any]:
         """Get the current configuration.
@@ -207,6 +208,14 @@ def nvcf_config_set_config(  # noqa: C901, PLR0913, PLR0912
             envvar="NGC_NVCF_ORG",
         ),
     ] = None,
+    team: Annotated[
+        str,
+        Option(
+            help="Team name within the org if applicable",
+            rich_help_panel="Common",
+            envvar="NGC_NVCF_TEAM",
+        ),
+    ] = "no-team",
     url: Annotated[
         str | None,
         Option(
@@ -241,6 +250,7 @@ def nvcf_config_set_config(  # noqa: C901, PLR0913, PLR0912
         instance: Hardware instance type.
         key: set API Key.
         org: Organization ID or name.
+        team: Team name within the organization.
         url: Base NGC url.
         nvcf_url: Base NVCF url
         timeout: Unused
@@ -255,6 +265,7 @@ def nvcf_config_set_config(  # noqa: C901, PLR0913, PLR0912
         key = ctx.obj.get("config").get("key")
     if org is None:
         org = ctx.obj.get("config").get("org")
+    assert team is not None
     if nvcf_url is None:
         nvcf_url = ctx.obj.get("config").get("nvcf_url")
     if timeout is None:
@@ -270,6 +281,8 @@ def nvcf_config_set_config(  # noqa: C901, PLR0913, PLR0912
         ctx.obj["url"] = url
     if org is not None:
         ctx.obj["org"] = org
+    if team is not None:
+        ctx.obj["team"] = team
     if nvcf_url is not None:
         ctx.obj["nvcf_url"] = nvcf_url
     if timeout is not None:
@@ -279,6 +292,7 @@ def nvcf_config_set_config(  # noqa: C901, PLR0913, PLR0912
         url=ctx.obj["url"],
         key=ctx.obj["key"],
         org=ctx.obj["org"],
+        team=ctx.obj["team"],
         nvcf_url=ctx.obj["nvcf_url"],
         timeout=ctx.obj["timeout"],
         backend=backend,

@@ -79,6 +79,7 @@ def get_nvcf_download_manager() -> NvcfModelManager:
     return NvcfModelManager(
         api_key=data["NGC_NVCF_API_KEY"],
         org=data["NGC_NVCF_ORG"],
+        team=data.get("NGC_NVCF_TEAM", "no-team"),
     )
 
 

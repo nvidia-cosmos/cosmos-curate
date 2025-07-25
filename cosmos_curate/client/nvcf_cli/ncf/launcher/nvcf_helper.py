@@ -104,7 +104,7 @@ class NvcfHelper(NvcfBase):
 
     """
 
-    def __init__(self, url: str, nvcf_url: str, key: str, org: str, timeout: int) -> None:
+    def __init__(self, url: str, nvcf_url: str, key: str, org: str, team: str, timeout: int) -> None:  # noqa: PLR0913
         """Initialize the NvcfHelper with API endpoints and authentication.
 
         Args:
@@ -112,10 +112,11 @@ class NvcfHelper(NvcfBase):
             nvcf_url (str): Base URL for the NVCF API.
             key (str): API key for authentication.
             org (str): Organization identifier.
+            team (str): Team name within the organization.
             timeout (int): Request timeout in seconds.
 
         """
-        super().__init__(url=url, nvcf_url=nvcf_url, key=key, org=org, timeout=timeout)
+        super().__init__(url=url, nvcf_url=nvcf_url, key=key, org=org, team=team, timeout=timeout)
 
         self.ncg_api_hdl = NvcfClient(self.logger.getChild("ncgApiHdl"), self.url, self.key)
         self.nvcf_api_hdl = NvcfClient(self.logger.getChild("nvcfApiHdl"), self.nvcf_url, self.key)
@@ -413,6 +414,7 @@ class NvcfHelper(NvcfBase):
             create_data["secrets"] = [
                 *(create_data["secrets"] or []),
                 {"name": "NGC_NVCF_ORG", "value": self.org},
+                {"name": "NGC_NVCF_TEAM", "value": self.team},
                 {"name": "NGC_NVCF_API_KEY", "value": self.key},
             ]  # type: ignore[misc]
         else:

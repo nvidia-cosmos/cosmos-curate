@@ -18,7 +18,7 @@
         "fixed_stride_split_duration": 10,
         "fixed_stride_min_clip_length_s": 2,
         "transnetv2_frame_decoder_mode": "ffmpeg_cpu",
-        "transnetv2_frame_decode_disable_fallback": false,
+        "transnetv2_frame_decode_raise_on_pynvc_error": false,
         "transnetv2_threshold": 0.4,
         "transnetv2_min_length_s": 2.0,
         "transnetv2_max_length_s": 60.0,

@@ -21,9 +21,11 @@ please reach out to NVIDIA Cosmos-Curate team to get help for onboarding.
 ### Store Configuration Settings
 
 ```bash
-# Set the NVCF ORG ID and API key
+# Set the NVCF Org ID and API key
 export NGC_NVCF_ORG=<your_org_id>
 export NGC_NVCF_API_KEY=<your_api_key>
+# If you NVCF Org has a hierarchy of team, set the team name
+export NGC_NVCF_TEAM=<your_team_name>
 
 # Set the NVCF cluster information
 export NVCF_BACKEND=<your_backend_cluster_name>
@@ -54,6 +56,19 @@ docker tag cosmos-curate:1.0.0 nvcr.io/$NGC_NVCF_ORG/cosmos-curate:1.0.0
 cosmos-curate nvcf image upload-image --data-file ~/.config/cosmos_curate/templates/image/image_upload.json
 ```
 
+If you are on a specifc team in your Org, you will probably want to use the private registry at team level.
+So the `image` entry in the `json` should be
+
+```json
+    "image": "<team-name>/cosmos-curate",
+```
+
+And the image should be re-tagged as
+
+```bash
+docker tag cosmos-curate:1.0.0 nvcr.io/$NGC_NVCF_ORG/$NGC_NVCF_TEAM/cosmos-curate:1.0.0
+```
+
 ### Upload Model Weights
 
 ```bash
@@ -65,6 +80,9 @@ cosmos-curate nvcf model sync-models \
     --data-file cosmos_curate/configs/all_models.json \
     --download-dir "${COSMOS_CURATE_LOCAL_WORKSPACE_PREFIX:-$HOME}/cosmos_curate_local_workspace/models/"
 ```
+
+Again if you are on a specifc team in your Org, it's likely models should be uploaded to your team's private registry;
+But for models, it is handled automatically by the CLI as long as you have `NGC_NVCF_TEAM` set as mentioned [above](#store-configuration-settings).
 
 ### Create, Deploy, Invoke Function 
 

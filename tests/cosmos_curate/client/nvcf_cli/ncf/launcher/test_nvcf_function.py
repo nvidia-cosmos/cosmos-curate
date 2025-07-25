@@ -39,11 +39,12 @@ def nvcf_function() -> NvcfFunction:
         version="test-version",
         key="test-key",
         org="test-org",
+        team="test-team",
     )
 
 
 @pytest.mark.parametrize(
-    ("funcid", "version", "key", "org", "kwargs", "expected_url", "expected_nvcf_url", "expected_timeout"),
+    ("funcid", "version", "key", "org", "team", "kwargs", "expected_url", "expected_nvcf_url", "expected_timeout"),
     [
         # Test with default URLs and timeout
         (
@@ -51,6 +52,7 @@ def nvcf_function() -> NvcfFunction:
             "test-version",
             "test-key",
             "test-org",
+            "test-team",
             {},
             DEFAULT_BASE_NGC_URL,
             DEFAULT_BASE_NVCF_URL,
@@ -62,6 +64,7 @@ def nvcf_function() -> NvcfFunction:
             "test-version",
             "test-key",
             "test-org",
+            "test-team",
             {
                 "ncg_url": "https://custom-ncg.example.com",
                 "nvcf_url": "https://custom-nvcf.example.com",
@@ -78,6 +81,7 @@ def test_nvcf_function_init(  # noqa: PLR0913
     version: str,
     key: str,
     org: str,
+    team: str,
     kwargs: dict[str, Any],
     expected_url: str,
     expected_nvcf_url: str,
@@ -89,6 +93,7 @@ def test_nvcf_function_init(  # noqa: PLR0913
         version=version,
         key=key,
         org=org,
+        team=team,
         **kwargs,
     )
 
@@ -96,6 +101,7 @@ def test_nvcf_function_init(  # noqa: PLR0913
     assert nvcf_function.version == version
     assert nvcf_function.key == key
     assert nvcf_function.org == org
+    assert nvcf_function.team == team
     assert nvcf_function.url == expected_url
     assert nvcf_function.nvcf_url == expected_nvcf_url
     assert nvcf_function.timeout == expected_timeout

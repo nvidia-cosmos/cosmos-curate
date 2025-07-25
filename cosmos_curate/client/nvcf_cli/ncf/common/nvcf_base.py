@@ -48,7 +48,7 @@ class NvcfBase(ABC):  # noqa: B024
     TEMPLATE_DIR = "templates"
     FUNCID_NAME = "funcid.json"
 
-    def __init__(self, url: str, nvcf_url: str, key: str | None, org: str | None, timeout: int) -> None:
+    def __init__(self, url: str, nvcf_url: str, key: str | None, org: str | None, team: str, timeout: int) -> None:  # noqa: PLR0913
         """Initialize the NVCF base class.
 
         Args:
@@ -56,12 +56,14 @@ class NvcfBase(ABC):  # noqa: B024
             nvcf_url: Base NVCF URL
             key: NGC NVCF API Key
             org: Organization ID or name
+            team: Team name within the org
             timeout: Request timeout in seconds
 
         """
         self.url: str = url
         self.key: str | None = key
         self.org: str | None = org
+        self.team: str = team
         self.nvcf_url: str = nvcf_url
         self.timeout: int = timeout
         self.cfg: dict[str, Any] = {}
@@ -119,7 +121,16 @@ class NvcfBase(ABC):  # noqa: B024
         return None if len(self.cfg) == 0 else self.config
 
     def save_config(  # noqa: PLR0913
-        self, url: str, nvcf_url: str, key: str, org: str, backend: str, instance: str, gpu: str, timeout: int
+        self,
+        url: str,
+        nvcf_url: str,
+        key: str,
+        org: str,
+        team: str,
+        backend: str,
+        instance: str,
+        gpu: str,
+        timeout: int,
     ) -> dict[str, Any]:
         """Save configuration to the config file.
 
@@ -128,6 +139,7 @@ class NvcfBase(ABC):  # noqa: B024
             nvcf_url: Base NVCF URL
             key: NGC NVCF API Key
             org: Organization ID or name
+            team: Team name within the organization
             backend: Backend configuration
             instance: Instance configuration
             gpu: GPU configuration
@@ -140,6 +152,7 @@ class NvcfBase(ABC):  # noqa: B024
         self.cfg["url"] = url
         self.cfg["key"] = key
         self.cfg["org"] = org
+        self.cfg["team"] = team
         self.cfg["nvcf_url"] = nvcf_url
         self.cfg["backend"] = backend
         self.cfg["gpu"] = gpu
@@ -253,6 +266,14 @@ def base_callback(  # noqa: PLR0913
             envvar="NGC_NVCF_ORG",
         ),
     ] = None,
+    team: Annotated[
+        str,
+        Option(
+            help="Team name within the org if applicable",
+            rich_help_panel="Common",
+            envvar="NGC_NVCF_TEAM",
+        ),
+    ] = "no-team",
     url: Annotated[
         str,
         Option(
@@ -285,6 +306,7 @@ def base_callback(  # noqa: PLR0913
         ctx: Typer context
         key: NGC NVCF API Key
         org: Organization ID or name
+        team: Team name within the organization
         url: Base NGC URL
         nvcf_url: Base NVCF URL
         timeout: Request timeout in seconds
@@ -305,7 +327,7 @@ def base_callback(  # noqa: PLR0913
         )
         raise typer.Exit(code=1)
     # Instantiate the functionality
-    nvcf_hdl = ins_type(url=url, nvcf_url=nvcf_url, key=key, org=org, timeout=timeout)
+    nvcf_hdl = ins_type(url=url, nvcf_url=nvcf_url, key=key, org=org, team=team, timeout=timeout)
 
     if nvcf_hdl.config is None and ins_name != "config":
         err_msg = f"No Configurations found, Please run '{nvcf_hdl.exe} nvcf config set' to create configuration"
@@ -316,6 +338,7 @@ def base_callback(  # noqa: PLR0913
         "nvcf_url": nvcf_url,
         "key": key,
         "org": org,
+        "team": team,
         "timeout": timeout,
         "config": nvcf_hdl.config,
         "nvcfHdl": nvcf_hdl,

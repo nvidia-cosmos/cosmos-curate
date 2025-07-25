@@ -31,17 +31,19 @@ if typing.TYPE_CHECKING:
 class NvcfModelManager:
     """A class to download and track models from the NVCF."""
 
-    def __init__(self, api_key: str, org: str, cache_dir: str | None = None) -> None:
+    def __init__(self, api_key: str, org: str, team: str, cache_dir: str | None = None) -> None:
         """Initialize the NVCF model manager.
 
         Args:
             api_key: NVCF API key
             org: NVCF organization name
+            team: NVCF team name within the organization
             cache_dir: Directory where models are cached. If None, will use the current directory.
 
         """
         self.api_key: str = api_key
         self.org: str = org
+        self.team: str = team
         self.logger = logger
         self.cache_dir = pathlib.Path(cache_dir or pathlib.Path.cwd())
         self.tracking_file = self.cache_dir / ".downloaded_models.json"
@@ -135,7 +137,7 @@ class NvcfModelManager:
 
         while attempts < max_attempts:
             try:
-                clt.configure(api_key=self.api_key, org_name=self.org)
+                clt.configure(api_key=self.api_key, org_name=self.org, team_name=self.team)
                 break
             except Exception as e:  # noqa: BLE001
                 logger.error(f"Error configuring client: {e}")
@@ -147,12 +149,13 @@ class NvcfModelManager:
             raise RuntimeError(error_msg)
 
         model: ModelAPI = clt.registry.model
-        logger.info(f"Downloading model {mname} to {dest}")
         count = 0
         max_attempts = 5
         while count < max_attempts:
             try:
-                model.download_version(target=f"{self.org}/{mname}", destination=dest)
+                target = f"{self.org}/{mname}" if self.team == "no-team" else f"{self.org}/{self.team}/{mname}"
+                logger.info(f"Downloading model {mname} from {target} to {dest}; retry-counter={count}")
+                model.download_version(target=target, destination=dest)
                 break
             except Exception as e:  # noqa: BLE001
                 logger.error(f"Error downloading model {mname}: {e}")

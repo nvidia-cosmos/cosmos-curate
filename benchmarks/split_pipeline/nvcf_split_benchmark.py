@@ -93,6 +93,7 @@ def nvcf_split_benchmark(  # noqa: PLR0913
         version=version,
         key=nvcf_secrets.ngc_key,
         org=nvcf_secrets.ngc_org,
+        team="no-team",
     )
 
     # Load and customize configuration templates

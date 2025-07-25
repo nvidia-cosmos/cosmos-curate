@@ -35,7 +35,7 @@ from cosmos_curate.client.nvcf_cli.ncf.common import NotFoundError, NVCFResponse
 )
 def test_upload_asset_failure(response: NVCFResponse, exception: type[Exception]) -> None:
     """Test upload asset failure scenarios."""
-    asset_manager = AssetManager(url="", nvcf_url="", key="", org="", timeout=15)
+    asset_manager = AssetManager(url="", nvcf_url="", key="", org="", team="", timeout=15)
 
     asset_manager.nvcf_api_hdl.post = MagicMock(return_value=response)
 
@@ -45,7 +45,7 @@ def test_upload_asset_failure(response: NVCFResponse, exception: type[Exception]
 
 def test_upload_asset_success(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
     """Test upload asset success."""
-    asset_manager = AssetManager(url="", nvcf_url="", key="", org="", timeout=15)
+    asset_manager = AssetManager(url="", nvcf_url="", key="", org="", team="", timeout=15)
     asset_manager.nvcf_api_hdl.post = MagicMock(
         return_value=NVCFResponse(
             {"status": 200, "assetId": "test-asset-id", "uploadUrl": "https://example.com/upload"}
@@ -72,7 +72,7 @@ def test_upload_asset_success(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
 )
 def test_delete_asset(response: NVCFResponse, exception: type[Exception]) -> None:
     """Test delete asset."""
-    asset_manager = AssetManager(url="", nvcf_url="", key="", org="", timeout=15)
+    asset_manager = AssetManager(url="", nvcf_url="", key="", org="", team="", timeout=15)
     asset_manager.nvcf_api_hdl.delete = MagicMock(return_value=response)
 
     with pytest.raises(exception):
@@ -89,7 +89,7 @@ def test_delete_asset(response: NVCFResponse, exception: type[Exception]) -> Non
 )
 def test_list_all(response: NVCFResponse, exception: type[Exception]) -> None:
     """Test list assets."""
-    asset_manager = AssetManager(url="", nvcf_url="", key="", org="", timeout=15)
+    asset_manager = AssetManager(url="", nvcf_url="", key="", org="", team="", timeout=15)
     asset_manager.nvcf_api_hdl.get = MagicMock(return_value=response)
 
     with pytest.raises(exception):
@@ -98,7 +98,7 @@ def test_list_all(response: NVCFResponse, exception: type[Exception]) -> None:
 
 def test_list_all_success() -> None:
     """Test list assets success."""
-    asset_manager = AssetManager(url="", nvcf_url="", key="", org="", timeout=15)
+    asset_manager = AssetManager(url="", nvcf_url="", key="", org="", team="", timeout=15)
     asset_manager.nvcf_api_hdl.get = MagicMock(
         return_value=NVCFResponse(
             {"status": 200, "assets": [{"assetId": "test-asset-id", "desc": "test", "size": 100}]}
@@ -126,7 +126,7 @@ def test_list_all_success() -> None:
 )
 def test_list_detail_failure(response: NVCFResponse, exception: type[Exception]) -> None:
     """Test list asset detail failure."""
-    asset_manager = AssetManager(url="", nvcf_url="", key="", org="", timeout=15)
+    asset_manager = AssetManager(url="", nvcf_url="", key="", org="", team="", timeout=15)
     asset_manager.nvcf_api_hdl.get = MagicMock(return_value=response)
 
     with pytest.raises(exception):

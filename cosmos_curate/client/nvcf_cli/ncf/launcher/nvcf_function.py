@@ -56,6 +56,7 @@ class NvcfFunction(NvcfHelper):
         version=version,
         key=ngc_key,
         org=ngc_org,
+        team=ngc_team_in_org,
     )
 
     with nvcf_function.deploy(
@@ -74,6 +75,7 @@ class NvcfFunction(NvcfHelper):
         # instance_type: str,
         key: str,
         org: str,
+        team: str,
         ncg_url: str = DEFAULT_BASE_NGC_URL,
         nvcf_url: str = DEFAULT_BASE_NVCF_URL,
         timeout: int = DEFAULT_NVCF_TIMEOUT,
@@ -85,6 +87,7 @@ class NvcfFunction(NvcfHelper):
             version: Function version.
             key: NVCF API Key.
             org: NVCF Organization.
+            team: Team name within the organization.
             ncg_url: NGC URL.
             nvcf_url: NVCF URL.
             timeout: NVCF timeout.
@@ -95,6 +98,7 @@ class NvcfFunction(NvcfHelper):
             nvcf_url=nvcf_url,
             key=key,
             org=org,
+            team=team,
             timeout=timeout,
         )
         self.funcid = funcid
