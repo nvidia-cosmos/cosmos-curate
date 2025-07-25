@@ -8,6 +8,9 @@ on:
         description: 'Tag to test release for'
         required: true
 
+permissions:
+  contents: write
+
 jobs:
   release:
     runs-on: ubuntu-latest
@@ -19,7 +22,7 @@ jobs:
       - name: Extract changelog section for tag
         id: extract
         run: |
-          TAG="${GITHUB_REF#refs/tags/}"
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
           echo "Looking for changelog section for tag: $TAG"
 
           # Extract relevant section
