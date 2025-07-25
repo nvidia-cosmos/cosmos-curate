@@ -15,6 +15,7 @@
 """Captioning stage."""
 
 import asyncio
+import math
 from collections.abc import Iterable
 from itertools import zip_longest
 
@@ -361,6 +362,7 @@ class QwenCaptionStage(CuratorStage):
         stage2_prompt_text: str | None = None,
         disable_mmcache: bool = False,
         use_async_engine: bool = False,
+        num_gpus_per_worker: float = 1.0,
         prepare_cosmos_predict_dataset: bool = False,
         verbose: bool = False,
         log_stats: bool = False,
@@ -377,16 +379,19 @@ class QwenCaptionStage(CuratorStage):
             stage2_prompt_text: Custom prompt for second stage.
             disable_mmcache: Whether to disable model cache.
             use_async_engine: Whether to use the asynchronous engine for processing.
+            num_gpus_per_worker: Number of GPUs to allocate per worker.
             prepare_cosmos_predict_dataset: Whether to prepare dataset for Cosmos-Predict.
             verbose: Whether to print verbose logs.
             log_stats: Whether to log performance statistics.
 
         """
         self._timer = StageTimer(self)
+        self._model_variant = model_variant
         self._batch_size = batch_size
         self._generate_stage2_caption = generate_stage2_caption
         self._disable_mmcache = disable_mmcache
         self._use_async_engine = use_async_engine
+        self._num_gpus_per_worker = num_gpus_per_worker
         self._prepare_cosmos_predict_dataset = prepare_cosmos_predict_dataset
         self._verbose = verbose
         self._log_stats = log_stats
@@ -398,6 +403,7 @@ class QwenCaptionStage(CuratorStage):
             stage2_prompt_text=stage2_prompt_text,
             disable_mmcache=self._disable_mmcache,
             use_async_engine=self._use_async_engine,
+            num_gpus=math.ceil(self._num_gpus_per_worker),
         )
 
     def stage_setup(self) -> None:
@@ -418,7 +424,7 @@ class QwenCaptionStage(CuratorStage):
             The resource requirements for this stage.
 
         """
-        return CuratorStageResource(gpus=1.0)
+        return CuratorStageResource(gpus=self._num_gpus_per_worker)
 
     @property
     def model(self) -> ModelInterface:
@@ -524,7 +530,7 @@ class QwenCaptionStage(CuratorStage):
         _captions = list(captions)
         for req_id, caption in _captions:
             clip_idx, window_idx = mapping[req_id]
-            video.clips[clip_idx].windows[window_idx].caption["qwen"] = caption
+            video.clips[clip_idx].windows[window_idx].caption[self._model_variant] = caption
             if self._verbose:
                 logger.info(f"Caption for clip {video.clips[clip_idx].uuid} window {window_idx}: {caption}")
 

@@ -169,6 +169,7 @@ class QwenVL(ModelInterface):
         stage2_prompt_text: str | None = None,
         disable_mmcache: bool = False,
         use_async_engine: bool = False,
+        num_gpus: int = 1,
     ) -> None:
         """Initialize the QwenVL model.
 
@@ -180,6 +181,7 @@ class QwenVL(ModelInterface):
             stage2_prompt_text: The prompt for the stage 2 caption.
             disable_mmcache: Whether to disable the MM cache.
             use_async_engine: Whether to use the async engine.
+            num_gpus: Number of GPUs to use for processing.
 
         """
         super().__init__()
@@ -193,6 +195,7 @@ class QwenVL(ModelInterface):
         self.model_variant = model_variant
         self.sampling_params: SamplingParams | None = None
         self.use_async_engine = use_async_engine
+        self.num_gpus = num_gpus
         self.pattern = (
             r"(<\|im_start\|>user\s*<\|vision_start\|><\|video_pad\|><\|vision_end\|>\s*)(.*?)(\s*<\|im_end\|>)"
         )
@@ -252,6 +255,7 @@ class QwenVL(ModelInterface):
                 mm_processor_kwargs=mm_processor_kwargs,
                 disable_mm_preprocessor_cache=self.disable_mmcache,
                 max_num_batched_tokens=32768,
+                tensor_parallel_size=self.num_gpus,
             )
             self.llm = AsyncLLMEngine.from_engine_args(engine_args)
             self.sampling_params = SamplingParams(
@@ -274,6 +278,7 @@ class QwenVL(ModelInterface):
                 mm_processor_kwargs=mm_processor_kwargs,
                 disable_mm_preprocessor_cache=self.disable_mmcache,
                 max_num_batched_tokens=32768,
+                tensor_parallel_size=self.num_gpus,
             )
             self.sampling_params = SamplingParams(
                 temperature=0.1,
