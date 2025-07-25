@@ -43,6 +43,7 @@ from cosmos_curate.pipelines.video.utils.data_model import (
     Video,
     Window,
 )
+from cosmos_curate.pipelines.video.utils.decoder_utils import DEFAULT_TRANSCODE_BITRATE_M
 
 _PROMPTS = {
     "default": """
@@ -293,7 +294,9 @@ class QwenInputPreparationStage(CuratorStage):
         for task in tasks:
             self._timer.reinit(self, task.get_major_size())
             video = task.video
-            target_bit_rate = f"{video.metadata.bit_rate_k}K" if self._use_input_bit_rate else "4M"
+            target_bit_rate = (
+                f"{video.metadata.bit_rate_k}K" if self._use_input_bit_rate else f"{DEFAULT_TRANSCODE_BITRATE_M}M"
+            )
             for clip in video.clips:
                 if clip.buffer is None:
                     logger.warning(f"Clip {clip.uuid} has no buffer.")

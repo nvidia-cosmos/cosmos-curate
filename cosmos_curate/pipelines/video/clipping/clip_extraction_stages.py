@@ -31,6 +31,7 @@ from cosmos_curate.pipelines.video.utils.data_model import (
     SplitPipeTask,
     Video,
 )
+from cosmos_curate.pipelines.video.utils.decoder_utils import DEFAULT_TRANSCODE_BITRATE_M
 
 
 class ClipTranscodingStage(CuratorStage):
@@ -247,7 +248,7 @@ class ClipTranscodingStage(CuratorStage):
             if use_bit_rate is not None:
                 command.extend(["-b:v", use_bit_rate])
             else:
-                command.extend(["-b:v", "4M"])
+                command.extend(["-b:v", f"{DEFAULT_TRANSCODE_BITRATE_M}M"])
             if self._encoder == "h264_nvenc":
                 # IMPORTANT! these settings are necessary for high quality!
                 command.extend(

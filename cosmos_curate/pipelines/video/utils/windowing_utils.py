@@ -21,7 +21,7 @@ import torch
 
 from cosmos_curate.core.utils import conda_utils
 from cosmos_curate.core.utils.runtime.operation_utils import make_pipeline_named_temporary_file
-from cosmos_curate.pipelines.video.utils.decoder_utils import get_frame_count
+from cosmos_curate.pipelines.video.utils.decoder_utils import DEFAULT_TRANSCODE_BITRATE_M, get_frame_count
 
 if conda_utils.is_running_in_env("unified") or conda_utils.is_running_in_env("phi"):
     from cosmos_curate.pipelines.video.utils.vision_process import fetch_video
@@ -90,7 +90,7 @@ def split_video_into_windows(  # noqa: PLR0913
     flip_input: bool = False,
     num_frames_to_use: int = 0,
     return_bytes: bool = False,
-    target_bit_rate: str = "4M",
+    target_bit_rate: str = f"{DEFAULT_TRANSCODE_BITRATE_M}M",
     return_video_frames: bool = True,
     num_threads: int = 1,
 ) -> tuple[list[bytes], list[torch.Tensor | None], list[WindowFrameInfo]]:

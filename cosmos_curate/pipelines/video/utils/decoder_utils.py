@@ -40,6 +40,9 @@ if TYPE_CHECKING:
     from av.container import InputContainer
 
 
+DEFAULT_TRANSCODE_BITRATE_M = 4  # Default to 4M bit rate for transcoding
+
+
 class Resolution(NamedTuple):
     """Container for video frame dimensions.
 
@@ -174,7 +177,7 @@ def extract_video_metadata(video: str | bytes) -> VideoMetadata:
     format_name = video_info.get("format", {}).get("format_name", "unknown").lower()
 
     # store bit_rate if available
-    bit_rate_k = 4000  # default to 4000K (4M) bit rate
+    bit_rate_k = int(DEFAULT_TRANSCODE_BITRATE_M * 1000)
     if "bit_rate" in video_stream:
         bit_rate_k = int(int(video_stream["bit_rate"]) / 1024)
 
