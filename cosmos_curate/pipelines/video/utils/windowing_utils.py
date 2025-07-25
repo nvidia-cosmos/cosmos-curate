@@ -90,6 +90,7 @@ def split_video_into_windows(  # noqa: PLR0913
     flip_input: bool = False,
     num_frames_to_use: int = 0,
     return_bytes: bool = False,
+    target_bit_rate: str = "4M",
     return_video_frames: bool = True,
     num_threads: int = 1,
 ) -> tuple[list[bytes], list[torch.Tensor | None], list[WindowFrameInfo]]:
@@ -100,17 +101,17 @@ def split_video_into_windows(  # noqa: PLR0913
 
     Args:
         mp4_bytes: input video in bytes
-        fps: Frames per second of the input video.
-        preprocess_dtype: Data type to use for preprocessing the video/image inputs.
-        num_frames_to_use: Number of frames to extract from the video. If 0, uses all frames.
-        flip_input: Whether to flip the input video/image horizontally.
-        return_bytes: Whether to extract mp4 bytes for each window for use by PreviewStage
-        model_does_preprocess: if the model does preprocessing
-        num_threads: number of threads
-        remainder_threshold: threshold for remainder
-        return_video_frames: whether to return video frames
-        sampling_fps: sampling fps
         window_size: window size
+        remainder_threshold: threshold for remainder
+        sampling_fps: sampling fps when generating frames
+        model_does_preprocess: if the model does preprocessing
+        preprocess_dtype: Data type to use for preprocessing the video/image inputs.
+        flip_input: Whether to flip the input video/image horizontally.
+        num_frames_to_use: Number of frames to extract from the video. If 0, uses all frames.
+        return_bytes: Whether to extract mp4 bytes for each window for use by PreviewStage
+        target_bit_rate: Target bit rate for the output window mp4 bytes.
+        return_video_frames: whether to return video frames
+        num_threads: number of threads
 
     Returns:
         Tuple containing:
@@ -163,6 +164,8 @@ def split_video_into_windows(  # noqa: PLR0913
                         "error",
                         "-vf",
                         f"select='between(n\\,{window.start}\\,{window.end})',setpts=PTS-STARTPTS",
+                        "-b:v",
+                        str(target_bit_rate),
                         "-threads",
                         str(num_threads),
                         "-f",

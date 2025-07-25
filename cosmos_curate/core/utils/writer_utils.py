@@ -233,6 +233,43 @@ def write_jsonl(  # noqa: PLR0913
     )
 
 
+def write_text(  # noqa: PLR0913
+    data: str,
+    dest: storage_client.StoragePrefix | pathlib.Path,
+    desc: str,
+    source_video: str,
+    *,
+    verbose: bool,
+    client: storage_client.StorageClient | None,
+    backup_and_overwrite: bool = False,
+    overwrite: bool = False,
+) -> None:
+    """Write text to S3 or local path.
+
+    Args:
+        data: Data to write.
+        dest: Destination to write.
+        desc: Description of the write.
+        source_video: Source video.
+        verbose: Verbosity.
+        client: Storage client.
+        backup_and_overwrite: Backup and overwrite.
+        overwrite: Overwrite.
+
+    """
+    text_bytes = io.BytesIO(data.encode("utf-8"))
+    write_bytes(
+        text_bytes.getvalue(),
+        dest,
+        desc,
+        source_video,
+        verbose=verbose,
+        client=client,
+        backup_and_overwrite=backup_and_overwrite,
+        overwrite=overwrite,
+    )
+
+
 def write_csv(  # noqa: PLR0913
     dest: storage_client.StoragePrefix | pathlib.Path,
     desc: str,

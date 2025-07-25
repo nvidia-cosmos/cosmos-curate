@@ -11,6 +11,7 @@
     - [Setup Environment and Install Dependencies](#setup-environment-and-install-dependencies)
     - [Run the Hello-World Example Pipeline](#run-the-hello-world-example-pipeline)
     - [Run the Reference Video Pipeline](#run-the-reference-video-pipeline)
+    - [Generate Dataset for Cosmos-Predict2 Post-Training](#generate-dataset-for-cosmos-predict2-post-training)
     - [Useful Options for Local Run](#useful-options-for-local-run)
   - [Launch Pipelines on Slurm](#launch-pipelines-on-slurm)
     - [Prerequisites for Slurm Run](#prerequisites-for-slurm-run)
@@ -232,6 +233,33 @@ curl -X POST http://localhost:8000/v1/run_pipeline -H "NVCF-REQID: 1234-5678" -d
 }'
 ```
 
+### Generate Dataset for Cosmos-Predict2 Post-Training
+
+The [Split-Annotate Pipeline](../curator/REFERENCE_PIPELINES_VIDEO.md#split-annotate-pipeline) above has first-class support
+for [Cosmos-Predict2 Video2World post-training](https://github.com/nvidia-cosmos/cosmos-predict2/blob/main/documentations/post-training_video2world.md).
+
+The following arguments are needed for `split-annotate` pipeline to generate the datasets for Cosmos-Predict2:
+- add `--generate-cosmos-predict-dataset predict2` to enable the dataset creation.
+- add ` --transnetv2-min-length-frames 120` to specify a minimum clip length of (e.g.) 120 frames, as Cosmos-Predict2 post-training requires 93 frames by default.
+
+This will generate a `cosmos_predict2_video2world_dataset/` sub-directory under the output path specified by `output_clip_path`.
+The `cosmos_predict2_video2world_dataset/` sub-directory has the following structure:
+
+```bash
+cosmos_predict2_video2world_dataset/
+├── metas/
+│   ├── {clip-uuid}_{start_frame}_{end_frame}.txt
+├── videos/
+│   ├── {clip-uuid}_{start_frame}_{end_frame}.mp4
+├── t5_xxl/
+│   ├── {clip-uuid}_{start_frame}_{end_frame}.pickle
+```
+
+Note the `T5` embedding generation are included in this pipeline, such that there is no need to
+run the `python -m scripts.get_t5_embeddings --dataset_path ...` command (from `Cosmos-Predict2` repo) as stated in the
+[post-training guide](https://github.com/nvidia-cosmos/cosmos-predict2/blob/main/documentations/post-training_video2world.md#post-training-guide),
+unless you want to manually edit the captions which will require re-generating the T5 embeddings.
+
 ### Useful Options for Local Run
 
 Almost all the CLI commands enable `no_args_is_help`, so running a command without any arguments will print out the help message.
@@ -392,7 +420,7 @@ If you encounter any issues:
 6. Ensure you have the correct Python version installed
 
 ## Support
-For additional support or to report issues, please contact the development team or create an issue in the repository. 
+For additional support or to report issues, please contact the development team or create an issue in the repository.
 
 ## Responsible Use of AI Models
 [Responsible Use](./RESPONSIBLE_USE.md)

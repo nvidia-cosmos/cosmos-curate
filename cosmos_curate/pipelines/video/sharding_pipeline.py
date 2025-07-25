@@ -42,7 +42,7 @@ from cosmos_curate.core.utils.storage_utils import (
     verify_path,
 )
 from cosmos_curate.pipelines.pipeline_args import add_common_args
-from cosmos_curate.pipelines.video.captioning.captioning_stages import T5Stage
+from cosmos_curate.pipelines.video.captioning.captioning_stages import T5StageForShard
 from cosmos_curate.pipelines.video.read_write.download_stages import DownloadPackUpload
 from cosmos_curate.pipelines.video.read_write.summary_writers import write_shard_summary
 from cosmos_curate.pipelines.video.utils.data_model import (
@@ -223,7 +223,7 @@ def shard(args: argparse.Namespace) -> None:
         return
 
     stages: list[CuratorStage | CuratorStageSpec] = [
-        T5Stage(
+        T5StageForShard(
             verbose=args.verbose,
             log_stats=args.perf_profile,
         ),

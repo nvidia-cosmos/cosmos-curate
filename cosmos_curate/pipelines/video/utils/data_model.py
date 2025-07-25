@@ -41,7 +41,9 @@ if TYPE_CHECKING:
 
 
 @attrs.define
-class _Window:
+class Window:
+    """Container for captioning window."""
+
     # Start frame number of this window
     start_frame: int
     # End frame number of this window
@@ -57,6 +59,8 @@ class _Window:
     # `caption: {model_name: caption}`
     caption: dict[str, str] = attrs.Factory(dict)
     enhanced_caption: dict[str, str] = attrs.Factory(dict)
+    # t5_xxl embeddings for this window
+    t5_xxl_embedding: dict[str, npt.NDArray[np.int32]] = attrs.Factory(dict)
     # webp preview
     webp_bytes: bytes | None = None
 
@@ -103,8 +107,8 @@ class Clip:
     intern_video_2_frames: npt.NDArray[np.float32] | None = None
     intern_video_2_embedding: npt.NDArray[np.float32] | None = None
     # captioning
-    windows: list[_Window] = attrs.Factory(list)
-    filter_windows: list[_Window] = attrs.Factory(list)
+    windows: list[Window] = attrs.Factory(list)
+    filter_windows: list[Window] = attrs.Factory(list)
     # for testing
     cosmos_embed1_text_match: tuple[str, float] | None = None
     intern_video_2_text_match: tuple[str, float] | None = None

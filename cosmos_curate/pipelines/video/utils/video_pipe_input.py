@@ -197,11 +197,11 @@ def extract_shard_tasks(  # noqa: PLR0913
     # extract clip metadata paths
     metadata_path = get_full_path(input_path, "metas", version)
     items = get_files_relative(str(metadata_path), client_input)
+    logger.info(f"Reading {len(items)} clip metadata from {metadata_path} ...")
     for item in items:
         if not item:
             continue
         clip_metadata_path = get_full_path(metadata_path, item)
-        logger.info(f"Reading clip metadata from {clip_metadata_path} ...")
         try:
             clip_metadata = read_json_file(clip_metadata_path, client_input)
         except Exception as e:  # noqa: BLE001

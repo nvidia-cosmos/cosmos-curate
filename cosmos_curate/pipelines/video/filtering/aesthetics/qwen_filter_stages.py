@@ -32,7 +32,7 @@ from cosmos_curate.core.utils.runtime.gpu_start_helper import (
 from cosmos_curate.core.utils.runtime.performance_utils import StageTimer
 from cosmos_curate.models import qwen_vl
 from cosmos_curate.pipelines.video.utils import windowing_utils
-from cosmos_curate.pipelines.video.utils.data_model import SplitPipeTask, Video, _Window
+from cosmos_curate.pipelines.video.utils.data_model import SplitPipeTask, Video, Window
 
 """
 Custom prompts are supported by passing a comma separated list of categories to the --qwen-filter-categories flag.
@@ -275,7 +275,7 @@ class QwenInputPreparationStageFiltering(CuratorStage):
                             clip.errors["qwen_input"] = str(e)
                         else:
                             clip.filter_windows.append(
-                                _Window(
+                                Window(
                                     window_frame_info.start,
                                     window_frame_info.end,
                                     mp4_bytes=window_bytes,

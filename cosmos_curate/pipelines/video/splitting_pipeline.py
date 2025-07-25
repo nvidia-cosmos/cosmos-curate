@@ -47,6 +47,7 @@ from cosmos_curate.pipelines.video.captioning.captioning_stages import (
     PhiInputPreparationStage,
     QwenCaptionStage,
     QwenInputPreparationStage,
+    T5StageForSplit,
 )
 from cosmos_curate.pipelines.video.clipping.clip_extraction_stages import (
     ClipTranscodingStage,
@@ -297,6 +298,7 @@ def split(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912, PLR0915
                     TransNetV2ClipExtractionStage(
                         threshold=args.transnetv2_threshold,
                         min_length_s=args.transnetv2_min_length_s,
+                        min_length_frames=args.transnetv2_min_length_frames,
                         max_length_s=args.transnetv2_max_length_s,
                         max_length_mode=args.transnetv2_max_length_mode,
                         crop_s=args.transnetv2_crop_s,
@@ -439,6 +441,8 @@ def split(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912, PLR0915
                     preprocess_dtype=args.qwen_preprocess_dtype,
                     model_does_preprocess=args.qwen_model_does_preprocess,
                     generate_previews=args.generate_previews,
+                    prepare_cosmos_predict_dataset=(args.generate_cosmos_predict_dataset != "disable"),
+                    use_input_bit_rate=args.transcode_use_input_video_bit_rate,
                     verbose=args.verbose,
                     log_stats=args.perf_profile,
                 ),
@@ -482,6 +486,7 @@ def split(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912, PLR0915
                         stage2_prompt_text=args.qwen_stage2_prompt_text,
                         disable_mmcache=not args.qwen_use_vllm_mmcache,
                         use_async_engine=args.qwen_use_async_engine,
+                        prepare_cosmos_predict_dataset=(args.generate_cosmos_predict_dataset != "disable"),
                         verbose=args.verbose,
                         log_stats=args.perf_profile,
                     ),
@@ -512,6 +517,18 @@ def split(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912, PLR0915
                 ),
             ]
 
+    if args.generate_cosmos_predict_dataset != "disable":
+        # run T5 embedding on captions
+        stages += [
+            CuratorStageSpec(
+                T5StageForSplit(
+                    caption_fields=[args.captioning_algorithm],
+                    verbose=args.verbose,
+                    log_stats=args.perf_profile,
+                ),
+            ),
+        ]
+
     stages.append(
         CuratorStageSpec(
             ClipWriterStage(
@@ -528,6 +545,7 @@ def split(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912, PLR0915
                 generate_previews=args.generate_previews,
                 caption_models=[args.captioning_algorithm],
                 enhanced_caption_models=["qwen_lm"],
+                generate_cosmos_predict_dataset=args.generate_cosmos_predict_dataset,
                 verbose=args.verbose,
                 log_stats=args.perf_profile,
             ),
@@ -656,17 +674,17 @@ def _setup_parser(parser: argparse.ArgumentParser) -> None:  # noqa: PLR0915
         help="Whether to upload parquet files for CVDS.",
     )
     parser.add_argument(
+        "--generate-cosmos-predict-dataset",
+        choices=["disable", "predict2"],
+        default="disable",
+        help="Whether and how to generate Cosmos-PredictX post-training dataset.",
+    )
+    parser.add_argument(
         "--splitting-algorithm",
         type=str,
         default="transnetv2",
         choices=["fixed-stride", "transnetv2"],
         help="Splitting algorithm to use on full videos.",
-    )
-    parser.add_argument(
-        "--clipping-nvdec-per-worker",
-        type=int,
-        default=0,
-        help="Number of NvDec decoders per worker for clipping stage. Set to 0 to disable.",
     )
     parser.add_argument(
         "--fixed-stride-split-duration",
@@ -708,6 +726,15 @@ def _setup_parser(parser: argparse.ArgumentParser) -> None:  # noqa: PLR0915
         default=2.0,
         help=(
             "Minimum length of clips (in seconds) for TransNetV2 splitting stage. "
+            "If specified, will remove any scenes below this length."
+        ),
+    )
+    parser.add_argument(
+        "--transnetv2-min-length-frames",
+        type=int,
+        default=48,
+        help=(
+            "Minimum length of clips (in frames) for TransNetV2 splitting stage. "
             "If specified, will remove any scenes below this length."
         ),
     )

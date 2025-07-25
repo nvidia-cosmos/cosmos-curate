@@ -40,7 +40,7 @@ from cosmos_curate.pipelines.video.utils.data_model import (
     ShardPipeTask,
     SplitPipeTask,
     Video,
-    _Window,
+    Window,
 )
 
 _PROMPTS = {
@@ -182,7 +182,7 @@ class WindowingStage(CuratorStage):
                         strict=True,
                     ):
                         clip.windows.append(
-                            _Window(
+                            Window(
                                 window_frame_info.start,
                                 window_frame_info.end,
                                 window_mp4_bytes,
@@ -216,6 +216,8 @@ class QwenInputPreparationStage(CuratorStage):
         *,
         model_does_preprocess: bool = False,
         generate_previews: bool = True,
+        prepare_cosmos_predict_dataset: bool = False,
+        use_input_bit_rate: bool = False,
         verbose: bool = False,
         log_stats: bool = False,
     ) -> None:
@@ -231,6 +233,8 @@ class QwenInputPreparationStage(CuratorStage):
             preprocess_dtype: Data type for preprocessing.
             model_does_preprocess: Whether model handles preprocessing.
             generate_previews: Whether to generate previews.
+            prepare_cosmos_predict_dataset: Whether to prepare dataset for Cosmos-Predict.
+            use_input_bit_rate: Whether to use the input video's bit rate for processing.
             verbose: Whether to print verbose logs.
             log_stats: Whether to log performance statistics.
 
@@ -247,6 +251,8 @@ class QwenInputPreparationStage(CuratorStage):
         self._preprocess_dtype = preprocess_dtype
         self._model_does_preprocess = model_does_preprocess
         self._generate_previews = generate_previews
+        self._prepare_cosmos_predict_dataset = prepare_cosmos_predict_dataset
+        self._use_input_bit_rate = use_input_bit_rate
 
     @property
     def resources(self) -> CuratorStageResource:
@@ -286,6 +292,7 @@ class QwenInputPreparationStage(CuratorStage):
         for task in tasks:
             self._timer.reinit(self, task.get_major_size())
             video = task.video
+            target_bit_rate = f"{video.metadata.bit_rate_k}K" if self._use_input_bit_rate else "4M"
             for clip in video.clips:
                 if clip.buffer is None:
                     logger.warning(f"Clip {clip.uuid} has no buffer.")
@@ -300,7 +307,8 @@ class QwenInputPreparationStage(CuratorStage):
                             sampling_fps=self._sampling_fps,
                             model_does_preprocess=self._model_does_preprocess,
                             preprocess_dtype=self._preprocess_dtype,
-                            return_bytes=self._generate_previews,
+                            return_bytes=(self._generate_previews or self._prepare_cosmos_predict_dataset),
+                            target_bit_rate=target_bit_rate,
                             num_threads=max(int(self.resources.cpus), 1),
                         ),
                     ):
@@ -319,7 +327,7 @@ class QwenInputPreparationStage(CuratorStage):
                             clip.errors["qwen_input"] = str(e)
                         else:
                             clip.windows.append(
-                                _Window(
+                                Window(
                                     window_frame_info.start,
                                     window_frame_info.end,
                                     mp4_bytes=window_bytes,
@@ -353,6 +361,7 @@ class QwenCaptionStage(CuratorStage):
         stage2_prompt_text: str | None = None,
         disable_mmcache: bool = False,
         use_async_engine: bool = False,
+        prepare_cosmos_predict_dataset: bool = False,
         verbose: bool = False,
         log_stats: bool = False,
     ) -> None:
@@ -368,6 +377,7 @@ class QwenCaptionStage(CuratorStage):
             stage2_prompt_text: Custom prompt for second stage.
             disable_mmcache: Whether to disable model cache.
             use_async_engine: Whether to use the asynchronous engine for processing.
+            prepare_cosmos_predict_dataset: Whether to prepare dataset for Cosmos-Predict.
             verbose: Whether to print verbose logs.
             log_stats: Whether to log performance statistics.
 
@@ -377,6 +387,7 @@ class QwenCaptionStage(CuratorStage):
         self._generate_stage2_caption = generate_stage2_caption
         self._disable_mmcache = disable_mmcache
         self._use_async_engine = use_async_engine
+        self._prepare_cosmos_predict_dataset = prepare_cosmos_predict_dataset
         self._verbose = verbose
         self._log_stats = log_stats
         self._raw_model = qwen_vl.QwenVL(
@@ -525,7 +536,8 @@ class QwenCaptionStage(CuratorStage):
         for clip in video.clips:
             for window in clip.windows:
                 window.qwen_llm_input = None
-                window.mp4_bytes = None
+                if not self._prepare_cosmos_predict_dataset:
+                    window.mp4_bytes = None
 
     def get_asyncio_loop(self) -> asyncio.AbstractEventLoop:
         """Get the asyncio event loop.
@@ -677,7 +689,7 @@ class PhiInputPreparationStage(CuratorStage):
                                 video_inputs=window_frames,
                             )
                             clip.windows.append(
-                                _Window(
+                                Window(
                                     window_frame_info.start,
                                     window_frame_info.end,
                                     mp4_bytes=window_bytes,
@@ -853,7 +865,7 @@ class PhiCaptionStage(CuratorStage):
         return "phi"
 
 
-class T5Stage(CuratorStage):
+class _T5Stage(CuratorStage):
     """Stage that encodes captions using the T5 model.
 
     This stage processes video captions through the T5 encoder model to generate
@@ -882,6 +894,7 @@ class T5Stage(CuratorStage):
         self._verbose = verbose
         self._log_stats = log_stats
         self._model = t5_encoder.T5Encoder(t5_encoder.ModelVariant.T5_XXL)
+        self._batch_size = 16 if operation_utils.is_running_on_the_cloud() else 4
 
     @property
     def model(self) -> ModelInterface:
@@ -903,7 +916,64 @@ class T5Stage(CuratorStage):
         """
         return CuratorStageResource(gpus=1.0)
 
-    @nvtx.annotate("T5Stage")  # type: ignore[misc]
+    def _add_prompt(self, all_prompts: list[str], caption_window: dict[str, str]) -> str | None:
+        found_caption_field = None
+        for field in self._caption_fields:
+            if field in caption_window:
+                all_prompts.append(caption_window[field])
+                found_caption_field = field
+                break
+        return found_caption_field
+
+    def _encode_prompts(self, all_prompts: list[str]) -> list[t5_encoder.EncodedSample]:
+        return self._model.encode(all_prompts, batch_size=self._batch_size)
+
+
+class T5StageForSplit(_T5Stage):
+    """Stage that encodes captions using the T5 model for shard processing."""
+
+    @nvtx.annotate("T5StageForSplit")  # type: ignore[misc]
+    def process_data(self, tasks: list[SplitPipeTask]) -> list[SplitPipeTask] | None:
+        """Process the data for the T5 caption encoding stage.
+
+        Args:
+            tasks: The tasks to process.
+
+        Returns:
+            The processed tasks.
+
+        """
+        for task in tasks:
+            self._timer.reinit(self, task.get_major_size())
+
+            all_prompts: list[str] = []
+            mapping: list[tuple[int, int, str]] = []
+
+            for clip_idx, clip in enumerate(task.video.clips):
+                for window_idx, window in enumerate(clip.windows):
+                    found_caption_field = self._add_prompt(all_prompts, window.caption)
+                    if found_caption_field is None:
+                        logger.error(f"Clip {clip.uuid} window {window_idx} has no caption, drop this clip!")
+                        continue
+                    mapping.append((clip_idx, window_idx, found_caption_field))
+
+            encoded_results = self._encode_prompts(all_prompts)
+
+            for result_idx, result in enumerate(encoded_results):
+                clip_idx, window_idx, caption_field = mapping[result_idx]
+                task.video.clips[clip_idx].windows[window_idx].t5_xxl_embedding[caption_field] = result.encoded_text
+
+            if self._log_stats:
+                stage_name, stage_perf_stats = self._timer.log_stats()
+                task.stage_perf[stage_name] = stage_perf_stats
+
+        return tasks
+
+
+class T5StageForShard(_T5Stage):
+    """Stage that encodes captions using the T5 model for shard processing."""
+
+    @nvtx.annotate("T5StageForShard")  # type: ignore[misc]
     def process_data(self, tasks: list[ShardPipeTask]) -> list[ShardPipeTask] | None:
         """Process the data for the T5 caption encoding stage.
 
@@ -917,31 +987,22 @@ class T5Stage(CuratorStage):
         for task in tasks:
             self._timer.reinit(self, task.get_major_size())
 
-            all_prompts = []
-            sample_key_mapping: list[tuple[int, int]] = []
+            all_prompts: list[str] = []
+            mapping: list[tuple[int, int]] = []
 
             for clip_idx, clip in enumerate(task.samples):
                 for window_idx, window in enumerate(clip.clip_metadata["windows"]):
-                    has_caption = False
-                    for field in self._caption_fields:
-                        if field in window:
-                            all_prompts.append(window[field])
-                            has_caption = True
-                            break
-                    if not has_caption:
+                    found_caption_field = self._add_prompt(all_prompts, window)
+                    if found_caption_field is None:
                         logger.error(f"Clip {clip.uuid} window {window_idx} has no caption, drop this clip!")
                         clip.clip_metadata["valid"] = False
                         continue
-                    sample_key_mapping.append((clip_idx, window_idx))
+                    mapping.append((clip_idx, window_idx))
 
-            batch_size = 16 if operation_utils.is_running_on_the_cloud() else 4
-
-            with self._timer.time_process():
-                # Encode all prompts at once
-                encoded_results = self._model.encode(all_prompts, batch_size=batch_size)
+            encoded_results = self._encode_prompts(all_prompts)
 
             for result_idx, result in enumerate(encoded_results):
-                clip_idx, window_idx = sample_key_mapping[result_idx]
+                clip_idx, window_idx = mapping[result_idx]
                 task.samples[clip_idx].t5_xxl_embeddings.append(result.encoded_text)
                 assert (window_idx + 1) == len(task.samples[clip_idx].t5_xxl_embeddings)
 

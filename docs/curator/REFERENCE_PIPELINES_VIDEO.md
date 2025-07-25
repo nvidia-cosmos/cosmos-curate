@@ -55,22 +55,33 @@ Today the split-annotate pipeline produces the following artifacts under the pat
 
 ```bash
 {output_clip_path}/
-├── clips/
-│   ├── {clip-uuid}.mp4             # transcoded clips
-├── iv2_embd/
-│   ├── {clip-uuid}.pickle          # InternVideo2 embedding per clip
-├── ce1_embd/
-│   ├── {clip-uuid}.pickle          # Cosmos-Embed1 embedding per clip
-├── iv2_embd_parquet/
-│   ├── {clip-chunk-uuid}.parquet   # InternVideo2 embeddings grouped by a chunk of clips
-├── ce1_embd_parquet/
-│   ├── {clip-chunk-uuid}.pickle    # Cosmos-Embed1 embeddings grouped by a chunk of clips
-├── metas/v0/
-│   ├── {clip-uuid}.json            # metadata per clip, motion & aesthetic scores will be included if enabled
-├── previews/
-│   ├── {clip-uuid}.webp            # web previews for each caption window if enabled
-├── processed_videos/
-│   ├── {input-video-relpath}.json  # record for each processed input videos
+├── clips/                          # transcoded clips
+│   ├── {clip-uuid}.mp4
+├── iv2_embd/                       # InternVideo2 embedding per clip
+│   ├── {clip-uuid}.pickle
+├── ce1_embd/                       # Cosmos-Embed1 embedding per clip; enabled by `--embedding-algorithm cosmos-embed1-336p`
+│   ├── {clip-uuid}.pickle
+├── iv2_embd_parquet/               # InternVideo2 embeddings grouped by a chunk of clips; used for semantic dedup
+│   ├── {video-uuid}_{chunk_index}.parquet
+├── ce1_embd_parquet/               # Cosmos-Embed1 embeddings grouped by a chunk of clips; used for semantic dedup
+│   ├── {video-uuid}_{chunk_index}.parquet
+├── metas/v0/                       # metadata per clip, motion & aesthetic scores will be included if enabled
+│   ├── {clip-uuid}.json
+├── metas_jsonl/v0/                 # metadatas grouped by a chunk of clips; enabled by `--upload-clip-info-in-chunks`
+│   ├── {video-uuid}_{chunk_index}.jsonl
+├── cvds_parquet/                   # metadata parquets for Milvus indexing; enabled by `--upload-cvds-parquet`
+│   ├── {clip-chunk-uuid}.parquet
+├── cosmos_video2world_dataset/     # dataset for Cosmos-Predict2 Video2World model post-training
+│   ├── metas/
+│       ├── {clip-uuid}_{frame_range}.txt
+│   ├── t5_xxl/
+│       ├── {clip-uuid}_{frame_range}.pickle
+│   ├── videos/
+│       ├── {clip-uuid}_{frame_range}.mp4
+├── previews/                       # web previews for each caption window; enabled by `--generate-previews`
+│   ├── {clip-uuid}_{frame_range}.webp
+├── processed_videos/               # record for each processed input videos
+│   ├── {input-video-relpath}.json
 ├── v0/all_window_captions.json     # aggregattion of all the captions generated for all the clips
 ├── summary.json                    # summary of the pipeline results
 ```
@@ -116,23 +127,27 @@ In case you want the output to be in a different S3 bucket than the input, you c
 **Options for Functionality**
 
 - `--limit`: how many videos to process
-- `--no-generate-embeddings`: disable InterVideo2/Cosmos-Embed1 embedding generation; use `"generate_embeddings": false` in API endpoint.
+- `--no-generate-embeddings`: disables InterVideo2/Cosmos-Embed1 embedding generation; use `"generate_embeddings": false` in API endpoint.
 - `--embedding-algorithm`: specifies embedding model, available options are `cosmos-embed1` and `internvideo2` (default).
-- `--no-generate-captions`: disable VLM captioning; use `"generate_captions": false` in API endpoint.
-- `--generate-previews`: enable web preview generation.
+- `--no-generate-captions`: disables VLM captioning; use `"generate_captions": false` in API endpoint.
+- `--generate-previews`: enables web preview generation.
+- `--upload-clip-info-in-chunks`: enables metadata jsonl for a group of clips and disables per-clip embedding & metadata writes.
+- `--upload-cvds-parquet`: enables generating parquet files for Milvus indexing.
+- `--generate-cosmos-predict-dataset`: enable generating dataset that is ready for [Cosmos-Predict2 Video2World model post-training](https://github.com/nvidia-cosmos/cosmos-predict2/blob/main/documentations/post-training_video2world.md).
 - `--splitting-algorithm`: specifies video-to-clip splitting algorithm, available options are `transnetv2` (default) and `fixed-stride`.
 - `--motion-filter`: specifies the working mode for motion filter, available options are `disable` (default), `enable`, `score-only` (generate score but do not filter out clips).
 - `--motion-global-mean-threshold`: empirical threshold for global average motion magnitude.
 - `--motion-per-patch-min-256-threshold`: empirical threshold for minimal averge motion magnitude in any 256x256 patch.
 - `--aesthetic-threshold`: threshold for aesthetic filter, defaults to `None` which disables the filter; use a negative value like `-1` to achieve the "score-only" behavior.
 - `--captioning-window-size`: captioning window size, defaults to 256 frames.
+- `--captioning-max-output-tokens`: max output tokens for captioning, default to 512.
 
 **Options for Performance**
 
 - `--transnetv2-gpus-per-worker`: number of fractional GPUs per work for `TransNetV2` stage; default to `0.25` targeting 48GB GPU.
 - `--motion-score-gpus-per-worker`: same as above for `MotionFilter` stage; default to `0.5` targeting 48GB GPU.
 - `--aesthetic-gpus-per-worker`: same as above for `AestheticFilter` stage; default to `0.25` targeting 48GB GPU.
-- `--iv2-gpus-per-worker`: same as above for `InterVideo2Embedding` stage; default to `0.25` targeting 48GB GPU.
+- `--embedding-gpus-per-worker`: same as above for `InterVideo2Embedding` or `CosmosEmbed1EmbeddingStage`; default to `0.25` targeting 48GB GPU.
 - `--qwen-batch-size`: batch size for VLM captioning call.
 - `--qwen-use-fp8-weights`: whether to enable FP8 quantization.
 

@@ -205,7 +205,7 @@ class ClipTranscodingStage(CuratorStage):
         video_filename: str,
         *,
         force_pix_fmt: bool,
-        use_bit_rate: str,
+        use_bit_rate: str | None,
         clips: list[Clip],
         input_video: str,
     ) -> None:
@@ -245,12 +245,9 @@ class ClipTranscodingStage(CuratorStage):
                 ],
             )
             if use_bit_rate is not None:
-                command.extend(
-                    [
-                        "-b:v",
-                        use_bit_rate,
-                    ],
-                )
+                command.extend(["-b:v", use_bit_rate])
+            else:
+                command.extend(["-b:v", "4M"])
             if self._encoder == "h264_nvenc":
                 # IMPORTANT! these settings are necessary for high quality!
                 command.extend(

@@ -30,7 +30,7 @@ from cosmos_curate.core.interfaces.stage_interface import CuratorStage, CuratorS
 from cosmos_curate.core.utils import storage_client, storage_utils
 from cosmos_curate.core.utils.runtime.performance_utils import StageTimer
 from cosmos_curate.core.utils.storage_utils import get_full_path
-from cosmos_curate.core.utils.writer_utils import write_bytes, write_json, write_jsonl, write_parquet
+from cosmos_curate.core.utils.writer_utils import write_bytes, write_json, write_jsonl, write_parquet, write_text
 from cosmos_curate.pipelines.video.utils.data_model import (
     Clip,
     ClipStats,
@@ -63,6 +63,7 @@ class ClipWriterStage(CuratorStage):
         generate_previews: bool,
         caption_models: list[str] | None = None,
         enhanced_caption_models: list[str] | None = None,
+        generate_cosmos_predict_dataset: str | None = None,
         verbose: bool = False,
         log_stats: bool = False,
     ) -> None:
@@ -85,6 +86,7 @@ class ClipWriterStage(CuratorStage):
         self._generate_previews = generate_previews
         self._caption_models = caption_models
         self._enhanced_caption_models = enhanced_caption_models
+        self._generate_cosmos_predict_dataset = generate_cosmos_predict_dataset
         self._verbose = verbose
         self._log_stats = log_stats
         self._embedding_buffer: list[dict[str, Any]] = []
@@ -195,6 +197,35 @@ class ClipWriterStage(CuratorStage):
         """Get a UUID for the video based on its input path."""
         return uuid.uuid5(uuid.NAMESPACE_URL, f"{input_video_path}")
 
+    @staticmethod
+    def get_output_path_cosmos_predict_dataset(output_path: str) -> str:
+        """Get path to store generated cosmos predict dataset."""
+        return ClipWriterStage._get_output_path(output_path, "cosmos_predict2_video2world_dataset")
+
+    @staticmethod
+    def get_output_path_per_window_clips(output_path: str) -> str:
+        """Get path to store per-window clips."""
+        return ClipWriterStage._get_output_path(
+            ClipWriterStage.get_output_path_cosmos_predict_dataset(output_path),
+            "videos",
+        )
+
+    @staticmethod
+    def get_output_path_per_window_metas(output_path: str) -> str:
+        """Get path to store per-window clip metadatas."""
+        return ClipWriterStage._get_output_path(
+            ClipWriterStage.get_output_path_cosmos_predict_dataset(output_path),
+            "metas",
+        )
+
+    @staticmethod
+    def get_output_path_per_window_t5_embeds(output_path: str) -> str:
+        """Get path to store per-window T5 embeddings."""
+        return ClipWriterStage._get_output_path(
+            ClipWriterStage.get_output_path_cosmos_predict_dataset(output_path),
+            "t5_xxl",
+        )
+
     def _write_data(
         self,
         buffer: bytes,
@@ -212,6 +243,15 @@ class ClipWriterStage(CuratorStage):
         source_video: str,
     ) -> None:
         write_json(data, dest, desc, source_video, verbose=self._verbose, client=self._storage_client)
+
+    def _write_text_data(
+        self,
+        text: str,
+        dest: storage_client.StoragePrefix | pathlib.Path,
+        desc: str,
+        source_video: str,
+    ) -> None:
+        write_text(text, dest, desc, source_video, verbose=self._verbose, client=self._storage_client)
 
     def process_data(self, tasks: list[SplitPipeTask]) -> list[SplitPipeTask] | None:  # type: ignore[override]
         """Save bytes to blobstore and metadata to postgres."""
@@ -235,6 +275,7 @@ class ClipWriterStage(CuratorStage):
                         executor.submit(self._write_clip_metadata, clip, video.metadata) for clip in video.clips
                     ]
 
+                    # filtered clips
                     futures_clips += [
                         executor.submit(self._write_clip_mp4, clip, filtered=True) for clip in video.filtered_clips
                     ]
@@ -243,21 +284,24 @@ class ClipWriterStage(CuratorStage):
                         for clip in video.filtered_clips
                     ]
 
-                    # wait for all clip-level tasks to finish
+                    # wait for all clip-level tasks to finish and gather stats
                     for future_c in futures_clips:
                         result = future_c.result()
                         if result is not None:
                             video.clip_stats.combine(result)
 
-                # write video-level metadata after all clip-level tasks are done
-                futures_videos = [executor.submit(self._write_video_metadata, video)]
-                # write buffered embeddings and metadata
-                futures_videos += [executor.submit(self._write_grouped_embeddings_to_parquet, video)]
-                futures_videos += [executor.submit(self._write_grouped_metadata_to_jsonl, video)]
-                futures_videos += [executor.submit(self._write_grouped_cvds_data_to_parquet, video)]
+                    # for cosmos-predictX
+                    futures_no_rt = [executor.submit(self._write_per_window_data, clip) for clip in video.clips]
+                    # write video-level metadata after all clip-level tasks are done
+                    futures_no_rt += [executor.submit(self._write_video_metadata, video)]
+                    # write buffered embeddings and metadata
+                    futures_no_rt += [executor.submit(self._write_grouped_embeddings_to_parquet, video)]
+                    futures_no_rt += [executor.submit(self._write_grouped_metadata_to_jsonl, video)]
+                    futures_no_rt += [executor.submit(self._write_grouped_cvds_data_to_parquet, video)]
 
-                for future_v in futures_videos:
-                    future_v.result()
+                    for future_n in futures_no_rt:
+                        future_n.result()
+
                 # clean up intermediate data
                 for clip in video.clips:
                     clip.buffer = None
@@ -344,6 +388,16 @@ class ClipWriterStage(CuratorStage):
     ) -> storage_client.StoragePrefix | pathlib.Path:
         output_window_file = f"{window[0]}_{window[1]}.{file_type}"
         return get_full_path(path_prefix, str(video_span_uuid), output_window_file)
+
+    def _get_cosmos_predict_uri(
+        self,
+        video_span_uuid: uuid.UUID,
+        window: tuple[int, int],
+        path_prefix: str,
+        file_type: str,
+    ) -> storage_client.StoragePrefix | pathlib.Path:
+        output_file = f"{video_span_uuid}_{window[0]}_{window[1]}.{file_type}"
+        return get_full_path(path_prefix, output_file)
 
     def _get_clip_uri(
         self,
@@ -625,3 +679,69 @@ class ClipWriterStage(CuratorStage):
                         break
         dest = self._get_clip_chunk_uri(input_video_path, video.clip_chunk_index)
         self._write_json_data(data, dest, "clip chunk metadata", input_video_path)
+
+    def _write_per_window_data(self, clip: Clip) -> None:
+        if self._generate_cosmos_predict_dataset == "disable":
+            return
+        for window in clip.windows:
+            if window.mp4_bytes is None:
+                logger.error(
+                    f"Clip {clip.uuid} window [{window.start_frame}, {window.end_frame}] "
+                    f"from {clip.source_video} has no mp4 bytes, skip uploading to dataset",
+                )
+                continue
+            if len(window.caption) == 0:
+                logger.error(
+                    f"Clip {clip.uuid} window [{window.start_frame}, {window.end_frame}] "
+                    f"from {clip.source_video} has no caption, skip uploading to dataset",
+                )
+                continue
+            if len(window.t5_xxl_embedding) == 0:
+                logger.error(
+                    f"Clip {clip.uuid} window [{window.start_frame}, {window.end_frame}] "
+                    f"from {clip.source_video} has no T5 XXL embedding, skip uploading to dataset",
+                )
+                continue
+            # upload mp4 bytes
+            dest_video = self._get_cosmos_predict_uri(
+                clip.uuid,
+                (window.start_frame, window.end_frame),
+                self.get_output_path_per_window_clips(self._output_path),
+                "mp4",
+            )
+            self._write_data(
+                window.mp4_bytes,
+                dest_video,
+                "dataset mp4 {clip.uuid} {window.start_frame}_{window.end_frame}",
+                clip.source_video,
+            )
+            # upload metadata
+            dest_meta = self._get_cosmos_predict_uri(
+                clip.uuid,
+                (window.start_frame, window.end_frame),
+                self.get_output_path_per_window_metas(self._output_path),
+                "txt",
+            )
+            caption_text = list(window.caption.values())
+            self._write_text_data(
+                caption_text[0],
+                dest_meta,
+                "dataset caption {clip.uuid} {window.start_frame}_{window.end_frame}",
+                clip.source_video,
+            )
+            # upload T5 XXL embedding
+            dest_t5 = self._get_cosmos_predict_uri(
+                clip.uuid,
+                (window.start_frame, window.end_frame),
+                self.get_output_path_per_window_t5_embeds(self._output_path),
+                "pickle",
+            )
+            buffer = io.BytesIO()
+            t5_embeddings = list(window.t5_xxl_embedding.values())
+            pickle.dump([t5_embeddings[0]], buffer)
+            self._write_data(
+                buffer.getvalue(),
+                dest_t5,
+                "dataset t5_xxl {clip.uuid} {window.start_frame}_{window.end_frame}",
+                clip.source_video,
+            )

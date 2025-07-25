@@ -60,7 +60,7 @@ cosmos-curate/
 │   ├── scripts/            # Startup scripts in various deployment environments
 ├── cosmos-xenna            # Git submodule for https://github.com/nvidia-cosmos/cosmos-xenna
 ├── packages                # Dockerfiles and scripts related to packaging
-│   ├── cosmos_curate      # Dockerfile template and conda environment recipes for building cosmos_curate image
+│   ├── cosmos_curate       # Dockerfile template and conda environment recipes for building cosmos_curate image
 ├── tests                   # Tests for testing
 │   ├── cosmos_curate             
 │       ├── pipelines       # Tests for models and pipeline stages for cosmos_curate

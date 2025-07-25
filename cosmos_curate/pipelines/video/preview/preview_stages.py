@@ -25,7 +25,7 @@ from cosmos_curate.core.utils.runtime.operation_utils import make_pipeline_tempo
 from cosmos_curate.core.utils.runtime.performance_utils import StageTimer
 from cosmos_curate.pipelines.video.utils.data_model import (
     SplitPipeTask,
-    _Window,
+    Window,
 )
 
 
@@ -69,7 +69,7 @@ class PreviewStage(CuratorStage):
         """
         return CuratorStageResource(cpus=4.0)
 
-    def _generate_preview(self, window: _Window) -> None:
+    def _generate_preview(self, window: Window) -> None:
         """Generate webp preview for a video window.
 
         Args:

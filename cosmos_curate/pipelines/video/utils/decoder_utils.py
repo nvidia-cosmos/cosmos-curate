@@ -65,9 +65,9 @@ class VideoMetadata:
     video_codec: str
     pixel_format: str
     video_duration: float
+    bit_rate_k: int
     format_name: str = "unknown"
     audio_codec: str | None = None
-    bit_rate_k: int | None = None
 
     @property
     def length_s(self) -> float:
@@ -174,7 +174,7 @@ def extract_video_metadata(video: str | bytes) -> VideoMetadata:
     format_name = video_info.get("format", {}).get("format_name", "unknown").lower()
 
     # store bit_rate if available
-    bit_rate_k = 2000  # default to 2000K (2M) bit rate
+    bit_rate_k = 4000  # default to 4000K (4M) bit rate
     if "bit_rate" in video_stream:
         bit_rate_k = int(int(video_stream["bit_rate"]) / 1024)
 

@@ -14,6 +14,7 @@
 # limitations under the License.
 """Extraction stages using TransNetV2."""
 
+import math
 import uuid
 from collections.abc import Callable, Generator
 from typing import Literal
@@ -46,6 +47,7 @@ class TransNetV2ClipExtractionStage(CuratorStage):
         self,
         threshold: float = 0.4,
         min_length_s: float | None = 2.0,
+        min_length_frames: int | None = 48,
         max_length_s: float | None = 60.0,
         max_length_mode: Literal["truncate", "stride"] = "stride",
         crop_s: float | None = 0.5,
@@ -62,6 +64,8 @@ class TransNetV2ClipExtractionStage(CuratorStage):
             threshold: (float) probability threshold above which a frame is classified as a shot transition.
                 Default is 0.4, which prioritizes recall over precision.
             min_length_s: (float) optional minimum length of scene, in seconds.
+                If specified, will remove any scenes below this length.
+            min_length_frames: (int) optional minimum length of scene, in frames.
                 If specified, will remove any scenes below this length.
             max_length_s: (float) optional maximum length of scene, in seconds.
                 If specified, will deal with the scene by the `max_length_mode` specified.
@@ -84,6 +88,7 @@ class TransNetV2ClipExtractionStage(CuratorStage):
         self._timer = StageTimer(self)
         self.threshold = threshold
         self.min_length_s = min_length_s
+        self.min_length_frames = min_length_frames
         self.max_length_s = max_length_s
         if self.min_length_s and self.max_length_s and self.max_length_s < self.min_length_s:
             error_msg = "Max length is smaller than min length!"
@@ -127,6 +132,15 @@ class TransNetV2ClipExtractionStage(CuratorStage):
         """
         return self._model
 
+    def _get_min_length(self, framerate: float) -> int | None:
+        min_length = math.ceil(self.min_length_s * framerate) if self.min_length_s is not None else None
+        if self.min_length_frames is not None:
+            min_length = max(min_length, self.min_length_frames) if min_length is not None else self.min_length_frames
+        return min_length
+
+    def _get_max_length(self, framerate: float) -> int | None:
+        return math.ceil(self.max_length_s * framerate) if self.max_length_s is not None else None
+
     @nvtx.annotate("TransNetV2ClipExtractionStage")  # type: ignore[misc]
     def process_data(self, tasks: list[SplitPipeTask]) -> list[SplitPipeTask] | None:  # noqa: C901
         """Process video data to extract clips.
@@ -162,8 +176,8 @@ class TransNetV2ClipExtractionStage(CuratorStage):
 
                 filtered_scenes = _get_filtered_scenes(
                     scenes,
-                    min_length=(int(self.min_length_s * video.metadata.framerate) if self.min_length_s else None),
-                    max_length=(int(self.max_length_s * video.metadata.framerate) if self.max_length_s else None),
+                    min_length=self._get_min_length(video.metadata.framerate),
+                    max_length=self._get_max_length(video.metadata.framerate),
                     max_length_mode=self.max_length_mode,
                     crop_length=(int(self.crop_s * video.metadata.framerate) if self.crop_s else None),
                 )
