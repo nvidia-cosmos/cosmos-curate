@@ -23,12 +23,15 @@ jobs:
         id: extract
         run: |
           TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          TAG=${TAG#v}  # Strip leading 'v' if present
           echo "Looking for changelog section for tag: $TAG"
 
           # Extract relevant section
           CHANGELOG=$(awk -v tag="$TAG" '
             $0 ~ "## \\[" tag "\\]" {flag=1; next}
             flag && /^## \[/ {flag=0}
+            flag && /^### Released/ {next}
+            flag && /^- [0-9]{4}-[0-9]{2}-[0-9]{2}/ {next}
             flag {print}
           ' CHANGELOG.md)
 
@@ -37,10 +40,7 @@ jobs:
           fi
 
           # Write to a temp file
-          {
-            echo "## [$TAG]"
-            echo "$CHANGELOG"
-          } > release_notes.md
+          echo "$CHANGELOG" > release_notes.md
 
           # Save multiline output to GITHUB_ENV via file
           echo "RELEASE_BODY<<EOF" >> $GITHUB_ENV
@@ -50,8 +50,8 @@ jobs:
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.ref_name }}
-          name: Release ${{ github.ref_name }}
-          body: ${{ env.RELEASE_BODY }}
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          name: Release ${{ github.event.inputs.tag || github.ref_name }}
+          body_path: release_notes.md
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
