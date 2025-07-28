@@ -24,9 +24,9 @@ import torch
 from loguru import logger
 
 from cosmos_curate.core.interfaces.stage_interface import CuratorStage, CuratorStageResource
-from cosmos_curate.core.utils import conda_utils
-from cosmos_curate.core.utils.runtime.operation_utils import make_pipeline_named_temporary_file
-from cosmos_curate.core.utils.runtime.performance_utils import StageTimer
+from cosmos_curate.core.utils.config.operation_context import make_pipeline_named_temporary_file
+from cosmos_curate.core.utils.infra.performance_utils import StageTimer
+from cosmos_curate.core.utils.model import conda_utils
 from cosmos_curate.pipelines.video.utils.data_model import SplitPipeTask
 
 if conda_utils.is_running_in_env("video_splitting") and torch.cuda.is_available():

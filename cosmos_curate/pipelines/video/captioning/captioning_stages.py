@@ -24,12 +24,12 @@ from loguru import logger
 
 from cosmos_curate.core.interfaces.model_interface import ModelInterface
 from cosmos_curate.core.interfaces.stage_interface import CuratorStage, CuratorStageResource
-from cosmos_curate.core.utils.runtime import operation_utils
-from cosmos_curate.core.utils.runtime.gpu_start_helper import (
+from cosmos_curate.core.utils.config import operation_context
+from cosmos_curate.core.utils.infra.gpu_start_helper import (
     gpu_stage_cleanup,
     gpu_stage_startup,
 )
-from cosmos_curate.core.utils.runtime.performance_utils import StageTimer
+from cosmos_curate.core.utils.infra.performance_utils import StageTimer
 from cosmos_curate.models import (
     phi_vl,
     qwen_lm,
@@ -903,7 +903,7 @@ class _T5Stage(CuratorStage):
         self._verbose = verbose
         self._log_stats = log_stats
         self._model = t5_encoder.T5Encoder(t5_encoder.ModelVariant.T5_XXL)
-        self._batch_size = 16 if operation_utils.is_running_on_the_cloud() else 4
+        self._batch_size = 16 if operation_context.is_running_on_the_cloud() else 4
 
     @property
     def model(self) -> ModelInterface:

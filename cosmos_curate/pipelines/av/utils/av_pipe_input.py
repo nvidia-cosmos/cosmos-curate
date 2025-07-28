@@ -17,10 +17,10 @@ from typing import Any
 import jinja2
 from loguru import logger
 
-from cosmos_curate.core.utils.database_types import PostgresDB
-from cosmos_curate.core.utils.s3_client import S3Prefix
-from cosmos_curate.core.utils.storage_client import StorageClient
-from cosmos_curate.core.utils.storage_utils import (
+from cosmos_curate.core.utils.db.database_types import PostgresDB
+from cosmos_curate.core.utils.storage.s3_client import S3Prefix
+from cosmos_curate.core.utils.storage.storage_client import StorageClient
+from cosmos_curate.core.utils.storage.storage_utils import (
     get_files_relative,
     get_full_path,
     get_storage_client,
@@ -29,7 +29,7 @@ from cosmos_curate.core.utils.storage_utils import (
     read_json_file,
     read_text,
 )
-from cosmos_curate.core.utils.writer_utils import (
+from cosmos_curate.core.utils.storage.writer_utils import (
     write_json,
 )
 from cosmos_curate.pipelines.av.captioning.captioning_stages import is_vri_prompt

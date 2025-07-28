@@ -17,7 +17,7 @@ from uuid import UUID
 import numpy as np
 import pytest
 
-from cosmos_curate.core.utils import s3_client
+from cosmos_curate.core.utils.storage import s3_client
 from cosmos_curate.pipelines.av.utils.av_data_model import (
     CaptionWindow,
     ClipForAnnotation,

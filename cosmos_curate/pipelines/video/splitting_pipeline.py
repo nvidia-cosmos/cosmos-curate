@@ -31,8 +31,8 @@ from loguru import logger
 
 from cosmos_curate.core.interfaces.pipeline_interface import run_pipeline
 from cosmos_curate.core.interfaces.stage_interface import CuratorStage, CuratorStageSpec
-from cosmos_curate.core.utils import args_utils
-from cosmos_curate.core.utils.storage_utils import (
+from cosmos_curate.core.utils.config import args_utils
+from cosmos_curate.core.utils.storage.storage_utils import (
     create_path,
     is_path_nested,
     verify_path,

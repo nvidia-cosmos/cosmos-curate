@@ -17,8 +17,8 @@ from nvtx import nvtx  # type: ignore[import-untyped]
 
 from cosmos_curate.core.interfaces.model_interface import ModelInterface
 from cosmos_curate.core.interfaces.stage_interface import CuratorStage, CuratorStageResource
-from cosmos_curate.core.utils.runtime.operation_utils import is_running_on_the_cloud
-from cosmos_curate.core.utils.runtime.performance_utils import StageTimer
+from cosmos_curate.core.utils.config.operation_context import is_running_on_the_cloud
+from cosmos_curate.core.utils.infra.performance_utils import StageTimer
 from cosmos_curate.models import (
     qwen_lm,
     qwen_vl,

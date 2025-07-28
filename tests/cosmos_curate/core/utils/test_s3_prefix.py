@@ -13,11 +13,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Unit tests for S3Prefix and is_s3path in cosmos_curate.core.utils.s3_client."""
+"""Unit tests for S3Prefix and is_s3path in cosmos_curate.core.utils.storage.s3_client."""
 
 import pytest
 
-from cosmos_curate.core.utils.s3_client import S3Prefix, is_s3path
+from cosmos_curate.core.utils.storage.s3_client import S3Prefix, is_s3path
 
 
 def test_s3prefix_with_scheme() -> None:

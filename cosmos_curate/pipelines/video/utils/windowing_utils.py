@@ -19,8 +19,8 @@ import subprocess
 import attrs
 import torch
 
-from cosmos_curate.core.utils import conda_utils
-from cosmos_curate.core.utils.runtime.operation_utils import make_pipeline_named_temporary_file
+from cosmos_curate.core.utils.config.operation_context import make_pipeline_named_temporary_file
+from cosmos_curate.core.utils.model import conda_utils
 from cosmos_curate.pipelines.video.utils.decoder_utils import DEFAULT_TRANSCODE_BITRATE_M, get_frame_count
 
 if conda_utils.is_running_in_env("unified") or conda_utils.is_running_in_env("phi"):

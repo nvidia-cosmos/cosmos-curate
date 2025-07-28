@@ -25,12 +25,12 @@ import numpy as np
 from loguru import logger
 
 from cosmos_curate.core.interfaces.stage_interface import CuratorStage
-from cosmos_curate.core.utils import s3_client
-from cosmos_curate.core.utils.database_types import PostgresDB
-from cosmos_curate.core.utils.runtime.performance_utils import StageTimer
-from cosmos_curate.core.utils.s3_client import is_s3path
-from cosmos_curate.core.utils.storage_utils import read_bytes
-from cosmos_curate.core.utils.writer_utils import write_bytes, write_json
+from cosmos_curate.core.utils.db.database_types import PostgresDB
+from cosmos_curate.core.utils.infra.performance_utils import StageTimer
+from cosmos_curate.core.utils.storage import s3_client
+from cosmos_curate.core.utils.storage.s3_client import is_s3path
+from cosmos_curate.core.utils.storage.storage_utils import read_bytes
+from cosmos_curate.core.utils.storage.writer_utils import write_bytes, write_json
 from cosmos_curate.pipelines.av.utils.av_data_info import CAMERA_MAPPING
 from cosmos_curate.pipelines.av.utils.av_data_model import AvShardingTask
 from cosmos_curate.pipelines.av.utils.av_pipe_input import WINDOWS_PER_CLIP

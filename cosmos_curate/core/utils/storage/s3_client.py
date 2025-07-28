@@ -39,7 +39,7 @@ from tqdm import tqdm
 
 from cosmos_curate.core.cf.nvcf_utils import NVCF_SECRETS_PATH, get_secrets_from_nvcf_secret_store
 from cosmos_curate.core.utils.environment import S3_PROFILE_PATH
-from cosmos_curate.core.utils.storage_client import (
+from cosmos_curate.core.utils.storage.storage_client import (
     DOWNLOAD_CHUNK_SIZE_BYTES,
     UPLOAD_CHUNK_SIZE_BYTES,
     BackgroundUploader,

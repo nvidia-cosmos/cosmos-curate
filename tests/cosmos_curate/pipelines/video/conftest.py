@@ -110,7 +110,7 @@ def mock_get_tmp_dir(tmp_path: Path) -> Generator[None, None, None]:
         tmp_path: pytest's temporary directory fixture
 
     """
-    with patch("cosmos_curate.core.utils.runtime.operation_utils.get_tmp_dir", return_value=tmp_path):
+    with patch("cosmos_curate.core.utils.config.operation_context.get_tmp_dir", return_value=tmp_path):
         yield
 
 

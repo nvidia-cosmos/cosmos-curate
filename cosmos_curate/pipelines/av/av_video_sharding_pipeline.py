@@ -20,11 +20,11 @@ from loguru import logger
 
 from cosmos_curate.core.interfaces.pipeline_interface import run_pipeline
 from cosmos_curate.core.interfaces.stage_interface import CuratorStage, CuratorStageSpec
-from cosmos_curate.core.utils import args_utils, s3_client
-from cosmos_curate.core.utils.database_types import EnvType, PostgresDB
-from cosmos_curate.core.utils.grouping import split_by_chunk_size
-from cosmos_curate.core.utils.s3_client import is_s3path
-from cosmos_curate.core.utils.writer_utils import write_json
+from cosmos_curate.core.utils.config import args_utils
+from cosmos_curate.core.utils.db.database_types import EnvType, PostgresDB
+from cosmos_curate.core.utils.misc.grouping import split_by_chunk_size
+from cosmos_curate.core.utils.storage.s3_client import S3Prefix, create_s3_client, is_s3path
+from cosmos_curate.core.utils.storage.writer_utils import write_json
 from cosmos_curate.pipelines.av.pipeline_args import add_common_args
 from cosmos_curate.pipelines.av.utils.av_data_model import AvShardingTask
 from cosmos_curate.pipelines.av.utils.av_pipe_input import (
@@ -179,10 +179,10 @@ def shard(args: argparse.Namespace) -> None:  # noqa: PLR0912, C901
             for k in task.tar_mappings:
                 for clip_name, tar_url in task.tar_mappings[k].items():
                     bin_to_tar_mappings[k][clip_name] = tar_url
-        client = s3_client.create_s3_client(target_path=args.output_prefix)
+        client = create_s3_client(target_path=args.output_prefix)
         for k, the_mappings in bin_to_tar_mappings.items():
             url = f"{t5_packaging_stage.get_chunk_prefix(T5_VARIANTS[k])}/mapping.json"
-            dest = s3_client.S3Prefix(url) if is_s3path(args.output_prefix) else Path(url)
+            dest = S3Prefix(url) if is_s3path(args.output_prefix) else Path(url)
             write_json(
                 the_mappings,
                 dest,

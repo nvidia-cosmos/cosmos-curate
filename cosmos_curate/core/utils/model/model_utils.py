@@ -35,10 +35,11 @@ from cosmos_curate.core.cf.nvcf_utils import (
     is_nvcf_container_deployment,
     is_nvcf_helm_deployment,
 )
-from cosmos_curate.core.utils import environment, storage_client, storage_utils
-from cosmos_curate.core.utils.config import load_config
-from cosmos_curate.core.utils.runtime import hardware_info, operation_utils, ray_cluster_utils
-from cosmos_curate.core.utils.storage_client import DOWNLOAD_CHUNK_SIZE_BYTES
+from cosmos_curate.core.utils import environment
+from cosmos_curate.core.utils.config import operation_context
+from cosmos_curate.core.utils.config.config import load_config
+from cosmos_curate.core.utils.infra import hardware_info, ray_cluster_utils
+from cosmos_curate.core.utils.storage import storage_client, storage_utils
 
 CUDA_DEVICE: str = "cuda:0"
 _MODEL_DOWNLOADER_CPU_REQUEST: float = 1.0
@@ -325,7 +326,7 @@ def _download_model_weights_from_cloud_storage_to_workspace(
             storage_prefix,
             destination,
             delete=True,
-            chunk_size_bytes=DOWNLOAD_CHUNK_SIZE_BYTES,
+            chunk_size_bytes=storage_client.DOWNLOAD_CHUNK_SIZE_BYTES,
         )
         logger.info(f"Done syncing {weights_name=} from {storage_dir=} to {destination=} ...")
     except Exception as e:
@@ -563,7 +564,7 @@ def push_huggingface_model_to_cloud_storage(
         if client is None:
             error_msg = f"Failed to create storage client for {model_weights_prefix=}"
             raise ValueError(error_msg)
-    with operation_utils.make_temporary_dir() as tmp_dir:
+    with operation_context.make_temporary_dir() as tmp_dir:
         _download_model_weights_from_huggingface_to_workspace(
             model_id,
             revision,

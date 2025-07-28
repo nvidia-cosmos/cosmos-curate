@@ -18,12 +18,12 @@ import nvtx  # type: ignore[import-untyped]
 from loguru import logger
 
 from cosmos_curate.core.interfaces.stage_interface import CuratorStage, CuratorStageResource
-from cosmos_curate.core.utils import s3_client
-from cosmos_curate.core.utils.runtime.operation_utils import (
+from cosmos_curate.core.utils.config.operation_context import (
     make_pipeline_named_temporary_file,
 )
-from cosmos_curate.core.utils.runtime.performance_utils import StageTimer
-from cosmos_curate.core.utils.storage_utils import (
+from cosmos_curate.core.utils.infra.performance_utils import StageTimer
+from cosmos_curate.core.utils.storage import s3_client
+from cosmos_curate.core.utils.storage.storage_utils import (
     get_files_relative,
     get_full_path,
     get_storage_client,
@@ -48,7 +48,7 @@ from cosmos_curate.pipelines.av.utils.av_pipe_input import (
 )
 
 if TYPE_CHECKING:
-    from cosmos_curate.core.utils.storage_client import StorageClient
+    from cosmos_curate.core.utils.storage.storage_client import StorageClient
 
 
 def is_h264_file(file_name: str) -> bool:

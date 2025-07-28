@@ -13,4 +13,4 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Core utility functions and helpers for the curator package."""
+"""Utilities for interaction with database."""

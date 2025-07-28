@@ -22,10 +22,10 @@ import ray
 from loguru import logger
 
 from cosmos_curate.core.interfaces.stage_interface import CuratorStage, CuratorStageSpec, PipelineTask
+from cosmos_curate.core.utils.config.operation_context import get_tmp_dir, is_running_on_slurm, is_running_on_the_cloud
 from cosmos_curate.core.utils.environment import MODEL_WEIGHTS_PREFIX
-from cosmos_curate.core.utils.model_utils import download_model_weights_on_all_nodes
-from cosmos_curate.core.utils.runtime import hardware_info, ray_cluster_utils
-from cosmos_curate.core.utils.runtime.operation_utils import get_tmp_dir, is_running_on_slurm, is_running_on_the_cloud
+from cosmos_curate.core.utils.infra import hardware_info, ray_cluster_utils
+from cosmos_curate.core.utils.model.model_utils import download_model_weights_on_all_nodes
 from cosmos_xenna.pipelines.private.pipelines import run_pipeline as xenna_run_pipeline
 from cosmos_xenna.pipelines.private.specs import (
     ExecutionMode,

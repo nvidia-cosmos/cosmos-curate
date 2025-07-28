@@ -18,7 +18,7 @@ from loguru import logger
 from sqlalchemy.orm import sessionmaker
 
 if TYPE_CHECKING:
-    from cosmos_curate.core.utils.database_types import PostgresDB
+    from cosmos_curate.core.utils.db.database_types import PostgresDB
 
 from cosmos_curate.pipelines.av.utils import postgres_schema
 

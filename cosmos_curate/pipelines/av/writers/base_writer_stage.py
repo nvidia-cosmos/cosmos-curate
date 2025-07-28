@@ -13,7 +13,7 @@ from sqlalchemy import exc
 from sqlalchemy.orm import Session, scoped_session, sessionmaker
 
 from cosmos_curate.core.interfaces.stage_interface import CuratorStage, PipelineTask
-from cosmos_curate.core.utils.database_types import PostgresDB
+from cosmos_curate.core.utils.db.database_types import PostgresDB
 
 # Generic type for the task data
 PipelineTaskType = TypeVar("PipelineTaskType", bound=PipelineTask)

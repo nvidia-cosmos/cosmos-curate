@@ -23,9 +23,9 @@ import pandas as pd
 from loguru import logger
 from six import BytesIO
 
-from cosmos_curate.core.utils import filter_utils
-from cosmos_curate.core.utils.storage_client import StorageClient, StoragePrefix
-from cosmos_curate.core.utils.storage_utils import (
+from cosmos_curate.core.utils.misc import filter_predicates
+from cosmos_curate.core.utils.storage.storage_client import StorageClient, StoragePrefix
+from cosmos_curate.core.utils.storage.storage_utils import (
     get_files_relative,
     get_full_path,
     get_storage_client,
@@ -155,7 +155,7 @@ def extract_split_tasks(  # noqa: PLR0913
         input_videos = get_files_relative(input_path, client_input, _limit)
 
     # apply filter func
-    _filter_files_func = filter_utils.accept if filter_files_func is None else filter_files_func
+    _filter_files_func = filter_predicates.accept if filter_files_func is None else filter_files_func
     all_videos = [video for video in input_videos if _filter_files_func(video)]
     logger.info(f"Found {len(all_videos)} input videos in {input_path}")
     if verbose:

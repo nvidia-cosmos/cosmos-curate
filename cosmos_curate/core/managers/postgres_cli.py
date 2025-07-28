@@ -28,7 +28,7 @@ from rich.panel import Panel
 from rich.table import Table
 from sqlalchemy import Column
 
-from cosmos_curate.core.utils import database_types, postgres_schema_types
+from cosmos_curate.core.utils.db import database_types, postgres_schema_types
 
 app = typer.Typer(help=__doc__, add_completion=False, no_args_is_help=True)
 console = Console()

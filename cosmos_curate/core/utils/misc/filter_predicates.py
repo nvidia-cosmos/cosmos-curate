@@ -13,4 +13,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Utilities for misc operations."""
+"""Filter utilities."""
+
+
+def accept(_: object) -> bool:
+    """Regardless of what is passed in, return True.
+
+    Example usage:
+
+    ```
+    def do_something(data: list[str], filter_func: Callable[str, bool] | None = None)
+        _filter_func = filter.accept if filter_func is None else filter_func
+        [x for x in my_list if _filter_func(x)]
+    ```
+    """
+    return True

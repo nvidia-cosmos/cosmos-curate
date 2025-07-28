@@ -30,7 +30,7 @@ from torch import nn
 from torch.nn import functional
 
 from cosmos_curate.core.interfaces.model_interface import ModelInterface
-from cosmos_curate.core.utils import model_utils
+from cosmos_curate.core.utils.model import model_utils
 
 _TRANSNETV2_MODEL_ID: Final = "Sn4kehead/TransNetV2"
 _TRANSNETV2_MODEL_WEIGHTS: Final = "transnetv2-pytorch-weights.pth"

@@ -18,7 +18,7 @@
 from loguru import logger
 
 from cosmos_curate.core.interfaces.model_interface import ModelInterface
-from cosmos_curate.core.utils import conda_utils, model_utils
+from cosmos_curate.core.utils.model import conda_utils, model_utils
 
 # pyright: reportMissingImports=false
 # pyright: reportUnboundVariable=false

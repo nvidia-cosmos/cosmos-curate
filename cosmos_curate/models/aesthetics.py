@@ -22,7 +22,7 @@ from safetensors.torch import load_file
 from torch import nn
 
 from cosmos_curate.core.interfaces.model_interface import ModelInterface
-from cosmos_curate.core.utils import model_utils
+from cosmos_curate.core.utils.model import model_utils
 
 _AESTHETICS_MODEL_ID = "ttj/sac-logos-ava1-l14-linearMSE"
 

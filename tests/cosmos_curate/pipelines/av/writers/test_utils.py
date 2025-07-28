@@ -16,7 +16,7 @@ from uuid import UUID
 import numpy as np
 
 from cosmos_curate.core.interfaces.stage_interface import CuratorStage
-from cosmos_curate.core.utils.s3_client import is_s3path
+from cosmos_curate.core.utils.storage.s3_client import is_s3path
 from cosmos_curate.pipelines.av.utils.av_data_model import (
     AvClipAnnotationTask,
     CaptionWindow,
@@ -143,7 +143,7 @@ def run_writer_stage_test(
     # Create mocks for the writer function and S3 client
     with (
         patch(writer_function_path) as mock_writer,
-        patch("cosmos_curate.core.utils.s3_client.create_s3_client") as mock_create_s3_client,
+        patch("cosmos_curate.core.utils.storage.s3_client.create_s3_client") as mock_create_s3_client,
         patch("loguru.logger"),
     ):
         # Configure mocks

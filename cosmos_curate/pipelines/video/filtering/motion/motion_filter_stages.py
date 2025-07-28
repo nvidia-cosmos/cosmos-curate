@@ -26,11 +26,11 @@ from loguru import logger
 
 import cosmos_curate.pipelines.video.filtering.motion.motion_vector_backend as motion
 from cosmos_curate.core.interfaces.stage_interface import CuratorStage, CuratorStageResource
-from cosmos_curate.core.utils.runtime.gpu_start_helper import (
+from cosmos_curate.core.utils.infra.gpu_start_helper import (
     gpu_stage_cleanup,
     gpu_stage_startup,
 )
-from cosmos_curate.core.utils.runtime.performance_utils import StageTimer
+from cosmos_curate.core.utils.infra.performance_utils import StageTimer
 from cosmos_curate.pipelines.video.utils.data_model import SplitPipeTask
 
 ScoringFunctionType = Callable[[bytes, npt.NDArray[np.uint8]], npt.NDArray[np.float32]]

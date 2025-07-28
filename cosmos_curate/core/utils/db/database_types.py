@@ -30,7 +30,7 @@ import sqlalchemy
 import tenacity
 from loguru import logger
 
-from cosmos_curate.core.utils import config
+from cosmos_curate.core.utils.config import config
 
 
 class TableSet(enum.Enum):

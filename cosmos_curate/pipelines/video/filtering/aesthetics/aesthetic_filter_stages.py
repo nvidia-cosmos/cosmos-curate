@@ -22,11 +22,11 @@ from loguru import logger
 
 from cosmos_curate.core.interfaces.model_interface import ModelInterface
 from cosmos_curate.core.interfaces.stage_interface import CuratorStage, CuratorStageResource
-from cosmos_curate.core.utils.runtime.gpu_start_helper import (
+from cosmos_curate.core.utils.infra.gpu_start_helper import (
     gpu_stage_cleanup,
     gpu_stage_startup,
 )
-from cosmos_curate.core.utils.runtime.performance_utils import StageTimer
+from cosmos_curate.core.utils.infra.performance_utils import StageTimer
 from cosmos_curate.models.clip_aesthetics import CLIPAestheticScorer
 from cosmos_curate.pipelines.video.utils.data_model import SplitPipeTask
 from cosmos_curate.pipelines.video.utils.decoder_utils import (

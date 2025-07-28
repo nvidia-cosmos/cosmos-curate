@@ -26,7 +26,7 @@ from typing import Any
 import nvtx  # type: ignore[import-untyped]
 import torch
 
-from cosmos_curate.core.utils import conda_utils
+from cosmos_curate.core.utils.model import conda_utils
 
 if conda_utils.is_running_in_env("video_splitting"):
     import cvcuda  # type: ignore[import-untyped]

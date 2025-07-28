@@ -34,7 +34,7 @@ import cv2
 import numpy as np
 import numpy.typing as npt
 
-from cosmos_curate.core.utils.runtime.operation_utils import make_pipeline_named_temporary_file
+from cosmos_curate.core.utils.config.operation_context import make_pipeline_named_temporary_file
 
 if TYPE_CHECKING:
     from av.container import InputContainer

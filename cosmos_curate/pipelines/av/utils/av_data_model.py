@@ -19,7 +19,7 @@ import numpy.typing as npt
 from loguru import logger
 
 from cosmos_curate.core.interfaces.stage_interface import PipelineTask
-from cosmos_curate.core.utils.runtime.performance_utils import StagePerfStats
+from cosmos_curate.core.utils.infra.performance_utils import StagePerfStats
 from cosmos_curate.pipelines.video.utils.decoder_utils import extract_video_metadata
 
 T = TypeVar("T")

@@ -26,7 +26,8 @@ import attrs
 import pandas as pd
 from loguru import logger
 
-from cosmos_curate.core.utils import storage_utils, summarize, writer_utils
+from cosmos_curate.core.utils.misc import summarize
+from cosmos_curate.core.utils.storage import storage_utils, writer_utils
 
 if TYPE_CHECKING:
     from collections.abc import Generator

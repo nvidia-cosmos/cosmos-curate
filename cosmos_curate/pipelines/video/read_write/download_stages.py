@@ -22,10 +22,10 @@ import nvtx  # type: ignore[import-untyped]
 from loguru import logger
 
 from cosmos_curate.core.interfaces.stage_interface import CuratorStage, CuratorStageResource
-from cosmos_curate.core.utils import storage_client, storage_utils
-from cosmos_curate.core.utils.dataset_utils import webdataset_utils
-from cosmos_curate.core.utils.runtime.performance_utils import StageTimer
-from cosmos_curate.core.utils.writer_utils import write_bytes
+from cosmos_curate.core.utils.dataset import webdataset_utils
+from cosmos_curate.core.utils.infra.performance_utils import StageTimer
+from cosmos_curate.core.utils.storage import storage_client, storage_utils
+from cosmos_curate.core.utils.storage.writer_utils import write_bytes
 from cosmos_curate.pipelines.video.utils.data_model import (
     ShardPipeTask,
     SplitPipeTask,

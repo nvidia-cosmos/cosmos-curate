@@ -28,7 +28,7 @@ from loguru import logger
 
 from cosmos_curate.core.cf.nvcf_model_manager import NvcfModelManager
 from cosmos_curate.core.utils import environment
-from cosmos_curate.core.utils.runtime import ray_cluster_utils
+from cosmos_curate.core.utils.infra import ray_cluster_utils
 from cosmos_curate.models.all_models import get_all_models_by_id
 
 NVCF_SECRETS_PATH = "/var/secrets/secrets.json"

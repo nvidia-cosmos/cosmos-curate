@@ -32,9 +32,10 @@ from loguru import logger
 
 from cosmos_curate.core.interfaces.pipeline_interface import run_pipeline
 from cosmos_curate.core.interfaces.stage_interface import CuratorStage, CuratorStageSpec
-from cosmos_curate.core.utils import args_utils, grouping, storage_client
-from cosmos_curate.core.utils.dataset_utils import dimensions, webdataset_utils
-from cosmos_curate.core.utils.storage_utils import (
+from cosmos_curate.core.utils.config import args_utils
+from cosmos_curate.core.utils.dataset import dimensions, webdataset_utils
+from cosmos_curate.core.utils.misc import grouping
+from cosmos_curate.core.utils.storage.storage_utils import (
     create_path,
     get_directories_relative,
     get_full_path,
@@ -57,6 +58,8 @@ from cosmos_curate.pipelines.video.utils.video_pipe_input import (
 if typing.TYPE_CHECKING:
     import pathlib
     from collections.abc import Generator, Iterable
+
+    from cosmos_curate.core.utils.storage.storage_client import StoragePrefix
 
 _MAX_TARS_PER_PART = 100
 _TARGET_TAR_SIZE_BYTES = 500 * 1024 * 1024  # 500 MB
@@ -109,9 +112,9 @@ def _group_samples_into_tasks(
     drop_small_shards: bool,
     output_path: str,
     output_s3_profile_name: str,
-) -> tuple[list[ShardPipeTask], list[storage_client.StoragePrefix | pathlib.Path], int]:
+) -> tuple[list[ShardPipeTask], list[StoragePrefix | pathlib.Path], int]:
     tasks: list[ShardPipeTask] = []
-    all_bins: list[storage_client.StoragePrefix | pathlib.Path] = []
+    all_bins: list[StoragePrefix | pathlib.Path] = []
     num_dropped_samples: int = 0
     grouped_by_bin = _group_samples_by_bin(samples)
     client_output = get_storage_client(output_path, profile_name=output_s3_profile_name)

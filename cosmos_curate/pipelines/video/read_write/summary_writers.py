@@ -21,22 +21,19 @@ from typing import Any
 import attrs
 from loguru import logger
 
-from cosmos_curate.core.utils import (
-    grouping,
-    storage_client,
-    storage_utils,
-)
-from cosmos_curate.core.utils.misc.retry_utils import do_with_retries
-from cosmos_curate.core.utils.runtime.performance_utils import (
+from cosmos_curate.core.utils.infra.performance_utils import (
     dump_and_write_perf_stats,
 )
-from cosmos_curate.core.utils.storage_utils import (
+from cosmos_curate.core.utils.misc import grouping
+from cosmos_curate.core.utils.misc.retry_utils import do_with_retries
+from cosmos_curate.core.utils.storage import storage_client, storage_utils
+from cosmos_curate.core.utils.storage.storage_utils import (
     get_files_relative,
     get_full_path,
     path_exists,
     read_json_file,
 )
-from cosmos_curate.core.utils.writer_utils import (
+from cosmos_curate.core.utils.storage.writer_utils import (
     write_csv,
     write_json,
 )

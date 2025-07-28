@@ -19,7 +19,7 @@ if TYPE_CHECKING:
     import argparse
     import uuid
 
-    from cosmos_curate.core.utils.database_types import PostgresDB
+    from cosmos_curate.core.utils.db.database_types import PostgresDB
 from cosmos_curate.pipelines.av.captioning.captioning_stages import (
     PROMPT_TYPES_FOR_ENHANCE_CAPTIONS,
     PROMPT_TYPES_FOR_T5_EMBEDDING,

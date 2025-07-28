@@ -25,9 +25,9 @@ from loguru import logger
 
 from cosmos_curate.core.interfaces.pipeline_interface import run_pipeline
 from cosmos_curate.core.interfaces.stage_interface import CuratorStage, CuratorStageSpec
-from cosmos_curate.core.utils import args_utils
-from cosmos_curate.core.utils.database_types import EnvType, PostgresDB
-from cosmos_curate.core.utils.grouping import split_by_chunk_size
+from cosmos_curate.core.utils.config import args_utils
+from cosmos_curate.core.utils.db.database_types import EnvType, PostgresDB
+from cosmos_curate.core.utils.misc.grouping import split_by_chunk_size
 from cosmos_curate.pipelines.av.av_video_pipelines_common import (
     build_caption_pipeline_stages,
 )

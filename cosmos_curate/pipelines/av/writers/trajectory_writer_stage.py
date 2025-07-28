@@ -21,11 +21,10 @@ from pathlib import Path
 from loguru import logger
 from sqlalchemy.orm import Session
 
-from cosmos_curate.core.utils import s3_client
-from cosmos_curate.core.utils.database_types import PostgresDB
-from cosmos_curate.core.utils.runtime.performance_utils import StageTimer
-from cosmos_curate.core.utils.s3_client import is_s3path
-from cosmos_curate.core.utils.writer_utils import write_bytes
+from cosmos_curate.core.utils.db.database_types import PostgresDB
+from cosmos_curate.core.utils.infra.performance_utils import StageTimer
+from cosmos_curate.core.utils.storage import s3_client
+from cosmos_curate.core.utils.storage.writer_utils import write_bytes
 from cosmos_curate.pipelines.av.utils.av_data_model import AvSessionTrajectoryTask
 from cosmos_curate.pipelines.av.utils.postgres_schema import ClipTrajectory
 from cosmos_curate.pipelines.av.writers.base_writer_stage import BaseWriterStage
@@ -104,7 +103,7 @@ class TrajectoryWriterStage(BaseWriterStage):
 
         """
         full_path = f"{self._output_prefix}/{self._db_type}/{self._clip_prefix}/{self._version}/{clip_uuid}.bin"
-        if is_s3path(self._output_prefix):
+        if s3_client.is_s3path(self._output_prefix):
             return s3_client.S3Prefix(full_path)
         return Path(full_path)
 

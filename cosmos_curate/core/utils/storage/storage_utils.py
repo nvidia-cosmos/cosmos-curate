@@ -22,11 +22,11 @@ from typing import Any
 
 from loguru import logger
 
-from cosmos_curate.core.utils import azure_client, s3_client
-from cosmos_curate.core.utils.azure_client import AzurePrefix, is_azure_path
-from cosmos_curate.core.utils.retry_utils import do_with_retries
-from cosmos_curate.core.utils.s3_client import S3Prefix, is_s3path
-from cosmos_curate.core.utils.storage_client import StorageClient, StoragePrefix
+from cosmos_curate.core.utils.misc.retry_utils import do_with_retries
+from cosmos_curate.core.utils.storage import azure_client, s3_client
+from cosmos_curate.core.utils.storage.azure_client import AzurePrefix, is_azure_path
+from cosmos_curate.core.utils.storage.s3_client import S3Prefix, is_s3path
+from cosmos_curate.core.utils.storage.storage_client import StorageClient, StoragePrefix
 
 
 def is_remote_path(path: str | None) -> bool:

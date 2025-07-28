@@ -27,7 +27,7 @@ if TYPE_CHECKING:
     from transformers import AutoTokenizer
 
 from cosmos_curate.core.interfaces.model_interface import ModelInterface
-from cosmos_curate.core.utils import conda_utils, model_utils
+from cosmos_curate.core.utils.model import conda_utils, model_utils
 
 _PHI4_VL_MODEL_ID = "microsoft/Phi-4-multimodal-instruct"
 

@@ -24,9 +24,9 @@ from typing import Any
 import pandas as pd
 from loguru import logger
 
-from cosmos_curate.core.utils import storage_client
 from cosmos_curate.core.utils.misc.retry_utils import do_with_retries
-from cosmos_curate.core.utils.storage_utils import backup_file
+from cosmos_curate.core.utils.storage import storage_client
+from cosmos_curate.core.utils.storage.storage_utils import backup_file
 
 
 class JsonEncoderCustom(json.JSONEncoder):

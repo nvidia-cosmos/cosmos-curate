@@ -23,7 +23,7 @@ from loguru import logger
 from sqlalchemy import exc
 from sqlalchemy.orm import scoped_session, sessionmaker
 
-from cosmos_curate.core.utils.database_types import EnvType, PostgresDB
+from cosmos_curate.core.utils.db.database_types import EnvType, PostgresDB
 
 if TYPE_CHECKING:
     from collections.abc import Iterable

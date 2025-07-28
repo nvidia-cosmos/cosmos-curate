@@ -57,8 +57,8 @@ from cosmos_curate.core.cf.nvcf_utils import (
     remove_s3_profile,
 )
 from cosmos_curate.core.utils.environment import CONTAINER_PATHS_CODE_DIR
-from cosmos_curate.core.utils.file_lock import file_lock
-from cosmos_curate.core.utils.presigned_s3_zip_utils import (
+from cosmos_curate.core.utils.misc.file_lock import file_lock
+from cosmos_curate.core.utils.storage.presigned_s3_zip import (
     gather_and_upload_outputs,
     handle_presigned_urls,
 )

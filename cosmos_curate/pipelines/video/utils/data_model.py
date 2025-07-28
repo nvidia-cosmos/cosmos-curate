@@ -26,7 +26,7 @@ import numpy.typing as npt
 from loguru import logger
 
 from cosmos_curate.core.interfaces.stage_interface import PipelineTask
-from cosmos_curate.core.utils import storage_client
+from cosmos_curate.core.utils.storage import storage_client
 from cosmos_curate.pipelines.video.utils.decoder_utils import extract_video_metadata
 
 if TYPE_CHECKING:
@@ -37,7 +37,7 @@ if TYPE_CHECKING:
     import numpy.typing as npt
 
     import cosmos_curate.pipelines.video.filtering.motion.motion_vector_backend as motion
-    from cosmos_curate.core.utils.runtime.performance_utils import StagePerfStats
+    from cosmos_curate.core.utils.infra.performance_utils import StagePerfStats
 
 
 @attrs.define

@@ -25,8 +25,9 @@ import numpy as np
 import torch
 
 from cosmos_curate.core.interfaces.model_interface import ModelInterface
-from cosmos_curate.core.utils import conda_utils, grouping, model_utils
 from cosmos_curate.core.utils.environment import CONTAINER_PATHS_CODE_DIR
+from cosmos_curate.core.utils.misc import grouping
+from cosmos_curate.core.utils.model import conda_utils, model_utils
 
 # pyright: reportMissingImports=false
 # pyright: reportUnboundVariable=false

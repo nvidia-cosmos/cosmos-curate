@@ -25,7 +25,7 @@ import numpy.typing as npt
 import PIL.Image
 from skimage import color
 
-from cosmos_curate.core.utils.dataset_utils import dimensions
+from cosmos_curate.core.utils.dataset import dimensions
 
 # We work with huge images sometimes. PIL gives a lot of false positives where it warns that the images are too large.
 # We add this line to ignore those errors.

@@ -25,7 +25,8 @@ from loguru import logger
 from nvtx import nvtx  # type: ignore[import-untyped]
 
 from cosmos_curate.core.interfaces.model_interface import ModelInterface
-from cosmos_curate.core.utils import conda_utils, grouping, model_utils
+from cosmos_curate.core.utils.misc import grouping
+from cosmos_curate.core.utils.model import conda_utils, model_utils
 
 _QWEN2_5_VL_MODEL_ID = "Qwen/Qwen2.5-VL-7B-Instruct"
 

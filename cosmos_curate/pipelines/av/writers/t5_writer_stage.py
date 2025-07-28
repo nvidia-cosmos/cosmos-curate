@@ -21,10 +21,10 @@ import uuid
 from loguru import logger
 
 from cosmos_curate.core.interfaces.stage_interface import CuratorStage
-from cosmos_curate.core.utils import s3_client
-from cosmos_curate.core.utils.runtime.performance_utils import StageTimer
-from cosmos_curate.core.utils.s3_client import is_s3path
-from cosmos_curate.core.utils.writer_utils import write_bytes
+from cosmos_curate.core.utils.infra.performance_utils import StageTimer
+from cosmos_curate.core.utils.storage import s3_client
+from cosmos_curate.core.utils.storage.s3_client import is_s3path
+from cosmos_curate.core.utils.storage.writer_utils import write_bytes
 from cosmos_curate.pipelines.av.captioning.captioning_stages import (
     PROMPT_TYPES_FOR_T5_EMBEDDING,
 )

@@ -52,11 +52,11 @@ import ray
 import requests
 from loguru import logger
 
-from cosmos_curate.core.utils.runtime.ray_cluster_utils import (
+from cosmos_curate.core.utils.infra.ray_cluster_utils import (
     get_node_name,
     init_or_connect_to_cluster,
 )
-from cosmos_curate.core.utils.storage_utils import (
+from cosmos_curate.core.utils.storage.storage_utils import (
     get_files_relative,
     get_storage_client,
 )

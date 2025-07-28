@@ -21,7 +21,7 @@ from loguru import logger
 from cosmos_curate.core.utils.environment import (
     MODEL_WEIGHTS_PREFIX,
 )
-from cosmos_curate.core.utils.model_utils import (
+from cosmos_curate.core.utils.model.model_utils import (
     download_model_weights_from_huggingface_to_workspace,
     push_huggingface_model_to_cloud_storage,
 )

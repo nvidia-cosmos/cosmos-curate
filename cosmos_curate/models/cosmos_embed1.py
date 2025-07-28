@@ -25,7 +25,7 @@ import torch
 from loguru import logger
 
 from cosmos_curate.core.interfaces.model_interface import ModelInterface
-from cosmos_curate.core.utils import conda_utils, model_utils
+from cosmos_curate.core.utils.model import conda_utils, model_utils
 
 _COSMOS_EMBED1_VARIANTS_INFO: Final = {
     "224p": "nvidia/Cosmos-Embed1-224p",

@@ -28,8 +28,8 @@ from torch import nn
 from transformers import BatchEncoding, PreTrainedTokenizer  # type: ignore[attr-defined]
 
 from cosmos_curate.core.interfaces.model_interface import ModelInterface
-from cosmos_curate.core.utils import conda_utils, model_utils
 from cosmos_curate.core.utils.environment import CONTAINER_PATHS_CODE_DIR
+from cosmos_curate.core.utils.model import conda_utils, model_utils
 
 # pyright: reportMissingImports=false
 # pyright: reportUnboundVariable=false

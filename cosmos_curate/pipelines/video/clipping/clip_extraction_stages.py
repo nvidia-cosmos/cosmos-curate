@@ -23,9 +23,9 @@ import nvtx  # type: ignore[import-untyped]
 from loguru import logger
 
 from cosmos_curate.core.interfaces.stage_interface import CuratorStage, CuratorStageResource
-from cosmos_curate.core.utils import grouping
-from cosmos_curate.core.utils.runtime.operation_utils import make_pipeline_temporary_dir
-from cosmos_curate.core.utils.runtime.performance_utils import StageTimer
+from cosmos_curate.core.utils.config.operation_context import make_pipeline_temporary_dir
+from cosmos_curate.core.utils.infra.performance_utils import StageTimer
+from cosmos_curate.core.utils.misc import grouping
 from cosmos_curate.pipelines.video.utils.data_model import (
     Clip,
     SplitPipeTask,

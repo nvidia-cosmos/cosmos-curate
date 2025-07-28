@@ -21,10 +21,10 @@ from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
-from cosmos_curate.core.utils import args_utils
-from cosmos_curate.core.utils.azure_client import get_azure_client_config, is_azure_path
-from cosmos_curate.core.utils.conda_utils import is_running_in_env
-from cosmos_curate.core.utils.s3_client import get_s3_client_config, is_s3path
+from cosmos_curate.core.utils.config import args_utils
+from cosmos_curate.core.utils.model.conda_utils import is_running_in_env
+from cosmos_curate.core.utils.storage.azure_client import get_azure_client_config, is_azure_path
+from cosmos_curate.core.utils.storage.s3_client import get_s3_client_config, is_s3path
 
 if is_running_in_env("text_curator") or TYPE_CHECKING:
     import dask

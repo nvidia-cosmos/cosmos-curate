@@ -29,7 +29,7 @@ from cosmos_curate.core.interfaces.stage_interface import (
     CuratorStageSpec,
     PipelineTask,
 )
-from cosmos_curate.core.utils.conda_utils import get_conda_env_name
+from cosmos_curate.core.utils.model.conda_utils import get_conda_env_name
 from cosmos_curate.models.gpt2 import GPT2
 
 

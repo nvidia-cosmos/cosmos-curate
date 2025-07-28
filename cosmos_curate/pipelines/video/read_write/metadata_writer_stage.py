@@ -27,10 +27,16 @@ import pandas as pd
 from loguru import logger
 
 from cosmos_curate.core.interfaces.stage_interface import CuratorStage, CuratorStageResource
-from cosmos_curate.core.utils import storage_client, storage_utils
-from cosmos_curate.core.utils.runtime.performance_utils import StageTimer
-from cosmos_curate.core.utils.storage_utils import get_full_path
-from cosmos_curate.core.utils.writer_utils import write_bytes, write_json, write_jsonl, write_parquet, write_text
+from cosmos_curate.core.utils.infra.performance_utils import StageTimer
+from cosmos_curate.core.utils.storage import storage_client, storage_utils
+from cosmos_curate.core.utils.storage.storage_utils import get_full_path
+from cosmos_curate.core.utils.storage.writer_utils import (
+    write_bytes,
+    write_json,
+    write_jsonl,
+    write_parquet,
+    write_text,
+)
 from cosmos_curate.pipelines.video.utils.data_model import (
     Clip,
     ClipStats,

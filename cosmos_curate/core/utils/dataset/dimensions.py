@@ -18,7 +18,7 @@ import re
 
 import attrs
 
-from cosmos_curate.core.utils import grouping
+from cosmos_curate.core.utils.misc import grouping
 
 # Constants for aspect ratio string representation
 _AR_PREFIX = "aspect_ratio_"

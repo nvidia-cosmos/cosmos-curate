@@ -18,7 +18,7 @@ try:
 
     import pytest
 
-    from cosmos_curate.core.utils.s3_client import S3Client, S3Prefix
+    from cosmos_curate.core.utils.storage.s3_client import S3Client, S3Prefix
     from cosmos_curate.pipelines.av.utils.av_data_model import (
         AvClipAnnotationTask,
     )
@@ -46,7 +46,7 @@ except ImportError:
 def test_get_json_annotation_url_return_type(output_prefix: str, expected_type: type) -> None:
     """Test that _get_json_annotation_url returns the correct type."""
     with patch(
-        "cosmos_curate.core.utils.s3_client.is_s3path",
+        "cosmos_curate.core.utils.storage.s3_client.is_s3path",
         return_value=output_prefix.startswith("s3://"),
     ):
         result = _get_json_annotation_url(

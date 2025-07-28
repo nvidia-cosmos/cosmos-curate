@@ -24,8 +24,8 @@ from typing import Any
 import attrs
 import cattrs
 
-from cosmos_curate.core.utils.dataset_utils import webdataset_utils
-from cosmos_curate.core.utils.dataset_utils.dimensions import Dimensions
+from cosmos_curate.core.utils.dataset import webdataset_utils
+from cosmos_curate.core.utils.dataset.dimensions import Dimensions
 
 
 @attrs.define
