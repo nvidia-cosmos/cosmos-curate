@@ -21,9 +21,12 @@ from unittest.mock import Mock, patch
 
 import pytest
 from _pytest.monkeypatch import MonkeyPatch
+from ngcbase.errors import AccessDeniedException, ResourceAlreadyExistsException, ResourceNotFoundException
 from typer.testing import CliRunner
 
 from cosmos_curate.client.cli import cosmos_curator  # type: ignore[import-untyped]
+from cosmos_curate.client.nvcf_cli.ncf.common import NotFoundError
+from cosmos_curate.client.nvcf_cli.ncf.image.image_manager import ImageManager
 
 runner = CliRunner()
 
@@ -245,3 +248,163 @@ def test_delete_image(caplog: pytest.LogCaptureFixture) -> None:
     # after deletion
     assert "image1" in result_del.output
     assert "todel" not in result_del.output
+
+
+class TestImageManager:
+    """Test cases for ImageManager class methods."""
+
+    # Mock the image API
+    @pytest.fixture
+    def image_manager_setup(self) -> tuple[ImageManager, Mock]:
+        """Create ImageManager with all mocked dependencies."""
+        mock_image_api = Mock()
+        mock_registry = Mock(image=mock_image_api)
+        mock_client = Mock(registry=mock_registry)
+
+        with patch("cosmos_curate.client.nvcf_cli.ncf.image.image_manager.Client", return_value=mock_client):
+            image_manager = ImageManager(url="test", nvcf_url="test", key="test", org="test", team="", timeout=30)
+            return image_manager, mock_image_api
+
+    def test_upload_image_success(self, image_manager_setup: Mock, tmp_path: Path) -> None:
+        """Test successful image upload.
+
+        Args:
+            image_manager_setup: ImageManager with all mocked dependencies.
+            tmp_path: Path to temporary directory.
+
+        """
+        image_manager, mock_image_api = image_manager_setup
+
+        # Create test JSON file
+        fname = tmp_path / "test_image.json"
+        with Path.open(fname, "w") as f:
+            json.dump({"image": "testimage", "tag": "testtag"}, f)
+
+        # Mock successful create and push
+        mock_image_api.create.return_value = Mock(toDict=lambda: {"id": "123", "name": "testimage"})
+        mock_image_api.push.return_value = 1
+
+        result = image_manager.upload_image(str(fname))
+
+        assert result is not None
+        assert result["id"] == "123"
+        assert result["name"] == "testimage"
+
+    def test_upload_image_resource_already_exists(self, image_manager_setup: Mock, tmp_path: Path) -> None:
+        """Test upload when image already exists.
+
+        Args:
+            image_manager_setup: ImageManager with all mocked dependencies.
+            tmp_path: Path to temporary directory.
+
+        """
+        image_manager, mock_image_api = image_manager_setup
+
+        # Create test JSON file
+        fname = tmp_path / "test_image.json"
+        with Path.open(fname, "w") as f:
+            json.dump({"image": "testimage", "tag": "testtag"}, f)
+
+        # Mock create to raise ResourceAlreadyExistsException, then successful push
+        mock_image_api.create.side_effect = ResourceAlreadyExistsException("Image already exists")
+        mock_image_api.push.return_value = 1
+
+        result = image_manager.upload_image(str(fname))
+
+        # Should return None when push succeeds but create failed
+        assert result is None
+
+    def test_download_image_success(self, image_manager_setup: Mock) -> None:
+        """Test successful image download.
+
+        Args:
+            image_manager_setup: ImageManager with all mocked dependencies.
+
+        """
+        image_manager, mock_image_api = image_manager_setup
+
+        # Mock successful pull operation
+        mock_image_api.pull.return_value = None
+
+        image_manager.download_image("testimage")
+
+        # Verify pull was called with correct image name
+        mock_image_api.pull.assert_called_once_with(image="test/testimage")
+
+    def test_download_image_not_found(self, image_manager_setup: Mock) -> None:
+        """Test download when image is not found.
+
+        Args:
+            image_manager_setup: ImageManager with all mocked dependencies.
+
+        """
+        image_manager, mock_image_api = image_manager_setup
+
+        # Mock pull to raise ResourceNotFoundException
+        mock_image_api.pull.side_effect = ResourceNotFoundException("Image not found")
+
+        with pytest.raises(NotFoundError):
+            image_manager.download_image("testimage")
+
+        mock_image_api.pull.side_effect = AccessDeniedException("Access denied")
+
+        with pytest.raises(RuntimeError):
+            image_manager.download_image("testimage")
+
+    def test_delete_image_fails(self, image_manager_setup: Mock) -> None:
+        """Test delete when image is not found.
+
+        Args:
+            image_manager_setup: ImageManager with all mocked dependencies.
+
+        """
+        image_manager, mock_image_api = image_manager_setup
+
+        # Mock delete to raise ResourceNotFoundException
+        mock_image_api.remove.side_effect = ResourceNotFoundException("Image not found")
+
+        with pytest.raises(NotFoundError):
+            image_manager.delete_image("testimage")
+
+        mock_image_api.remove.side_effect = AccessDeniedException("Access denied")
+
+        with pytest.raises(RuntimeError):
+            image_manager.delete_image("testimage")
+
+    def test_list_all_fails(self, image_manager_setup: Mock) -> None:
+        """Test list all when image is not found.
+
+        Args:
+            image_manager_setup: ImageManager with all mocked dependencies.
+
+        """
+        image_manager, mock_image_api = image_manager_setup
+
+        mock_image_api.list.side_effect = Exception("Image not found")
+
+        with pytest.raises(RuntimeError):
+            image_manager.list_all(all_accessible_orgs=True)
+
+    def test_list_details_fails(self, image_manager_setup: Mock) -> None:
+        """Test list details when image is not found.
+
+        Args:
+            image_manager_setup: ImageManager with all mocked dependencies.
+
+        """
+        image_manager, mock_image_api = image_manager_setup
+
+        # Mock list to raise ResourceNotFoundException
+        mock_image_api.info.side_effect = ResourceNotFoundException("Image not found")
+
+        with pytest.raises(NotFoundError):
+            image_manager.list_detail(iname="testimage")
+
+        mock_image_api.info.side_effect = AccessDeniedException("Access denied")
+
+        with pytest.raises(RuntimeError):
+            image_manager.list_detail(iname="testimage")
+
+        mock_image_api.info.return_value = (1, 2, 3, 4)
+        with pytest.raises(RuntimeError):
+            image_manager.list_detail(iname="testimage")

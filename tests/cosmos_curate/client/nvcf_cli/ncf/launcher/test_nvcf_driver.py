@@ -23,8 +23,12 @@ import pytest
 from typer.testing import CliRunner
 
 from cosmos_curate.client.cli import cosmos_curator  # type: ignore[import-not-found]
+from cosmos_curate.client.nvcf_cli.ncf.common import NotFoundError
 
 runner = CliRunner()
+
+_FAKE_UUID_ONE = "12345678-1234-1234-1234-123456789abc"
+_FAKE_UUID_TWO = "87654321-4321-4321-4321-987654321def"
 
 
 def test_deploy_function_no_id_version(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
@@ -40,7 +44,7 @@ def test_deploy_function_no_id_version(tmp_path: Path, caplog: pytest.LogCapture
     # A mock data file to pass to the command
     mock_func.id_version.return_value = (False, 1234, 5678)
     fname = tmp_path / "fake.json"
-    Path.open(fname, "w")
+    fname.touch()
 
     args = [
         "nvcf",
@@ -73,7 +77,7 @@ def test_deploy_function_no_backend_gpu_instance(mock_cc: MagicMock, tmp_path: P
 
     # A mock data file to pass to the command
     fname = tmp_path / "fake.json"
-    Path.open(fname, "w")
+    fname.touch()
 
     # Mock return values to test backend = None
     mock_instance.id_version.return_value = (True, 1234, 5678)
@@ -120,7 +124,7 @@ def test_deploy_function_success(mock_cc: MagicMock, tmp_path: Path) -> None:
 
     # Mock file to pass as arguement
     fname = tmp_path / "fake.json"
-    Path.open(fname, "w")
+    fname.touch()
 
     mock_instance.id_version.return_value = (True, 1234, 5678)
     mock_instance.get_cluster.return_value = (True, True, True, True)
@@ -156,7 +160,7 @@ def test_deploy_function_exception(mock_cc: MagicMock, tmp_path: Path) -> None:
     mock_cc.return_value = {"function": {"help": "A fake function", "type": mock_func}}
 
     fname = tmp_path / "fake.json"
-    Path.open(fname, "w")
+    fname.touch()
 
     mock_instance.id_version.return_value = (True, 1234, 5678)
     mock_instance.get_cluster.return_value = (True, True, True, True)
@@ -203,7 +207,7 @@ def test_deploy_function_validation_failures(mock_cc: MagicMock, tmp_path: Path)
     result = runner.invoke(cosmos_curator, args)
     assert result.exit_code != 0
 
-    Path.open(fname, "w")
+    fname.touch()
 
     mock_instance.id_version.return_value = (True, 1234, 5678)
     args = ["nvcf", "function", "deploy-function", "--data-file", str(fname), "-version", "badversion"]
@@ -240,7 +244,7 @@ def test_invoke_function_no_id_version(mock_cc: MagicMock, tmp_path: Path) -> No
     mock_cc.return_value = {"function": {"help": "A fake function", "type": mock_func}}
 
     fname = tmp_path / "fake.json"
-    Path.open(fname, "w")
+    fname.touch()
 
     mock_instance.id_version.return_value = (False, 1234, 5678)
 
@@ -272,7 +276,7 @@ def test_invoke_function_bad_assetid(mock_cc: MagicMock, tmp_path: Path) -> None
     mock_cc.return_value = {"function": {"help": "A fake function", "type": mock_func}}
 
     fname = tmp_path / "fake.json"
-    Path.open(fname, "w")
+    fname.touch()
 
     mock_instance.id_version.return_value = (True, 1234, 5678)
     # A mock uuid
@@ -312,7 +316,7 @@ def test_invoke_function_test_wait(mock_cc: MagicMock, tmp_path: Path) -> None:
     mock_cc.return_value = {"function": {"help": "A fake function", "type": mock_func}}
 
     fname = tmp_path / "fake.json"
-    Path.open(fname, "w")
+    fname.touch()
 
     mock_instance.id_version.return_value = (True, 1234, 5678)
 
@@ -357,7 +361,7 @@ def test_invoke_function_validation_failures(mock_cc: MagicMock, tmp_path: Path)
     args = [
         "nvcf",
         "function",
-        "deploy-function",
+        "invoke-function",
         "--data-file",
         str(fname),
     ]
@@ -365,10 +369,10 @@ def test_invoke_function_validation_failures(mock_cc: MagicMock, tmp_path: Path)
     result = runner.invoke(cosmos_curator, args)
     assert result.exit_code != 0
 
-    Path.open(fname, "w")
+    fname.touch()
 
     mock_instance.id_version.return_value = (True, 1234, 5678)
-    args = ["nvcf", "function", "deploy-function", "--data-file", str(fname), "-assetid", "badassetid"]
+    args = ["nvcf", "function", "invoke-function", "--data-file", str(fname), "--assetid", "badassetid"]
 
     result = runner.invoke(cosmos_curator, args)
     assert result.exit_code != 0
@@ -377,7 +381,7 @@ def test_invoke_function_validation_failures(mock_cc: MagicMock, tmp_path: Path)
     args = [
         "nvcf",
         "function",
-        "deploy-function",
+        "invoke-function",
         "--data-file",
         str(fname),
         "--retry_cnt",
@@ -385,3 +389,428 @@ def test_invoke_function_validation_failures(mock_cc: MagicMock, tmp_path: Path)
     ]
     result = runner.invoke(cosmos_curator, args)
     assert result.exit_code != 0
+
+
+@patch("cosmos_curate.client.nvcf_cli.ncf.common.nvcf_base.cc_client_instances")
+def test_list_clusters(mock_cc: MagicMock) -> None:
+    """Test that list-clusters can succeed.
+
+    Args:
+        mock_cc: A mock to return a fake helper.
+
+    """
+    # Mock NvfcHelper
+    mock_instance = MagicMock()
+    mock_func = MagicMock(return_value=mock_instance)
+    mock_cc.return_value = {"function": {"help": "A fake function", "type": mock_func}}
+
+    # Mock the required method
+    mock_instance.nvcf_helper_list_clusters.return_value = "mock clusters response"
+
+    args = ["nvcf", "function", "list-clusters"]
+
+    result = runner.invoke(cosmos_curator, args)
+    assert result.exit_code == 0
+
+    # Test with exception in helper method
+    mock_instance.nvcf_helper_list_clusters.side_effect = RuntimeError("mock exception")
+    result = runner.invoke(cosmos_curator, args)
+    assert result.exit_code == 1
+
+
+@patch("cosmos_curate.client.nvcf_cli.ncf.common.nvcf_base.cc_client_instances")
+def test_list_functions(mock_cc: MagicMock) -> None:
+    """Test that list-functions can succeed.
+
+    Args:
+        mock_cc: A mock to return a fake helper.
+
+    """
+    # Mock NvfcHelper
+    mock_instance = MagicMock()
+    mock_func = MagicMock(return_value=mock_instance)
+    mock_cc.return_value = {"function": {"help": "A fake function", "type": mock_func}}
+
+    # Mock the required method
+    mock_instance.nvcf_helper_list_functions.return_value = "mock functions response"
+
+    args = ["nvcf", "function", "list-functions"]
+
+    result = runner.invoke(cosmos_curator, args)
+    assert result.exit_code == 0
+
+    # Test with exception in helper method
+    mock_instance.nvcf_helper_list_functions.side_effect = RuntimeError("mock exception")
+    result = runner.invoke(cosmos_curator, args)
+    assert result.exit_code == 1
+
+
+@patch("cosmos_curate.client.nvcf_cli.ncf.common.nvcf_base.cc_client_instances")
+def test_list_function_detail(mock_cc: MagicMock) -> None:
+    """Test that list-versions can succeed.
+
+    Args:
+        mock_cc: A mock to return a fake helper.
+
+    """
+    # Mock NvfcHelper
+    mock_instance = MagicMock()
+    mock_func = MagicMock(return_value=mock_instance)
+    mock_cc.return_value = {"function": {"help": "A fake function", "type": mock_func}}
+
+    # Mock the required method
+    mock_instance.nvcf_helper_list_function_detail.return_value = "mock function detail response"
+
+    args = ["nvcf", "function", "list-function-detail", "--name", "test-function"]
+
+    result = runner.invoke(cosmos_curator, args)
+    assert result.exit_code == 0
+
+    # Test with NotFoundError in helper method
+    mock_instance.nvcf_helper_list_function_detail.side_effect = NotFoundError("mock exception")
+    result = runner.invoke(cosmos_curator, args)
+    assert result.exit_code == 1
+
+    # Test with RuntimeError in helper method
+    mock_instance.nvcf_helper_list_function_detail.side_effect = RuntimeError("mock exception")
+    result = runner.invoke(cosmos_curator, args)
+    assert result.exit_code == 1
+
+
+@patch("cosmos_curate.client.nvcf_cli.ncf.common.nvcf_base.cc_client_instances")
+def test_create_function(mock_cc: MagicMock, tmp_path: Path) -> None:
+    """Test that create-function can succeed.
+
+    Args:
+        tmp_path: A temporary path.
+        mock_cc: A mock to return a fake helper.
+
+    """
+    # Mock NvfcHelper
+    mock_instance = MagicMock()
+    mock_func = MagicMock(return_value=mock_instance)
+    mock_cc.return_value = {"function": {"help": "A fake function", "type": mock_func}}
+
+    # Create a temporary data file
+    fname = tmp_path / "fake.json"
+    fname.touch()
+
+    # Mock the required method
+    mock_instance.nvcf_helper_create_function.return_value = {"name": "test-function", "id": "123", "version": "456"}
+    mock_instance.store_ids.return_value = None
+
+    args = ["nvcf", "function", "create-function", "--name", "test-function", "--data-file", str(fname)]
+
+    result = runner.invoke(cosmos_curator, args)
+    assert result.exit_code == 0
+
+    # Test with exception in helper method
+    mock_instance.nvcf_helper_create_function.side_effect = RuntimeError("mock exception")
+    result = runner.invoke(cosmos_curator, args)
+    assert result.exit_code == 1
+
+
+@patch("cosmos_curate.client.nvcf_cli.ncf.common.nvcf_base.cc_client_instances")
+def test_nvcf_invoke_batch_function(mock_cc: MagicMock, tmp_path: Path) -> None:
+    """Test that invoke-batch can succeed.
+
+    Args:
+        tmp_path: A temporary path.
+        mock_cc: A mock to return a fake helper.
+
+    """
+    # Mock NvfcHelper
+    mock_instance = MagicMock()
+    mock_func = MagicMock(return_value=mock_instance)
+    mock_cc.return_value = {"function": {"help": "A fake function", "type": mock_func}}
+
+    # Create temporary files for all required parameters
+    data_file = tmp_path / "data.json"
+    id_file = tmp_path / "id.json"
+    job_variant_file = tmp_path / "job_variant.json"
+    s3_config_file = tmp_path / "s3_config.json"
+
+    data_file.touch()
+    id_file.touch()
+    job_variant_file.touch()
+    s3_config_file.touch()
+
+    args = [
+        "nvcf",
+        "function",
+        "invoke-batch",
+        "--data-file",
+        str(data_file),
+        "--id-file",
+        str(id_file),
+        "--job-variant-file",
+        str(job_variant_file),
+        "--s3-config-file",
+        str(s3_config_file),
+    ]
+
+    result = runner.invoke(cosmos_curator, args)
+    assert result.exit_code == 0
+
+
+@patch("cosmos_curate.client.nvcf_cli.ncf.common.nvcf_base.cc_client_instances")
+def test_get_request_status(mock_cc: MagicMock, tmp_path: Path) -> None:
+    """Test that get-request-status can succeed.
+
+    Args:
+        tmp_path: A temporary path.
+        mock_cc: A mock to return a fake helper.
+
+    """
+    # Mock NvfcHelper
+    mock_instance = MagicMock()
+    mock_func = MagicMock(return_value=mock_instance)
+    mock_cc.return_value = {"function": {"help": "A fake function", "type": mock_func}}
+
+    # Mock the required methods
+    mock_instance.id_version.return_value = (True, _FAKE_UUID_ONE, _FAKE_UUID_TWO)
+    mock_instance.nvcf_helper_get_request_status_with_wait.return_value = None
+
+    # Test with a custom output directory
+    custom_out_dir = tmp_path / "custom_output"
+    custom_out_dir.mkdir()
+
+    args = ["nvcf", "function", "get-request-status", "--reqid", _FAKE_UUID_ONE, "--out-dir", str(custom_out_dir)]
+
+    result = runner.invoke(cosmos_curator, args)
+    assert result.exit_code == 0
+
+    mock_instance.nvcf_helper_get_request_status_with_wait.side_effect = RuntimeError("mock exception")
+    result = runner.invoke(cosmos_curator, args)
+    assert result.exit_code == 1
+
+    mock_instance.id_version.return_value = (None, _FAKE_UUID_ONE, _FAKE_UUID_TWO)
+    result = runner.invoke(cosmos_curator, args)
+    assert result.exit_code == 1
+
+
+@patch("cosmos_curate.client.nvcf_cli.ncf.common.nvcf_base.cc_client_instances")
+def test_nvcf_terminate_request(mock_cc: MagicMock) -> None:
+    """Test that terminate-request can succeed.
+
+    Args:
+        mock_cc: A mock to return a fake helper.
+
+    """
+    # Mock NvfcHelper
+    mock_instance = MagicMock()
+    mock_func = MagicMock(return_value=mock_instance)
+    mock_cc.return_value = {"function": {"help": "A fake function", "type": mock_func}}
+
+    # Mock the required methods
+    mock_instance.id_version.return_value = (True, _FAKE_UUID_ONE, _FAKE_UUID_TWO)
+    mock_instance.nvcf_helper_terminate_request.return_value = None
+
+    args = ["nvcf", "function", "terminate-request", "--reqid", _FAKE_UUID_ONE]
+
+    result = runner.invoke(cosmos_curator, args)
+    assert result.exit_code == 0
+
+    mock_instance.nvcf_helper_terminate_request.side_effect = RuntimeError("mock exception")
+    result = runner.invoke(cosmos_curator, args)
+    assert result.exit_code == 1
+
+    mock_instance.id_version.return_value = (None, _FAKE_UUID_ONE, _FAKE_UUID_TWO)
+    result = runner.invoke(cosmos_curator, args)
+    assert result.exit_code == 1
+
+
+@patch("cosmos_curate.client.nvcf_cli.ncf.common.nvcf_base.cc_client_instances")
+def test_nvcf_get_deployment_detail(mock_cc: MagicMock) -> None:
+    """Test that get-deployment-detail can succeed.
+
+    Args:
+        mock_cc: A mock to return a fake helper.
+
+    """
+    # Mock NvfcHelper
+    mock_instance = MagicMock()
+    mock_func = MagicMock(return_value=mock_instance)
+    mock_cc.return_value = {"function": {"help": "A fake function", "type": mock_func}}
+
+    # Mock the required methods
+    mock_instance.id_version.return_value = (True, _FAKE_UUID_ONE, _FAKE_UUID_TWO)
+    mock_instance.nvcf_helper_get_deployment_detail.return_value = None
+
+    args = ["nvcf", "function", "get-deployment-detail", "--funcid", _FAKE_UUID_ONE, "--version", _FAKE_UUID_TWO]
+
+    result = runner.invoke(cosmos_curator, args)
+    assert result.exit_code == 0
+
+    # Test with exception in helper method
+    mock_instance.nvcf_helper_get_deployment_detail.side_effect = RuntimeError("mock exception")
+    result = runner.invoke(cosmos_curator, args)
+    assert result.exit_code == 1
+
+    # Test with failed id_version validation
+    mock_instance.id_version.return_value = (False, _FAKE_UUID_ONE, _FAKE_UUID_TWO)
+    result = runner.invoke(cosmos_curator, args)
+    assert result.exit_code == 1
+
+
+@patch("cosmos_curate.client.nvcf_cli.ncf.common.nvcf_base.cc_client_instances")
+def test_nvcf_delete_function(mock_cc: MagicMock) -> None:
+    """Test that delete-function can succeed.
+
+    Args:
+        mock_cc: A mock to return a fake helper.
+
+    """
+    # Mock NvfcHelper
+    mock_instance = MagicMock()
+    mock_func = MagicMock(return_value=mock_instance)
+    mock_cc.return_value = {"function": {"help": "A fake function", "type": mock_func}}
+
+    # Mock the required methods
+    mock_instance.id_version.return_value = (True, _FAKE_UUID_ONE, _FAKE_UUID_TWO)
+    mock_instance.nvcf_helper_delete_function.return_value = None
+
+    args = ["nvcf", "function", "delete-function", "--funcid", _FAKE_UUID_ONE, "--version", _FAKE_UUID_TWO]
+
+    result = runner.invoke(cosmos_curator, args)
+    assert result.exit_code == 0
+
+    # Test with exception in helper method
+    mock_instance.nvcf_helper_delete_function.side_effect = RuntimeError("mock exception")
+    result = runner.invoke(cosmos_curator, args)
+    assert result.exit_code == 1
+
+    # Test with failed id_version validation
+    mock_instance.id_version.return_value = (False, _FAKE_UUID_ONE, _FAKE_UUID_TWO)
+    result = runner.invoke(cosmos_curator, args)
+    assert result.exit_code == 1
+
+
+@patch("cosmos_curate.client.nvcf_cli.ncf.common.nvcf_base.cc_client_instances")
+def test_nvcf_s3_config_function(mock_cc: MagicMock, tmp_path: Path) -> None:
+    """Test that s3-config can succeed.
+
+    Args:
+        tmp_path: A temporary path.
+        mock_cc: A mock to return a fake helper.
+
+    """
+    # Mock NvfcHelper
+    mock_instance = MagicMock()
+    mock_func = MagicMock(return_value=mock_instance)
+    mock_cc.return_value = {"function": {"help": "A fake function", "type": mock_func}}
+
+    # Create a temporary data file
+    fname = tmp_path / "fake.json"
+    fname.touch()
+
+    # Mock the required methods
+    mock_instance.id_version.return_value = (True, _FAKE_UUID_ONE, _FAKE_UUID_TWO)
+    mock_instance.nvcf_helper_s3cred_function.return_value = None
+
+    args = [
+        "nvcf",
+        "function",
+        "s3cred-function",
+        "--funcid",
+        _FAKE_UUID_ONE,
+        "--version",
+        _FAKE_UUID_TWO,
+        "--s3credfile",
+        str(fname),
+    ]
+
+    result = runner.invoke(cosmos_curator, args)
+    assert result.exit_code == 0
+
+    # Test with exception in helper method
+    mock_instance.nvcf_helper_s3cred_function.side_effect = RuntimeError("mock exception")
+    result = runner.invoke(cosmos_curator, args)
+    assert result.exit_code == 1
+
+    # Test with failed id_version validation
+    mock_instance.id_version.return_value = (False, _FAKE_UUID_ONE, _FAKE_UUID_TWO)
+    result = runner.invoke(cosmos_curator, args)
+    assert result.exit_code == 1
+
+
+@patch("cosmos_curate.client.nvcf_cli.ncf.common.nvcf_base.cc_client_instances")
+def test_nvcf_undeploy_function(mock_cc: MagicMock) -> None:
+    """Test that undeploy-function can succeed.
+
+    Args:
+        mock_cc: A mock to return a fake helper.
+
+    """
+    # Mock NvfcHelper
+    mock_instance = MagicMock()
+    mock_func = MagicMock(return_value=mock_instance)
+    mock_cc.return_value = {"function": {"help": "A fake function", "type": mock_func}}
+
+    # Mock the required methods
+    mock_instance.id_version.return_value = (True, _FAKE_UUID_ONE, _FAKE_UUID_TWO)
+    mock_instance.nvcf_helper_undeploy_function.return_value = ("test-function", "undeployed")
+
+    args = ["nvcf", "function", "undeploy-function", "--funcid", _FAKE_UUID_ONE, "--version", _FAKE_UUID_TWO]
+
+    result = runner.invoke(cosmos_curator, args)
+    assert result.exit_code == 0
+
+    # Test with exception in helper method
+    mock_instance.nvcf_helper_undeploy_function.side_effect = RuntimeError("mock exception")
+    result = runner.invoke(cosmos_curator, args)
+    assert result.exit_code == 1
+
+    # Test with failed id_version validation
+    mock_instance.id_version.return_value = (False, _FAKE_UUID_ONE, _FAKE_UUID_TWO)
+    result = runner.invoke(cosmos_curator, args)
+    assert result.exit_code == 1
+
+
+@patch("cosmos_curate.client.nvcf_cli.ncf.common.nvcf_base.cc_client_instances")
+def test_import_function(mock_cc: MagicMock) -> None:
+    """Test that import-function can succeed.
+
+    Args:
+        mock_cc: A mock to return a fake helper.
+
+    """
+    # Mock NvfcHelper
+    mock_instance = MagicMock()
+    mock_func = MagicMock(return_value=mock_instance)
+    mock_cc.return_value = {"function": {"help": "A fake function", "type": mock_func}}
+
+    # Mock the ncg_api_hdl.post method
+    mock_ncg_api_hdl = MagicMock()
+    mock_instance.ncg_api_hdl = mock_ncg_api_hdl
+
+    # Create a mock response that's not an error
+    mock_response = MagicMock()
+    mock_response.is_error = False
+    mock_ncg_api_hdl.post.return_value = mock_response
+
+    args = [
+        "nvcf",
+        "function",
+        "import-function",
+        "--funcid",
+        _FAKE_UUID_ONE,
+        "--version",
+        _FAKE_UUID_TWO,
+        "--name",
+        "test-function",
+    ]
+
+    result = runner.invoke(cosmos_curator, args)
+    assert result.exit_code == 0
+
+    # Test with error response
+    mock_response.is_error = True
+    mock_response.get_error.return_value = "import error"
+    result = runner.invoke(cosmos_curator, args)
+    assert result.exit_code == 1
+
+    # Test with exception
+    mock_ncg_api_hdl.post.side_effect = RuntimeError("mock exception")
+    result = runner.invoke(cosmos_curator, args)
+    assert result.exit_code == 1
