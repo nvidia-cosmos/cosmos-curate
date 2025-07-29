@@ -1200,28 +1200,15 @@ def nvcf_import_function(
 
     """
     nvcf_hdl = ctx.obj["nvcfHdl"]
+    ids = {"id": funcid, "version": version, "name": name}
     try:
-        resp = nvcf_hdl.ncg_api_hdl.post(
-            "/v2/nvcf/functions/import",
-            {
-                "id": funcid,
-                "versionId": version,
-                "name": name,
-            },
-        )
-        if resp is None:  # take this out when .get can't return None anymore
-            error_msg = "unexpected empty response"
-            _raise_runtime_err(error_msg)
-
-        if resp.is_error:
-            _raise_runtime_err(resp.get_error("import"))
-
-        nvcf_hdl.console.print(f"Function with id '{funcid}' and version '{version}' imported as '{name}'")
-
+        nvcf_hdl.store_ids(ids)
     except Exception as e:
         error_msg = f"Could not import function: {e!s}"
         nvcf_hdl.logger.error(error_msg)  # noqa: TRY400
         raise typer.Exit(code=1) from e
+    else:
+        nvcf_hdl.console.print(f"Function with id '{funcid}' and version '{version}' imported as '{name}'")
 
 
 if __name__ == "__main__":

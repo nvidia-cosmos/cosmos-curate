@@ -780,15 +780,6 @@ def test_import_function(mock_cc: MagicMock) -> None:
     mock_func = MagicMock(return_value=mock_instance)
     mock_cc.return_value = {"function": {"help": "A fake function", "type": mock_func}}
 
-    # Mock the ncg_api_hdl.post method
-    mock_ncg_api_hdl = MagicMock()
-    mock_instance.ncg_api_hdl = mock_ncg_api_hdl
-
-    # Create a mock response that's not an error
-    mock_response = MagicMock()
-    mock_response.is_error = False
-    mock_ncg_api_hdl.post.return_value = mock_response
-
     args = [
         "nvcf",
         "function",
@@ -803,14 +794,3 @@ def test_import_function(mock_cc: MagicMock) -> None:
 
     result = runner.invoke(cosmos_curator, args)
     assert result.exit_code == 0
-
-    # Test with error response
-    mock_response.is_error = True
-    mock_response.get_error.return_value = "import error"
-    result = runner.invoke(cosmos_curator, args)
-    assert result.exit_code == 1
-
-    # Test with exception
-    mock_ncg_api_hdl.post.side_effect = RuntimeError("mock exception")
-    result = runner.invoke(cosmos_curator, args)
-    assert result.exit_code == 1
