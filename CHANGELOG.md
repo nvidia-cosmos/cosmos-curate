@@ -3,8 +3,19 @@
 
 ## Latest
 
+## [1.0.2]
+
+### Released
+- 2025-07-28
+
+### Added
+- Support for using multiple GPUs in captioning stage to enable large models
+- Support for generating dataset to post-train [Cosmos-Predict2](https://github.com/nvidia-cosmos/cosmos-predict2/blob/main/documentations/post-training_video2world.md)
+- Support for [Phi-4](https://huggingface.co/microsoft/Phi-4-multimodal-instruct) as an alternative model for captioning
+
 ### Fixed
-- Fix import-function in cosmos-curate CLI
+- PyNvCodec path for video decoding by fixing NVIDIA_DRIVER_CAPABILITIES env var
+- CLI to import existing NVCF functions
 
 ## [1.0.1]
 
