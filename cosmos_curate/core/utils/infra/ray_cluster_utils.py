@@ -15,6 +15,8 @@
 
 """Ray utilities."""
 
+import socket
+
 import loguru
 import ray
 from loguru import logger
@@ -48,15 +50,38 @@ def init_or_connect_to_cluster() -> None:
     )
 
 
+def get_live_nodes(*, dump_info: bool = True) -> list[dict[str, str]]:
+    """Get the list of alive nodes in the Ray cluster."""
+    try:
+        all_nodes = ray.nodes()
+    except Exception as e:
+        logger.error(f"Failed to get nodes: {e}")
+        msg = "Failed to get nodes from Ray cluster"
+        raise RuntimeError(msg) from e
+
+    live_nodes = []
+    for node in all_nodes:
+        if node["Alive"]:
+            if dump_info:
+                logger.info(f"Found node {node['NodeID']} on {node['NodeManagerHostname']}")
+            node_info = {
+                "NodeID": node["NodeID"],
+                "NodeName": node["NodeManagerHostname"],
+            }
+            live_nodes.append(node_info)
+        elif dump_info:
+            logger.warning(f"Found node {node['NodeID']} on {node['NodeManagerHostname']} is NOT alive")
+    return live_nodes
+
+
 def get_node_idx_and_name() -> tuple[int, str]:
     """Get the node index and name."""
     node_id = ray.get_runtime_context().get_node_id()
-    nodes = ray.nodes()
-    for idx in range(len(nodes)):
-        node = nodes[idx]
+    nodes = get_live_nodes(dump_info=False)
+    for idx, node in enumerate(nodes):
         if node["NodeID"] == node_id:
-            return idx, node["NodeManagerHostname"]
-    return -1, ""
+            return idx, node["NodeName"]
+    return -1, socket.gethostname()
 
 
 def get_node_name() -> str:

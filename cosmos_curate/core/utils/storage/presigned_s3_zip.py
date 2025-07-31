@@ -52,10 +52,7 @@ import ray
 import requests
 from loguru import logger
 
-from cosmos_curate.core.utils.infra.ray_cluster_utils import (
-    get_node_name,
-    init_or_connect_to_cluster,
-)
+from cosmos_curate.core.utils.infra import ray_cluster_utils
 from cosmos_curate.core.utils.storage.storage_utils import (
     get_files_relative,
     get_storage_client,
@@ -240,7 +237,7 @@ class _ZipDownloader:
     """Ray actor that performs a single download/extract on its node."""
 
     def __init__(self) -> None:
-        self._node = get_node_name()
+        self._node = ray_cluster_utils.get_node_name()
 
     def run(self, url: str, base_tmp_dir: str) -> tuple[str, str]:
         path = _download_and_extract_zip_impl(url, base_tmp_dir)
@@ -249,7 +246,7 @@ class _ZipDownloader:
 
 def _download_and_extract_on_all_nodes(url: str, base_tmp_dir: str) -> str:
     """Ensure the archive is downloaded & extracted once per Ray node."""
-    bundles = [{"CPU": _ZIP_DOWNLOADER_CPU_REQUEST} for _ in ray.nodes()]
+    bundles = [{"CPU": _ZIP_DOWNLOADER_CPU_REQUEST} for _ in ray_cluster_utils.get_live_nodes()]
     pg = ray.util.placement_group(bundles=bundles, strategy="STRICT_SPREAD")
     ray.get(pg.ready())
 
@@ -264,7 +261,7 @@ def _download_and_extract_on_all_nodes(url: str, base_tmp_dir: str) -> str:
 
 
 def _worker_download_and_extract(url: str, base_tmp_dir: str) -> str:
-    init_or_connect_to_cluster()
+    ray_cluster_utils.init_or_connect_to_cluster()
     extracted = _download_and_extract_on_all_nodes(url, base_tmp_dir)
     time.sleep(1)  # Let Ray flush logs
     ray.shutdown()
@@ -300,7 +297,7 @@ class _OutputGatherer:
     """Actor that zips local output directory and returns bytes."""
 
     def run(self, output_dir: str) -> tuple[str, Any | None]:
-        node = get_node_name()
+        node = ray_cluster_utils.get_node_name()
         out_path = Path(output_dir)
         if not out_path.exists():
             return node, None
@@ -328,7 +325,7 @@ def _extract_zip_bytes(buf: bytes, dest_dir: str) -> None:
 
 
 def _gather_outputs_on_all_nodes(output_dir: str) -> None:
-    bundles = [{"CPU": _OUTPUT_GATHERER_CPU_REQUEST} for _ in ray.nodes()]
+    bundles = [{"CPU": _OUTPUT_GATHERER_CPU_REQUEST} for _ in ray_cluster_utils.get_live_nodes()]
     pg = ray.util.placement_group(bundles=bundles, strategy="STRICT_SPREAD")
     ray.get(pg.ready())
     actors = [_OutputGatherer.options(placement_group=pg).remote() for _ in bundles]  # type: ignore[attr-defined]
@@ -344,9 +341,9 @@ def _gather_outputs_on_all_nodes(output_dir: str) -> None:
 
 
 def _worker_gather_outputs(output_dir: str) -> None:
-    ray.init(address="auto", ignore_reinit_error=True, log_to_driver=True)
+    ray_cluster_utils.init_or_connect_to_cluster()
     _gather_outputs_on_all_nodes(output_dir)
-    time.sleep(1)
+    time.sleep(1)  # Let Ray flush logs
     ray.shutdown()
 
 

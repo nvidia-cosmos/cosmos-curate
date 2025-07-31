@@ -89,7 +89,7 @@ def _worker_download_models(model_names: list[str], model_weights_prefix: str) -
     """
     ray_cluster_utils.init_or_connect_to_cluster()
     num_gpus: int = ray.cluster_resources().get("GPU", 0)
-    num_nodes = len(ray.nodes())
+    num_nodes = len(ray_cluster_utils.get_live_nodes())
     logger.info(f"The ray cluster has {num_gpus} GPUs on {num_nodes} nodes.")
 
     # schedule a model-downloader task on each node

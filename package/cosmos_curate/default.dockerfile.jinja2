@@ -177,6 +177,8 @@ ENV RAY_DEDUP_LOGS=0 \
     RAY_MAX_LIMIT_FROM_DATA_SOURCE=40000 \
     RAY_DEFAULT_OBJECT_STORE_MAX_MEMORY_BYTES=800000000000 \
     RAY_DEFAULT_OBJECT_STORE_MEMORY_PROPORTION=0.4 \
+    RAY_gcs_rpc_server_connect_timeout_s=30 \
+    RAY_gcs_rpc_server_reconnect_timeout_s=180 \
     XENNA_RAY_METRICS_PORT=9002
 
 # boto3 & pbss

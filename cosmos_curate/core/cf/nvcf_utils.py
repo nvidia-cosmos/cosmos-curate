@@ -199,7 +199,7 @@ class _NvcfMiscRunner:
 
 def _setup_executors_on_all_nodes(msg: str) -> list[Any]:
     ray.init(address="auto", ignore_reinit_error=True)
-    num_nodes = len(ray.nodes())
+    num_nodes = len(ray_cluster_utils.get_live_nodes())
     logger.info(f"Running {msg} on {num_nodes} nodes")
     bundles = [{"CPU": _NVCF_MISC_RUNNER_CPU_REQUEST} for _ in range(num_nodes)]
     pg = ray.util.placement_group(bundles=bundles, strategy="STRICT_SPREAD")
