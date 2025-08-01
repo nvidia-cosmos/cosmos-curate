@@ -1162,7 +1162,7 @@ python-versions = ">=3.9"
 groups = ["main"]
 markers = "extra == \"local\""
 files = []
-develop = false
+develop = true
 
 [package.dependencies]
 attrs = ">=25.3.0"
@@ -9888,4 +9888,4 @@ local = ["Pillow", "aiofiles", "astral", "attrs", "av", "azure-identity", "azure
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.10,<3.12"
-content-hash = "ab6f6c90cf74fb74c2b0bb7313ffcb27e7cc0b8a2bdb08c9d75ad0c937ec76cc"
+content-hash = "eefe33511b777544268c4b04e53c81ccaef512fb845876704615b59f8a544f4a"
