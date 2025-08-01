@@ -22,6 +22,7 @@ import multiprocessing
 import os
 import pathlib
 import pickle
+import shutil
 import socket
 import subprocess
 import sys
@@ -68,8 +69,8 @@ from cosmos_curate.pipelines.video.splitting_pipeline import nvcf_run_split
 
 _LOG_RDWR_LOCK_FILE = pathlib.Path(tempfile.gettempdir()) / "pipeline_status.lock"
 
-_MICROMAMBA_BIN = pathlib.Path("/bin/micromamba")
-_SEM_DEDUP_ENV = os.getenv("SEM_DEDUP_ENV", "text_curator")
+_PIXI_BIN = pathlib.Path(shutil.which("pixi") or "/usr/local/bin/pixi")
+_SEM_DEDUP_ENV = os.getenv("SEM_DEDUP_ENV", "text-curator")
 
 _RAY_DASHBOARD = f"http://127.0.0.1:{os.getenv('RAY_DASHBOARD_PORT', '8265')}"
 _METRICS_PORT = 9002
@@ -768,7 +769,7 @@ async def curate_video(request: Request) -> JSONResponse:  # noqa: C901, PLR0912
             pass
         elif pipeline_type == "semantic-dedup":
             execute_pipeline(
-                _run_in_mamba,
+                _run_in_pixi,
                 nvcf_run_semdedup,
                 request_id,
                 pipeline_args,
@@ -827,7 +828,7 @@ async def curate_video(request: Request) -> JSONResponse:  # noqa: C901, PLR0912
             manager.shutdown()
 
 
-def _run_in_mamba(
+def _run_in_pixi(
     func: Callable[..., None],
     request_id: str,
     pipeline_args: argparse.Namespace,
@@ -857,9 +858,9 @@ if __name__ == '__main__':
 """)
     # Create a subprocess that runs the function
     cmd = [
-        str(_MICROMAMBA_BIN),
+        str(_PIXI_BIN),
         "run",
-        "-n",
+        "-e",
         _SEM_DEDUP_ENV,
         "python",
         str(sfile),

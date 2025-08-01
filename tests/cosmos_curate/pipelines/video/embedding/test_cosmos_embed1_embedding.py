@@ -61,7 +61,6 @@ def sample_embedding_task(sample_video_data: bytes) -> SplitPipeTask:
     )
 
 
-@pytest.mark.skip(reason="Enable when public repo is available.")
 @pytest.mark.env("unified")
 def test_generate_embedding(sample_embedding_task: SplitPipeTask) -> None:
     """Test the Cosmos-Embed1Embedding result."""

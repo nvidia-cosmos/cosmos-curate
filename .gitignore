@@ -15,3 +15,5 @@ trace.log
 **/client.key
 **/client.crt
 **/charts/*.tgz
+# pixi environments
+.pixi

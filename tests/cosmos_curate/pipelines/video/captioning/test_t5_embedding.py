@@ -41,7 +41,7 @@ def get_ref_embeddings() -> list[np.ndarray]:  # type:  ignore[type-arg]
         return pickle.load(f)  # type: ignore[no-any-return] # noqa: S301
 
 
-@pytest.mark.env("video_splitting")
+@pytest.mark.env("video-splitting")
 def test_t5_encoding() -> None:
     """Tests the t5 encoding."""
     # Set up the t5 model

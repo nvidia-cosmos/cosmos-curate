@@ -34,7 +34,7 @@ EXPECTED_AESTHETIC_SCORE_MIN: float = 4.0103
 TOLERANCE: float = 0.002
 
 
-@pytest.mark.env("video_splitting")
+@pytest.mark.env("video-splitting")
 def test_aesthetic_filter_setup() -> None:
     """Test that the aesthetic filter stage can be set up properly."""
     aesthetic_filter_stage = AestheticFilterStage(
@@ -52,7 +52,7 @@ def test_aesthetic_filter_setup() -> None:
     aesthetic_filter_stage.destroy()
 
 
-@pytest.mark.env("video_splitting")
+@pytest.mark.env("video-splitting")
 def test_aesthetic_score_calculation_mean(sample_filtering_task: SplitPipeTask) -> None:
     """Test that aesthetic scores are calculated correctly with mean reduction.
 
@@ -86,7 +86,7 @@ def test_aesthetic_score_calculation_mean(sample_filtering_task: SplitPipeTask) 
     assert "AestheticFilterStage" in result_task.stage_perf
 
 
-@pytest.mark.env("video_splitting")
+@pytest.mark.env("video-splitting")
 def test_aesthetic_score_calculation_min(sample_filtering_task: SplitPipeTask) -> None:
     """Test that aesthetic scores are calculated correctly with min reduction.
 
@@ -120,7 +120,7 @@ def test_aesthetic_score_calculation_min(sample_filtering_task: SplitPipeTask) -
     assert "AestheticFilterStage" in result_task.stage_perf
 
 
-@pytest.mark.env("video_splitting")
+@pytest.mark.env("video-splitting")
 @pytest.mark.parametrize(
     ("score_threshold", "should_be_filtered"),
     [

@@ -312,9 +312,9 @@ gpu_tests:
       set -e
 
       # Run tests for each environment with unique report files and coverage
-      for env in cosmos_curate video_splitting unified; do
+      for env in default video-splitting unified; do
         echo "Running tests for $env environment"
-        micromamba run -n $env pytest -m env -n ${PYTEST_XDIST_WORKERS} \
+        pixi run -e $env pytest -m env -n ${PYTEST_XDIST_WORKERS} \
           --junitxml="/config/project/$env-report.xml" \
           --cov=cosmos_curate \
           --cov-report=term \

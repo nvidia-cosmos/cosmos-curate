@@ -43,6 +43,7 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
             config.hook.pytest_deselected(items=marked_tests)
             items[:] = [item for item in items if item.get_closest_marker("env") is None]
         return
+    current_env = current_env.removeprefix("cosmos-curate:")
 
     selected, deselected = [], []
     for item in items:

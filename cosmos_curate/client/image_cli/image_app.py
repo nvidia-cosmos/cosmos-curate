@@ -80,7 +80,7 @@ def build(  # noqa: PLR0913
             ),
             rich_help_panel="conda_envs",
         ),
-    ] = "text_curator,unified,video_splitting",
+    ] = "text-curator,unified,video-splitting",
     dockerfile_output_path: Annotated[
         str | None,
         Option(
@@ -194,5 +194,5 @@ def _parse_envs(env_string: str) -> list[str]:
     env_names = set()
     if env_string:
         env_names = set(env_string.split(","))
-    env_names.add("model_download")
+    env_names.add("model-download")
     return sorted(env_names)

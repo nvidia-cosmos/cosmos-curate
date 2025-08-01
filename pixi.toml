@@ -1,0 +1,98 @@
+[workspace]
+channels = ["conda-forge", "nvidia"]
+name = "cosmos-curate"
+platforms = ["linux-64"]
+version = "1.0.0"
+
+[pypi-options]
+extra-index-urls = ["https://pypi.nvidia.com"]
+
+[system-requirements]
+cuda = "12.9.1" # match the version of the nvidia/cuda docker base image
+
+[dependencies]
+astral = "*"
+attrs = "*"
+azure-identity = "*"
+azure-storage-blob = "*"
+cattrs = "*"
+easydict = "*"
+fastapi = "*"
+gpustat = "*"
+huggingface_hub = "*"
+jinja2 = "*"
+loguru = "*"
+numpy = "*"
+nvtx = "*"
+pandas = "*"
+psycopg2-binary = "*"
+pynvml = "*"
+pyproj = "*"
+pytest = "*"
+pytest-asyncio = "*"
+pytest-cov = "*"
+pytest-xdist = "*"
+python = "3.10.*"
+pytorch-gpu = ">=2.7.1"
+scipy = "*"
+sqlalchemy = "*"
+tabulate = "*"
+tenacity = "*"
+timezonefinder = "*"
+tqdm = "*"
+transformers = "*"
+typer = "*"
+uvicorn = "*"
+webdataset = "*"
+
+[pypi-dependencies]
+av = "*" # conda-forge package pulls in ffmpeg
+ngcsdk = "*" # not available on conda-forge
+opencv-python-headless = "*" # not available on conda-forge
+pulp = "*" # conda-forge package is too old
+ray = { version = "*", extras = ["default"] } # conda-forge package pulls in an old version of protobuf
+
+[feature.text-curator.system-requirements]
+cuda = "12.9.1" # match the version of the nvidia/cuda docker base image
+
+[feature.text-curator.dependencies]
+cattrs = "*"
+easydict = "*"
+loguru = "*"
+numpy = "<2"
+python = "3.10.*"
+pytorch-gpu = ">=2.7.1"
+tabulate = "*"
+webdataset = "*"
+
+[feature.text-curator.pypi-dependencies]
+av = "*" # conda-forge package pulls in ffmpeg
+nemo-curator = { git = "https://github.com/NVIDIA/NeMo-Curator.git", rev = "060d702d0e5289abb1e94a92f9b8296b36c04fb7", extras = ["cuda12x", "s3", "azure"] }
+opencv-python-headless = "*" # not available on conda-forge
+ngcsdk = "*" # not available on conda-forge
+pulp = "*" # conda-forge package is too old
+ray = { version = "*", extras = ["default"] } # conda-forge package pulls in an old version of protobuf
+
+[feature.unified.dependencies]
+cuda-libraries-dev = "*"
+flash-attn = "*"
+flash-attn-fused-dense = "*"
+flash-attn-layer-norm = "*"
+
+[feature.unified.pypi-dependencies]
+timm = "*" # conda-forge package pulls in torchvision, which is behind
+vllm = ">=0.10.0" # not available on conda-forge
+
+[feature.video-splitting.dependencies]
+pycuda = "*"
+
+[feature.video-splitting.pypi-dependencies]
+cvcuda-cu12 = "*" # not available on conda-forge
+PyNvVideoCodec = "*" # not available on conda-forge
+timm = "*" # conda-forge package pulls in torchvision, which is behind
+
+[environments]
+model-download = []
+text-curator = {features = ["text-curator"], no-default-feature = true}
+unified = ["unified"]
+video-splitting = ["video-splitting"]

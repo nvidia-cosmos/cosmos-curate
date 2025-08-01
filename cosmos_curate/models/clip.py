@@ -25,8 +25,10 @@ from transformers import CLIPModel
 from cosmos_curate.core.interfaces.model_interface import ModelInterface
 from cosmos_curate.core.utils.model import conda_utils, model_utils
 
-if conda_utils.is_running_in_env("video_splitting"):
+if conda_utils.is_running_in_env("video-splitting"):
     from torchvision import transforms  # type: ignore[import-untyped]
+else:
+    transforms = None
 
 _CLIP_MODEL_ID: Final = "openai/clip-vit-large-patch14"
 
@@ -40,6 +42,9 @@ class _CLIPImageEmbeddings(torch.nn.Module):
         self.dtype = torch.float32
 
         # torchvision transforms that match CLIP preprocessor_config.json:
+        if transforms is None:
+            msg = "torchvision.transforms is unavailable; ensure you're in the 'video-splitting' environment"
+            raise RuntimeError(msg)
         self.transforms = transforms.Compose(
             [
                 transforms.Resize(
@@ -84,7 +89,7 @@ class CLIPImageEmbeddings(ModelInterface):
             The conda environment name.
 
         """
-        return "video_splitting"
+        return "video-splitting"
 
     @property
     def model_id_names(self) -> list[str]:

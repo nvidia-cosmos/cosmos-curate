@@ -119,7 +119,7 @@ class VideoDownloader(CuratorStage):
             The conda environment name.
 
         """
-        return "video_splitting"
+        return "video-splitting"
 
     def stage_setup(self) -> None:
         """Set up the VideoDownloader.

@@ -26,7 +26,7 @@ from cosmos_curate.core.utils.model.conda_utils import is_running_in_env
 from cosmos_curate.core.utils.storage.azure_client import get_azure_client_config, is_azure_path
 from cosmos_curate.core.utils.storage.s3_client import get_s3_client_config, is_s3path
 
-if is_running_in_env("text_curator") or TYPE_CHECKING:
+if is_running_in_env("text-curator") or TYPE_CHECKING:
     import dask
     import dask_cudf  # type: ignore[import-untyped]
     from nemo_curator.datasets import DocumentDataset  # type: ignore[import-not-found]
@@ -117,11 +117,11 @@ def setup_dask_and_run_semantic_dedup(args: argparse.Namespace) -> None:
         args: Command line arguments.
 
     Raises:
-        OSError: If the environment is not text_curator.
+        OSError: If the environment is not text-curator.
 
     """
-    if not is_running_in_env("text_curator"):
-        msg = "Deduplication pipeline is only supported in text_curator environment."
+    if not is_running_in_env("text-curator"):
+        msg = "Deduplication pipeline is only supported in text-curator environment."
         raise OSError(msg)
 
     # Start dask

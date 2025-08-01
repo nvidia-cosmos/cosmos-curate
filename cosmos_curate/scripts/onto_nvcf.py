@@ -143,7 +143,7 @@ def start_nvcf_server() -> subprocess.Popen[str] | None:
 
     """
     workdir: str = "/opt/cosmos-curate"
-    uvicorn_path: str = os.environ.get("UVICORN_PATH", "/cosmos_curate/conda_envs/envs/cosmos_curate/bin/uvicorn")
+    uvicorn_path: str = os.environ.get("UVICORN_PATH", "/opt/cosmos-curate/.pixi/envs/default/bin/uvicorn")
     app_command: str = os.environ.get("APP_COMMAND", "cosmos_curate.core.cf.nvcf_main:app")
 
     if not Path(uvicorn_path).exists():

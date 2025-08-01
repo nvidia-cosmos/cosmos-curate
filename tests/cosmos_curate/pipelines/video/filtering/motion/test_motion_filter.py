@@ -93,7 +93,7 @@ def test_motion_vector_decode(
     assert "MotionVectorDecodeStage" in result_task.stage_perf
 
 
-@pytest.mark.env("cosmos_curate")
+@pytest.mark.env("cosmos-curate")
 def test_motion_filter_calculation(
     motion_decode_stage: MotionVectorDecodeStage,
     motion_filter_stage: MotionFilterStage,
@@ -135,7 +135,7 @@ def test_motion_filter_calculation(
     assert "MotionFilterStage" in result_task.stage_perf
 
 
-@pytest.mark.env("cosmos_curate")
+@pytest.mark.env("cosmos-curate")
 @pytest.mark.parametrize(
     ("global_threshold", "patch_threshold", "should_be_filtered"),
     [

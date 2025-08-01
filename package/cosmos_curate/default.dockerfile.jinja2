@@ -11,7 +11,7 @@ ARG DEBIAN_FRONTEND=noninteractive
 FROM nvidia/cuda:12.9.1-devel-ubuntu24.04 AS main
 
 SHELL ["/bin/bash", "-c"]
-
+ENV NVIDIA_DRIVER_CAPABILITIES=compute,video,utility
 ENV TZ=America/Los_Angeles
 # Get system level packages
 RUN apt-get update \
@@ -20,7 +20,7 @@ RUN apt-get update \
     libsm6 libxext6 \
     # Needed because the certs age out sometimes?
     ca-certificates \
-    # Needed for installing micromamba \
+    # Needed for installing pixi \
     wget \
     # Needed for pip install \
     git \
@@ -96,79 +96,14 @@ RUN mkdir -p /tmp && chmod 1777 /tmp && \
     rm -rf /tmp/nv-codec-headers* && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# Install micromamba
-ENV MAMBA_ROOT_PREFIX="/cosmos_curate/conda_envs"
-ARG MICROMAMBA_RELEASE_URL="https://github.com/mamba-org/micromamba-releases/releases/download/2.0.4-0/micromamba-linux-64"
-RUN mkdir -p ${MAMBA_ROOT_PREFIX} && \
-    wget -qO "/bin/micromamba" "${MICROMAMBA_RELEASE_URL}" && chmod +x /bin/micromamba
-
-# Set home
-ENV HOME="/home"
-
-# Disable the speed limit
-ENV MAMBA_NO_LOW_SPEED_LIMIT=1
+# Install pixi
+RUN wget -qO- https://pixi.sh/install.sh | PIXI_HOME=/usr/local PIXI_NO_PATH_UPDATE=1 sh
 
 # Common ENV variables needed by some ML libs
 ENV AM_I_DOCKER=True \
     BUILD_WITH_CUDA=True \
-    TORCH_CUDA_ARCH_LIST="5.0;6.0;6.1;7.0;7.5;8.0;8.6;9.0+PTX"
-
-# Save the old env vars so we can revert to them.
-ENV OLD_PATH="$PATH" \
-    OLD_LD_LIBRARY_PATH="$LD_LIBRARY_PATH" \
-    OLD_LIBRARY_PATH="$LIBRARY_PATH" \
-    OLD_CUDA_HOME="$CUDA_HOME"
-
-# Create cosmos_curate env. Install conda so that Ray can use models from our envs
-RUN {{cache_mount_str}} micromamba create --always-copy -n cosmos_curate python=3.10.18 pip conda -c conda-forge
-# Install the cosmos-curate core deps for the cosmos_curate env
-RUN {{cache_mount_str}} micromamba -n cosmos_curate run pip install {{core_cosmos_curator_deps_string}} {{regular_cosmos_curator_deps_string}}
-
-# Loop through all the envs, if any are set.
-{% for env in envs %}
-# ------------------------------------Install the env-----------------------------
-RUN {{cache_mount_str}} micromamba create --always-copy -n {{env.name}} python=3.10.18 pip -y
-
-# Activate the env
-ENV CONDA_PREFIX="/cosmos_curate/conda_envs/envs/{{env.name}}" \
-    PATH="/cosmos_curate/conda_envs/envs/{{env.name}}/bin:/usr/local/cuda/bin:$PATH" \
-    LD_LIBRARY_PATH="/cosmos_curate/conda_envs/envs/{{env.name}}/lib/python3.10/site-packages/nvidia/cuda_runtime/lib:/cosmos_curate/conda_envs/envs/{{env.name}}/lib:/cosmos_curate/conda_envs/envs/{{env.name}}/lib/python3.10/site-packages/torch/lib:/usr/local/cuda/lib64:$LD_LIBRARY_PATH" \
-    LIBRARY_PATH="/cosmos_curate/conda_envs/envs/{{env.name}}/lib:$LIBRARY_PATH" \
+    TORCH_CUDA_ARCH_LIST="5.0;6.0;6.1;7.0;7.5;8.0;8.6;9.0+PTX" \
     CUDA_HOME="/usr/local/cuda"
-
-# Add some shell scripts which we run when this env is activated or deactivated.
-RUN mkdir -p /cosmos_curate/conda_envs/envs/{{env.name}}/etc/conda/activate.d && \
-    mkdir -p /cosmos_curate/conda_envs/envs/{{env.name}}/etc/conda/deactivate.d
-COPY package/cosmos_curate/activate_env.sh /cosmos_curate/conda_envs/envs/{{env.name}}/etc/conda/activate.d/activate_env.sh
-COPY package/cosmos_curate/deactivate_env.sh /cosmos_curate/conda_envs/envs/{{env.name}}/etc/conda/deactivate.d/deactivate_env.sh
-
-# ------------------------------------ Env Build Steps begin ---------------------------
-{{env.build_steps_str}}
-# ------------------------------------ Env Build Steps end -----------------------------
-
-# Deactivate the env and revert to the old env vars
-ENV CONDA_PREFIX="" \
-    PATH="$OLD_PATH" \
-    LD_LIBRARY_PATH="$OLD_LD_LIBRARY_PATH" \
-    LIBRARY_PATH="$OLD_LIBRARY_PATH" \
-    CUDA_HOME=""
-{% endfor %}
-
-# Activate the cosmos_curate env
-ENV PATH="/cosmos_curate/conda_envs/envs/cosmos_curate/bin:$PATH" \
-    CONDA_PREFIX="/cosmos_curate/conda_envs/envs/cosmos_curate"
-
-# This has to be done *after* the home variable has been set for silly conda reasons.
-RUN conda config --add envs_dirs /cosmos_curate/conda_envs/envs/
-# Backup option for conda envs path
-ENV CONDA_ENVS_PATH=/cosmos_curate/conda_envs/envs
-
-# Needed for setting up conda envs within a docker image for some reason
-RUN conda config --set remote_read_timeout_secs 300
-
-# Conda does some insane stuff with certs sometimes. We force it to use the docker certs
-ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt \
-    SSL_CERT_DIR=/etc/ssl/certs
 
 # Disable Ray log dedup
 ENV RAY_DEDUP_LOGS=0 \
@@ -189,8 +124,23 @@ ENV DEFAULT_WORKSPACE_LOC="/config/default_workspace"
 ENV HF_HOME="${DEFAULT_WORKSPACE_LOC}/weights/hf_home/" \
     LAION_CACHE_HOME="${DEFAULT_WORKSPACE_LOC}/weights/laion_cache/"
 
-# Set the NVIDIA_DRIVER_CAPABILITIES env var
-ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility,video
+# Set up pixi environments
+COPY pixi.toml pixi.lock {{code_dir_str}}/
+# If we install all the environments in a single layer, it's over 20GB and will cause slurm/NVCF to timeout pulling the
+# layer. Since the text-curator environment is large and needs non-overlapping RAPIDS packages, we install it
+# separately.
+RUN cd {{code_dir_str}} && \
+    export CONDA_OVERRIDE_CUDA=12.9.1 && \
+    pixi install -e default -e {{ envs | selectattr('name', 'ne', 'text-curator') | map(attribute='name') | join(' -e ') }} --frozen && \
+    pixi clean cache -y
+
+# Install the text-curator environment separately if requested.
+{% if envs | selectattr('name', 'equalto', 'text-curator') | list %}
+RUN cd {{code_dir_str}} && \
+    export CONDA_OVERRIDE_CUDA=12.9.1 && \
+    pixi install -e text-curator --frozen && \
+    pixi clean cache -y
+{% endif %}
 
 # Copy the video pipeline code
 COPY cosmos_curate {{code_dir_str}}/cosmos_curate
@@ -208,4 +158,4 @@ EXPOSE 8000 6379
 
 WORKDIR {{code_dir_str}}
 
-CMD ["python", "{{code_dir_str}}/cosmos_curate/scripts/onto_nvcf.py", "--helm", "False"]
+CMD ["pixi", "run", "python", "cosmos_curate/scripts/onto_nvcf.py", "--helm", "False"]

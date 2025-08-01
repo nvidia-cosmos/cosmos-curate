@@ -5,9 +5,11 @@
     ],
     "configuration": {
         "command": [
-            "python"
+            "pixi"
         ],
         "args": [
+            "run",
+            "python",
             "/opt/cosmos-curate/cosmos_curate/scripts/onto_nvcf.py",
             "--helm",
             "True"

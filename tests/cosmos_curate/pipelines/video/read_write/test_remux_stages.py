@@ -99,14 +99,14 @@ def synthetic_avi_video() -> io.BytesIO:
     return _make_synthetic_video("avi")
 
 
-@pytest.mark.env("cosmos_curate")
+@pytest.mark.env("cosmos-curate")
 def test_remux_bad_source_bytes() -> None:
     """Test that remuxing fails if the source bytes are not set."""
     with pytest.raises(RuntimeError):
         remux_to_mp4(b"", threads=1)
 
 
-@pytest.mark.env("cosmos_curate")
+@pytest.mark.env("cosmos-curate")
 def test_remux_if_needed_mp4_no_change(synthetic_mp4_video: io.BytesIO) -> None:
     """Test that MP4 videos are not remuxed."""
     # Arrange
@@ -121,7 +121,7 @@ def test_remux_if_needed_mp4_no_change(synthetic_mp4_video: io.BytesIO) -> None:
     assert video.source_bytes == original_bytes  # Should be unchanged
 
 
-@pytest.mark.env("cosmos_curate")
+@pytest.mark.env("cosmos-curate")
 def test_remux_if_needed_mpegts_to_mp4(synthetic_mpegts_video: io.BytesIO) -> None:
     """Test that MPEG-TS videos are remuxed to MP4."""
     # Arrange
@@ -149,7 +149,7 @@ def test_remux_if_needed_mpegts_to_mp4(synthetic_mpegts_video: io.BytesIO) -> No
         assert len(container.streams.video) > 0
 
 
-@pytest.mark.env("cosmos_curate")
+@pytest.mark.env("cosmos-curate")
 def test_remux_if_needed_avi_to_mp4(synthetic_avi_video: io.BytesIO) -> None:
     """Test that AVI videos are remuxed to MP4."""
     # Arrange
@@ -176,7 +176,7 @@ def test_remux_if_needed_avi_to_mp4(synthetic_avi_video: io.BytesIO) -> None:
         assert len(container.streams.video) > 0
 
 
-@pytest.mark.env("cosmos_curate")
+@pytest.mark.env("cosmos-curate")
 def test_remux_if_needed_preserves_video_content(synthetic_mpegts_video: io.BytesIO) -> None:
     """Test that remuxing preserves the actual video content."""
 
@@ -221,7 +221,7 @@ def test_remux_if_needed_preserves_video_content(synthetic_mpegts_video: io.Byte
         assert result_height == original_height
 
 
-@pytest.mark.env("cosmos_curate")
+@pytest.mark.env("cosmos-curate")
 def test_remux_stage_integration(synthetic_mpegts_video: io.BytesIO) -> None:
     """Test RemuxStage end-to-end with real video data."""
     # Arrange
@@ -260,7 +260,7 @@ def test_remux_stage_integration(synthetic_mpegts_video: io.BytesIO) -> None:
 class TestRemuxStage:
     """Test the RemuxStage class."""
 
-    @pytest.mark.env("cosmos_curate")
+    @pytest.mark.env("cosmos-curate")
     def test_init(self) -> None:
         """Test RemuxStage initialization."""
         # Test that RemuxStage can be initialized with default parameters
@@ -271,14 +271,14 @@ class TestRemuxStage:
         stage = RemuxStage(verbose=True, log_stats=True)
         assert stage is not None
 
-    @pytest.mark.env("cosmos_curate")
+    @pytest.mark.env("cosmos-curate")
     def test_resources(self) -> None:
         """Test that RemuxStage returns correct resource requirements."""
         stage = RemuxStage()
         resources = stage.resources
         assert resources.cpus == 1
 
-    @pytest.mark.env("cosmos_curate")
+    @pytest.mark.env("cosmos-curate")
     @patch("cosmos_curate.pipelines.video.read_write.remux_stages.remux_if_needed")
     def test_process_data_success(self, mock_remux_if_needed: MagicMock) -> None:
         """Test successful processing of tasks."""
@@ -304,7 +304,7 @@ class TestRemuxStage:
         # Assert
         assert result == tasks
 
-    @pytest.mark.env("cosmos_curate")
+    @pytest.mark.env("cosmos-curate")
     @patch("cosmos_curate.pipelines.video.read_write.remux_stages.remux_if_needed")
     def test_process_data_with_logging(self, mock_remux_if_needed: MagicMock) -> None:
         """Test processing with performance logging enabled."""
@@ -327,7 +327,7 @@ class TestRemuxStage:
         # Verify that stage_perf was populated (timer should add entries)
         assert len(task.stage_perf) > 0
 
-    @pytest.mark.env("cosmos_curate")
+    @pytest.mark.env("cosmos-curate")
     @patch("cosmos_curate.pipelines.video.read_write.remux_stages.remux_if_needed")
     def test_process_data_empty_list(self, mock_remux_if_needed: MagicMock) -> None:
         """Test processing with empty task list."""
@@ -342,7 +342,7 @@ class TestRemuxStage:
         assert result == []
         mock_remux_if_needed.assert_not_called()
 
-    @pytest.mark.env("cosmos_curate")
+    @pytest.mark.env("cosmos-curate")
     @patch("cosmos_curate.pipelines.video.read_write.remux_stages.remux_to_mp4")
     def test_process_data_error_handling(self, mock_remux_to_mp4: MagicMock) -> None:
         """Test that remux errors are handled gracefully and don't stop pipeline."""

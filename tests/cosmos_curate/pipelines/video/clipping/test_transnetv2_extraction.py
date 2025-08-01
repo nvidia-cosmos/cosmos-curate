@@ -22,7 +22,7 @@ from cosmos_curate.pipelines.video.utils.data_model import SplitPipeTask
 from tests.utils.sequential_runner import run_pipeline
 
 
-@pytest.mark.env("cosmos_curate")
+@pytest.mark.env("cosmos-curate")
 def test_transnetv2_requires_frame_extraction(sample_splitting_task: SplitPipeTask) -> None:
     """Test that TransNetV2 stage skips processing (yields zero clips) if frames were not extracted."""
     # Run TransNetV2 without prior frame extraction: it should skip processing
@@ -31,7 +31,7 @@ def test_transnetv2_requires_frame_extraction(sample_splitting_task: SplitPipeTa
     assert len(result_tasks[0].video.clips) == 0
 
 
-@pytest.mark.env("cosmos_curate")
+@pytest.mark.env("cosmos-curate")
 def test_transnetv2_default_extraction(sample_splitting_task: SplitPipeTask) -> None:
     """Test default extraction pipeline produces clips."""
     stages = [
@@ -58,7 +58,7 @@ def test_transnetv2_default_extraction(sample_splitting_task: SplitPipeTask) -> 
     assert "TransNetV2ClipExtractionStage" in result_tasks[0].stage_perf
 
 
-@pytest.mark.env("cosmos_curate")
+@pytest.mark.env("cosmos-curate")
 def test_transnetv2_no_transitions_entire_scene_false(sample_splitting_task: SplitPipeTask) -> None:
     """Test that no clips are extracted when no transitions and entire_scene_as_clip=False."""
     stages = [
@@ -70,7 +70,7 @@ def test_transnetv2_no_transitions_entire_scene_false(sample_splitting_task: Spl
     assert len(video.clips) == 0
 
 
-@pytest.mark.env("cosmos_curate")
+@pytest.mark.env("cosmos-curate")
 def test_transnetv2_entire_scene_when_no_transitions(sample_splitting_task: SplitPipeTask) -> None:
     """Test that entire scene is returned as one clip when no transitions and entire_scene_as_clip=True."""
     stages = [
@@ -86,7 +86,7 @@ def test_transnetv2_entire_scene_when_no_transitions(sample_splitting_task: Spli
     assert end == pytest.approx(duration, abs=1e-2)
 
 
-@pytest.mark.env("cosmos_curate")
+@pytest.mark.env("cosmos-curate")
 def test_transnetv2_limit_clips(sample_splitting_task: SplitPipeTask) -> None:
     """Test that limit_clips parameter limits the number of extracted clips."""
     stages = [

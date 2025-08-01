@@ -31,7 +31,7 @@ from cosmos_curate.core.utils.model import conda_utils, model_utils
 
 # pyright: reportMissingImports=false
 # pyright: reportUnboundVariable=false
-if conda_utils.is_running_in_env("video_splitting"):
+if conda_utils.is_running_in_env("video-splitting"):
     from transformers import T5Config, T5EncoderModel, T5TokenizerFast
     from transformers import logging as transformers_logging
 
@@ -113,7 +113,7 @@ class T5Encoder(ModelInterface):
             The conda environment name.
 
         """
-        return "video_splitting"
+        return "video-splitting"
 
     @property
     def model_id_names(self) -> list[str]:

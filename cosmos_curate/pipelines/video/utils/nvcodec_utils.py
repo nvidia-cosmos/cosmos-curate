@@ -28,13 +28,13 @@ import torch
 
 from cosmos_curate.core.utils.model import conda_utils
 
-if conda_utils.is_running_in_env("video_splitting"):
+if conda_utils.is_running_in_env("video-splitting"):
     import cvcuda  # type: ignore[import-untyped]
     import nvcv  # type: ignore[import-untyped]
     import pycuda.driver as cuda  # type: ignore[import-untyped]
     import PyNvVideoCodec as Nvc  # type: ignore[import-untyped]
 
-if conda_utils.is_running_in_env("video_splitting"):
+if conda_utils.is_running_in_env("video-splitting"):
     pixel_format_to_cvcuda_code = {
         Nvc.Pixel_Format.YUV444: cvcuda.ColorConversion.YUV2RGB,  # type: ignore[import-untyped]
         Nvc.Pixel_Format.NV12: cvcuda.ColorConversion.YUV2RGB_NV12,  # type: ignore[import-untyped]

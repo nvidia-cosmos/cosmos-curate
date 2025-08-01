@@ -88,9 +88,7 @@ class CommonTemplateParams:
 
     # This is a string that is needed to put after "RUN" when installing things via conda or pip.
     # It gets conda and pip to cache to a cache mount to speed up future builds.
-    cache_mount_str: str = (
-        "--mount=type=cache,target=/cosmos_curate/conda_envs/pkgs --mount=type=cache,target=/root/.cache/"
-    )
+    cache_mount_str: str = "--mount=type=cache,target=/root/.cache/"
     code_dir_str: str = CONTAINER_PATHS_CODE_DIR.as_posix()
 
     @classmethod

@@ -45,7 +45,7 @@ CUDA_DEVICE: str = "cuda:0"
 _MODEL_DOWNLOADER_CPU_REQUEST: float = 1.0
 
 
-@ray.remote(num_cpus=_MODEL_DOWNLOADER_CPU_REQUEST, runtime_env={"conda": "model_download"})
+@ray.remote(num_cpus=_MODEL_DOWNLOADER_CPU_REQUEST, runtime_env={"py_executable": "pixi run -e model-download python"})
 class _ModelWeightsDownloader:
     """A Ray actor class for downloading model weights on a specific node.
 
