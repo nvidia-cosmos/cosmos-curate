@@ -400,6 +400,8 @@ Cosmos-Curate can be deployed on [NVIDIA Cloud Function (NVCF)](https://docs.nvi
 
 There are a few steps needed to get a new user onboarded to NVCF, so please reach out to NVIDIA Cosmos-Curate team and we will guide you through the process.
 
+If you have already onboarded to NVCF and have an NVCF Org, please follow this [NVCF Guide](NVCF_GUIDE.md) to deploy Cosmos-Curate on NVCF.
+
 ## Launch Pipelines on K8s Cluster (coming soon)
 
 ## Building the Client package

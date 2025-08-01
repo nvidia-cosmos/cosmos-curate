@@ -105,10 +105,6 @@ metrics:
             action: drop
           - source_labels:
               - __name__
-            regex: ray_grpc_server_.*
-            action: drop
-          - source_labels:
-              - __name__
             regex: ray_object_store_memory|ray_object_store_dist_bucket
             action: drop
           - source_labels:
@@ -117,7 +113,7 @@ metrics:
             action: drop
           - source_labels:
               - __name__
-            regex: ray_gcs_.*
+            regex: ray_gcs_placement_.*|ray_gcs_storage_.*
             action: drop
           - source_labels:
               - __name__

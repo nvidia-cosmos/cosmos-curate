@@ -2,6 +2,7 @@
 
 - [Cosmos-Curate - NVCF Guide](#cosmos-curate---nvcf-guide)
     - [Store Configuration Settings](#store-configuration-settings)
+    - [Upload Helm Chart](#upload-helm-chart)
     - [Upload Container Image](#upload-container-image)
     - [Upload Model Weights](#upload-model-weights)
     - [Create, Deploy, Invoke Function](#create-deploy-invoke-function)
@@ -24,7 +25,7 @@ please reach out to NVIDIA Cosmos-Curate team to get help for onboarding.
 # Set the NVCF Org ID and API key
 export NGC_NVCF_ORG=<your_org_id>
 export NGC_NVCF_API_KEY=<your_api_key>
-# If you NVCF Org has a hierarchy of team, set the team name
+# If you NVCF Org has a hierarchy of team, set the team name - this is rare
 export NGC_NVCF_TEAM=<your_team_name>
 
 # Set the NVCF cluster information
@@ -35,6 +36,10 @@ export NVCF_INSTANCE_TYPE=<your_instance_type>
 # Save above configuration settings to `~/.config/cosmos_curate/client.json`
 cosmos-curate nvcf config set
 ```
+
+### Upload Helm Chart
+
+Follow this [README](../../charts/cosmos-curate/README.md) to upload the helm chart to your Org's registry.
 
 ### Upload Container Image
 

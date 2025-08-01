@@ -86,7 +86,7 @@ variables:
     value: "cosmos-curate"
   CICD_HELM_CHART_VERSION:
     description: "Helm chart version for the CICD pipeline"
-    value: "2.0.3"
+    value: "2.0.5"
 
   # Manual NVCF testing parameters
   NVCF_GPU_TYPE:
