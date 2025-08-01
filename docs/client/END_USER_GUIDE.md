@@ -119,12 +119,10 @@ micromamba create -n cosmos-curate -c conda-forge python=3.10.18 poetry
 micromamba activate cosmos-curate
 
 # 2. Clone the repository and update `cosmos-xenna` submodule
-git clone https://github.com/nvidia-cosmos/cosmos-curate.git
+git clone --recurse-submodules https://github.com/nvidia-cosmos/cosmos-curate.git
 cd cosmos-curate
-git submodule update --init
 
 # 3. Install dependencies
-pip install -e cosmos-xenna/
 poetry install --extras=local
 
 # 4. Verify the CLI tool is available
