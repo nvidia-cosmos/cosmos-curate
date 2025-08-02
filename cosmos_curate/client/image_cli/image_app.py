@@ -26,6 +26,7 @@ from typer import Option
 
 from cosmos_curate.client.environment import CONTAINER_PATHS_CODE_DIR
 from cosmos_curate.client.utils import docker_utils
+from cosmos_curate.client.utils.conda_envs import get_pixi_envs
 
 image_build = typer.Typer(
     help="Commands for building container image.",
@@ -116,17 +117,6 @@ def build(  # noqa: PLR0913
             rich_help_panel="common",
         ),
     ] = False,
-    extra_envs_paths: Annotated[
-        str | None,
-        Option(
-            help=(
-                "Comma-separated list of paths to additional conda environment files to build into the image."
-                "{curator_path}/package/cosmos_curate/envs/ will always be included,"
-                " use this argument to specify additional paths."
-            ),
-            rich_help_panel="conda_envs",
-        ),
-    ] = None,
     extra_code_paths: Annotated[
         str | None,
         Option(
@@ -142,15 +132,14 @@ def build(  # noqa: PLR0913
     _curator_path = Path(curator_path)
     _dockerfile_output_path = Path(dockerfile_output_path) if dockerfile_output_path else None
     package_path = _curator_path / Path("package") / Path("cosmos_curate")
-    envs_paths = [package_path / Path("envs")]
-    if extra_envs_paths:
-        envs_paths.extend([Path(x) for x in extra_envs_paths.split(",")])
 
-    for path in envs_paths:
-        if not path.exists():
-            logger.error(f"Could not find environments directory at {path}/")
-            sys.exit(1)
     env_names = _parse_envs(envs)
+    # Validate that requested environments exist in Pixi
+    pixi_envs = get_pixi_envs()
+    invalid_envs = set(env_names) - set(pixi_envs)
+    if invalid_envs:
+        logger.error(f"Environments not available in Pixi: {sorted(invalid_envs)}")
+        sys.exit(1)
 
     code_paths = []
     if extra_code_paths:
@@ -162,9 +151,7 @@ def build(  # noqa: PLR0913
     dockerfile_template_path = package_path / Path("default.dockerfile.jinja2")
 
     dockerfile_path = docker_utils.generate_dockerfile(
-        curator_path=_curator_path,
         dockerfile_template_path=dockerfile_template_path,
-        envs_paths=envs_paths,
         conda_env_names=env_names,
         code_paths=code_paths,
         dockerfile_output_path=_dockerfile_output_path,

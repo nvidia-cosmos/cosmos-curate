@@ -157,18 +157,9 @@ To help management of models, add a section in [all_models.json](../../cosmos_cu
 ### Conda Environment Management
 
 The `GPT2` model above uses a conda environment called `transformers`;
-that corresponds to directory `transformers/` under [package/cosmos_curate/envs/](../../package/cosmos_curate/envs/).
+that corresponds to the environment `transformers` in [pixi.toml](../../pixi.toml).
 
-For every "env" there, a single `jinja2` templated dockerfile snippet named `build_steps.dockerfile.j2` is required
-to have the recipes for building this conda environment. For example,
-
-```dockerfile
-# /transformers/build_steps.dockerfile.j2
-RUN {{cache_mount_str}} micromamba install python=3.10.18 -y
-RUN {{cache_mount_str}} pip install torch==2.7.0 transformers==4.51.1
-
-{{install_regular_cosmos_curator_deps_str}}
-```
+Every "env" needs to be listed in [pixi.toml](../../pixi.toml).
 
 Then when building the docker image for running pipelines, use option `--envs` to specify which conda environments to be included in the build.
 

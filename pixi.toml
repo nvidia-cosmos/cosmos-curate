@@ -7,10 +7,16 @@ version = "1.0.0"
 [pypi-options]
 extra-index-urls = ["https://pypi.nvidia.com"]
 
-[system-requirements]
+[dependencies]
+python = "3.10.*"
+
+[pypi-dependencies]
+ray = { version = "*", extras = ["default"] } # conda-forge package pulls in an old version of protobuf
+
+[feature.core.system-requirements]
 cuda = "12.9.1" # match the version of the nvidia/cuda docker base image
 
-[dependencies]
+[feature.core.dependencies]
 astral = "*"
 attrs = "*"
 azure-identity = "*"
@@ -32,7 +38,6 @@ pytest = "*"
 pytest-asyncio = "*"
 pytest-cov = "*"
 pytest-xdist = "*"
-python = "3.10.*"
 pytorch-gpu = ">=2.7.1"
 scipy = "*"
 sqlalchemy = "*"
@@ -45,12 +50,27 @@ typer = "*"
 uvicorn = "*"
 webdataset = "*"
 
-[pypi-dependencies]
+[feature.core.pypi-dependencies]
 av = "*" # conda-forge package pulls in ffmpeg
 ngcsdk = "*" # not available on conda-forge
 opencv-python-headless = "*" # not available on conda-forge
 pulp = "*" # conda-forge package is too old
-ray = { version = "*", extras = ["default"] } # conda-forge package pulls in an old version of protobuf
+
+[feature.model-download.dependencies]
+azure-identity = "*"
+azure-storage-blob = "*"
+cattrs = "*"
+huggingface_hub = "*"
+loguru = "*"
+pandas = "*"
+pynvml = "*"
+numpy = "*"
+scipy = "*"
+tabulate = "*"
+
+[feature.model-download.pypi-dependencies]
+ngcsdk = "*" # not available on conda-forge
+opencv-python-headless = "*" # not available on conda-forge
 
 [feature.text-curator.system-requirements]
 cuda = "12.9.1" # match the version of the nvidia/cuda docker base image
@@ -60,7 +80,6 @@ cattrs = "*"
 easydict = "*"
 loguru = "*"
 numpy = "<2"
-python = "3.10.*"
 pytorch-gpu = ">=2.7.1"
 tabulate = "*"
 webdataset = "*"
@@ -71,7 +90,6 @@ nemo-curator = { git = "https://github.com/NVIDIA/NeMo-Curator.git", rev = "060d
 opencv-python-headless = "*" # not available on conda-forge
 ngcsdk = "*" # not available on conda-forge
 pulp = "*" # conda-forge package is too old
-ray = { version = "*", extras = ["default"] } # conda-forge package pulls in an old version of protobuf
 
 [feature.unified.dependencies]
 cuda-libraries-dev = "*"
@@ -92,7 +110,9 @@ PyNvVideoCodec = "*" # not available on conda-forge
 timm = "*" # conda-forge package pulls in torchvision, which is behind
 
 [environments]
-model-download = []
-text-curator = {features = ["text-curator"], no-default-feature = true}
-unified = ["unified"]
-video-splitting = ["video-splitting"]
+default = ["default", "core"]
+model-download = ["model-download"]
+text-curator = ["text-curator"]
+transformers = ["core"]
+unified = ["core", "unified"]
+video-splitting = ["core", "video-splitting"]

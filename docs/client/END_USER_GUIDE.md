@@ -149,10 +149,10 @@ The hello-world example pipeline aims to provide a minimal example to help under
 cosmos-curate image build --image-name cosmos-curate --image-tag hello-world --envs transformers
 
 # 2. Download the GPT-2 model weights
-cosmos-curate local launch --image-name cosmos-curate --image-tag hello-world -- python3 -m cosmos_curate.core.managers.model_cli download --models gpt2
+cosmos-curate local launch --image-name cosmos-curate --image-tag hello-world -- pixi run python -m cosmos_curate.core.managers.model_cli download --models gpt2
 
 # 3. Run the hellow-world pipeline
-cosmos-curate local launch --image-name cosmos-curate --image-tag hello-world --curator-path . -- python3 -m cosmos_curate.pipelines.examples.hello_world_pipeline
+cosmos-curate local launch --image-name cosmos-curate --image-tag hello-world --curator-path . -- pixi run python -m cosmos_curate.pipelines.examples.hello_world_pipeline
 ```
 
 ### Run the Reference Video Pipeline
@@ -165,14 +165,14 @@ This section of the instructions references the concept of local paths. Note tha
    - This could take up to 45 minutes for a fresh new build.
 
 ```bash
-cosmos-curate image build --image-name cosmos-curate --image-tag 1.0.0 --envs text_curator,unified,video_splitting
+cosmos-curate image build --image-name cosmos-curate --image-tag 1.0.0 --envs text-curator,unified,video-splitting
 ```
 
 2. **Download model weights from Hugging Face.**
    - For the same reason as above, we need to download weights for a few more models and it will take 10+ minutes depends on your network condition.
 
 ```bash
-cosmos-curate local launch --image-name cosmos-curate --image-tag 1.0.0 -- python3 -m cosmos_curate.core.managers.model_cli download
+cosmos-curate local launch --image-name cosmos-curate --image-tag 1.0.0 -- pixi run python -m cosmos_curate.core.managers.model_cli download
 ```
 
 3. **Run the Split-Annotate Pipeline**
@@ -193,7 +193,7 @@ cosmos-curate local launch --image-name cosmos-curate --image-tag 1.0.0 -- pytho
 ```bash
 cosmos-curate local launch \
     --image-name cosmos-curate --image-tag 1.0.0 --curator-path . \
-    -- python3 -m cosmos_curate.pipelines.video.run_pipeline split \
+    -- pixi run python -m cosmos_curate.pipelines.video.run_pipeline split \
     --input-video-path <local or s3 path containing input videos> \
     --output-clip-path <local or s3 path to store output clips and metadatas> \
     --limit 1
@@ -215,7 +215,7 @@ First, launch the container with a service endpoint.
 ```bash
 cosmos-curate local launch \
    --image-name cosmos-curate --image-tag 1.0.0 --curator-path . \
-   -- python cosmos_curate/scripts/onto_nvcf.py --helm False
+   -- pixi run python cosmos_curate/scripts/onto_nvcf.py --helm False
 ```
 
 After `Application startup complete.` is printed in the log, you can invoke the split-annotate with a `curl` command.
@@ -373,7 +373,7 @@ cosmos-curate slurm submit \
   --remote-files-path "${SLURM_USER_DIR}/job_info" \
   --container-image "${CONTAINER_IMAGE}" \
   --container-mounts "${CONTAINER_MOUNTS}" \
-    -- python3 -m cosmos_curate.pipelines.examples.hello_world_pipeline
+    -- pixi run python -m cosmos_curate.pipelines.examples.hello_world_pipeline
 ```
 
 The command above will print the slurm job id like below

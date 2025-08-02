@@ -90,9 +90,9 @@ tests/cosmos_curate/pipelines/video/utils/test_decoder_utils.py ................
 Launch the docker container locally and simply run `pytest` command:
 
 ```bash
-for conda_env in cosmos_curate video_splitting unified; do
+for conda_env in default video-splitting unified; do
    cosmos-curate local launch --image-name cosmos-curate --image-tag 1.0.0 --curator-path . \
-   -- micromamba -n $conda_env run pytest -m env tests/cosmos_curate/pipelines/;
+   -- pixi run -e $conda_env pytest -m env tests/cosmos_curate/pipelines/;
 done
 
 ================ test session starts ================

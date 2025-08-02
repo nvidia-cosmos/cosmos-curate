@@ -28,11 +28,9 @@ from loguru import logger
 from cosmos_curate.client.utils import conda_envs
 
 
-def generate_dockerfile(  # noqa: PLR0913
+def generate_dockerfile(
     *,
-    curator_path: pathlib.Path,
     dockerfile_template_path: pathlib.Path,
-    envs_paths: list[pathlib.Path],
     conda_env_names: list[str],
     code_paths: list[str],
     dockerfile_output_path: pathlib.Path | None = None,
@@ -41,9 +39,7 @@ def generate_dockerfile(  # noqa: PLR0913
     """Generate a Dockerfile based on the provided template and parameters.
 
     Args:
-        curator_path (pathlib.Path): The path to the cosmos-curate repo directory.
         dockerfile_template_path (pathlib.Path): The path to the Dockerfile template.
-        envs_paths: (list[pathlib.Path]): List of environment paths
         conda_env_names (List[str]): The list of conda environment names to include in the Docker image.
         code_paths (List[conda_envs.CodePath]): The list of code paths to include in the Docker image.
         dockerfile_output_path (Optional[pathlib.Path]): The path to write the rendered Dockerfile.
@@ -54,26 +50,12 @@ def generate_dockerfile(  # noqa: PLR0913
         pathlib.Path: The path to the generated Dockerfile.
 
     """
-    # Retrieve conda environments
-    if conda_env_names:
-        all_envs = {x.name: x for x in conda_envs.get_conda_envs(curator_path, envs_paths, conda_env_names)}
-        available_env_names = set(all_envs.keys())
-        not_found_env_names = set(conda_env_names) - available_env_names
-        if not_found_env_names:
-            error_msg = (
-                f"Was unable to find env name(s) {sorted(not_found_env_names)}. "
-                f"Available env names = {sorted(available_env_names)}"
-            )
-            raise ValueError(error_msg)
-
-        env_list = sorted([all_envs[x] for x in conda_env_names], key=lambda x: x.name)
-    else:
-        env_list = []
+    env_list = sorted(conda_env_names)
 
     # Read and render the Dockerfile template
     with pathlib.Path(dockerfile_template_path).open() as f:
         template = jinja2.Template(f.read())
-    common_template_params = conda_envs.CommonTemplateParams.make(curator_path)
+    common_template_params = conda_envs.CommonTemplateParams.make()
     contents = template.render(
         envs=env_list,
         code_paths=code_paths,
