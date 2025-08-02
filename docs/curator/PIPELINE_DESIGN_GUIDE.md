@@ -159,9 +159,17 @@ To help management of models, add a section in [all_models.json](../../cosmos_cu
 The `GPT2` model above uses a conda environment called `transformers`;
 that corresponds to the environment `transformers` in [pixi.toml](../../pixi.toml).
 
-Every "env" needs to be listed in [pixi.toml](../../pixi.toml).
+Every `env` needs to be listed in [pixi.toml](../../pixi.toml).
+Note as a convention enforced by `pixi`, you should use `-` instead of `_` for the `env` name.
 
 Then when building the docker image for running pipelines, use option `--envs` to specify which conda environments to be included in the build.
+
+In case you find it hard to configure your `env` using `pixi`, you can add a `post_install.sh` script under `package/cosmos_curate/envs/<env_name>/`.
+We have an example for `paddle-ocr` env which only installs the basic packages in [pixi.toml](../../pixi.toml)
+and then installs `paddlepaddle-gpu`
+from [package/cosmos_curate/envs/paddle-ocr/post_install.sh](../../package/cosmos_curate/envs/paddle-ocr/post_install.sh).
+Note that if you want to use `pip` inside your `post_install.sh` script, you will need to add `pip` feature to your `env`
+in [pixi.toml](../../pixi.toml); e.g. for `paddle-ocr` env, we have `paddle-ocr = ["core", "pip"]` in [pixi.toml](../../pixi.toml).
 
 ### Run the Pipeline
 

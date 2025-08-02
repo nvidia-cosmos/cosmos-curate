@@ -109,9 +109,13 @@ cvcuda-cu12 = "*" # not available on conda-forge
 PyNvVideoCodec = "*" # not available on conda-forge
 timm = "*" # conda-forge package pulls in torchvision, which is behind
 
+[feature.pip.dependencies]
+pip = "*"
+
 [environments]
 default = ["default", "core"]
 model-download = ["model-download"]
+paddle-ocr = ["core", "pip"]
 text-curator = ["text-curator"]
 transformers = ["core"]
 unified = ["core", "unified"]

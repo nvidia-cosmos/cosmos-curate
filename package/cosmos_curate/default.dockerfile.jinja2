@@ -142,6 +142,15 @@ RUN cd {{code_dir_str}} && \
     pixi clean cache -y
 {% endif %}
 
+# Run any hacky post-install script for each environment
+COPY package/cosmos_curate/envs/ /tmp/cosmos_curate_build_envs
+{% for env in envs %}
+RUN if [ -f /tmp/cosmos_curate_build_envs/{{ env }}/post_install.sh ]; then \
+        cd {{code_dir_str}} && \
+        pixi run -e {{ env }} bash /tmp/cosmos_curate_build_envs/{{ env }}/post_install.sh; \
+    fi
+{% endfor %}
+
 # Copy the video pipeline code
 COPY cosmos_curate {{code_dir_str}}/cosmos_curate
 COPY cosmos-xenna/cosmos_xenna {{code_dir_str}}/cosmos_xenna
