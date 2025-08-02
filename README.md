@@ -8,6 +8,11 @@
 
 A powerful video curation system that processes, analyzes, and organizes video content using advanced AI models and distributed computing.
 
+## Important
+
+Please run `git submodule sync` if you have cloned the repository before and just pulled the latest update.
+We updated the URL for `cosmos-xenna` submodule on 08/04/2025.
+
 ## Overview
 
 Cosmos-Curate is a comprehensive solution for video processing and curation using state-of-the-art AI models,
