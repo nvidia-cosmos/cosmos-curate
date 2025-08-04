@@ -11,22 +11,17 @@
 
 import argparse
 
-from cosmos_curate.pipelines.av.av_video_captioning_pipeline import (
-    add_caption_command,
-)
-from cosmos_curate.pipelines.av.av_video_ingesting_pipeline import (
-    add_ingest_command,
-)
-from cosmos_curate.pipelines.av.av_video_sharding_pipeline import (
-    add_shard_command,
-)
-from cosmos_curate.pipelines.av.av_video_splitting_pipeline import (
-    add_split_command,
-)
+from cosmos_curate.core.utils.config.operation_context import check_if_running_in_pixi_env
 
 
 def cli() -> None:
     """CLI for AV data curation pipelines."""
+    # Lazy-import pipeline commands after PIXI env check
+    from cosmos_curate.pipelines.av.av_video_captioning_pipeline import add_caption_command
+    from cosmos_curate.pipelines.av.av_video_ingesting_pipeline import add_ingest_command
+    from cosmos_curate.pipelines.av.av_video_sharding_pipeline import add_shard_command
+    from cosmos_curate.pipelines.av.av_video_splitting_pipeline import add_split_command
+
     parser = argparse.ArgumentParser(
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
         description="AV data curation pipelines",
@@ -42,4 +37,5 @@ def cli() -> None:
 
 
 if __name__ == "__main__":
+    check_if_running_in_pixi_env()
     cli()

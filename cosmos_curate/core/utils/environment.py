@@ -60,3 +60,6 @@ LOCAL_AWS_CREDENTIALS_FILE = pathlib.Path("~/.aws/credentials").expanduser()
 
 # Local Azure credentials file path
 LOCAL_AZURE_CREDENTIALS_FILE = pathlib.Path("~/.azure/credentials").expanduser()
+
+# Environment variable for the pixi environment name.
+PIXI_ENVIRONMENT_NAME_VAR_NAME = "PIXI_ENVIRONMENT_NAME"

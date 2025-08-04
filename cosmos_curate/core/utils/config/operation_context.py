@@ -19,13 +19,22 @@ from __future__ import annotations
 import contextlib
 import os
 import pathlib
+import sys
 import tempfile
 from typing import TYPE_CHECKING
 
-from cosmos_curate.core.utils.environment import LOCAL_DOCKER_ENV_VAR_NAME, SLURM_RAY_ENV_VAR_NAME
+from cosmos_curate.core.utils.environment import (
+    LOCAL_DOCKER_ENV_VAR_NAME,
+    PIXI_ENVIRONMENT_NAME_VAR_NAME,
+    SLURM_RAY_ENV_VAR_NAME,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Generator
+
+# ANSI escape codes for error highlighting
+_ERROR_COLOR = "\033[1;31m"
+_RESET_COLOR = "\033[0m"
 
 
 def is_running_on_slurm() -> bool:
@@ -139,3 +148,24 @@ def make_pipeline_named_temporary_file(
     target_dir.mkdir(parents=True, exist_ok=True)
     with make_named_temporary_file(delete=True, target_dir=target_dir, suffix=suffix) as file:
         yield file
+
+
+def is_running_in_pixi_env() -> bool:
+    """Check if the job is running in a pixi environment."""
+    return PIXI_ENVIRONMENT_NAME_VAR_NAME in os.environ
+
+
+def check_if_running_in_pixi_env() -> None:
+    """Check if the job is running in a pixi environment and exit if not."""
+    if not is_running_in_pixi_env():
+        error_msg = (
+            "Error: Pipelines must be executed inside a Pixi environment.\n"
+            "\n"
+            "  To use the default environment:\n"
+            "    pixi run python -m <module> [args]\n"
+            "  To use a named environment:\n"
+            "    pixi run -e <env_name> python -m <module> [args]\n"
+            "\n"
+            "Run `pixi run --help` for more details.\n"
+        )
+        sys.exit(f"{_ERROR_COLOR}{error_msg}{_RESET_COLOR}")
