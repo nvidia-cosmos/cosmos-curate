@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Qwen Video Model."""
+"""Cosmos-Reason1 Video Model."""
 
 import logging
 import os
@@ -28,10 +28,10 @@ from cosmos_curate.core.interfaces.model_interface import ModelInterface
 from cosmos_curate.core.utils.misc import grouping
 from cosmos_curate.core.utils.model import conda_utils, model_utils
 
-_QWEN2_5_VL_MODEL_ID = "Qwen/Qwen2.5-VL-7B-Instruct"
+_COSMOS_REASON1_MODEL_ID = "nvidia/Cosmos-Reason1-7B"
 
-_QWEN_VARIANTS_INFO = {
-    "qwen": _QWEN2_5_VL_MODEL_ID,
+_COSMOS_REASON1_VARIANTS_INFO = {
+    "cosmos_r1": _COSMOS_REASON1_MODEL_ID,
 }
 
 _DEFAULT_STAGE2_PROMPT = """
@@ -52,25 +52,25 @@ if conda_utils.is_running_in_env("unified"):
     vllm_logger.setLevel(logging.ERROR)  # Suppress warnings and info from vLLM
 
 
-class QwenUtils:
-    """Utility class for handling Qwen model inputs and message formatting."""
+class CosmosReason1Utils:
+    """Utility class for handling Cosmos-Reason1 model inputs and message formatting."""
 
     def __init__(
         self,
-        model_variant: str = "qwen",
+        model_variant: str = "cosmos_r1",
     ) -> None:
-        """Initialize the QwenUtils class.
+        """Initialize the CosmosReason1Utils class.
 
         Args:
-            model_variant: The variant of the Qwen model to use.
+            model_variant: The variant of the Cosmos-Reason1 model to use.
 
         """
-        self.weight_file = model_utils.get_local_dir_for_weights_name(_QWEN_VARIANTS_INFO[model_variant])
+        self.weight_file = model_utils.get_local_dir_for_weights_name(_COSMOS_REASON1_VARIANTS_INFO[model_variant])
         self.text_prompt = None
         self.processor: AutoProcessor | None = None
 
     def setup(self) -> None:
-        """Set up the Qwen model.
+        """Set up the Cosmos-Reason1 model.
 
         This method initializes the model and its configuration for processing video and text data.
         It also sets up the image processor for preprocessing video frames if needed.
@@ -81,17 +81,24 @@ class QwenUtils:
     @staticmethod
     def create_message(
         text_input: str,
-    ) -> list[dict[str, str | list[dict[str, str]]]]:
-        """Create a message for the Qwen model.
+    ) -> list[dict[str, str | list[dict[str, str | int | None]]]]:
+        """Create a message for the Cosmos-Reason1 model.
 
         Args:
             text_input: The text input to create a message for.
 
         Returns:
-            List of messages for the Qwen model.
+            List of messages for the Cosmos-Reason1 model.
 
         """
         return [
+            {
+                "role": "system",
+                "content": (
+                    "You are a helpful assistant. Answer the question in the following format: "
+                    "<think>\nyour reasoning\n</think>\n\n<answer>\nyour answer\n</answer>."
+                ),
+            },
             {
                 "role": "user",
                 "content": [
@@ -114,9 +121,9 @@ class QwenUtils:
         *,
         override_text_prompt: bool = False,
     ) -> dict[str, Any]:
-        """Generate inputs for the Qwen language model from video and text data.
+        """Generate inputs for the Cosmos-Reason1 language model from video and text data.
 
-        Processes video and text inputs to create the input for the Qwen model. It handles both video and
+        Processes video and text inputs to create the input for the Cosmos-Reason1 model. It handles both video and
         image inputs, decoding video and applying preprocessing if needed, and creates a structured
         input dictionary containing the processed prompt and multimodal data.
 
@@ -153,12 +160,12 @@ class QwenUtils:
         }
 
 
-class QwenVL(ModelInterface):
-    """Interface for Qwen vision-language model for video understanding and captioning."""
+class CosmosReason1VL(ModelInterface):
+    """Interface for Cosmos-Reason1 vision-language model for video understanding and captioning."""
 
     def __init__(  # noqa: PLR0913
         self,
-        model_variant: str = "qwen",
+        model_variant: str = "cosmos_r1",
         *,
         fp8: bool = True,
         max_output_tokens: int = 512,
@@ -166,23 +173,21 @@ class QwenVL(ModelInterface):
         stage2_prompt_text: str | None = None,
         disable_mmcache: bool = False,
         use_async_engine: bool = False,
-        num_gpus: int = 1,
     ) -> None:
-        """Initialize the QwenVL model.
+        """Initialize the CosmosReason1VL model.
 
         Args:
-            model_variant: The variant of the Qwen model to use.
+            model_variant: The variant of the Cosmos-Reason1 model to use.
             fp8: Whether to use FP8 quantization.
             max_output_tokens: The maximum number of tokens to generate.
             model_does_preprocess: Whether to preprocess the model.
             stage2_prompt_text: The prompt for the stage 2 caption.
             disable_mmcache: Whether to disable the MM cache.
             use_async_engine: Whether to use the async engine.
-            num_gpus: Number of GPUs to use for processing.
 
         """
         super().__init__()
-        self._weights_name = _QWEN_VARIANTS_INFO[model_variant]
+        self._weights_name = _COSMOS_REASON1_VARIANTS_INFO[model_variant]
         self.weight_file = str(model_utils.get_local_dir_for_weights_name(self._weights_name))
         self.fp8 = fp8
         self.max_output_tokens = max_output_tokens
@@ -192,9 +197,9 @@ class QwenVL(ModelInterface):
         self.model_variant = model_variant
         self.sampling_params: SamplingParams | None = None
         self.use_async_engine = use_async_engine
-        self.num_gpus = num_gpus
         self.pattern = (
-            r"(<\|im_start\|>user\s*<\|vision_start\|><\|video_pad\|><\|vision_end\|>\s*)(.*?)(\s*<\|im_end\|>)"
+            r"(<\|im_start\|>system\s*.*?<\|im_end\|>\s*"
+            r"<\|im_start\|>user\s*<\|vision_start\|><\|video_pad\|><\|vision_end\|>\s*)(.*?)(\s*<\|im_end\|>)"
         )
         self.stage2_prompt: str = _DEFAULT_STAGE2_PROMPT
         if stage2_prompt_text is not None:
@@ -220,15 +225,15 @@ class QwenVL(ModelInterface):
         """
         return [self._weights_name]
 
-    @nvtx.annotate("Setup Qwen model")  # type: ignore[misc]
+    @nvtx.annotate("Setup Cosmos-Reason1 model")  # type: ignore[misc]
     def setup(self) -> None:
-        """Set up the Qwen model.
+        """Set up the Cosmos-Reason1 model.
 
         This method initializes the model and its configuration for processing video and text data.
         It also sets up the image processor for preprocessing video frames if needed.
 
         """
-        logger.info("Setting up Qwen model")
+        logger.info("Setting up Cosmos-Reason1 model")
         mm_processor_kwargs = {
             "do_resize": self.model_does_preprocess,
             "do_rescale": self.model_does_preprocess,
@@ -252,7 +257,6 @@ class QwenVL(ModelInterface):
                 mm_processor_kwargs=mm_processor_kwargs,
                 disable_mm_preprocessor_cache=self.disable_mmcache,
                 max_num_batched_tokens=32768,
-                tensor_parallel_size=self.num_gpus,
             )
             self.llm = AsyncLLMEngine.from_engine_args(engine_args)
             self.sampling_params = SamplingParams(
@@ -275,7 +279,6 @@ class QwenVL(ModelInterface):
                 mm_processor_kwargs=mm_processor_kwargs,
                 disable_mm_preprocessor_cache=self.disable_mmcache,
                 max_num_batched_tokens=32768,
-                tensor_parallel_size=self.num_gpus,
             )
             self.sampling_params = SamplingParams(
                 temperature=0.1,
@@ -288,6 +291,14 @@ class QwenVL(ModelInterface):
         logger.info(
             "CUDA graph enabled for sequences smaller than 16k tokens; adjust accordingly for even longer sequences",
         )
+
+    @staticmethod
+    def _extract_from_reasoning_format(caption: str) -> str:
+        if "<answer>" in caption and "</answer>" in caption:
+            start_idx = caption.find("<answer>") + len("<answer>")
+            end_idx = caption.find("</answer>")
+            return caption[start_idx:end_idx].strip()
+        return caption
 
     async def generate_async(
         self,
@@ -318,7 +329,7 @@ class QwenVL(ModelInterface):
         caption = ""
         try:
             async for output in generator:
-                caption = output.outputs[0].text
+                caption = self._extract_from_reasoning_format(output.outputs[0].text)
         except Exception as e:
             logger.exception(f"Error processing request {req_id}: {e}")
             raise
@@ -341,21 +352,21 @@ class QwenVL(ModelInterface):
             # Wait for this request's results
             try:
                 async for output in generator:
-                    caption = "".join(output.outputs[0].text)
+                    caption = self._extract_from_reasoning_format(output.outputs[0].text)
             except Exception as e:
                 logger.exception(f"Error processing request {req_id}: {e}")
                 raise
         return req_id_input, caption
 
-    @nvtx.annotate("Qwen Generate tokens")  # type: ignore[misc]
+    @nvtx.annotate("Cosmos-Reason1 Generate tokens")  # type: ignore[misc]
     def generate(
         self,
         videos: list[dict[str, Any]],
         *,
         generate_stage2_caption: bool = False,
-        batch_size: int = 16,
+        batch_size: int = 8,
     ) -> list[str]:
-        """Generate text for a list of videos.
+        """Generate text using the Cosmos-Reason1 model.
 
         Args:
             videos: List of input dictionaries for the LLM.
@@ -381,7 +392,7 @@ class QwenVL(ModelInterface):
 
                 if generate_stage2_caption:
                     for i, out in enumerate(outputs):  # type: ignore[arg-type]
-                        updated_prompt = self.stage2_prompt + out.outputs[0].text
+                        updated_prompt = self.stage2_prompt + self._extract_from_reasoning_format(out.outputs[0].text)
                         llm_inputs[i]["prompt"] = re.sub(
                             self.pattern,
                             rf"\1{updated_prompt}\3",
@@ -395,7 +406,7 @@ class QwenVL(ModelInterface):
                         use_tqdm=False,
                     )
 
-                generated_text.extend([out.outputs[0].text for out in outputs])  # type: ignore[union-attr]
+                generated_text.extend([self._extract_from_reasoning_format(out.outputs[0].text) for out in outputs])  # type: ignore[union-attr]
 
             except Exception as e:
                 logger.exception(f"Error generating text for batch of {len(batch_videos)}: {e}")

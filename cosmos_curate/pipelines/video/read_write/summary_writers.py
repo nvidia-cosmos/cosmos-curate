@@ -162,6 +162,8 @@ def _write_split_result_summary(  # noqa: PLR0913
             summary_data[input_video]["processed"] = False
             continue
 
+        summary_data[input_video]["video_uuid"] = data.video_metadata.get("video_uuid", "N/A")
+        summary_data[input_video]["num_clip_chunks"] = len(data.clip_chunks)
         summary_data[input_video]["num_total_clips"] = data.video_metadata.get("num_total_clips", "N/A")
         summary_data[input_video]["clips"] = []
         summary_data[input_video]["filtered_clips"] = []

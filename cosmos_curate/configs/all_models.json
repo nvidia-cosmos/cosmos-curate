@@ -109,5 +109,12 @@
         "filelist": null,
         "precision": "BF16",
         "nvcf_model_id": "cosmos_embed1_448p"
+    },
+    "cosmos_reason1": {
+        "model_id": "nvidia/Cosmos-Reason1-7B",
+        "version": "0caf724f837efea5e25bf6d5818dcdeec0a36604",
+        "filelist": null,
+        "precision": "BF16",
+        "nvcf_model_id": "cosmos_reason1_7b"
     }
 }

@@ -42,6 +42,8 @@ from cosmos_curate.pipelines.pipeline_args import (
     add_common_args,
 )
 from cosmos_curate.pipelines.video.captioning.captioning_stages import (
+    CosmosReason1CaptionStage,
+    CosmosReason1InputPreparationStage,
     EnhanceCaptionStage,
     PhiCaptionStage,
     PhiInputPreparationStage,
@@ -447,6 +449,22 @@ def split(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912, PLR0915
                     log_stats=args.perf_profile,
                 ),
             ]
+        elif "cosmos_r1" in args.captioning_algorithm.lower():
+            stages += [
+                CosmosReason1InputPreparationStage(
+                    model_variant=args.captioning_algorithm,
+                    prompt_variant=args.captioning_prompt_variant,
+                    prompt_text=args.captioning_prompt_text,
+                    sampling_fps=args.captioning_sampling_fps,
+                    window_size=args.captioning_window_size,
+                    remainder_threshold=args.captioning_remainder_threshold,
+                    preprocess_dtype="float16",
+                    model_does_preprocess=False,
+                    generate_previews=args.generate_previews,
+                    verbose=args.verbose,
+                    log_stats=args.perf_profile,
+                ),
+            ]
         elif "phi4" in args.captioning_algorithm.lower():
             stages += [
                 PhiInputPreparationStage(
@@ -488,6 +506,24 @@ def split(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912, PLR0915
                         use_async_engine=args.qwen_use_async_engine,
                         num_gpus_per_worker=args.qwen_num_gpus_per_worker,
                         prepare_cosmos_predict_dataset=(args.generate_cosmos_predict_dataset != "disable"),
+                        verbose=args.verbose,
+                        log_stats=args.perf_profile,
+                    ),
+                ),
+            ]
+        elif "cosmos_r1" in args.captioning_algorithm.lower():
+            stages += [
+                CuratorStageSpec(
+                    CosmosReason1CaptionStage(
+                        model_variant=args.captioning_algorithm,
+                        batch_size=args.qwen_batch_size,
+                        fp8_enable=args.qwen_use_fp8_weights,
+                        max_output_tokens=max(4096, args.captioning_max_output_tokens),  # Higher limit for reasoning
+                        model_does_preprocess=args.qwen_model_does_preprocess,
+                        generate_stage2_caption=args.qwen_stage2_caption,
+                        stage2_prompt_text=args.qwen_stage2_prompt_text,
+                        disable_mmcache=not args.qwen_use_vllm_mmcache,
+                        use_async_engine=args.qwen_use_async_engine,
                         verbose=args.verbose,
                         log_stats=args.perf_profile,
                     ),
@@ -976,7 +1012,7 @@ def _setup_parser(parser: argparse.ArgumentParser) -> None:  # noqa: PLR0915
         "--captioning-algorithm",
         type=str,
         default="qwen",
-        choices=["qwen", "phi4"],
+        choices=["qwen", "phi4", "cosmos_r1"],
         help="Captioning algorithm to use in annotation pipeline.",
     )
     parser.add_argument(

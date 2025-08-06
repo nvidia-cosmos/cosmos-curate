@@ -17,6 +17,7 @@
 These are used to help automate docker building/pushing/running.
 """
 
+import os
 import pathlib
 import subprocess
 import tempfile
@@ -92,6 +93,16 @@ def build(  # noqa: PLR0913
         verbose (bool): If True, logs detailed information. Default is False.
 
     """
+    docker_build_limit = 65536
+    _custom_ulimit = os.environ.get("COSMOS_CURATE_DOCKER_BUILD_ULIMIT", None)
+    if _custom_ulimit is not None:
+        try:
+            docker_build_limit = int(_custom_ulimit)
+        except ValueError:
+            logger.warning(
+                f"Invalid COSMOS_CURATE_DOCKER_BUILD_ULIMIT value: {_custom_ulimit}. Using default value of 65536.",
+            )
+
     cmd = ["docker"]
     if cache_from or cache_to:
         cmd.append("buildx")
@@ -105,6 +116,8 @@ def build(  # noqa: PLR0913
         cmd.extend(["--load"])
     cmd.extend(
         [
+            "--ulimit",
+            f"nofile={docker_build_limit}",
             f"--progress={'plain' if verbose else 'auto'}",
             "--network=host",
             "-f",

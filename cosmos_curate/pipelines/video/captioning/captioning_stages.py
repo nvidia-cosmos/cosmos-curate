@@ -31,6 +31,7 @@ from cosmos_curate.core.utils.infra.gpu_start_helper import (
 )
 from cosmos_curate.core.utils.infra.performance_utils import StageTimer
 from cosmos_curate.models import (
+    cosmos_reason1_vl,
     phi_vl,
     qwen_lm,
     qwen_vl,
@@ -187,8 +188,7 @@ class WindowingStage(CuratorStage):
                             Window(
                                 window_frame_info.start,
                                 window_frame_info.end,
-                                window_mp4_bytes,
-                                None,
+                                mp4_bytes=window_mp4_bytes,
                             ),
                         )
 
@@ -565,6 +565,377 @@ class QwenCaptionStage(CuratorStage):
     @nvtx.annotate("QwenCaptionStage")  # type: ignore[misc]
     def process_data(self, tasks: list[SplitPipeTask]) -> list[SplitPipeTask] | None:
         """Process the data for the Qwen caption generation stage.
+
+        Args:
+            tasks: The tasks to process.
+
+        Returns:
+            The processed tasks.
+
+        """
+        if self._use_async_engine:
+            asyncio_loop = self.get_asyncio_loop()
+            return asyncio_loop.run_until_complete(self._process_data_async(tasks))
+        return self.process_data_sync(tasks)
+
+
+class CosmosReason1InputPreparationStage(CuratorStage):
+    """Stage that prepares video inputs for the Cosmos-Reason1 vision-language model.
+
+    This stage processes video clips and prepares them for Cosmos-Reason1 caption generation by
+    extracting frames, applying preprocessing, and creating structured inputs for the model.
+    """
+
+    def __init__(  # noqa: PLR0913
+        self,
+        model_variant: str = "cosmos_r1",
+        prompt_variant: str = "default",
+        prompt_text: str | None = None,
+        sampling_fps: float = 4.0,
+        window_size: int = 256,
+        remainder_threshold: int = 128,
+        preprocess_dtype: str = "float32",
+        *,
+        model_does_preprocess: bool = False,
+        generate_previews: bool = True,
+        verbose: bool = False,
+        log_stats: bool = False,
+    ) -> None:
+        """Initialize the Cosmos-Reason1 input preparation stage.
+
+        Args:
+            model_variant: Name of the model variant to use.
+            prompt_variant: Type of prompt to use.
+            prompt_text: Custom prompt text if provided.
+            sampling_fps: Frames per second to sample from input clips.
+            window_size: Size of each window in frames.
+            remainder_threshold: Minimum frames required for the last window.
+            preprocess_dtype: Data type for preprocessing operations.
+            model_does_preprocess: Whether model handles preprocessing.
+            generate_previews: Whether to generate preview images.
+            verbose: Whether to print verbose logs.
+            log_stats: Whether to log performance statistics.
+
+        """
+        self._timer = StageTimer(self)
+        self._model_variant = model_variant
+        self._sampling_fps = sampling_fps
+        self._window_size = window_size
+        self._remainder_threshold = remainder_threshold
+        self._preprocess_dtype = preprocess_dtype
+        self._model_does_preprocess = model_does_preprocess
+        self._generate_previews = generate_previews
+        self._verbose = verbose
+        self._log_stats = log_stats
+        self._prompt_variant = prompt_variant
+        self._prompt_text = prompt_text
+
+        # Initialize the model utils for input preparation
+        self._cosmos_r1_utils = cosmos_reason1_vl.CosmosReason1Utils(model_variant)
+
+    @property
+    def resources(self) -> CuratorStageResource:
+        """Get the resource requirements for this stage.
+
+        Returns:
+            The resource requirements for this stage.
+
+        """
+        return CuratorStageResource(cpus=4.0)
+
+    @property
+    def conda_env_name(self) -> str:
+        """Get the conda environment name.
+
+        Returns:
+            The conda environment name.
+
+        """
+        return "unified"
+
+    def stage_setup(self) -> None:
+        """Set up the Cosmos-Reason1 input preparation stage."""
+        self._cosmos_r1_utils.setup()
+
+    @nvtx.annotate("CosmosReason1InputPreparationStage")  # type: ignore[misc]
+    def process_data(self, tasks: list[SplitPipeTask]) -> list[SplitPipeTask] | None:
+        """Process the data for the Cosmos-Reason1 input preparation stage.
+
+        Args:
+            tasks: The tasks to process.
+
+        Returns:
+            The processed tasks.
+
+        """
+        for task in tasks:
+            self._timer.reinit(self, task.get_major_size())
+            video = task.video
+            for clip in video.clips:
+                if clip.buffer is None:
+                    logger.warning(f"Clip {clip.uuid} has no buffer.")
+                    clip.errors["buffer"] = "empty"
+                    continue
+                with self._timer.time_process():
+                    for window_bytes, window_frames, window_frame_info in zip_longest(
+                        *windowing_utils.split_video_into_windows(
+                            clip.buffer,
+                            window_size=self._window_size,
+                            remainder_threshold=self._remainder_threshold,
+                            sampling_fps=self._sampling_fps,
+                            model_does_preprocess=self._model_does_preprocess,
+                            preprocess_dtype=self._preprocess_dtype,
+                            return_bytes=self._generate_previews,
+                            num_threads=max(int(self.resources.cpus), 1),
+                        ),
+                    ):
+                        # Get the prompt based on variant
+                        if self._prompt_text:
+                            prompt = self._prompt_text
+                        else:
+                            prompt = _PROMPTS.get(self._prompt_variant, _PROMPTS["default"])
+
+                        # Generate LLM inputs using the model utils
+                        llm_input = self._cosmos_r1_utils.generate_llm_inputs(
+                            prompt=prompt.strip(),
+                            video_inputs=window_frames,
+                        )
+
+                        clip.windows.append(
+                            Window(
+                                window_frame_info.start,
+                                window_frame_info.end,
+                                mp4_bytes=window_bytes if self._generate_previews else None,
+                                cosmos_reason1_llm_input=llm_input,
+                            ),
+                        )
+
+            if self._log_stats:
+                stage_name, stage_perf_stats = self._timer.log_stats()
+                task.stage_perf[stage_name] = stage_perf_stats
+
+        return tasks
+
+
+class CosmosReason1CaptionStage(CuratorStage):
+    """Stage that generates captions for video windows using the Cosmos-Reason1 model.
+
+    This stage processes prepared video windows through the Cosmos-Reason1 vision-language model to
+    generate descriptive captions with physical reasoning capabilities.
+    """
+
+    def __init__(  # noqa: PLR0913
+        self,
+        model_variant: str = "cosmos_r1",
+        batch_size: int = 8,
+        *,
+        fp8_enable: bool = False,
+        max_output_tokens: int = 512,
+        model_does_preprocess: bool = False,
+        generate_stage2_caption: bool = False,
+        stage2_prompt_text: str | None = None,
+        disable_mmcache: bool = False,
+        use_async_engine: bool = False,
+        verbose: bool = False,
+        log_stats: bool = False,
+    ) -> None:
+        """Initialize the Cosmos-Reason1 caption generation stage.
+
+        Args:
+            model_variant: Name of the model variant to use.
+            batch_size: Number of samples to process in parallel.
+            fp8_enable: Whether to enable FP8 precision.
+            max_output_tokens: Maximum number of tokens to generate.
+            model_does_preprocess: Whether model handles preprocessing.
+            generate_stage2_caption: Whether to generate second stage captions.
+            stage2_prompt_text: Custom prompt for second stage.
+            disable_mmcache: Whether to disable model cache.
+            use_async_engine: Whether to use the asynchronous engine for processing.
+            verbose: Whether to print verbose logs.
+            log_stats: Whether to log performance statistics.
+
+        """
+        self._timer = StageTimer(self)
+        self._batch_size = batch_size
+        self._generate_stage2_caption = generate_stage2_caption
+        self._disable_mmcache = disable_mmcache
+        self._use_async_engine = use_async_engine
+        self._verbose = verbose
+        self._log_stats = log_stats
+        self._raw_model = cosmos_reason1_vl.CosmosReason1VL(
+            model_variant,
+            fp8=fp8_enable,
+            max_output_tokens=max_output_tokens,
+            model_does_preprocess=model_does_preprocess,
+            stage2_prompt_text=stage2_prompt_text,
+            disable_mmcache=self._disable_mmcache,
+            use_async_engine=self._use_async_engine,
+        )
+
+    @property
+    def resources(self) -> CuratorStageResource:
+        """Get the resource requirements for this stage.
+
+        Returns:
+            The resource requirements for this stage.
+
+        """
+        return CuratorStageResource(gpus=1.0)
+
+    @property
+    def model(self) -> ModelInterface:
+        """Get the model.
+
+        Returns:
+            The model.
+
+        """
+        return self._raw_model
+
+    @property
+    def conda_env_name(self) -> str:
+        """Get the conda environment name.
+
+        Returns:
+            The conda environment name.
+
+        """
+        return "unified"
+
+    def stage_setup(self) -> None:
+        """Set up the model for processing."""
+        gpu_stage_startup(self.__class__.__name__, self.resources.gpus, pre_setup=True)
+        self._raw_model.setup()
+        gpu_stage_startup(self.__class__.__name__, self.resources.gpus, pre_setup=False)
+
+    def destroy(self) -> None:
+        """Clean up GPU resources."""
+        gpu_stage_cleanup(self.__class__.__name__)
+
+    def process_data_sync(self, tasks: list[SplitPipeTask]) -> list[SplitPipeTask]:
+        """Process the data for the Cosmos-Reason1 caption generation stage.
+
+        Args:
+            tasks: The tasks to process.
+
+        Returns:
+            The processed tasks.
+
+        """
+        for task in tasks:
+            self._timer.reinit(self, task.get_major_size())
+            video = task.video
+            inputs = []
+            mapping: dict[int, tuple[int, int]] = {}
+            idx = 0
+            with self._timer.time_process(len(video.clips)):
+                for clip_idx, clip in enumerate(video.clips):
+                    if len(clip.windows) == 0:
+                        logger.warning(f"Clip {clip.uuid} has no windows.")
+                        clip.errors["windows"] = "empty"
+                    for window_idx, window in enumerate(clip.windows):
+                        if not hasattr(window, "cosmos_reason1_llm_input") or window.cosmos_reason1_llm_input is None:
+                            logger.error(f"Clip {clip.uuid} window {window_idx} has no prepared inputs.")
+                            clip.errors[f"window-{window_idx}"] = "empty"
+                            continue
+                        mapping[idx] = (clip_idx, window_idx)
+                        inputs.append(window.cosmos_reason1_llm_input)
+                        idx += 1
+
+                captions = self._raw_model.generate(
+                    inputs,
+                    generate_stage2_caption=self._generate_stage2_caption,
+                    batch_size=self._batch_size,
+                )
+
+                self._assign_captions(video, mapping, enumerate(captions))
+
+            if self._log_stats:
+                stage_name, stage_perf_stats = self._timer.log_stats()
+                task.stage_perf[stage_name] = stage_perf_stats
+
+        return tasks
+
+    async def _process_data_async(self, tasks: list[SplitPipeTask]) -> list[SplitPipeTask]:
+        for task in tasks:
+            self._timer.reinit(self, task.get_major_size())
+            video = task.video
+            mapping: dict[int, tuple[int, int]] = {}
+            input_req_id = 0
+            vllm_tasks = []
+            with self._timer.time_process(len(video.clips)):
+                for clip_idx, clip in enumerate(video.clips):
+                    if len(clip.windows) == 0:
+                        logger.warning(f"Clip {clip.uuid} has no windows.")
+                        clip.errors["windows"] = "empty"
+                    for window_idx, window in enumerate(clip.windows):
+                        if not hasattr(window, "cosmos_reason1_llm_input") or window.cosmos_reason1_llm_input is None:
+                            logger.error(f"Clip {clip.uuid} window {window_idx} has no prepared inputs.")
+                            clip.errors[f"window-{window_idx}"] = "empty"
+                            continue
+                        mapping[input_req_id] = (clip_idx, window_idx)
+                        vllm_task = asyncio.create_task(
+                            self._raw_model.generate_async(
+                                window.cosmos_reason1_llm_input,
+                                input_req_id,
+                                generate_stage2_caption=self._generate_stage2_caption,
+                            ),
+                        )
+                        vllm_tasks.append(vllm_task)
+                        input_req_id += 1
+
+                # Wait for all VLLM tasks to complete
+                vllm_captions = await asyncio.gather(*vllm_tasks)
+                # Assign captions to the corresponding clip/window
+                self._assign_captions(video, mapping, vllm_captions)
+
+            if self._log_stats:
+                stage_name, stage_perf_stats = self._timer.log_stats()
+                task.stage_perf[stage_name] = stage_perf_stats
+
+        return tasks
+
+    def _assign_captions(
+        self,
+        video: Video,
+        mapping: dict[int, tuple[int, int]],
+        captions: Iterable[tuple[int, str]],
+    ) -> None:
+        _captions = list(captions)
+        for req_id, caption in _captions:
+            clip_idx, window_idx = mapping[req_id]
+            video.clips[clip_idx].windows[window_idx].caption["cosmos_r1"] = caption
+            if self._verbose:
+                logger.info(f"Caption for clip {video.clips[clip_idx].uuid} window {window_idx}: {caption}")
+
+        logger.info(
+            f"Generated {len(_captions)} captions for video {video.input_path} "
+            f"chunk-{video.clip_chunk_index} with {len(video.clips)} clips",
+        )
+
+        for clip in video.clips:
+            for window in clip.windows:
+                if hasattr(window, "cosmos_reason1_llm_input"):
+                    window.cosmos_reason1_llm_input = None
+                window.mp4_bytes = None
+
+    def get_asyncio_loop(self) -> asyncio.AbstractEventLoop:
+        """Get the asyncio event loop.
+
+        Returns:
+            The asyncio event loop.
+
+        """
+        try:
+            asyncio_loop = asyncio.get_event_loop()
+        except RuntimeError:
+            asyncio_loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(asyncio_loop)
+        return asyncio_loop
+
+    @nvtx.annotate("CosmosReason1CaptionStage")  # type: ignore[misc]
+    def process_data(self, tasks: list[SplitPipeTask]) -> list[SplitPipeTask] | None:
+        """Process the data for the Cosmos-Reason1 caption generation stage.
 
         Args:
             tasks: The tasks to process.
