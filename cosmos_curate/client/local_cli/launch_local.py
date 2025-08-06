@@ -23,6 +23,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated
 
+import psutil
 import typer
 from loguru import logger
 from typer import Argument, Option
@@ -207,6 +208,25 @@ def _get_code_mount_strings(opts: LaunchDocker) -> list[str]:
     return code_path_strings
 
 
+def _get_system_memory_gb() -> float:
+    mem = psutil.virtual_memory()
+    return mem.total / (1024**3)
+
+
+def _get_shm_size_str() -> str:
+    default_proportion = 0.4
+    mem_proportion_str = os.environ.get("RAY_DEFAULT_OBJECT_STORE_MEMORY_PROPORTION", str(default_proportion))
+    try:
+        fraction = float(mem_proportion_str)
+    except ValueError:
+        logger.warning(
+            f"Found RAY_DEFAULT_OBJECT_STORE_MEMORY_PROPORTION in env, but value must be a float. "
+            f"Got: {mem_proportion_str}. Using default 0.4."
+        )
+        fraction = default_proportion
+    return f"{_get_system_memory_gb() * fraction:.2f}gb"
+
+
 def _launch_in_docker_container(opts: LaunchDocker) -> None:
     """Launch the command inside a local Docker container."""
     if not LOCAL_WORKSPACE_PATH.exists():
@@ -225,7 +245,7 @@ def _launch_in_docker_container(opts: LaunchDocker) -> None:
         "--rm",
         f"--gpus={gpus_string}",
         "--device=/dev/dri:/dev/dri",
-        "--shm-size=10.24gb",
+        f"--shm-size={_get_shm_size_str()}",
         "--network=host",
         "--cap-add=SYS_ADMIN",
         "-e",
