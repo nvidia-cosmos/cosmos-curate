@@ -14,6 +14,8 @@
 # limitations under the License.
 """Key interfaces for defining a stage in the curation pipeline."""
 
+import warnings
+
 import attrs
 
 from cosmos_curate.core.interfaces.model_interface import ModelInterface
@@ -21,6 +23,9 @@ from cosmos_curate.core.utils.pixi_runtime_envs import PixiRuntimeEnv
 from cosmos_xenna.pipelines.private.specs import Stage, StageSpec
 from cosmos_xenna.ray_utils.resources import Resources, WorkerMetadata
 from cosmos_xenna.ray_utils.runtime_envs import CondaEnv, RuntimeEnv
+
+# Suppress repetitive pkg_resources deprecation warnings
+warnings.filterwarnings("ignore", category=UserWarning, message="pkg_resources is deprecated as an API")
 
 
 @attrs.define
