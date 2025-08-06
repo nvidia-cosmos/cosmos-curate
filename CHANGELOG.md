@@ -3,6 +3,21 @@
 
 ## Latest
 
+## [1.1.0]
+
+### Released
+- 2025-08-12
+
+### Added
+- Use [pixi](docs/DEVELOPER_GUIDE.md#working-with-pixi-environments) to manage environments inside container image
+- Use absolute URL for [cosmos-xenna](https://github.com/nvidia-cosmos/cosmos-xenna) submodule; PLEASE run `git submodule sync` after pulling update
+- Support for [Cosmos-Reason1](https://github.com/nvidia-cosmos/cosmos-reason1) as an alternative model for captioning
+- Support for running [Phi-4](https://huggingface.co/microsoft/Phi-4-multimodal-instruct) with [vLLM](https://docs.vllm.ai/en/latest/)
+
+### Fixed
+- Suppress warnings to make log more readable
+- Make `/dev/shm` (and hence Ray object store) a fraction of system memory in local mode.
+
 ## [1.0.2]
 
 ### Released
