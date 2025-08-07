@@ -2,6 +2,13 @@
 
 - [Cosmos-Curate - Developer Guide](#cosmos-curate---developer-guide)
   - [Development Environment Setup](#development-environment-setup)
+    - [Working with Pixi Environments](#working-with-pixi-environments)
+      - [Installing Pixi](#installing-pixi)
+      - [Adding New Dependencies](#adding-new-dependencies)
+      - [Updating Pixi Environments](#updating-pixi-environments)
+      - [Viewing Available Environments](#viewing-available-environments)
+      - [Viewing Packages in Pixi Environments](#viewing-packages-in-pixi-environments)
+      - [Running Commands in Pixi Environments](#running-commands-in-pixi-environments)
   - [Code Quality Checks](#code-quality-checks)
   - [Building the Client package](#building-the-client-package)
   - [Testing](#testing)
@@ -36,6 +43,93 @@ mypy --install-types
 # Set up pre-commit hooks
 pre-commit install
 ```
+
+### Working with Pixi Environments
+
+Cosmos-Curate uses [Pixi](https://pixi.sh) to manage Python environments inside Docker images. As a developer, you may
+need to inspect or work with these environments locally.
+
+The `pixi.toml` file at the repository root defines all Pixi environments used by Cosmos-Curate.
+
+#### Installing Pixi
+
+Follow the [Pixi installation instructions](https://pixi.sh/latest/installation/), or run the following commands:
+
+```bash
+# Assuming your current user has write access to /usr/local/bin.
+# If not, you can change ownership of /usr/local to your user: sudo chown -R $USER:$USER /usr/local
+wget -qO- https://pixi.sh/install.sh | PIXI_HOME=/usr/local PIXI_NO_PATH_UPDATE=1 sh
+```
+
+This installs Pixi to `/usr/local/bin/pixi`, which matches the location in the Docker image.
+You can verify the installation by running `pixi --version`.
+
+#### Adding New Dependencies
+
+When adding new dependencies to a pixi environment:
+
+1. Edit the `pixi.toml` file to add your dependency under the appropriate environment
+2. Run `pixi lock` to resolve the new dependency
+3. Rebuild the Docker image
+4. Test your changes inside the Docker container to ensure compatibility
+5. Commit both `pixi.toml` and the updated `pixi.lock` file to version control to ensure reproducibility
+
+Note: Environment names in pixi use hyphens (e.g., `video-splitting`) rather than underscores, as per pixi conventions.
+
+#### Updating Pixi Environments
+
+To update pixi environments:
+
+1. Run `pixi update` to update the environments
+2. Rebuild the Docker image
+3. Test your changes inside the Docker container to ensure compatibility
+
+#### Viewing Available Environments
+
+To see all available pixi environments defined in `pixi.toml`:
+
+```bash
+# Show detailed information about all environments
+pixi info
+
+# Or list the environments only
+pixi workspace environment list
+```
+
+#### Viewing Packages in Pixi Environments
+
+To see all the packages and their versions in a pixi environment:
+
+```bash
+# For the default environment
+pixi list
+
+# For a specific environment
+pixi list -e <env-name>
+
+# For a specific package
+pixi list -e <env-name> <package-name>
+
+# Example: see the pytorch packages in the 'video-splitting' environment
+pixi list -e video-splitting pytorch
+```
+
+#### Running Commands in Pixi Environments
+
+While most pipeline execution happens inside Docker containers, you may need to run commands in pixi environments:
+
+```bash
+# Run in the default environment
+pixi run python -m <module>
+
+# Run in a specific environment
+pixi run -e <env-name> python -m <module>
+
+# Example: check if PyTorch is CUDA enabled in the video-splitting environment
+pixi run -e video-splitting python -c "import torch; print(torch.cuda.is_available())"
+```
+
+Note: For pipeline execution, always use the Docker container as shown in the testing section.
 
 ## Code Quality Checks
 
