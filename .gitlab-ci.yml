@@ -156,15 +156,12 @@ stages:
 
   # Set up micromamba environment for Python dependencies
   setup_micromamba: &setup_micromamba |
-    # Download appropriate micromamba binary based on architecture
-    if [ "$(uname -m)" == "aarch64" ]; then
-      curl -Ls https://micro.mamba.pm/api/micromamba/linux-aarch64/latest | tar -xvj bin/micromamba
-    else
-      curl -Ls https://micro.mamba.pm/api/micromamba/linux-64/latest | tar -xvj bin/micromamba
-    fi
+    # We now use locally installed micromamba
+    # Shell runner: /usr/local/bin/micromamba
+    # Docker runner: /usr/bin/micromamba (if using the micromamba Docker image)
     # Configure micromamba environment
     export MAMBA_ROOT_PREFIX="$(pwd)/micromamba"
-    eval "$(./bin/micromamba shell hook -s posix)"
+    eval "$(micromamba shell hook -s posix)"
     # Create Python environment for curator
     micromamba create -n curator python=${PYTHON_VERSION} poetry -y
     micromamba activate curator
@@ -173,17 +170,14 @@ stages:
   activate_micromamba: &activate_micromamba |
     # Configure micromamba environment
     export MAMBA_ROOT_PREFIX="$(pwd)/micromamba"
-    eval "$(./bin/micromamba shell hook -s posix)"
+    eval "$(micromamba shell hook -s posix)"
     # Create Python environment for curator
     micromamba activate curator
 
   # Clean up micromamba environment
   teardown_micromamba: &teardown_micromamba |
-    # Only attempt cleanup if micromamba was installed
-    if [ -f "$(pwd)/bin/micromamba" ]; then
-      micromamba deactivate || true
-      micromamba env remove -n curator -y || true
-    fi
+    micromamba deactivate || true
+    micromamba env remove -n curator -y || true
 
   # Install curator full requirements
   setup_curator: &setup_curator |
@@ -207,7 +201,7 @@ ruff:
 
 mypy:
   stage: lint
-  image: python:3.10
+  image: mambaorg/micromamba:latest
   tags:
     - build-runner  # Override to Docker executor
   rules: *pre_merge_rules
@@ -412,7 +406,7 @@ nvcf-helm:
   needs: [ "build_deploy_curator" ]
   rules: *merge_result_and_web_rules
   allow_failure: false
-  image: python:3.10
+  image: mambaorg/micromamba:latest
   tags:
     - build-runner  # Override to Docker executor
   variables:
@@ -422,7 +416,7 @@ nvcf-helm:
     - *setup_curator_cli
     - |
       if ! which envsubst; then
-        apt-get update && apt-get install -y gettext jq
+        micromamba install -y -c conda-forge gettext jq
       fi
     - export HELM_BYO_METRICS_RECEIVER_CLIENT_CRT=$(echo $HELM_BYO_METRICS_RECEIVER_CLIENT_CRT_BASE64 | base64 -d | awk '{printf "%s\\n", $0}')
     - export HELM_BYO_METRICS_RECEIVER_CLIENT_KEY=$(echo $HELM_BYO_METRICS_RECEIVER_CLIENT_KEY_BASE64 | base64 -d | awk '{printf "%s\\n", $0}')
@@ -546,7 +540,7 @@ nvcf-helm-validate:
   needs: [ "nvcf-helm" ]
   rules: *merge_result_and_web_rules
   allow_failure: false
-  image: python:3.10
+  image: mambaorg/micromamba:latest
   tags:
     - build-runner  # Override to Docker executor
   variables:
@@ -564,7 +558,7 @@ nvcf-helm-validate:
     - export AWS_SHARED_CREDENTIALS_FILE="$(pwd)/aws_credentials"
     - |
       if ! which jq; then
-        apt-get update && apt-get install -y jq
+        micromamba install -y -c conda-forge jq
       fi
   script:
     - |
