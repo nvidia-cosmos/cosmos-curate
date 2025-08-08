@@ -39,6 +39,7 @@ dependencies = [
     "ray[default]==2.46.0",
     "requests==2.32.3",
     "rich==14.0.0",
+    "tomli>=2.2.1",
     "tqdm==4.67.1",
     "typer==0.15.3",
     "urllib3==1.26.18"
@@ -64,7 +65,7 @@ cosmos-curate = 'cosmos_curate.client.cli:cosmos_curator'
 cosmos-curate = 'cosmos_curate.client.cli:cosmos_curator'
 
 [build-system]
-requires = ["setuptools==80.7.1", "jinja2>=3.1.6", "tomli", "wheel"]
+requires = ["setuptools==80.7.1", "jinja2>=3.1.6", "tomli>=2.2.1", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project.optional-dependencies]
