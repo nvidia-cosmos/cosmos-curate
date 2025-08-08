@@ -52,10 +52,10 @@ class Window:
     mp4_bytes: bytes | None = None
     # Qwen LLM input for this window
     qwen_llm_input: dict[str, Any] | None = None
-    # Phi LLM input for this window
-    phi_llm_input: dict[str, Any] | None = None
     # Cosmos-Reason1 LLM input for this window
     cosmos_reason1_llm_input: dict[str, Any] | None = None
+    # Phi LLM input for this window
+    phi_llm_input: dict[str, Any] | None = None
     # `caption: {model_name: caption}`
     caption: dict[str, str] = attrs.Factory(dict)
     enhanced_caption: dict[str, str] = attrs.Factory(dict)

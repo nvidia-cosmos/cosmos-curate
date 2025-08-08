@@ -18,6 +18,7 @@
 from nvtx import nvtx  # type: ignore[import-untyped]
 
 from cosmos_curate.core.interfaces.model_interface import ModelInterface
+from cosmos_curate.core.utils.misc import grouping
 from cosmos_curate.core.utils.model import conda_utils, model_utils
 
 _QWEN_LM_MODEL_ID = "Qwen/Qwen2.5-14B-Instruct"
@@ -92,19 +93,27 @@ class QwenLM(ModelInterface):
     def generate(
         self,
         prompts: list[list[dict[str, str]]],
+        batch_size: int = 32,
     ) -> list[str]:
         """Generate text using the Qwen-LM model.
 
         Args:
             prompts: List of prompts to generate text from.
+            batch_size: Number of prompts to process in a single batch.
 
         Returns:
             List of generated text.
 
         """
-        formatted_prompt = self.tokenizer.apply_chat_template(prompts, tokenize=False, add_generation_prompt=True)
-        outputs = self.llm.generate(formatted_prompt, sampling_params=self.sampling_params)
-        return [out.outputs[0].text for out in outputs]
+        generated_text = []
+        for batch_prompts in grouping.split_by_chunk_size(prompts, batch_size):
+            formatted_prompts = self.tokenizer.apply_chat_template(
+                list(batch_prompts), tokenize=False, add_generation_prompt=True
+            )
+            outputs = self.llm.generate(formatted_prompts, sampling_params=self.sampling_params, use_tqdm=False)
+            generated_text.extend([out.outputs[0].text for out in outputs])
+
+        return generated_text
 
 
 def make_qwen_lm_input(

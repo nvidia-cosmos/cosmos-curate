@@ -39,6 +39,7 @@ from cosmos_curate.models import (
 )
 from cosmos_curate.pipelines.video.utils import windowing_utils
 from cosmos_curate.pipelines.video.utils.data_model import (
+    Clip,
     ShardPipeTask,
     SplitPipeTask,
     Video,
@@ -111,6 +112,56 @@ def _get_enhance_prompt(prompt_variant: str, prompt_text: str | None, *, verbose
     if verbose:
         logger.debug(f"Enhance Captioning prompt: {prompt}")
     return prompt
+
+
+def _assign_captions(  # noqa: PLR0913
+    video: Video,
+    mapping: dict[int, tuple[int, int]],
+    captions: Iterable[tuple[int, str]],
+    model_variant: str,
+    *,
+    keep_mp4_bytes: bool,
+    verbose: bool,
+) -> None:
+    _captions = list(captions)
+    for req_id, caption in _captions:
+        clip_idx, window_idx = mapping[req_id]
+        video.clips[clip_idx].windows[window_idx].caption[model_variant] = caption
+        if verbose:
+            logger.info(f"Caption for clip {video.clips[clip_idx].uuid} window {window_idx}: {caption}")
+
+    logger.info(
+        f"Generated {len(_captions)} captions for video {video.input_path} "
+        f"chunk-{video.clip_chunk_index} with {len(video.clips)} clips",
+    )
+
+    for clip in video.clips:
+        for window in clip.windows:
+            window.qwen_llm_input = None
+            window.cosmos_reason1_llm_input = None
+            window.phi_llm_input = None
+            if not keep_mp4_bytes:
+                window.mp4_bytes = None
+
+
+# utilities common for different captioning stages
+def _handle_empty_clip_buffer(clip: Clip) -> None:
+    logger.warning(f"Clip {clip.uuid} has no buffer.")
+    clip.errors["buffer"] = "empty"
+
+
+def _handle_empty_clip_windows(clip: Clip) -> None:
+    logger.warning(f"Clip {clip.uuid} has no windows.")
+    clip.errors["windows"] = "empty"
+
+
+def _handle_empty_llm_inputs(clip: Clip, window_idx: int) -> None:
+    logger.error(f"Clip {clip.uuid} window {window_idx} has no prepared inputs.")
+    clip.errors[f"window-{window_idx}"] = "empty"
+
+
+def _get_target_bit_rate(video: Video, *, use_input_bit_rate: bool) -> str:
+    return f"{video.metadata.bit_rate_k}K" if use_input_bit_rate else f"{DEFAULT_TRANSCODE_BITRATE_M}M"
 
 
 class WindowingStage(CuratorStage):
@@ -294,13 +345,9 @@ class QwenInputPreparationStage(CuratorStage):
         for task in tasks:
             self._timer.reinit(self, task.get_major_size())
             video = task.video
-            target_bit_rate = (
-                f"{video.metadata.bit_rate_k}K" if self._use_input_bit_rate else f"{DEFAULT_TRANSCODE_BITRATE_M}M"
-            )
             for clip in video.clips:
                 if clip.buffer is None:
-                    logger.warning(f"Clip {clip.uuid} has no buffer.")
-                    clip.errors["buffer"] = "empty"
+                    _handle_empty_clip_buffer(clip)
                     continue
                 with self._timer.time_process():
                     for window_bytes, window_frames, window_frame_info in zip_longest(
@@ -312,7 +359,7 @@ class QwenInputPreparationStage(CuratorStage):
                             model_does_preprocess=self._model_does_preprocess,
                             preprocess_dtype=self._preprocess_dtype,
                             return_bytes=(self._generate_previews or self._prepare_cosmos_predict_dataset),
-                            target_bit_rate=target_bit_rate,
+                            target_bit_rate=_get_target_bit_rate(video, use_input_bit_rate=self._use_input_bit_rate),
                             num_threads=max(int(self.resources.cpus), 1),
                         ),
                     ):
@@ -458,15 +505,12 @@ class QwenCaptionStage(CuratorStage):
             with self._timer.time_process(len(video.clips)):
                 for clip_idx, clip in enumerate(video.clips):
                     if len(clip.windows) == 0:
-                        logger.warning(f"Clip {clip.uuid} has no windows.")
-                        clip.errors["windows"] = "empty"
+                        _handle_empty_clip_windows(clip)
                     for window_idx, window in enumerate(clip.windows):
                         if window.qwen_llm_input is None:
-                            logger.error(f"Clip {clip.uuid} window {window_idx} has no prepared inputs.")
-                            clip.errors[f"window-{window_idx}"] = "empty"
+                            _handle_empty_llm_inputs(clip, window_idx)
                             continue
                         mapping[idx] = (clip_idx, window_idx)
-                        assert window.qwen_llm_input is not None
                         inputs.append(window.qwen_llm_input)
                         idx += 1
 
@@ -476,7 +520,14 @@ class QwenCaptionStage(CuratorStage):
                     batch_size=self._batch_size,
                 )
 
-                self._assgin_captions(video, mapping, enumerate(captions))
+                _assign_captions(
+                    video,
+                    mapping,
+                    enumerate(captions),
+                    self._model_variant,
+                    keep_mp4_bytes=self._prepare_cosmos_predict_dataset,
+                    verbose=self._verbose,
+                )
 
             if self._log_stats:
                 stage_name, stage_perf_stats = self._timer.log_stats()
@@ -494,15 +545,12 @@ class QwenCaptionStage(CuratorStage):
             with self._timer.time_process(len(video.clips)):
                 for clip_idx, clip in enumerate(video.clips):
                     if len(clip.windows) == 0:
-                        logger.warning(f"Clip {clip.uuid} has no windows.")
-                        clip.errors["windows"] = "empty"
+                        _handle_empty_clip_windows(clip)
                     for window_idx, window in enumerate(clip.windows):
                         if window.qwen_llm_input is None:
-                            logger.error(f"Clip {clip.uuid} window {window_idx} has no prepared inputs.")
-                            clip.errors[f"window-{window_idx}"] = "empty"
+                            _handle_empty_llm_inputs(clip, window_idx)
                             continue
                         mapping[input_req_id] = (clip_idx, window_idx)
-                        assert window.qwen_llm_input is not None
                         vllm_task = asyncio.create_task(
                             self._raw_model.generate_async(
                                 window.qwen_llm_input,
@@ -516,37 +564,20 @@ class QwenCaptionStage(CuratorStage):
                 # Wait for all VLLM tasks to complete
                 vllm_captions = await asyncio.gather(*vllm_tasks)
                 # Assign captions to the corresponding clip/window
-                self._assgin_captions(video, mapping, vllm_captions)
+                _assign_captions(
+                    video,
+                    mapping,
+                    vllm_captions,
+                    self._model_variant,
+                    keep_mp4_bytes=self._prepare_cosmos_predict_dataset,
+                    verbose=self._verbose,
+                )
 
             if self._log_stats:
                 stage_name, stage_perf_stats = self._timer.log_stats()
                 task.stage_perf[stage_name] = stage_perf_stats
 
         return tasks
-
-    def _assgin_captions(
-        self,
-        video: Video,
-        mapping: dict[int, tuple[int, int]],
-        captions: Iterable[tuple[int, str]],
-    ) -> None:
-        _captions = list(captions)
-        for req_id, caption in _captions:
-            clip_idx, window_idx = mapping[req_id]
-            video.clips[clip_idx].windows[window_idx].caption[self._model_variant] = caption
-            if self._verbose:
-                logger.info(f"Caption for clip {video.clips[clip_idx].uuid} window {window_idx}: {caption}")
-
-        logger.info(
-            f"Generated {len(_captions)} captions for video {video.input_path} "
-            f"chunk-{video.clip_chunk_index} with {len(video.clips)} clips",
-        )
-
-        for clip in video.clips:
-            for window in clip.windows:
-                window.qwen_llm_input = None
-                if not self._prepare_cosmos_predict_dataset:
-                    window.mp4_bytes = None
 
     def get_asyncio_loop(self) -> asyncio.AbstractEventLoop:
         """Get the asyncio event loop.
@@ -598,6 +629,8 @@ class CosmosReason1InputPreparationStage(CuratorStage):
         *,
         model_does_preprocess: bool = False,
         generate_previews: bool = True,
+        prepare_cosmos_predict_dataset: bool = False,
+        use_input_bit_rate: bool = False,
         verbose: bool = False,
         log_stats: bool = False,
     ) -> None:
@@ -613,25 +646,26 @@ class CosmosReason1InputPreparationStage(CuratorStage):
             preprocess_dtype: Data type for preprocessing operations.
             model_does_preprocess: Whether model handles preprocessing.
             generate_previews: Whether to generate preview images.
+            prepare_cosmos_predict_dataset: Whether to prepare dataset for Cosmos-Predict.
+            use_input_bit_rate: Whether to use the input video's bit rate for processing.
             verbose: Whether to print verbose logs.
             log_stats: Whether to log performance statistics.
 
         """
         self._timer = StageTimer(self)
-        self._model_variant = model_variant
+        self._verbose = verbose
+        self._log_stats = log_stats
+        self._cosmos_r1_utils = cosmos_reason1_vl.CosmosReason1Utils(model_variant)
+        self._prompt_variant = prompt_variant
+        self._prompt_text = prompt_text
         self._sampling_fps = sampling_fps
         self._window_size = window_size
         self._remainder_threshold = remainder_threshold
         self._preprocess_dtype = preprocess_dtype
         self._model_does_preprocess = model_does_preprocess
         self._generate_previews = generate_previews
-        self._verbose = verbose
-        self._log_stats = log_stats
-        self._prompt_variant = prompt_variant
-        self._prompt_text = prompt_text
-
-        # Initialize the model utils for input preparation
-        self._cosmos_r1_utils = cosmos_reason1_vl.CosmosReason1Utils(model_variant)
+        self._prepare_cosmos_predict_dataset = prepare_cosmos_predict_dataset
+        self._use_input_bit_rate = use_input_bit_rate
 
     @property
     def resources(self) -> CuratorStageResource:
@@ -673,8 +707,7 @@ class CosmosReason1InputPreparationStage(CuratorStage):
             video = task.video
             for clip in video.clips:
                 if clip.buffer is None:
-                    logger.warning(f"Clip {clip.uuid} has no buffer.")
-                    clip.errors["buffer"] = "empty"
+                    _handle_empty_clip_buffer(clip)
                     continue
                 with self._timer.time_process():
                     for window_bytes, window_frames, window_frame_info in zip_longest(
@@ -685,30 +718,35 @@ class CosmosReason1InputPreparationStage(CuratorStage):
                             sampling_fps=self._sampling_fps,
                             model_does_preprocess=self._model_does_preprocess,
                             preprocess_dtype=self._preprocess_dtype,
-                            return_bytes=self._generate_previews,
+                            return_bytes=(self._generate_previews or self._prepare_cosmos_predict_dataset),
+                            target_bit_rate=_get_target_bit_rate(video, use_input_bit_rate=self._use_input_bit_rate),
                             num_threads=max(int(self.resources.cpus), 1),
                         ),
                     ):
-                        # Get the prompt based on variant
-                        if self._prompt_text:
-                            prompt = self._prompt_text
+                        prompt = _get_prompt(
+                            self._prompt_variant,
+                            self._prompt_text,
+                            verbose=self._verbose,
+                        )
+                        try:
+                            # For some reason the `strip` is critical specifically for cosmos-reason1
+                            # when enabling batch inference
+                            llm_input = self._cosmos_r1_utils.generate_llm_inputs(
+                                prompt=prompt.strip(),
+                                video_inputs=window_frames,
+                            )
+                        except Exception as e:  # noqa: BLE001
+                            logger.error(f"Error in Cosmos-Reason1 input preparation: {e}")
+                            clip.errors["cosmos_reason1_input"] = str(e)
                         else:
-                            prompt = _PROMPTS.get(self._prompt_variant, _PROMPTS["default"])
-
-                        # Generate LLM inputs using the model utils
-                        llm_input = self._cosmos_r1_utils.generate_llm_inputs(
-                            prompt=prompt.strip(),
-                            video_inputs=window_frames,
-                        )
-
-                        clip.windows.append(
-                            Window(
-                                window_frame_info.start,
-                                window_frame_info.end,
-                                mp4_bytes=window_bytes if self._generate_previews else None,
-                                cosmos_reason1_llm_input=llm_input,
-                            ),
-                        )
+                            clip.windows.append(
+                                Window(
+                                    window_frame_info.start,
+                                    window_frame_info.end,
+                                    mp4_bytes=window_bytes,
+                                    cosmos_reason1_llm_input=llm_input,
+                                ),
+                            )
 
             if self._log_stats:
                 stage_name, stage_perf_stats = self._timer.log_stats()
@@ -736,6 +774,7 @@ class CosmosReason1CaptionStage(CuratorStage):
         stage2_prompt_text: str | None = None,
         disable_mmcache: bool = False,
         use_async_engine: bool = False,
+        prepare_cosmos_predict_dataset: bool = False,
         verbose: bool = False,
         log_stats: bool = False,
     ) -> None:
@@ -751,15 +790,18 @@ class CosmosReason1CaptionStage(CuratorStage):
             stage2_prompt_text: Custom prompt for second stage.
             disable_mmcache: Whether to disable model cache.
             use_async_engine: Whether to use the asynchronous engine for processing.
+            prepare_cosmos_predict_dataset: Whether to prepare dataset for Cosmos-Predict.
             verbose: Whether to print verbose logs.
             log_stats: Whether to log performance statistics.
 
         """
         self._timer = StageTimer(self)
+        self._model_variant = model_variant
         self._batch_size = batch_size
         self._generate_stage2_caption = generate_stage2_caption
         self._disable_mmcache = disable_mmcache
         self._use_async_engine = use_async_engine
+        self._prepare_cosmos_predict_dataset = prepare_cosmos_predict_dataset
         self._verbose = verbose
         self._log_stats = log_stats
         self._raw_model = cosmos_reason1_vl.CosmosReason1VL(
@@ -831,12 +873,10 @@ class CosmosReason1CaptionStage(CuratorStage):
             with self._timer.time_process(len(video.clips)):
                 for clip_idx, clip in enumerate(video.clips):
                     if len(clip.windows) == 0:
-                        logger.warning(f"Clip {clip.uuid} has no windows.")
-                        clip.errors["windows"] = "empty"
+                        _handle_empty_clip_windows(clip)
                     for window_idx, window in enumerate(clip.windows):
-                        if not hasattr(window, "cosmos_reason1_llm_input") or window.cosmos_reason1_llm_input is None:
-                            logger.error(f"Clip {clip.uuid} window {window_idx} has no prepared inputs.")
-                            clip.errors[f"window-{window_idx}"] = "empty"
+                        if window.cosmos_reason1_llm_input is None:
+                            _handle_empty_llm_inputs(clip, window_idx)
                             continue
                         mapping[idx] = (clip_idx, window_idx)
                         inputs.append(window.cosmos_reason1_llm_input)
@@ -848,7 +888,14 @@ class CosmosReason1CaptionStage(CuratorStage):
                     batch_size=self._batch_size,
                 )
 
-                self._assign_captions(video, mapping, enumerate(captions))
+                _assign_captions(
+                    video,
+                    mapping,
+                    enumerate(captions),
+                    self._model_variant,
+                    keep_mp4_bytes=self._prepare_cosmos_predict_dataset,
+                    verbose=self._verbose,
+                )
 
             if self._log_stats:
                 stage_name, stage_perf_stats = self._timer.log_stats()
@@ -866,12 +913,10 @@ class CosmosReason1CaptionStage(CuratorStage):
             with self._timer.time_process(len(video.clips)):
                 for clip_idx, clip in enumerate(video.clips):
                     if len(clip.windows) == 0:
-                        logger.warning(f"Clip {clip.uuid} has no windows.")
-                        clip.errors["windows"] = "empty"
+                        _handle_empty_clip_windows(clip)
                     for window_idx, window in enumerate(clip.windows):
-                        if not hasattr(window, "cosmos_reason1_llm_input") or window.cosmos_reason1_llm_input is None:
-                            logger.error(f"Clip {clip.uuid} window {window_idx} has no prepared inputs.")
-                            clip.errors[f"window-{window_idx}"] = "empty"
+                        if window.cosmos_reason1_llm_input is None:
+                            _handle_empty_llm_inputs(clip, window_idx)
                             continue
                         mapping[input_req_id] = (clip_idx, window_idx)
                         vllm_task = asyncio.create_task(
@@ -887,37 +932,20 @@ class CosmosReason1CaptionStage(CuratorStage):
                 # Wait for all VLLM tasks to complete
                 vllm_captions = await asyncio.gather(*vllm_tasks)
                 # Assign captions to the corresponding clip/window
-                self._assign_captions(video, mapping, vllm_captions)
+                _assign_captions(
+                    video,
+                    mapping,
+                    vllm_captions,
+                    self._model_variant,
+                    keep_mp4_bytes=self._prepare_cosmos_predict_dataset,
+                    verbose=self._verbose,
+                )
 
             if self._log_stats:
                 stage_name, stage_perf_stats = self._timer.log_stats()
                 task.stage_perf[stage_name] = stage_perf_stats
 
         return tasks
-
-    def _assign_captions(
-        self,
-        video: Video,
-        mapping: dict[int, tuple[int, int]],
-        captions: Iterable[tuple[int, str]],
-    ) -> None:
-        _captions = list(captions)
-        for req_id, caption in _captions:
-            clip_idx, window_idx = mapping[req_id]
-            video.clips[clip_idx].windows[window_idx].caption["cosmos_r1"] = caption
-            if self._verbose:
-                logger.info(f"Caption for clip {video.clips[clip_idx].uuid} window {window_idx}: {caption}")
-
-        logger.info(
-            f"Generated {len(_captions)} captions for video {video.input_path} "
-            f"chunk-{video.clip_chunk_index} with {len(video.clips)} clips",
-        )
-
-        for clip in video.clips:
-            for window in clip.windows:
-                if hasattr(window, "cosmos_reason1_llm_input"):
-                    window.cosmos_reason1_llm_input = None
-                window.mp4_bytes = None
 
     def get_asyncio_loop(self) -> asyncio.AbstractEventLoop:
         """Get the asyncio event loop.
@@ -969,6 +997,8 @@ class PhiInputPreparationStage(CuratorStage):
         *,
         model_does_preprocess: bool = False,
         generate_previews: bool = True,
+        prepare_cosmos_predict_dataset: bool = False,
+        use_input_bit_rate: bool = False,
         verbose: bool = False,
         log_stats: bool = False,
     ) -> None:
@@ -984,6 +1014,8 @@ class PhiInputPreparationStage(CuratorStage):
             preprocess_dtype: Data type for preprocessing.
             model_does_preprocess: Whether model handles preprocessing.
             generate_previews: Whether to generate previews.
+            prepare_cosmos_predict_dataset: Whether to prepare dataset for Cosmos-Predict.
+            use_input_bit_rate: Whether to use the input video's bit rate for processing.
             verbose: Whether to print verbose logs.
             log_stats: Whether to log performance statistics.
 
@@ -1000,6 +1032,8 @@ class PhiInputPreparationStage(CuratorStage):
         self._preprocess_dtype = preprocess_dtype
         self._model_does_preprocess = model_does_preprocess
         self._generate_previews = generate_previews
+        self._prepare_cosmos_predict_dataset = prepare_cosmos_predict_dataset
+        self._use_input_bit_rate = use_input_bit_rate
 
     @property
     def resources(self) -> CuratorStageResource:
@@ -1041,11 +1075,10 @@ class PhiInputPreparationStage(CuratorStage):
             video = task.video
             for clip in video.clips:
                 if clip.buffer is None:
-                    logger.warning(f"Clip {clip.uuid} has no buffer.")
-                    clip.errors["buffer"] = "empty"
+                    _handle_empty_clip_buffer(clip)
                     continue
                 with self._timer.time_process():
-                    for window_bytes, window_frames, window_frame_info in zip(
+                    for window_bytes, window_frames, window_frame_info in zip_longest(
                         *windowing_utils.split_video_into_windows(
                             clip.buffer,
                             window_size=self._window_size,
@@ -1053,10 +1086,10 @@ class PhiInputPreparationStage(CuratorStage):
                             sampling_fps=self._sampling_fps,
                             model_does_preprocess=self._model_does_preprocess,
                             preprocess_dtype=self._preprocess_dtype,
-                            return_bytes=self._generate_previews,
+                            return_bytes=(self._generate_previews or self._prepare_cosmos_predict_dataset),
+                            target_bit_rate=_get_target_bit_rate(video, use_input_bit_rate=self._use_input_bit_rate),
                             num_threads=max(int(self.resources.cpus), 1),
                         ),
-                        strict=True,
                     ):
                         prompt = _get_prompt(
                             self._prompt_variant,
@@ -1068,6 +1101,10 @@ class PhiInputPreparationStage(CuratorStage):
                                 prompt=prompt,
                                 video_inputs=window_frames,
                             )
+                        except Exception as e:  # noqa: BLE001
+                            logger.exception(f"Error in Phi input preparation: {e}")
+                            clip.errors["phi_input"] = str(e)
+                        else:
                             clip.windows.append(
                                 Window(
                                     window_frame_info.start,
@@ -1076,9 +1113,6 @@ class PhiInputPreparationStage(CuratorStage):
                                     phi_llm_input=llm_input,
                                 ),
                             )
-                        except Exception as e:  # noqa: BLE001
-                            logger.exception("Error in Phi input preparation")
-                            clip.errors["phi_input"] = str(e)
 
             if self._log_stats:
                 stage_name, stage_perf_stats = self._timer.log_stats()
@@ -1104,6 +1138,7 @@ class PhiCaptionStage(CuratorStage):
         model_does_preprocess: bool = False,  # noqa: ARG002, we are likely to use this in the future
         disable_mmcache: bool = False,
         use_async_engine: bool = False,
+        prepare_cosmos_predict_dataset: bool = False,
         verbose: bool = False,
         log_stats: bool = False,
     ) -> None:
@@ -1117,6 +1152,7 @@ class PhiCaptionStage(CuratorStage):
             model_does_preprocess: Whether model handles preprocessing.
             disable_mmcache: Whether to disable model cache.
             use_async_engine: Whether to use the asynchronous engine for processing.
+            prepare_cosmos_predict_dataset: Whether to prepare dataset for Cosmos-Predict.
             verbose: Whether to print verbose logs.
             log_stats: Whether to log performance statistics.
 
@@ -1126,6 +1162,7 @@ class PhiCaptionStage(CuratorStage):
         self._batch_size = batch_size
         self._disable_mmcache = disable_mmcache
         self._use_async_engine = use_async_engine
+        self._prepare_cosmos_predict_dataset = prepare_cosmos_predict_dataset
         self._verbose = verbose
         self._log_stats = log_stats
         self._raw_model = phi_vl.PhiVL(
@@ -1185,12 +1222,10 @@ class PhiCaptionStage(CuratorStage):
             with self._timer.time_process(len(video.clips)):
                 for clip_idx, clip in enumerate(video.clips):
                     if len(clip.windows) == 0:
-                        logger.warning(f"Clip {clip.uuid} has no windows.")
-                        clip.errors["windows"] = "empty"
+                        _handle_empty_clip_windows(clip)
                     for window_idx, window in enumerate(clip.windows):
                         if window.phi_llm_input is None:
-                            logger.error(f"Clip {clip.uuid} window {window_idx} has no prepared inputs.")
-                            clip.errors[f"window-{window_idx}"] = "empty"
+                            _handle_empty_llm_inputs(clip, window_idx)
                             continue
                         mapping[idx] = (clip_idx, window_idx)
                         assert window.phi_llm_input is not None
@@ -1202,37 +1237,20 @@ class PhiCaptionStage(CuratorStage):
                     batch_size=self._batch_size,
                 )
 
-                self._assign_captions(video, mapping, enumerate(captions))
+                _assign_captions(
+                    video,
+                    mapping,
+                    enumerate(captions),
+                    self._model_variant,
+                    keep_mp4_bytes=self._prepare_cosmos_predict_dataset,
+                    verbose=self._verbose,
+                )
 
             if self._log_stats:
                 stage_name, stage_perf_stats = self._timer.log_stats()
                 task.stage_perf[stage_name] = stage_perf_stats
 
         return tasks
-
-    def _assign_captions(
-        self,
-        video: Video,
-        mapping: dict[int, tuple[int, int]],
-        captions: Iterable[tuple[int, str]],
-    ) -> None:
-        total_captions = 0
-        for req_id, caption in captions:
-            total_captions += 1
-            clip_idx, window_idx = mapping[req_id]
-            video.clips[clip_idx].windows[window_idx].caption[self._model_variant] = caption
-            if self._verbose:
-                logger.info(f"Caption for clip {video.clips[clip_idx].uuid} window {window_idx}: {caption}")
-
-        logger.info(
-            f"Generated {total_captions} captions for video {video.input_path} "
-            f"chunk-{video.clip_chunk_index} with {len(video.clips)} clips",
-        )
-
-        for clip in video.clips:
-            for window in clip.windows:
-                window.phi_llm_input = None
-                window.mp4_bytes = None
 
     @property
     def conda_env_name(self) -> str:
@@ -1406,7 +1424,7 @@ class EnhanceCaptionStage(CuratorStage):
         self,
         prompt_variant: str = "default",
         prompt_text: str | None = None,
-        batch_size: int = 128,
+        batch_size: int = 32,
         *,
         fp8_enable: bool = False,
         max_output_tokens: int = 2048,
@@ -1486,11 +1504,11 @@ class EnhanceCaptionStage(CuratorStage):
                             clip.errors[f"window-{window_idx}"] = "empty"
                             continue
                         mapping[idx] = (clip_idx, window_idx)
-                        assert window.caption is not None
 
                         caption = None
-                        if "qwen" in window.caption:
-                            caption = window.caption["qwen"]
+                        for caption_model_variant in window.caption:
+                            caption = window.caption[caption_model_variant]
+                            break
 
                         if caption is None:
                             logger.error(f"Clip {clip.uuid} window {window_idx} has no captions")
@@ -1511,12 +1529,8 @@ class EnhanceCaptionStage(CuratorStage):
 
                     for idx, result in enumerate(captions):
                         clip_idx, window_idx = mapping[idx]
-                        qwen_vl_caption = video.clips[clip_idx].windows[window_idx].caption["qwen"]
                         video.clips[clip_idx].windows[window_idx].enhanced_caption["qwen_lm"] = result
                         if self._verbose:
-                            logger.info(
-                                f"Caption for clip {video.clips[clip_idx].uuid} window {window_idx}: {qwen_vl_caption}",
-                            )
                             logger.info(
                                 f"Enhanced QwenLM Caption for clip {video.clips[clip_idx].uuid} "
                                 f"window {window_idx}: {result}",

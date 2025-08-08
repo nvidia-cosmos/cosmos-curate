@@ -461,6 +461,8 @@ def split(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912, PLR0915
                     preprocess_dtype="float16",
                     model_does_preprocess=False,
                     generate_previews=args.generate_previews,
+                    prepare_cosmos_predict_dataset=(args.generate_cosmos_predict_dataset != "disable"),
+                    use_input_bit_rate=args.transcode_use_input_video_bit_rate,
                     verbose=args.verbose,
                     log_stats=args.perf_profile,
                 ),
@@ -474,6 +476,9 @@ def split(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912, PLR0915
                     sampling_fps=args.captioning_sampling_fps,
                     window_size=args.captioning_window_size,
                     remainder_threshold=args.captioning_remainder_threshold,
+                    generate_previews=args.generate_previews,
+                    prepare_cosmos_predict_dataset=(args.generate_cosmos_predict_dataset != "disable"),
+                    use_input_bit_rate=args.transcode_use_input_video_bit_rate,
                     verbose=args.verbose,
                     log_stats=args.perf_profile,
                 ),
@@ -524,6 +529,7 @@ def split(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912, PLR0915
                         stage2_prompt_text=args.qwen_stage2_prompt_text,
                         disable_mmcache=not args.qwen_use_vllm_mmcache,
                         use_async_engine=args.qwen_use_async_engine,
+                        prepare_cosmos_predict_dataset=(args.generate_cosmos_predict_dataset != "disable"),
                         verbose=args.verbose,
                         log_stats=args.perf_profile,
                     ),
@@ -534,6 +540,8 @@ def split(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912, PLR0915
                 CuratorStageSpec(
                     PhiCaptionStage(
                         model_variant=args.captioning_algorithm,
+                        max_output_tokens=args.captioning_max_output_tokens,
+                        prepare_cosmos_predict_dataset=(args.generate_cosmos_predict_dataset != "disable"),
                         verbose=args.verbose,
                         log_stats=args.perf_profile,
                     ),
@@ -541,7 +549,7 @@ def split(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912, PLR0915
             ]
 
         # enhance caption
-        if args.enhance_captions and args.captioning_algorithm != "phi4":
+        if args.enhance_captions:
             stages += [
                 EnhanceCaptionStage(
                     batch_size=args.qwen_lm_batch_size,
@@ -1145,7 +1153,7 @@ def _setup_parser(parser: argparse.ArgumentParser) -> None:  # noqa: PLR0915
     parser.add_argument(
         "--qwen-lm-batch-size",
         type=int,
-        default=128,
+        default=32,
         help="Batch size for Qwen-LM enahnce captioning stage.",
     )
     parser.add_argument(

@@ -204,6 +204,7 @@ class CosmosReason1VL(ModelInterface):
         self.stage2_prompt: str = _DEFAULT_STAGE2_PROMPT
         if stage2_prompt_text is not None:
             self.stage2_prompt = stage2_prompt_text
+        self.stage2_prompt = self.stage2_prompt.strip() + "\n"
 
     @property
     def conda_env_name(self) -> str:

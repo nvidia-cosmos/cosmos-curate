@@ -210,6 +210,9 @@ mypy:
     - *setup_curator
     - mypy --pretty
     - *teardown_micromamba
+  retry:
+    max: 2
+    when: always
 
 unit_tests:
   stage: test
@@ -238,6 +241,9 @@ unit_tests:
       - unit-coverage.xml
       - .coverage.unit_tests
     expire_in: 1 week
+  retry:
+    max: 2
+    when: always
 
 build_deploy_curator:
   stage: build
