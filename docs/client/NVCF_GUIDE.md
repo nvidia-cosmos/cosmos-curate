@@ -2,7 +2,7 @@
 
 - [Cosmos-Curate - NVCF Guide](#cosmos-curate---nvcf-guide)
     - [Store Configuration Settings](#store-configuration-settings)
-    - [Upload Helm Chart](#upload-helm-chart)
+    - [Build \& Upload Helm Chart](#build--upload-helm-chart)
     - [Upload Container Image](#upload-container-image)
     - [Upload Model Weights](#upload-model-weights)
     - [Create, Deploy, Invoke Function](#create-deploy-invoke-function)
@@ -37,9 +37,9 @@ export NVCF_INSTANCE_TYPE=<your_instance_type>
 cosmos-curate nvcf config set
 ```
 
-### Upload Helm Chart
+### Build & Upload Helm Chart
 
-Follow this [README](../../charts/cosmos-curate/README.md) to upload the helm chart to your Org's registry.
+Follow the instructions in this [README](../../charts/cosmos-curate/README.md).
 
 ### Upload Container Image
 
@@ -78,7 +78,7 @@ docker tag cosmos-curate:1.0.0 nvcr.io/$NGC_NVCF_ORG/$NGC_NVCF_TEAM/cosmos-curat
 
 ```bash
 # download models from hugging face to local
-cosmos-curate local launch --image-name cosmos-curate --image-tag 1.0.0 --curator-path . -- python3 -m cosmos_curate.core.managers.model_cli download
+cosmos-curate local launch --image-name cosmos-curate --image-tag 1.0.0 --curator-path . -- pixi run python3 -m cosmos_curate.core.managers.model_cli download
 
 # sync to NVCF
 cosmos-curate nvcf model sync-models \
@@ -93,14 +93,17 @@ But for models, it is handled automatically by the CLI as long as you have `NGC_
 
 #### Create a Function
 
-Modify `~/.config/cosmos_curate/templates/function/create_curator_helm.json` to fill in the cert and key for your Thanos instance.
+Modify `~/.config/cosmos_curate/templates/function/create_curator_helm.json` to fill in the `crt` and `key` for your Thanos-like instance.
 This is for the Prometheus agent to remote-write the metrics.
+- If you don't have a Thanos-like instance yet,
+  - you can remove `byo-metrics-receiver-client-crt` and `byo-metrics-receiver-client-key` from the `secrets` list;
+  - then disable `metrics` when deploying the function, see details in next step.
 
 ```bash
 cosmos-curate nvcf function create-function \
     --name "${USER}-cosmos-curate" \
     --health-ep /api/local_raylet_healthz --health-port 52365 \
-    --helm-chart https://helm.ngc.nvidia.com/${NGC_NVCF_ORG}/charts/cosmos-curate-2.0.3.tgz \
+    --helm-chart https://helm.ngc.nvidia.com/${NGC_NVCF_ORG}/charts/cosmos-curate-2.0.5.tgz \
     --data-file ~/.config/cosmos_curate/templates/function/create_curator_helm.json
 ```
 
@@ -108,9 +111,10 @@ cosmos-curate nvcf function create-function \
 
 Modify `~/.config/cosmos_curate/templates/function/deploy_curator_helm.json` to fill in
 - image tag in `configuration.image.tag`
-- Org ID in the `nvcf.io/<ORG-ID>/...` image string
-- GPU count in `configuration.resources.requests`
+- Org ID in the `nvcf.io/<ORG-ID>/...` image string in `configuration.image.repository`
+- GPU count (per node) in `configuration.resources.requests` and `configuration.resources.limits`
 - Thanos remote-write receiver URL in `configuration.metrics.remoteWrite.endpoint`
+  - As mentioned above, if you don't have an endpoint, set `configuration.metrics.enabled` to `false`
 
 ```bash
 # --instance-count controls number of nodes
@@ -120,10 +124,24 @@ cosmos-curate nvcf function deploy-function \
     --data-file ~/.config/cosmos_curate/templates/function/deploy_curator_helm.json
 ```
 
-The deployment can take up to 30 minutes, you can run the following command to check the status:
+The deployment can take up to 15 minutes, you can run the following command to check the status:
 
 ```bash
 cosmos-curate nvcf function get-deployment-detail
+```
+
+If you are deploying a brand new container image, the deployment may fail due to timeout when pulling the new image.
+In that case, a re-deployment should just work:
+
+```bash
+# Un-deploy the function
+cosmos-curate nvcf function undeploy-function
+
+# Deploy it again
+cosmos-curate nvcf function deploy-function \
+    --max-concurrency 2 \
+    --instance-count 2 \
+    --data-file ~/.config/cosmos_curate/templates/function/deploy_curator_helm.json
 ```
 
 #### Invoke the Function

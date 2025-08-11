@@ -1,11 +1,12 @@
-# cosmos-curate Helm
-## Pre-requisites
-* [helm binary](https://helm.sh/docs/intro/install/)
-* [NGC CLI](https://org.ngc.nvidia.com/setup/installers/cli) and NGC profile (if pushing a new chart to the registry)
-* NGC_NVCF_API_KEY env var (if calling create/deploy) - that is an API key for an ORG with NVCF access
-* NGC_NVCF_ORG - destination repo for chart to be pushed
+# Cosmos-Curate Helm Chart
 
-## One-time steps
+## Pre-requisites
+* [Helm binary](https://helm.sh/docs/intro/install/)
+* [OpenTelemetry](https://opentelemetry.io/) repo
+* [NGC CLI and NGC profile](https://org.ngc.nvidia.com/setup/installers/cli) (if pushing a new chart to the [NGC registry](https://docs.nvidia.com/ngc/gpu-cloud/ngc-private-registry-user-guide/index.html))
+* `NGC_NVCF_ORG` - NVCF org ID, i.e. destination repo for chart to be pushed
+
+## One-Time Steps
 
 ### Add Open-Telemetry repo
 ```bash
@@ -24,14 +25,19 @@ ngc config set
 # - "no-ace"
 ```
 
-## Create the Chart Metadata for New Orgs:
+### Create the Chart Metadata for New Orgs:
 ```bash
 ngc registry chart create --short-desc "Chart for NVCF function for cosmos curate" ${NGC_NVCF_ORG}/cosmos-curate
 ```
 
-## Manually Packaging a chart
+## Version Control
+The latest version right now is `2.0.5`; you can edit this version as needed if you are tweaking this chart.
 ```bash
 export CHART_VERSION=2.0.5
+```
+
+## Manually Packaging a chart
+```bash
 helm dep build charts/cosmos-curate/
 helm package charts/cosmos-curate --version ${CHART_VERSION}
 ```
@@ -42,7 +48,7 @@ helm package charts/cosmos-curate --version ${CHART_VERSION}
 ngc registry chart push ${NGC_NVCF_ORG}/cosmos-curate:${CHART_VERSION}
 ```
 
-## Removing a chart (optional - use if you need to replace an existing version, use with caution) 
+## Removing a chart (if you REALLY need to replace an existing version, use with caution) 
 ```bash
 ngc registry chart remove ${NGC_NVCF_ORG}/cosmos-curate:${CHART_VERSION}
 ```
