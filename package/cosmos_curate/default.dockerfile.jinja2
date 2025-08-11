@@ -103,7 +103,10 @@ RUN wget -qO- https://pixi.sh/install.sh | PIXI_HOME=/usr/local PIXI_NO_PATH_UPD
 ENV AM_I_DOCKER=True \
     BUILD_WITH_CUDA=True \
     TORCH_CUDA_ARCH_LIST="5.0;6.0;6.1;7.0;7.5;8.0;8.6;9.0+PTX" \
-    CUDA_HOME="/usr/local/cuda"
+    CUDA_HOME="/usr/local/cuda" \
+    XFORMERS_IGNORE_FLASH_VERSION_CHECK="1" \
+    VLLM_WORKER_MULTIPROC_METHOD="spawn" \
+    VLLM_USE_V1="1"
 
 # Disable Ray log dedup
 ENV RAY_DEDUP_LOGS=0 \

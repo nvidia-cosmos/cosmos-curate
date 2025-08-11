@@ -501,3 +501,56 @@ class ShardPipeTask(PipelineTask):
         for sample in self.samples:
             total_size += sample.get_major_size()
         return total_size
+
+
+@attrs.define
+class VLLMConfig:
+    """Configuration for a vLLM model.
+
+    Args:
+        variant: Name of the model variant to use.
+        prompt_variant: Type of prompt to use.
+        prompt_text: Custom prompt text if provided.
+        batch_size: Number of samples to process in parallel.
+        fp8: Whether to enable FP8 precision.
+        preprocess: Whether model handles preprocessing.
+        disable_mmcache: Whether to disable model cache.
+        num_gpus_per_worker: Number of GPUs to allocate per worker.
+        batch_size: Number of samples to process in parallel.
+
+    """
+
+    variant: str
+    prompt_variant: str = "default"
+    prompt_text: str | None = None
+    fp8: bool = True
+    max_output_tokens: int = 512
+    preprocess: bool = False
+    disable_mmcache: bool = False
+    num_gpus: int = 1
+    temperature: float = 0.1
+    top_p: float = 0.001
+    repetition_penalty: float = 1.05
+    batch_size: int = 4
+
+
+@attrs.define
+class WindowConfig:
+    """Configuration for splitting a video into windows.
+
+    Args:
+        sampling_fps: Frames per second for sampling.
+        window_size: Size of each window in frames.
+        remainder_threshold: Minimum frames required for a remainder window.
+        preprocess_dtype: Data type for preprocessing.
+        model_does_preprocess: Whether model handles preprocessing.
+        use_input_bit_rate: Whether to use the input video's bit rate for processing.
+
+    """
+
+    window_size: int = 256
+    sampling_fps: float = 2.0
+    remainder_threshold: int = 128
+    model_does_preprocess: bool = False
+    preprocess_dtype: str = "float32"
+    use_input_bit_rate: bool = False

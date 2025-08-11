@@ -54,6 +54,7 @@ webdataset = "*"
 av = "*" # conda-forge package pulls in ffmpeg
 ngcsdk = "*" # not available on conda-forge
 opencv-python-headless = "*" # not available on conda-forge
+pillow = "*"  # required by phi-4 model, part of task, needs to be serialized
 pulp = "*" # conda-forge package is too old
 
 [feature.model-download.dependencies]

@@ -15,12 +15,20 @@
 """Utilities which are used in multiple places in the pipeline and/or are unit-tested."""
 
 import subprocess
+from itertools import zip_longest
 
 import attrs
 import torch
+from loguru import logger
 
 from cosmos_curate.core.utils.config.operation_context import make_pipeline_named_temporary_file
 from cosmos_curate.core.utils.model import conda_utils
+from cosmos_curate.pipelines.video.utils.data_model import (
+    Clip,
+    Video,
+    Window,
+    WindowConfig,
+)
 from cosmos_curate.pipelines.video.utils.decoder_utils import DEFAULT_TRANSCODE_BITRATE_M, get_frame_count
 
 if conda_utils.is_running_in_env("unified") or conda_utils.is_running_in_env("phi"):
@@ -176,3 +184,110 @@ def split_video_into_windows(  # noqa: PLR0913
                     subprocess.check_call(command)  # noqa: S603
                     mp4_bytes_list.append(tmp_file.read_bytes())
         return mp4_bytes_list, video_frames, windows
+
+
+def _make_windows_for_clip(
+    clip: Clip,
+    config: WindowConfig,
+    target_bit_rate: str,
+    num_decode_threads: int,
+    *,
+    keep_mp4: bool = False,
+) -> tuple[list[Window], list[torch.Tensor]]:
+    """Make windows for a clip.
+
+    Args:
+        clip: The clip to create windows for.
+        config: The configuration for the windowing.
+        target_bit_rate: The target bit rate.
+        num_decode_threads: The number of threads to use.
+        keep_mp4: Whether to keep the MP4.
+
+    Returns:
+        A tuple of lists of windows and frames.
+
+    """
+    windows: list[Window] = []
+    frames: list[torch.Tensor] = []
+
+    if clip.buffer is None:
+        logger.error(f"clip {clip.uuid} does not have a buffer")
+        clip.errors["clip_windowing"] = "clip.buffer is None"
+        return windows, frames
+
+    for window_bytes, window_frames, window_frame_info in zip_longest(
+        *split_video_into_windows(
+            clip.buffer,
+            window_size=config.window_size,
+            remainder_threshold=config.remainder_threshold,
+            sampling_fps=config.sampling_fps,
+            model_does_preprocess=config.model_does_preprocess,
+            preprocess_dtype=config.preprocess_dtype,
+            return_bytes=keep_mp4,
+            target_bit_rate=target_bit_rate,
+            num_threads=num_decode_threads,
+        ),
+    ):
+        if window_frames is None:
+            logger.error(f"Window frames are None for window {window_frame_info.start} to {window_frame_info.end}")
+            continue
+        try:
+            window = Window(
+                start_frame=window_frame_info.start,
+                end_frame=window_frame_info.end,
+                mp4_bytes=window_bytes,
+            )
+            clip.windows.append(window)
+            windows.append(window)
+            frames.append(window_frames)
+        except Exception as e:  # noqa: BLE001
+            logger.exception("Error when splitting a video into windows")
+            clip.errors["clip_windowing"] = str(e)
+
+    return windows, frames
+
+
+def make_windows_for_video(
+    video: Video,
+    config: WindowConfig,
+    num_decode_threads: int,
+    *,
+    keep_mp4: bool = False,
+) -> tuple[list[Window], list[torch.Tensor]]:
+    """Add windows to each clip in a video.
+
+    Args:
+        video: The video to make vLLM inputs for.
+        config: The configuration for the windowing.
+        num_decode_threads: The number of threads to use when decoding the video.
+        keep_mp4: Whether to keep the MP4.
+
+    Returns:
+        A tuple of lists of windows and frames.
+
+    """
+    target_bit_rate = (
+        f"{video.metadata.bit_rate_k}K" if config.use_input_bit_rate else f"{DEFAULT_TRANSCODE_BITRATE_M}M"
+    )
+
+    windows: list[Window] = []
+    frames: list[torch.Tensor] = []
+
+    for clip in video.clips:
+        if clip.buffer is None:
+            logger.warning(f"Clip {clip.uuid} has no buffer.")
+            clip.errors["buffer"] = "empty"
+            continue
+
+        _windows, _frames = _make_windows_for_clip(
+            clip,
+            config,
+            target_bit_rate,
+            num_decode_threads,
+            keep_mp4=keep_mp4,
+        )
+
+        windows.extend(_windows)
+        frames.extend(_frames)
+
+    return windows, frames

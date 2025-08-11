@@ -54,9 +54,8 @@ def sample_filtering_task(sample_video_data: bytes) -> SplitPipeTask:
 
 
 @pytest.mark.env("unified")
-def test_generate_embedding(sample_filtering_task: SplitPipeTask, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_generate_embedding(sample_filtering_task: SplitPipeTask) -> None:
     """Test the QwenCaptioning result."""
-    monkeypatch.setenv("VLLM_WORKER_MULTIPROC_METHOD", "spawn")
     filtering_prompt = "blue car"
     stages = [
         ClipTranscodingStage(encoder="libopenh264"),
