@@ -31,9 +31,9 @@ ngc registry chart create --short-desc "Chart for NVCF function for cosmos curat
 ```
 
 ## Version Control
-The latest version right now is `2.0.5`; you can edit this version as needed if you are tweaking this chart.
+The latest version right now is `2.1.1`; you can edit this version as needed if you are tweaking this chart.
 ```bash
-export CHART_VERSION=2.0.5
+export CHART_VERSION=2.1.1
 ```
 
 ## Manually Packaging a chart

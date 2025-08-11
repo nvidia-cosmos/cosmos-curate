@@ -4,16 +4,6 @@
         "zone1"
     ],
     "configuration": {
-        "command": [
-            "pixi"
-        ],
-        "args": [
-            "run",
-            "python",
-            "/opt/cosmos-curate/cosmos_curate/scripts/onto_nvcf.py",
-            "--helm",
-            "True"
-        ],
         "image": {
             "tag": "${HELM_IMAGE_TAG}",
             "repository": "nvcr.io/${NGC_NVCF_ORG}/cosmos-curate"

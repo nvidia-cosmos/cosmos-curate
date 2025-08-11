@@ -67,12 +67,6 @@ health:
   port: 52365
 shmem:
   limit: 55Gi
-command:
-  - "python"
-args:
-  - "/opt/cosmos-curate/cosmos_curate/scripts/onto_nvcf.py"
-  - "--helm"
-  - "True"
 s3:
   credsPath: "/dev/shm/aws.config"
   secret:

@@ -103,7 +103,7 @@ This is for the Prometheus agent to remote-write the metrics.
 cosmos-curate nvcf function create-function \
     --name "${USER}-cosmos-curate" \
     --health-ep /api/local_raylet_healthz --health-port 52365 \
-    --helm-chart https://helm.ngc.nvidia.com/${NGC_NVCF_ORG}/charts/cosmos-curate-2.0.5.tgz \
+    --helm-chart https://helm.ngc.nvidia.com/${NGC_NVCF_ORG}/charts/cosmos-curate-2.1.1.tgz \
     --data-file ~/.config/cosmos_curate/templates/function/create_curator_helm.json
 ```
 
