@@ -699,11 +699,12 @@ async def curate_video(request: Request) -> JSONResponse:  # noqa: C901, PLR0912
         )
 
         invoke_args = await request.json()
+        pipeline_type = invoke_args.get("pipeline", "unknown")
 
         pipeline_args = argparse.Namespace(**(invoke_args.get("args", {})))
 
         # Handle any presigned URL processing and ensure we now have a concrete Namespace
-        pipeline_args = handle_presigned_urls(pipeline_args)
+        pipeline_args = handle_presigned_urls(pipeline_type, pipeline_args)
 
         # At this point `pipeline_args` **must** be a populated Namespace object.
         # Add an explicit runtime assertion so static type-checkers understand this.
@@ -715,7 +716,6 @@ async def curate_video(request: Request) -> JSONResponse:  # noqa: C901, PLR0912
             # the pipeline script dont need it once the profile is created
             pipeline_args.s3_config = "REDACTED"
 
-        pipeline_type = invoke_args.get("pipeline", "unknown")
         logger.info(f"Launching pipeline {pipeline_type} with args: {pipeline_args}")
         if pipeline_type in {"split"}:
             # handle possible assets. Do not override presigned URL paths.
@@ -823,7 +823,7 @@ async def curate_video(request: Request) -> JSONResponse:  # noqa: C901, PLR0912
         if did_init_s3_profile:
             remove_s3_profile()
         if pipeline_args is not None:
-            gather_and_upload_outputs(pipeline_args)
+            gather_and_upload_outputs(pipeline_type, pipeline_args)
         if manager:
             manager.shutdown()
 

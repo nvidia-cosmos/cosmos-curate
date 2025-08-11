@@ -276,19 +276,34 @@ def download_and_extract_zip(presigned_url: str) -> str:
         return fut.result()
 
 
-def handle_presigned_urls(pipeline_args: argparse.Namespace) -> argparse.Namespace:
+def handle_presigned_urls(pipeline_type: str, pipeline_args: argparse.Namespace) -> argparse.Namespace:
     """Update *pipeline_args* in-place based on any presigned URLs present."""
     if getattr(pipeline_args, "input_presigned_s3_url", None):
         logger.info("Input presigned URL detected - downloading …")
         extracted_path = download_and_extract_zip(pipeline_args.input_presigned_s3_url)
-        pipeline_args.input_video_path = extracted_path
         logger.info(f"Extracted to temporary directory: {extracted_path}")
+        if pipeline_type == "split":
+            pipeline_args.input_video_path = extracted_path
+        elif pipeline_type == "semantic-dedup":
+            pipeline_args.input_embeddings_path = extracted_path
+        else:
+            logger.warning(f"Unsupported pipeline type '{pipeline_type}' for presigned input URL.")
 
-    if getattr(pipeline_args, "output_presigned_s3_url", None) and not getattr(pipeline_args, "output_clip_path", None):
-        pipeline_args.output_clip_path = tempfile.mkdtemp(prefix="output_clips_")
-        logger.warning(
-            f"No output_clip_path provided; using temporary directory {pipeline_args.output_clip_path}",
-        )
+    if getattr(pipeline_args, "output_presigned_s3_url", None):
+        if pipeline_type == "split":
+            if not getattr(pipeline_args, "output_clip_path", None):
+                pipeline_args.output_clip_path = tempfile.mkdtemp(prefix="output_split_")
+                logger.warning(
+                    f"No output_clip_path provided; using temporary directory {pipeline_args.output_clip_path}",
+                )
+        elif pipeline_type == "semantic-dedup":
+            if not getattr(pipeline_args, "output_path", None):
+                pipeline_args.output_path = tempfile.mkdtemp(prefix="output_dedup_")
+                logger.warning(
+                    f"No output_path provided; using temporary directory {pipeline_args.output_path}",
+                )
+        else:
+            logger.warning(f"Unsupported pipeline type '{pipeline_type}' for presigned output URL.")
     return pipeline_args
 
 
@@ -357,31 +372,47 @@ def gather_outputs_from_all_nodes(output_directory: str) -> None:
             logger.warning(f"Gather outputs failed: {exc}")
 
 
-def gather_and_upload_outputs(args: argparse.Namespace) -> None:
+def gather_and_upload_outputs(pipeline_type: str, args: argparse.Namespace) -> None:
     """Gather outputs, write metadata, zip, and upload via presigned URL."""
-    if not (getattr(args, "output_presigned_s3_url", None) and getattr(args, "output_clip_path", None)):
+    if getattr(args, "output_presigned_s3_url", None) is None:
+        return
+
+    output_path: str | None = None
+    if pipeline_type == "split":
+        if getattr(args, "output_clip_path", None) is None:
+            logger.warning("output_clip_path for split pipeline is not set?")
+            return
+        output_path = str(args.output_clip_path)
+    elif pipeline_type == "semantic-dedup":
+        if getattr(args, "output_path", None) is None:
+            logger.warning("output_path for semantic-dedup pipeline is not set?")
+            return
+        output_path = str(args.output_path)
+    else:
+        logger.warning(f"Unsupported pipeline type '{pipeline_type}' for presigned output URL.")
         return
 
     try:
         logger.info("Gathering per-node outputs …")
-        gather_outputs_from_all_nodes(args.output_clip_path)
+        gather_outputs_from_all_nodes(output_path)
 
-        logger.info("Writing consolidated window-captions metadata …")
-        input_client = get_storage_client(args.input_video_path)
-        output_client = get_storage_client(args.output_clip_path, can_overwrite=True)
-        _write_all_window_captions(
-            args.output_clip_path,
-            None,
-            get_files_relative(args.input_video_path, input_client),
-            0,
-            output_client,
-        )
+        if pipeline_type == "split":
+            logger.info("Re-writing consolidated window-captions metadata …")
+            input_client = get_storage_client(args.input_video_path)
+            output_client = get_storage_client(output_path, can_overwrite=True)
+            _write_all_window_captions(
+                output_path,
+                None,
+                get_files_relative(args.input_video_path, input_client),
+                0,
+                output_client,
+            )
 
         logger.info("Uploading zipped outputs …")
-        zip_and_upload_directory(args.output_clip_path, args.output_presigned_s3_url)
+        zip_and_upload_directory(output_path, args.output_presigned_s3_url)
     except Exception as exc:  # noqa: BLE001
         logger.exception(f"Failed to gather/upload outputs: {exc}")
     finally:
-        if "output_clips_" in str(getattr(args, "output_clip_path", "")):
+        if "output_split_" in output_path or "output_dedup_" in output_path:
             with contextlib.suppress(OSError):
-                shutil.rmtree(args.output_clip_path)
+                shutil.rmtree(output_path)
