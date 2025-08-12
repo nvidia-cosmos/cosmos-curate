@@ -11,7 +11,7 @@ extra-index-urls = ["https://pypi.nvidia.com"]
 python = "3.10.*"
 
 [pypi-dependencies]
-ray = { version = "*", extras = ["default"] } # conda-forge package pulls in an old version of protobuf
+ray = { version = "==2.48.0", extras = ["default"] } # conda-forge package pulls in an old version of protobuf
 
 [feature.core.system-requirements]
 cuda = "12.9.1" # match the version of the nvidia/cuda docker base image
