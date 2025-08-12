@@ -24,6 +24,8 @@ RUN apt-get update \
     wget \
     # Needed for pip install \
     git \
+    # Needed for cuda profiling \
+    nsight-systems-2025.3.2 \
     --option=Dpkg::Options::=--force-confdef \
     && update-ca-certificates \
     && apt-get clean \
