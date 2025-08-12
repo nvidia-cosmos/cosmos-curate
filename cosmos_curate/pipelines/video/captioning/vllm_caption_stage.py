@@ -196,6 +196,15 @@ class VllmPrepStage(CuratorStage):
         self._processor: AutoProcessor | None = None
         self._keep_mp4 = keep_mp4
 
+    def secondary_name(self) -> str:
+        """Get the secondary name of the stage.
+
+        Returns:
+            The secondary name of the stage.
+
+        """
+        return self._vllm_config.variant
+
     @property
     def resources(self) -> CuratorStageResource:
         """Get the resource requirements for this stage.
@@ -327,6 +336,15 @@ class VllmCaptionStage(CuratorStage):
     def destroy(self) -> None:
         """Clean up GPU resources."""
         gpu_stage_cleanup(self.__class__.__name__)
+
+    def secondary_name(self) -> str:
+        """Get the secondary name of the stage.
+
+        Returns:
+            The secondary name of the stage.
+
+        """
+        return self._vllm_config.variant
 
     @property
     def conda_env_name(self) -> str:
