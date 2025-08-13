@@ -129,17 +129,14 @@ class VLLMPlugin(ABC):
 
     @staticmethod
     @abstractmethod
-    def get_llm_input_from_window(window: Window) -> dict[str, Any]:
+    def get_llm_input_from_window(window: Window) -> dict[str, Any] | None:
         """Get the LLM input for a window.
 
         Args:
             window: The window.
 
         Returns:
-            The LLM input for the window.
-
-        Raises:
-            ValueError: If the LLM input is None.
+            The LLM input for the window, None if the window has no LLM input.
 
         """
 

@@ -140,15 +140,6 @@ def test_get_phi_llm_input_from_window() -> None:
 
 
 @pytest.mark.env("unified")
-def test_get_phi_llm_input_from_window_none() -> None:
-    """Test get_phi_llm_input_from_window with None input."""
-    window = Window(start_frame=0, end_frame=10, phi_llm_input=None)
-
-    with pytest.raises(ValueError, match=".*"):
-        VLLMPhi4.get_llm_input_from_window(window)
-
-
-@pytest.mark.env("unified")
 def test_free_vllm_inputs_phi() -> None:
     """Test free_vllm_inputs function."""
     # Create windows with data

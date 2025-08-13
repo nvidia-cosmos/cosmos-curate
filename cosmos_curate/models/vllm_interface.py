@@ -178,10 +178,18 @@ def gather_vllm_inputs(
     caption_mappings: list[tuple[int, int, int]] = []
     for video_idx, video in enumerate(videos):
         for clip_idx, clip in enumerate(video.clips):
+            if not clip.windows:
+                logger.warning(f"Clip {clip.uuid} has no windows")
+                clip.errors["clip_windowing"] = "empty"
+                continue
             for window_idx, window in enumerate(clip.windows):
                 llm_input = vllm_plugin.get_llm_input_from_window(window)
-                llm_inputs.append(llm_input)
-                caption_mappings.append((video_idx, clip_idx, window_idx))
+                if llm_input:
+                    llm_inputs.append(llm_input)
+                    caption_mappings.append((video_idx, clip_idx, window_idx))
+                else:
+                    logger.error(f"Clip {clip.uuid} window {window_idx} has no prepared inputs.")
+                    clip.errors[f"window-{window_idx}"] = "empty"
 
     return llm_inputs, caption_mappings
 
@@ -314,6 +322,15 @@ def vllm_caption(  # noqa: PLR0913
     """
     # stage 1 captioning
     llm_inputs, caption_mappings = gather_vllm_inputs(videos, model_config.variant)
+
+    if not llm_inputs:
+        logger.warning("No valid LLM inputs found in any videos")
+        return 0
+
+    if not caption_mappings:
+        logger.warning("No valid caption mappings found in any videos")
+        return 0
+
     vllm_outputs = vllm_generate(llm, sampling_params, llm_inputs, model_config.batch_size, use_tqdm=use_tqdm)
     captions = decode_vllm_outputs(vllm_outputs, model_config.variant)
 

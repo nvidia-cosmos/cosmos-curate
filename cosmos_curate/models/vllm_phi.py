@@ -231,22 +231,16 @@ class VLLMPhi4(VLLMPlugin):
         window.phi_llm_input = llm_input
 
     @staticmethod
-    def get_llm_input_from_window(window: Window) -> dict[str, Any]:
+    def get_llm_input_from_window(window: Window) -> dict[str, Any] | None:
         """Get the LLM input for a Phi window.
 
         Args:
             window: The window.
 
         Returns:
-            The LLM input for the window.
-
-        Raises:
-            ValueError: If the Phi LLM input is None.
+            The LLM input for the window, None if the window has no LLM input.
 
         """
-        if window.phi_llm_input is None:
-            msg = "Phi LLM input is None"
-            raise ValueError(msg)
         return window.phi_llm_input
 
     @staticmethod

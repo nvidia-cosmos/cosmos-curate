@@ -79,6 +79,37 @@ def test_gather_vllm_inputs_empty(mock_get_plugin: MagicMock) -> None:
 
 
 @pytest.mark.env("unified")
+def test_gather_vllm_inputs_empty_clip() -> None:
+    """Test gather_vllm_inputs with empty clip."""
+    clip = Clip(uuid=uuid4(), source_video="test.mp4", span=(0.0, 5.0), windows=[])
+    video = Video(input_video=Path("test.mp4"), clips=[clip])
+    videos = [video]
+
+    llm_inputs, caption_mappings = gather_vllm_inputs(videos, VALID_VARIANTS[0])
+
+    assert llm_inputs == []
+    assert caption_mappings == []
+    assert clip.errors["clip_windowing"]
+
+
+@pytest.mark.env("unified")
+def test_gather_vllm_inputs_empty_llm_inputs() -> None:
+    """Test gather_vllm_inputs with empty llm_inputs in window."""
+    window = Window(start_frame=0, end_frame=10)
+    clip = Clip(uuid=uuid4(), source_video="test.mp4", span=(0.0, 5.0), windows=[window])
+    video = Video(input_video=Path("test.mp4"), clips=[clip])
+    videos = [video]
+
+    assert not clip.errors
+
+    llm_inputs, caption_mappings = gather_vllm_inputs(videos, VALID_VARIANTS[0])
+
+    assert llm_inputs == []
+    assert caption_mappings == []
+    assert clip.errors
+
+
+@pytest.mark.env("unified")
 def test_scatter_vllm_captions() -> None:
     """Test scatter_vllm_captions function."""
     # Create test windows
