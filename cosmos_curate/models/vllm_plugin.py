@@ -83,6 +83,28 @@ class VLLMPlugin(ABC):
 
     @staticmethod
     @abstractmethod
+    def make_refined_llm_input(
+        caption: str, prev_input: dict[str, Any], processor: AutoProcessor, refine_prompt: str | None = None
+    ) -> dict[str, Any]:
+        """Make refined LLM input.
+
+        Take a generated caption and the prompt (prev_input) used to
+        generate that caption and create an refinement prompt.
+
+        Args:
+            caption: The caption to refine
+            prev_input: The prompt that was used to generate the caption
+            processor: The processor to use for the stage 2 prompt
+            refine_prompt: An optional prompt to use to refine the caption. If
+                None, the default refineprompt will be used.
+
+        Returns:
+            A prompt used to refine an existing caption.
+
+        """
+
+    @staticmethod
+    @abstractmethod
     def decode(vllm_output: RequestOutput) -> str:
         """Decode one vllm output into a caption string.
 

@@ -34,6 +34,7 @@ import nvtx  # type: ignore[import-untyped]
 from loguru import logger
 
 from cosmos_curate.core.interfaces.stage_interface import CuratorStage, CuratorStageResource, PipelineTask
+from cosmos_curate.core.utils.infra.gpu_start_helper import gpu_stage_cleanup
 from cosmos_curate.core.utils.infra.performance_utils import StageTimer
 from cosmos_curate.core.utils.model import conda_utils
 from cosmos_curate.pipelines.video.captioning.captioning_stages import _get_prompt
@@ -51,13 +52,10 @@ if conda_utils.is_running_in_env("unified"):
 
     from cosmos_curate.models.vllm_interface import (
         auto_processor,
-        decode_vllm_outputs,
         encode_windows_for_vllm,
         free_vllm_inputs,
-        gather_vllm_inputs,
         sampling_params,
-        scatter_vllm_captions,
-        vllm_generate,
+        vllm_caption,
         vllm_model,
     )
 
@@ -253,6 +251,7 @@ class VLLMCaptionStage(CuratorStage):
         self._vllm_config = vllm_config
         self._llm: LLM | None = None
         self._sampling_params: SamplingParams | None = None
+        self._processor: AutoProcessor | None = None
         self._keep_mp4 = keep_mp4
         self._verbose = verbose
         self._log_stats = log_stats
@@ -302,6 +301,22 @@ class VLLMCaptionStage(CuratorStage):
             self._sampling_params = sampling_params(self._vllm_config)
         return self._sampling_params
 
+    @property
+    def processor(self) -> "AutoProcessor":
+        """Get the processor for the model.
+
+        Returns:
+            The processor for the model.
+
+        """
+        if self._processor is None:
+            self._processor = auto_processor(self._vllm_config)
+        return self._processor
+
+    def destroy(self) -> None:
+        """Clean up GPU resources."""
+        gpu_stage_cleanup(self.__class__.__name__)
+
     def free_unused(self, tasks: list[T]) -> None:
         """Free unused memory, if enabled.
 
@@ -334,15 +349,17 @@ class VLLMCaptionStage(CuratorStage):
         videos = [_get_video_from_task(task) for task in tasks]
 
         with self._timer.time_process():
-            llm_inputs, caption_mappings = gather_vllm_inputs(videos, self._vllm_config.variant)
-            vllm_outputs = vllm_generate(
-                self.llm, self.sampling_params, llm_inputs, self._vllm_config.batch_size, use_tqdm=self._vllm_use_tqdm
+            num_captions = vllm_caption(
+                videos,
+                self.llm,
+                self.processor,
+                self._vllm_config,
+                self.sampling_params,
+                use_tqdm=self._vllm_use_tqdm,
             )
-            captions = decode_vllm_outputs(vllm_outputs, self._vllm_config.variant)
-            scatter_vllm_captions(self._vllm_config.variant, videos, caption_mappings, captions)
 
         if self._verbose:
-            logger.info(f"Generated {len(captions)} captions for {len(tasks)} tasks")
+            logger.info(f"Generated {num_captions} captions for {len(tasks)} tasks")
 
         if self._log_stats:
             # Because there's a single call to caption all tasks, just log the first task's stage_perf.

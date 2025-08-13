@@ -264,3 +264,72 @@ def free_vllm_inputs(video: Video, model_variant: str) -> None:
 
     """
     _get_vllm_plugin(model_variant).free_vllm_inputs(video)
+
+
+def make_refined_llm_input(
+    caption: str,
+    prev_input: dict[str, Any],
+    processor: AutoProcessor,
+    model_variant: str,
+    refine_prompt: str | None = None,
+) -> dict[str, Any]:
+    """Make a refined LLM input.
+
+    Args:
+        caption: The caption to refine.
+        prev_input: The previous input.
+        processor: The processor to use.
+        model_variant: The variant of the model.
+        refine_prompt: The prompt to use to refine the caption.
+
+    Returns:
+        A refined LLM input.
+
+    """
+    return _get_vllm_plugin(model_variant).make_refined_llm_input(caption, prev_input, processor, refine_prompt)
+
+
+def vllm_caption(  # noqa: PLR0913
+    videos: list[Video],
+    llm: LLM,
+    processor: AutoProcessor,
+    model_config: VLLMConfig,
+    sampling_params: SamplingParams,
+    *,
+    use_tqdm: bool = False,
+) -> int:
+    """Caption the videos using the vLLM model.
+
+    Args:
+        videos: The videos to caption.
+        llm: The vLLM model.
+        processor: The processor to use.
+        model_config: The configuration for the VLLM model.
+        sampling_params: The sampling parameters.
+        use_tqdm: Whether to use tqdm.
+
+    Returns:
+        The number of captions generated.
+
+    """
+    # stage 1 captioning
+    llm_inputs, caption_mappings = gather_vllm_inputs(videos, model_config.variant)
+    vllm_outputs = vllm_generate(llm, sampling_params, llm_inputs, model_config.batch_size, use_tqdm=use_tqdm)
+    captions = decode_vllm_outputs(vllm_outputs, model_config.variant)
+
+    # stage 2 captioning
+    if model_config.stage2_caption:
+        llm_inputs_refined = [
+            make_refined_llm_input(
+                caption, prev_input, processor, model_config.variant, model_config.stage2_prompt_text
+            )
+            for caption, prev_input in zip(captions, llm_inputs, strict=True)
+        ]
+        vllm_refined_outputs = vllm_generate(
+            llm, sampling_params, llm_inputs_refined, model_config.batch_size, use_tqdm=use_tqdm
+        )
+        captions = decode_vllm_outputs(vllm_refined_outputs, model_config.variant)
+
+    scatter_vllm_captions(model_config.variant, videos, caption_mappings, captions)
+
+    return len(captions)

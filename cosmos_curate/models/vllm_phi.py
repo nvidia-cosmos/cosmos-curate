@@ -41,6 +41,10 @@ GPU_MEMORY_UTILIZATION = 0.85
 MAX_NUM_BATCHED_TOKENS = 32768
 TRUST_REMOTE_CODE = True
 LIMIT_MM_PER_PROMPT = {"image": 100}
+_DEFAULT_REFINE_PROMPT = """
+Improve and refine following video description. Focus on highlighting the key visual and sensory elements.
+Ensure the description is clear, precise, and paints a compelling picture of the scene.\n
+"""
 
 
 def tensor_to_pil(tensor: torch.Tensor) -> Image.Image:
@@ -59,6 +63,64 @@ def tensor_to_pil(tensor: torch.Tensor) -> Image.Image:
     tensor = torch.clamp(tensor, 0, 255) if tensor.dtype == torch.uint8 else torch.clamp(tensor, 0, 1)
     pil_image = tensor_to_pil_transform(tensor)
     return cast("Image.Image", pil_image)
+
+
+def get_image_placeholder(num_frames: int) -> str:
+    """Get the image placeholder for the Phi model.
+
+    Args:
+        num_frames: The number of frames to get the placeholder for.
+
+    Returns:
+        A string containing the image placeholder.
+
+    """
+    return "".join(f"<|image_{i + 1}|>" for i in range(num_frames))
+
+
+def make_message(prompt: str, images: list[Image.Image]) -> dict[str, Any]:
+    """Make a message for the Phi model.
+
+    Args:
+        prompt: The prompt to use for the message.
+        images: The images to use for the message.
+
+    Returns:
+        A message for the Phi model.
+
+    """
+    placeholder = get_image_placeholder(len(images))
+    return {
+        "role": "user",
+        "content": placeholder + prompt,
+        "images": images,
+    }
+
+
+def make_prompt(message: dict[str, Any], processor: AutoProcessor) -> dict[str, Any]:
+    """Make a prompt for the Phi model.
+
+    Args:
+        message: The message to use to create the prompt
+        processor: The processor to use for the prompt.
+
+    Returns:
+        A prompt for the Phi model.
+
+    """
+    tokenizer = getattr(processor, "tokenizer", None)
+    if tokenizer is None:
+        msg = "Tokenizer is not set"
+        raise ValueError(msg)
+
+    if "images" not in message:
+        msg = "Message does not contain images"
+        raise ValueError(msg)
+
+    return {
+        "prompt": tokenizer.apply_chat_template([message], tokenize=False, add_generation_prompt=True),
+        "multi_modal_data": {"image": message["images"]},
+    }
 
 
 class VLLMPhi4(VLLMPlugin):
@@ -122,31 +184,40 @@ class VLLMPhi4(VLLMPlugin):
             A dictionary containing the LLM inputs.
 
         """
-        placeholder = ""
-        for i in range(frames.shape[0]):
-            placeholder += f"<|image_{i + 1}|>"
-
         pil_images = [tensor_to_pil(frames[i]) for i in range(frames.shape[0])]
+        message = make_message(prompt, pil_images)
+        return make_prompt(message, processor)
 
-        message = {
-            "role": "user",
-            "content": placeholder + prompt,
-            "images": pil_images,
-        }
+    @staticmethod
+    def make_refined_llm_input(
+        caption: str, prev_input: dict[str, Any], processor: AutoProcessor, refine_prompt: str | None = None
+    ) -> dict[str, Any]:
+        """Get a prompt to refine an existing caption.
 
-        tokenizer = getattr(processor, "tokenizer", None)
-        if tokenizer is None:
-            msg = "Tokenizer is not set"
+        Args:
+            caption: The caption to refine
+            prev_input: The prompt that was used to generate the caption
+            processor: The processor to use for the stage 2 prompt
+            refine_prompt: An optional prompt to use to refine the caption. If
+                None, the default refine prompt will be used.
+
+        Returns:
+            A refined prompt
+
+        """
+        _refine_prompt = _DEFAULT_REFINE_PROMPT if refine_prompt is None else refine_prompt
+        final_prompt = _refine_prompt + caption
+
+        if "multi_modal_data" not in prev_input:
+            msg = "Message does not contain multi_modal_data"
             raise ValueError(msg)
 
-        token_prompt = tokenizer.apply_chat_template([message], tokenize=False, add_generation_prompt=True)
+        if "image" not in prev_input["multi_modal_data"]:
+            msg = "Message does not contain image"
+            raise ValueError(msg)
 
-        return {
-            "prompt": token_prompt,
-            "multi_modal_data": {
-                "image": pil_images,
-            },
-        }
+        message = make_message(final_prompt, prev_input["multi_modal_data"]["image"])
+        return make_prompt(message, processor)
 
     @staticmethod
     def add_llm_input_to_window(window: Window, llm_input: dict[str, Any]) -> None:

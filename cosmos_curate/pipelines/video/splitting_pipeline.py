@@ -439,6 +439,8 @@ def split(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912, PLR0915
             prompt_variant=args.captioning_prompt_variant,
             prompt_text=args.captioning_prompt_text,
             max_output_tokens=args.captioning_max_output_tokens,
+            stage2_caption=args.phi4_stage2_caption,
+            stage2_prompt_text=args.phi4_stage2_prompt_text,
         )
 
         window_config = WindowConfig(
@@ -1127,6 +1129,19 @@ def _setup_parser(parser: argparse.ArgumentParser) -> None:  # noqa: PLR0915
         action="store_true",
         default=False,
         help="Whether to use fp8 weights for Qwen VL model or not.",
+    )
+    parser.add_argument(
+        "--phi4-stage2-caption",
+        dest="phi4_stage2_caption",
+        action="store_true",
+        default=False,
+        help="If set, generated captions are used as input prompts again into Phi4 to refine them",
+    )
+    parser.add_argument(
+        "--phi4-stage2-prompt-text",
+        type=str,
+        default=None,
+        help="Specify the input prompt used to generate stage2 Phi4 captions",
     )
     parser.add_argument(
         "--captioning-max-output-tokens",

@@ -517,6 +517,8 @@ class VLLMConfig:
         disable_mmcache: Whether to disable model cache.
         num_gpus_per_worker: Number of GPUs to allocate per worker.
         batch_size: Number of samples to process in parallel.
+        stage2_caption: Whether to enable stage 2 captioning.
+        stage2_prompt_text: Custom prompt text for stage 2 captioning.
 
     """
 
@@ -532,6 +534,8 @@ class VLLMConfig:
     top_p: float = 0.001
     repetition_penalty: float = 1.05
     batch_size: int = 4
+    stage2_caption: bool = False
+    stage2_prompt_text: str | None = None
 
 
 @attrs.define

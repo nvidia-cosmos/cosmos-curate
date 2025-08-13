@@ -22,7 +22,7 @@ import pytest
 import torch
 from PIL import Image
 
-from cosmos_curate.models.vllm_phi import VLLMPhi4, tensor_to_pil
+from cosmos_curate.models.vllm_phi import VLLMPhi4, get_image_placeholder, make_message, make_prompt, tensor_to_pil
 from cosmos_curate.pipelines.video.utils.data_model import Clip, Video, Window
 
 
@@ -185,3 +185,42 @@ def test_free_vllm_inputs_empty_video() -> None:
 
     # Should not raise any errors
     VLLMPhi4.free_vllm_inputs(video)
+
+
+@pytest.mark.env("unified")
+def test_get_image_placeholder() -> None:
+    """Test get_image_placeholder function."""
+    assert get_image_placeholder(1) == "<|image_1|>"
+    assert get_image_placeholder(2) == "<|image_1|><|image_2|>"
+    assert get_image_placeholder(3) == "<|image_1|><|image_2|><|image_3|>"
+
+
+@pytest.mark.env("unified")
+def test_make_message() -> None:
+    """Test make_message function."""
+    prompt = "Test prompt"
+    images = [Image.new("RGB", (32, 32)) for _ in range(2)]
+    message = make_message(prompt, images)
+    assert "role" in message
+    assert message["role"] == "user"
+    assert "content" in message
+    assert "images" in message
+    assert message["images"] == images
+
+
+@pytest.mark.env("unified")
+def test_make_prompt() -> None:
+    """Test make_prompt function."""
+    # Create mock processor with tokenizer
+    mock_tokenizer = MagicMock()
+    mock_tokenizer.apply_chat_template.return_value = "mocked_prompt"
+
+    mock_processor = MagicMock()
+    mock_processor.tokenizer = mock_tokenizer
+
+    prompt = "Test prompt"
+    images = [Image.new("RGB", (32, 32)) for _ in range(2)]
+    message = make_message(prompt, images)
+    result = make_prompt(message, mock_processor)
+    assert result["prompt"] == "mocked_prompt"
+    assert result["multi_modal_data"]["image"] == images
