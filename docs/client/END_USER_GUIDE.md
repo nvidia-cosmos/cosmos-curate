@@ -373,7 +373,7 @@ cosmos-curate slurm submit \
   --remote-files-path "${SLURM_USER_DIR}/job_info" \
   --container-image "${CONTAINER_IMAGE}" \
   --container-mounts "${CONTAINER_MOUNTS}" \
-    -- pixi run python -m cosmos_curate.pipelines.examples.hello_world_pipeline
+    -- python -m cosmos_curate.pipelines.examples.hello_world_pipeline
 ```
 
 The command above will print the slurm job id like below

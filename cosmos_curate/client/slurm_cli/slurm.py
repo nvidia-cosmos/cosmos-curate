@@ -586,7 +586,7 @@ def submit_cli(  # noqa: PLR0913
     exclude_nodes_list = exclude_nodes.split(",") if exclude_nodes is not None else None
 
     container_spec = ContainerSpec(
-        command=[str(_START_RAY), *command],
+        command=["pixi", "run", str(_START_RAY), *command],
         squashfs_path=container_image,
         environment=env_list,
         mounts=container_mount_specs,

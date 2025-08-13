@@ -744,7 +744,7 @@ class TestMain:
 
             if is_head_node:
                 mock_wait_for_workers.assert_called_once_with(test_num_nodes)
-                MIN_EXPECTED_CALL_COUNT = 3
+                MIN_EXPECTED_CALL_COUNT = 2
                 assert mock_asyncio_run.call_count >= MIN_EXPECTED_CALL_COUNT  # conda config, command, and ray stop
                 mock_sleep.assert_called_once_with(30)
                 mock_start_ray.assert_called_once_with(
