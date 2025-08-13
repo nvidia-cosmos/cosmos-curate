@@ -52,6 +52,9 @@ def generate_dockerfile(
 
     """
     env_list = sorted(conda_env_names)
+    post_install_env_list = [
+        env for env in env_list if pathlib.Path(f"package/cosmos_curate/envs/{env}/post_install.sh").is_file()
+    ]
 
     # Read and render the Dockerfile template
     with pathlib.Path(dockerfile_template_path).open() as f:
@@ -59,6 +62,7 @@ def generate_dockerfile(
     common_template_params = conda_envs.CommonTemplateParams.make()
     contents = template.render(
         envs=env_list,
+        post_install_envs=post_install_env_list,
         code_paths=code_paths,
         **attrs.asdict(common_template_params),
     )

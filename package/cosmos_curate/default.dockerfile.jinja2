@@ -149,11 +149,9 @@ RUN cd {{code_dir_str}} && \
 
 # Run any hacky post-install script for each environment
 COPY package/cosmos_curate/envs/ /tmp/cosmos_curate_build_envs
-{% for env in envs %}
-RUN if [ -f /tmp/cosmos_curate_build_envs/{{ env }}/post_install.sh ]; then \
-        cd {{code_dir_str}} && \
-        pixi run -e {{ env }} bash /tmp/cosmos_curate_build_envs/{{ env }}/post_install.sh; \
-    fi
+{% for env in post_install_envs %}
+RUN cd {{code_dir_str}} && \
+    pixi run -e {{ env }} bash /tmp/cosmos_curate_build_envs/{{ env }}/post_install.sh
 {% endfor %}
 
 # Copy the video pipeline code
