@@ -3,6 +3,20 @@
 
 ## Latest
 
+## [1.1.1]
+
+### Released
+- 2025-08-13
+
+### Added
+- Add stage2 caption support to VLLMCaptionStage
+- Add Nsight Systems for CUDA profiling
+
+### Fixed
+- Avoid unnecessary post-install docker layers
+- Pin Ray to the same version for both pixi and poetry
+- Update slurm cli to work with pixi
+
 ## [1.1.0]
 
 ### Released
