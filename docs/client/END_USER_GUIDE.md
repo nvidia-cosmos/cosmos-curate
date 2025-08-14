@@ -231,6 +231,12 @@ curl -X POST http://localhost:8000/v1/run_pipeline -H "NVCF-REQID: 1234-5678" -d
 }'
 ```
 
+To stop the service, press `Ctrl+C` in the terminal where you ran the launch command.
+
+> **Note:** When Ray starts up, it will print instructions including `ray stop` - do not use this command directly on
+> the host. The Ray cluster runs inside the container and is managed by the service. Always stop the service using
+> `Ctrl+C` for proper cleanup.
+
 ### Generate Dataset for Cosmos-Predict2 Post-Training
 
 The [Split-Annotate Pipeline](../curator/REFERENCE_PIPELINES_VIDEO.md#split-annotate-pipeline) above has first-class support
