@@ -223,7 +223,8 @@ def _download_and_extract_zip_impl(presigned_url: str, base_tmp_dir: str) -> str
 
     logger.info("Extracting downloaded archive …")
     with zipfile.ZipFile(zip_path, "r") as zf:
-        zf.extractall(extract_dir)
+        safe_members = [m for m in zf.namelist() if "__MACOSX" not in m]
+        zf.extractall(extract_dir, members=safe_members)
 
     # If the archive contains a single top-level directory, return that; else the extraction dir
     top_items = list(extract_dir.iterdir())
