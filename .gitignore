@@ -17,3 +17,6 @@ trace.log
 **/charts/*.tgz
 # pixi environments
 .pixi
+
+/cosmos-curate-*.tgz
+/run-all.sh

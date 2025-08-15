@@ -310,7 +310,7 @@ class VLLMCaptionStage(CuratorStage):
         self._llm = vllm_model(self._vllm_config)
         self._sampling_params = sampling_params(self._vllm_config)
         self._processor = auto_processor(self._vllm_config)
-        gpu_stage_startup(self.__class__.__name__, self.resources.gpus, pre_setup=True)
+        gpu_stage_startup(self.__class__.__name__, self.resources.gpus, pre_setup=False)
 
     def destroy(self) -> None:
         """Clean up GPU resources."""
