@@ -466,24 +466,8 @@ def main() -> None:
         if slurm_env.procid == 0:
             start_ray(ray_config, stop_retries_after=slurm_env.stop_retries_after)
             wait_for_workers(slurm_env.num_nodes)
-            logger.info("Adding cosmos_curate environment directories to conda config")
-            asyncio.run(
-                run_subprocess_async(
-                    [
-                        "micromamba",
-                        "run",
-                        "-n",
-                        "cosmos_curate",
-                        "conda",
-                        "config",
-                        "--add",
-                        "envs_dirs",
-                        "/cosmos_curate/conda_envs/envs/",
-                    ]
-                )
-            )
             logger.info("Running: %s", " ".join(sys.argv[1:]))
-            asyncio.run(run_subprocess_async(["micromamba", "run", "-n", "cosmos_curate"] + sys.argv[1:]))
+            asyncio.run(run_subprocess_async(["pixi", "run"] + sys.argv[1:]))
             # It's not clear why this is needed. If we get to this point, ray is stopping on its own.
             logger.info("Stopping Ray")
             asyncio.run(run_subprocess_async(["ray", "stop"]))
