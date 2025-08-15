@@ -14,3 +14,8 @@
 # limitations under the License.
 
 """Cosmos curator package."""
+
+import warnings
+
+# Suppress repetitive pkg_resources deprecation warnings
+warnings.filterwarnings("ignore", category=UserWarning, message="pkg_resources is deprecated as an API")
