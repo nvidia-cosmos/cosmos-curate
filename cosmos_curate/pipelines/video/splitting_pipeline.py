@@ -45,8 +45,6 @@ from cosmos_curate.pipelines.video.captioning.captioning_stages import (
     CosmosReason1CaptionStage,
     CosmosReason1InputPreparationStage,
     EnhanceCaptionStage,
-    QwenCaptionStage,
-    QwenInputPreparationStage,
     T5StageForSplit,
 )
 from cosmos_curate.pipelines.video.captioning.vllm_caption_stage import (
@@ -433,14 +431,14 @@ def split(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912, PLR0915
 
     vllm_config: VLLMConfig | None = None
     window_config: WindowConfig | None = None
-    if args.captioning_algorithm.lower() in {"phi4"}:
+    keep_mp4 = args.generate_previews or (args.generate_cosmos_predict_dataset != "disable")
+
+    if args.captioning_algorithm.lower() in {"phi4", "qwen"}:
         vllm_config = VLLMConfig(
             args.captioning_algorithm,
             prompt_variant=args.captioning_prompt_variant,
             prompt_text=args.captioning_prompt_text,
             max_output_tokens=args.captioning_max_output_tokens,
-            stage2_caption=args.phi4_stage2_caption,
-            stage2_prompt_text=args.phi4_stage2_prompt_text,
         )
 
         window_config = WindowConfig(
@@ -448,26 +446,34 @@ def split(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912, PLR0915
             remainder_threshold=args.captioning_remainder_threshold,
             sampling_fps=args.captioning_sampling_fps,
             preprocess_dtype=args.qwen_preprocess_dtype,
-            model_does_preprocess=args.qwen_model_does_preprocess,
             use_input_bit_rate=args.transcode_use_input_video_bit_rate,
         )
 
+        if args.captioning_algorithm.lower() in {"qwen"}:
+            vllm_config.batch_size = args.qwen_batch_size
+            vllm_config.fp8 = args.qwen_use_fp8_weights
+            vllm_config.disable_mmcache = not args.qwen_use_vllm_mmcache
+            vllm_config.num_gpus = args.qwen_num_gpus_per_worker
+            vllm_config.stage2_caption = args.qwen_stage2_caption
+            vllm_config.stage2_prompt_text = args.qwen_stage2_prompt_text
+            window_config.preprocess_dtype = args.qwen_preprocess_dtype
+            window_config.model_does_preprocess = args.qwen_model_does_preprocess
+        elif args.captioning_algorithm.lower() == "phi4":
+            vllm_config.stage2_caption = args.phi4_stage2_caption
+            vllm_config.stage2_prompt_text = args.phi4_stage2_prompt_text
+
     if args.generate_captions:
         # windowing
-        if "qwen" in args.captioning_algorithm.lower():
+        if vllm_config is not None:
+            if window_config is None:
+                msg = "Window config is not set"
+                raise ValueError(msg)
+
             stages += [
-                QwenInputPreparationStage(
-                    model_variant=args.captioning_algorithm,
-                    prompt_variant=args.captioning_prompt_variant,
-                    prompt_text=args.captioning_prompt_text,
-                    sampling_fps=args.captioning_sampling_fps,
-                    window_size=args.captioning_window_size,
-                    remainder_threshold=args.captioning_remainder_threshold,
-                    preprocess_dtype=args.qwen_preprocess_dtype,
-                    model_does_preprocess=args.qwen_model_does_preprocess,
-                    generate_previews=args.generate_previews,
-                    prepare_cosmos_predict_dataset=(args.generate_cosmos_predict_dataset != "disable"),
-                    use_input_bit_rate=args.transcode_use_input_video_bit_rate,
+                VLLMEncodeStage(
+                    vllm_config=vllm_config,
+                    window_config=window_config,
+                    keep_mp4=keep_mp4,
                     verbose=args.verbose,
                     log_stats=args.perf_profile,
                 ),
@@ -490,26 +496,6 @@ def split(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912, PLR0915
                     log_stats=args.perf_profile,
                 ),
             ]
-        elif "phi4" in args.captioning_algorithm.lower():
-            if vllm_config is None:
-                msg = "VLLM config is not set"
-                raise ValueError(msg)
-
-            if window_config is None:
-                msg = "Window config is not set"
-                raise ValueError(msg)
-
-            # windowing
-            keep_mp4 = args.generate_previews or (args.generate_cosmos_predict_dataset != "disable")
-            stages += [
-                VLLMEncodeStage(
-                    vllm_config,
-                    window_config,
-                    keep_mp4=keep_mp4,
-                    verbose=args.verbose,
-                    log_stats=args.perf_profile,
-                ),
-            ]
 
         # preview
         if args.generate_previews:
@@ -523,24 +509,13 @@ def split(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912, PLR0915
             ]
 
         # captioning
-        if "qwen" in args.captioning_algorithm.lower():
+        if vllm_config is not None:
             stages += [
-                CuratorStageSpec(
-                    QwenCaptionStage(
-                        model_variant=args.captioning_algorithm,
-                        batch_size=args.qwen_batch_size,
-                        fp8_enable=args.qwen_use_fp8_weights,
-                        max_output_tokens=args.captioning_max_output_tokens,
-                        model_does_preprocess=args.qwen_model_does_preprocess,
-                        generate_stage2_caption=args.qwen_stage2_caption,
-                        stage2_prompt_text=args.qwen_stage2_prompt_text,
-                        disable_mmcache=not args.qwen_use_vllm_mmcache,
-                        use_async_engine=args.qwen_use_async_engine,
-                        num_gpus_per_worker=args.qwen_num_gpus_per_worker,
-                        prepare_cosmos_predict_dataset=(args.generate_cosmos_predict_dataset != "disable"),
-                        verbose=args.verbose,
-                        log_stats=args.perf_profile,
-                    ),
+                VLLMCaptionStage(
+                    vllm_config=vllm_config,
+                    verbose=args.verbose,
+                    keep_mp4=keep_mp4,
+                    log_stats=args.perf_profile,
                 ),
             ]
         elif "cosmos_r1" in args.captioning_algorithm.lower():
@@ -560,19 +535,6 @@ def split(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912, PLR0915
                         verbose=args.verbose,
                         log_stats=args.perf_profile,
                     ),
-                ),
-            ]
-        elif "phi4" in args.captioning_algorithm.lower():
-            if vllm_config is None:
-                msg = "VLLM config is not set"
-                raise ValueError(msg)
-
-            stages += [
-                VLLMCaptionStage(
-                    vllm_config=vllm_config,
-                    verbose=args.verbose,
-                    keep_mp4=keep_mp4,
-                    log_stats=args.perf_profile,
                 ),
             ]
 

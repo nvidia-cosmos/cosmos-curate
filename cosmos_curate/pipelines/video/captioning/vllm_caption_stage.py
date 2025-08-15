@@ -33,10 +33,12 @@ from typing import TYPE_CHECKING, TypeVar, cast
 import nvtx  # type: ignore[import-untyped]
 from loguru import logger
 
+from cosmos_curate.core.interfaces.model_interface import ModelInterface
 from cosmos_curate.core.interfaces.stage_interface import CuratorStage, CuratorStageResource, PipelineTask
 from cosmos_curate.core.utils.infra.gpu_start_helper import gpu_stage_cleanup
 from cosmos_curate.core.utils.infra.performance_utils import StageTimer
 from cosmos_curate.core.utils.model import conda_utils
+from cosmos_curate.models.all_models import get_all_models_by_id
 from cosmos_curate.pipelines.video.captioning.captioning_stages import _get_prompt
 from cosmos_curate.pipelines.video.utils import windowing_utils
 from cosmos_curate.pipelines.video.utils.data_model import (
@@ -64,6 +66,13 @@ if conda_utils.is_running_in_env("unified"):
 
 
 T = TypeVar("T", bound=PipelineTask)
+
+
+# Map of model variants to model IDs.
+_VLLM_VARIANTS = {
+    "qwen": "Qwen/Qwen2.5-VL-7B-Instruct",
+    "phi4": "microsoft/Phi-4-multimodal-instruct",
+}
 
 
 def _get_major_size_task(task: T) -> int:
@@ -108,6 +117,44 @@ def _get_video_from_task(task: T) -> Video:
         msg = f"task.video type={type(video)}, expected `Video`"
         raise TypeError(msg)
     return video
+
+
+class VLLMModelInterface(ModelInterface):
+    """Information about a VLLM model."""
+
+    def __init__(self, vllm_config: VLLMConfig) -> None:
+        """Initialize the VLLM model interface."""
+        self._vllm_config = vllm_config
+
+    @property
+    def conda_env_name(self) -> str:
+        """Get the conda environment name."""
+        return "unified"
+
+    @property
+    def model_id_names(self) -> list[str]:
+        """Get the model ID names."""
+        variant = _VLLM_VARIANTS.get(self._vllm_config.variant)
+        if variant is None:
+            msg = f"Variant {self._vllm_config.variant} not supported"
+            raise ValueError(msg)
+
+        models = get_all_models_by_id()
+        model = models.get(variant)
+
+        if model is None:
+            msg = f"Model not found for{self._vllm_config.variant} -> {variant}"
+            raise ValueError(msg)
+
+        model_id = model.get("model_id")
+        if model_id is None:
+            msg = f"Model ID not found for variant {self._vllm_config.variant} -> {variant}"
+            raise ValueError(msg)
+
+        return [cast("str", model_id)]
+
+    def setup(self) -> None:
+        """Set up the VLLM model interface."""
 
 
 class VLLMEncodeStage(CuratorStage):
@@ -252,6 +299,7 @@ class VLLMCaptionStage(CuratorStage):
         self._llm: LLM | None = None
         self._sampling_params: SamplingParams | None = None
         self._processor: AutoProcessor | None = None
+        self._model: VLLMModelInterface | None = None
         self._keep_mp4 = keep_mp4
         self._verbose = verbose
         self._log_stats = log_stats
@@ -312,6 +360,18 @@ class VLLMCaptionStage(CuratorStage):
         if self._processor is None:
             self._processor = auto_processor(self._vllm_config)
         return self._processor
+
+    @property
+    def model(self) -> VLLMModelInterface:
+        """Get the model for the stage.
+
+        Returns:
+            The model for the stage.
+
+        """
+        if self._model is None:
+            self._model = VLLMModelInterface(self._vllm_config)
+        return self._model
 
     def destroy(self) -> None:
         """Clean up GPU resources."""

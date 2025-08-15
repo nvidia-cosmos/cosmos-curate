@@ -38,6 +38,7 @@ from vllm import LLM, RequestOutput, SamplingParams
 
 from cosmos_curate.core.utils.misc import grouping
 from cosmos_curate.models.vllm_phi import VLLMPhi4
+from cosmos_curate.models.vllm_qwen import VLLMQwen7B
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -54,7 +55,10 @@ if TYPE_CHECKING:
 
 
 # Add new VLLM plugins to _VLLM_PLUGINS
-_VLLM_PLUGINS = {VLLMPhi4.model_variant(): VLLMPhi4}
+_VLLM_PLUGINS = {
+    VLLMPhi4.model_variant(): VLLMPhi4,
+    VLLMQwen7B.model_variant(): VLLMQwen7B,
+}
 
 
 def _get_vllm_plugin(variant: str) -> VLLMPlugin:
