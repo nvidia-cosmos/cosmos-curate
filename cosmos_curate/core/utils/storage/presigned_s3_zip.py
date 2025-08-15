@@ -41,7 +41,6 @@ import contextlib
 import os
 import shutil
 import tempfile
-import time
 import uuid
 import zipfile
 from concurrent.futures import ProcessPoolExecutor
@@ -264,8 +263,7 @@ def _download_and_extract_on_all_nodes(url: str, base_tmp_dir: str) -> str:
 def _worker_download_and_extract(url: str, base_tmp_dir: str) -> str:
     ray_cluster_utils.init_or_connect_to_cluster()
     extracted = _download_and_extract_on_all_nodes(url, base_tmp_dir)
-    time.sleep(1)  # Let Ray flush logs
-    ray.shutdown()
+    ray_cluster_utils.shutdown_cluster()
     return extracted
 
 
@@ -359,8 +357,7 @@ def _gather_outputs_on_all_nodes(output_dir: str) -> None:
 def _worker_gather_outputs(output_dir: str) -> None:
     ray_cluster_utils.init_or_connect_to_cluster()
     _gather_outputs_on_all_nodes(output_dir)
-    time.sleep(1)  # Let Ray flush logs
-    ray.shutdown()
+    ray_cluster_utils.shutdown_cluster()
 
 
 def gather_outputs_from_all_nodes(output_directory: str) -> None:

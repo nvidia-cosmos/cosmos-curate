@@ -14,7 +14,6 @@
 # limitations under the License.
 """Entry function to run a pipeline."""
 
-import time
 from concurrent.futures import ProcessPoolExecutor
 from typing import TypeVar
 
@@ -97,9 +96,7 @@ def _worker_download_models(model_names: list[str], model_weights_prefix: str) -
     # dump disk usage info
     hardware_info.print_disk_path_info(get_tmp_dir())
 
-    # disconnect / shutdown the ray cluster
-    time.sleep(1)  # give some time for logs to be flushed
-    ray.shutdown()
+    ray_cluster_utils.shutdown_cluster()
     return num_gpus
 
 
@@ -255,5 +252,4 @@ def run_pipeline(
     finally:
         ray_shutdown_delay = 5
         logger.info(f"Disconnecting from Ray cluster in {ray_shutdown_delay} seconds")
-        time.sleep(ray_shutdown_delay)
-        ray.shutdown()
+        ray_cluster_utils.shutdown_cluster(flush_seconds=ray_shutdown_delay)

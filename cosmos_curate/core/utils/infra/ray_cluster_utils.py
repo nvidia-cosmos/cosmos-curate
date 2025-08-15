@@ -16,6 +16,7 @@
 """Ray utilities."""
 
 import socket
+import time
 
 import loguru
 import ray
@@ -48,6 +49,12 @@ def init_or_connect_to_cluster() -> None:
         ignore_reinit_error=True,
         log_to_driver=True,
     )
+
+
+def shutdown_cluster(*, flush_seconds: float = 1.0) -> None:
+    """Flush logs briefly and cleanly shutdown Ray."""
+    time.sleep(flush_seconds)
+    ray.shutdown()
 
 
 def get_live_nodes(*, dump_info: bool = True) -> list[dict[str, str]]:
