@@ -35,7 +35,10 @@ from loguru import logger
 
 from cosmos_curate.core.interfaces.model_interface import ModelInterface
 from cosmos_curate.core.interfaces.stage_interface import CuratorStage, CuratorStageResource, PipelineTask
-from cosmos_curate.core.utils.infra.gpu_start_helper import gpu_stage_cleanup
+from cosmos_curate.core.utils.infra.gpu_start_helper import (
+    gpu_stage_cleanup,
+    gpu_stage_startup,
+)
 from cosmos_curate.core.utils.infra.performance_utils import StageTimer
 from cosmos_curate.core.utils.model import conda_utils
 from cosmos_curate.models.all_models import get_all_models_by_id
@@ -209,17 +212,9 @@ class VLLMEncodeStage(CuratorStage):
         """
         return "unified"
 
-    @property
-    def processor(self) -> "AutoProcessor":
-        """Get the processor for the model.
-
-        Returns:
-            The processor for the model.
-
-        """
-        if self._processor is None:
-            self._processor = auto_processor(self._vllm_config)
-        return self._processor
+    def stage_setup(self) -> None:
+        """Set up the model for processing."""
+        self._processor = auto_processor(self._vllm_config)
 
     @nvtx.annotate("VLLMEncodeStage")  # type: ignore[misc]
     def process_data(self, tasks: list[T]) -> list[T]:
@@ -232,6 +227,10 @@ class VLLMEncodeStage(CuratorStage):
             The processed tasks.
 
         """
+        if self._processor is None:
+            msg = "self._processor not initialized, call stage_setup() first"
+            raise RuntimeError(msg)
+
         prompt = _get_prompt(
             self._vllm_config.prompt_variant,
             self._vllm_config.prompt_text,
@@ -257,7 +256,7 @@ class VLLMEncodeStage(CuratorStage):
                     windows,
                     frames,
                     self._vllm_config,
-                    self.processor,
+                    self._processor,
                     prompt,
                 )
 
@@ -299,11 +298,23 @@ class VLLMCaptionStage(CuratorStage):
         self._llm: LLM | None = None
         self._sampling_params: SamplingParams | None = None
         self._processor: AutoProcessor | None = None
-        self._model: VLLMModelInterface | None = None
         self._keep_mp4 = keep_mp4
         self._verbose = verbose
         self._log_stats = log_stats
         self._vllm_use_tqdm = False
+        self._model = VLLMModelInterface(self._vllm_config)
+
+    def stage_setup(self) -> None:
+        """Set up the model for processing."""
+        gpu_stage_startup(self.__class__.__name__, self.resources.gpus, pre_setup=True)
+        self._llm = vllm_model(self._vllm_config)
+        self._sampling_params = sampling_params(self._vllm_config)
+        self._processor = auto_processor(self._vllm_config)
+        gpu_stage_startup(self.__class__.__name__, self.resources.gpus, pre_setup=True)
+
+    def destroy(self) -> None:
+        """Clean up GPU resources."""
+        gpu_stage_cleanup(self.__class__.__name__)
 
     @property
     def conda_env_name(self) -> str:
@@ -326,56 +337,14 @@ class VLLMCaptionStage(CuratorStage):
         return CuratorStageResource(gpus=self._vllm_config.num_gpus)
 
     @property
-    def llm(self) -> "LLM":
-        """Get the VLLM model.
-
-        Returns:
-            The VLLM model.
-
-        """
-        if self._llm is None:
-            self._llm = vllm_model(self._vllm_config)
-        return self._llm
-
-    @property
-    def sampling_params(self) -> "SamplingParams":
-        """Get the sampling parameters for the VLLM model.
-
-        Returns:
-            The sampling parameters for the VLLM model.
-
-        """
-        if self._sampling_params is None:
-            self._sampling_params = sampling_params(self._vllm_config)
-        return self._sampling_params
-
-    @property
-    def processor(self) -> "AutoProcessor":
-        """Get the processor for the model.
-
-        Returns:
-            The processor for the model.
-
-        """
-        if self._processor is None:
-            self._processor = auto_processor(self._vllm_config)
-        return self._processor
-
-    @property
     def model(self) -> VLLMModelInterface:
-        """Get the model for the stage.
+        """Get the model for this stage.
 
         Returns:
-            The model for the stage.
+            The model for this stage.
 
         """
-        if self._model is None:
-            self._model = VLLMModelInterface(self._vllm_config)
         return self._model
-
-    def destroy(self) -> None:
-        """Clean up GPU resources."""
-        gpu_stage_cleanup(self.__class__.__name__)
 
     def free_unused(self, tasks: list[T]) -> None:
         """Free unused memory, if enabled.
@@ -404,6 +373,18 @@ class VLLMCaptionStage(CuratorStage):
             The processed tasks.
 
         """
+        if self._llm is None:
+            msg = "VLLM model not initialized, call stage_setup() first"
+            raise RuntimeError(msg)
+
+        if self._sampling_params is None:
+            msg = "Sampling parameters not initialized, call stage_setup() first"
+            raise RuntimeError(msg)
+
+        if self._processor is None:
+            msg = "Processor not initialized, call stage_setup() first"
+            raise RuntimeError(msg)
+
         major_size = _get_major_size_tasks(tasks)
         self._timer.reinit(self, major_size)
         videos = [_get_video_from_task(task) for task in tasks]
@@ -411,10 +392,10 @@ class VLLMCaptionStage(CuratorStage):
         with self._timer.time_process():
             num_captions = vllm_caption(
                 videos,
-                self.llm,
-                self.processor,
+                self._llm,
+                self._processor,
                 self._vllm_config,
-                self.sampling_params,
+                self._sampling_params,
                 use_tqdm=self._vllm_use_tqdm,
             )
 
