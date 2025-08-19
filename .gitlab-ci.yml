@@ -434,13 +434,13 @@ nvcf-helm:
           # this can be overridden by passing the HELM_IMAGE_TAG var in cicd variables
           export HELM_IMAGE_TAG=${HELM_IMAGE_TAG:-$(cosmos-curate nvcf image list-image-detail --iname $NVCF_DEV_BASE_IMAGE |grep latestTag |sed "s/['│,]//g" |awk '{print $2}')}
         elif [[ "$CI_PIPELINE_SOURCE" == "web" ]]; then
-          # Web triggers use staging images
+          # Web triggers use staging images unless e2e is specified, then tests latest dev image
           export HELM_IMAGE_TAG=${HELM_IMAGE_TAG:-$(cosmos-curate nvcf image list-image-detail --iname $NVCF_STAGING_BASE_IMAGE |grep latestTag |sed "s/['│,]//g" |awk '{print $2}')}
         else
           export HELM_IMAGE_TAG="${CI_COMMIT_TIMESTAMP%%T*}_${CI_COMMIT_SHORT_SHA}"
         fi
       - |
-        if [[ "$CI_PIPELINE_SOURCE" == "web" ]]; then
+        if [[ "$CI_PIPELINE_SOURCE" == "web" && "$TEST_END_TO_END" != "True" ]]; then
           NVCF_IMAGE=${NVCF_STAGING_IMAGE}:$HELM_IMAGE_TAG
         else
           NVCF_IMAGE=${NVCF_DEV_IMAGE}:$HELM_IMAGE_TAG
