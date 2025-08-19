@@ -164,6 +164,7 @@ class CuratorStageSpec(StageSpec[PipelineTask, PipelineTask]):
     Commonly used properties are:
     num_workers_per_node: set a fixed number of workers per node, typically for IO workers.
     num_run_attempts_python: set the number of retry attempts in case of exceptions.
+    over_provision_factor: set the over-provision factor for the stage to influence stage worker allocation.
     worker_max_lifetime_m: set the maximum lifetime of a worker in minutes.
     worker_restart_interval_m: set the interval in minutes for two lifetime-expiring worker restarts.
     """
