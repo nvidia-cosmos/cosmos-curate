@@ -480,3 +480,44 @@ def backup_file(  # noqa: C901
                 break
             idx += 1
         dest.rename(bak_dest)
+
+
+def is_parquet_file(filename: str) -> bool:
+    """Check if a file is a parquet file."""
+    return filename.lower().endswith(".parquet")
+
+
+def extract_parquet_files(
+    input_path: str,
+    profile_name: str,
+    limit: int = 0,
+    *,
+    verbose: bool = False,
+) -> list[StoragePrefix | pathlib.Path]:
+    """List parquet files under an input path.
+
+    Args:
+        input_path: Base path to search (local or remote like s3://...).
+        profile_name: Profile name to use when accessing remote storage.
+        limit: Optional maximum number of parquet files to return; 0 means no limit.
+        verbose: If True, log each discovered parquet file.
+
+    Returns:
+        A list of fully-qualified paths (StoragePrefix for remote, Path for local) to parquet files.
+
+    """
+    client_input = get_storage_client(input_path, profile_name=profile_name)
+
+    # List all files relative to the base path then filter parquet files
+    all_items = get_files_relative(input_path, client_input)
+    parquet_items = [item for item in all_items if is_parquet_file(item)]
+
+    if limit > 0:
+        parquet_items = parquet_items[:limit]
+
+    if verbose:
+        logger.debug(f"Found {len(parquet_items)} parquet files under {input_path}")
+        for item in parquet_items:
+            logger.debug(item)
+
+    return [get_full_path(input_path, item) for item in parquet_items]

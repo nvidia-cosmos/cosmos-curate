@@ -20,7 +20,7 @@ from cosmos_curate.core.interfaces.model_interface import ModelInterface
 from cosmos_curate.core.utils.pixi_runtime_envs import PixiRuntimeEnv
 from cosmos_xenna.pipelines.private.specs import Stage, StageSpec
 from cosmos_xenna.ray_utils.resources import Resources, WorkerMetadata
-from cosmos_xenna.ray_utils.runtime_envs import CondaEnv, RuntimeEnv
+from cosmos_xenna.ray_utils.runtime_envs import RuntimeEnv
 
 
 @attrs.define
@@ -143,7 +143,7 @@ class CuratorStage(Stage[PipelineTask, PipelineTask]):
 
         """
         if self.conda_env_name is not None:
-            return PixiRuntimeEnv(CondaEnv(self.conda_env_name))
+            return PixiRuntimeEnv(self.conda_env_name)
         return None
 
     # Should not override

@@ -132,18 +132,17 @@ ENV HF_HOME="${DEFAULT_WORKSPACE_LOC}/weights/hf_home/" \
 # Set up pixi environments
 COPY pixi.toml pixi.lock {{code_dir_str}}/
 # If we install all the environments in a single layer, it's over 20GB and will cause slurm/NVCF to timeout pulling the
-# layer. Since the text-curator environment is large and needs non-overlapping RAPIDS packages, we install it
-# separately.
+# layer. Since the cuml environment is large and needs non-overlapping RAPIDS packages, we install it separately.
 RUN cd {{code_dir_str}} && \
     export CONDA_OVERRIDE_CUDA=12.9.1 && \
-    pixi install -e default -e {{ envs | reject('equalto', 'text-curator') | join(' -e ') }} --frozen && \
+    pixi install -e default -e {{ envs | reject('equalto', 'cuml') | join(' -e ') }} --frozen && \
     pixi clean cache -y
 
-# Install the text-curator environment separately if requested.
-{% if 'text-curator' in envs %} \
+# Install the cuml environment separately if requested.
+{% if 'cuml' in envs %} \
 RUN cd {{code_dir_str}} && \
     export CONDA_OVERRIDE_CUDA=12.9.1 && \
-    pixi install -e text-curator --frozen && \
+    pixi install -e cuml --frozen && \
     pixi clean cache -y
 {% endif %}
 

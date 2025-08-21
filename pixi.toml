@@ -1,5 +1,5 @@
 [workspace]
-channels = ["conda-forge", "nvidia"]
+channels = ["rapidsai", "conda-forge", "nvidia"]
 name = "cosmos-curate"
 platforms = ["linux-64"]
 version = "1.0.0"
@@ -42,6 +42,7 @@ pytorch-gpu = ">=2.7.1"
 scipy = "*"
 sqlalchemy = "*"
 tabulate = "*"
+tblib = "*"
 tenacity = "*"
 timezonefinder = "*"
 tqdm = "*"
@@ -56,6 +57,19 @@ ngcsdk = "*" # not available on conda-forge
 opencv-python-headless = "*" # not available on conda-forge
 pillow = "*"  # required by phi-4 model, part of task, needs to be serialized
 pulp = "*" # conda-forge package is too old
+
+[feature.cuml.system-requirements]
+cuda = "12.9.1" # match the version of the nvidia/cuda docker base image
+
+[feature.cuml.dependencies]
+azure-identity = "*"
+azure-storage-blob = "*"
+cuml = "==25.08"
+loguru = "*"
+tqdm = "*"
+
+[feature.cuml.pypi-dependencies]
+ngcsdk = "*" # not available on conda-forge
 
 [feature.model-download.dependencies]
 azure-identity = "*"
@@ -104,25 +118,6 @@ setuptools = "*"
 timm = "*" # conda-forge package pulls in torchvision, which is behind
 transformers = "==4.51.3"
 
-[feature.text-curator.system-requirements]
-cuda = "12.9.1" # match the version of the nvidia/cuda docker base image
-
-[feature.text-curator.dependencies]
-cattrs = "*"
-easydict = "*"
-loguru = "*"
-numpy = "<2"
-pytorch-gpu = ">=2.7.1"
-tabulate = "*"
-webdataset = "*"
-
-[feature.text-curator.pypi-dependencies]
-av = "*" # conda-forge package pulls in ffmpeg
-nemo-curator = { git = "https://github.com/NVIDIA/NeMo-Curator.git", rev = "060d702d0e5289abb1e94a92f9b8296b36c04fb7", extras = ["cuda12x", "s3", "azure"] }
-opencv-python-headless = "*" # not available on conda-forge
-ngcsdk = "*" # not available on conda-forge
-pulp = "*" # conda-forge package is too old
-
 [feature.unified.dependencies]
 cuda-libraries-dev = "*"
 flash-attn = "*"
@@ -145,11 +140,11 @@ timm = "*" # conda-forge package pulls in torchvision, which is behind
 pip = "*"
 
 [environments]
+cuml = ["default", "cuml"]
 default = ["default", "core"]
 model-download = ["model-download"]
 phi = ["default", "phi"]
 paddle-ocr = ["core", "pip"]
-text-curator = ["text-curator"]
 transformers = ["core"]
 unified = ["core", "unified"]
 video-splitting = ["core", "video-splitting"]

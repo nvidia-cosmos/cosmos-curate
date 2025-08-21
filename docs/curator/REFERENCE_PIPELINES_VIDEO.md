@@ -189,7 +189,7 @@ An example command is as follows assuming you have used the default `internvideo
 ```bash
 cosmos-curate local launch \
   --image-name cosmos-curate --image-tag 1.0.0 --curator-path . \
-  -- pixi run -e text-curator run \
+  -- pixi run \
   python3 -m cosmos_curate.pipelines.video.run_pipeline dedup \
   --input-embeddings-path <local or s3 path to store clips and metadatas produced by split-annotate pipeline>/iv2_embd_parquet/ \
   --output-path <local or s3 path to store semantic-dedup output>
@@ -200,7 +200,7 @@ A full list of options can be seen from the help message
 ```bash
 cosmos-curate local launch \
   --image-name cosmos-curate --image-tag 1.0.0 --curator-path . \
-  -- pixi run -e text-curator run \
+  -- pixi run \
   python3 -m cosmos_curate.pipelines.video.run_pipeline dedup --help
 ```
 

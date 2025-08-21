@@ -184,13 +184,17 @@ exclude = [
     "cosmos_curate/models/internvideo2_multi_modality/",
     "cosmos_curate/pipelines/video/utils/vision_process.py",
     "cosmos_curate/pipelines/video/utils/nvcodec_utils.py",
-    "cosmos_curate/pipelines/video/dedup_pipeline.py",
 ]
 
 [[tool.mypy.overrides]]
 module = [
     "cosmos_curate.models.internvideo2_multi_modality.*",
-    "cosmos_curate.pipelines.video.utils.*"
+    "cosmos_curate.pipelines.video.utils.*",
+    "cudf.*",
+    "cuml.*",
+    "cupy.*",
+    "pylibraft.*",
+    "raft_dask.*",
 ]
 follow_imports = "skip"
 

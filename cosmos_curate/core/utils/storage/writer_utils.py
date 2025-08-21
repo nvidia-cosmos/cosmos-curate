@@ -91,7 +91,7 @@ def write_bytes(  # noqa: C901, PLR0912, PLR0913
                 logger.warning(f"{desc} {dest.path} already exists, skipping ...")
                 return
         if verbose:
-            logger.info(f"Uploading {desc} for {source_video} to {dest.path}")
+            logger.debug(f"Uploading {desc} for {source_video} to {dest.path}")
 
         def func_to_call() -> None:
             client.upload_bytes(dest, buffer)
@@ -108,7 +108,7 @@ def write_bytes(  # noqa: C901, PLR0912, PLR0913
                 logger.warning(f"{desc} {dest} already exists, skipping ...")
                 return
         if verbose:
-            logger.info(f"Writing {desc} for {source_video} to {dest}")
+            logger.debug(f"Writing {desc} for {source_video} to {dest}")
         dest.parent.mkdir(parents=True, exist_ok=True)
         with dest.open("wb") as fp:
             fp.write(buffer)

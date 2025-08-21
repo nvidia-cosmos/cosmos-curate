@@ -22,7 +22,6 @@ import multiprocessing
 import os
 import pathlib
 import pickle
-import shutil
 import socket
 import subprocess
 import sys
@@ -68,9 +67,6 @@ from cosmos_curate.pipelines.video.sharding_pipeline import nvcf_run_shard
 from cosmos_curate.pipelines.video.splitting_pipeline import nvcf_run_split
 
 _LOG_RDWR_LOCK_FILE = pathlib.Path(tempfile.gettempdir()) / "pipeline_status.lock"
-
-_PIXI_BIN = pathlib.Path(shutil.which("pixi") or "/usr/local/bin/pixi")
-_SEM_DEDUP_ENV = os.getenv("SEM_DEDUP_ENV", "text-curator")
 
 _RAY_DASHBOARD = f"http://127.0.0.1:{os.getenv('RAY_DASHBOARD_PORT', '8265')}"
 _METRICS_PORT = 9002
@@ -769,7 +765,7 @@ async def curate_video(request: Request) -> JSONResponse:  # noqa: C901, PLR0912
             pass
         elif pipeline_type == "semantic-dedup":
             execute_pipeline(
-                _run_in_pixi,
+                _run_in_process,
                 nvcf_run_semdedup,
                 request_id,
                 pipeline_args,
@@ -826,47 +822,6 @@ async def curate_video(request: Request) -> JSONResponse:  # noqa: C901, PLR0912
             gather_and_upload_outputs(pipeline_type, pipeline_args)
         if manager:
             manager.shutdown()
-
-
-def _run_in_pixi(
-    func: Callable[..., None],
-    request_id: str,
-    pipeline_args: argparse.Namespace,
-    log_queue: multiprocessing.Queue,  # type: ignore[type-arg]
-    ipc_status: Synchronized,  # type: ignore[type-arg]
-) -> None:
-    """Run the function in a conda env, capturing its output."""
-    # Create the script dynamically
-    sfile = pathlib.Path(tempfile.gettempdir()) / f"{request_id}.py"
-    with sfile.open("w") as sf:
-        sf.write(f"""
-import sys
-import pickle
-import os
-
-# add CONTAINER_PATHS_CODE_DIR to sys.path
-sys.path.append('{CONTAINER_PATHS_CODE_DIR}')
-
-def run_func():
-    mod = __import__('{func.__module__}', fromlist=['{func.__name__}'])
-    func = getattr(mod, '{func.__name__}')
-    pipeline_args = pickle.loads({pickle.dumps(pipeline_args)!r})
-    func(pipeline_args)
-
-if __name__ == '__main__':
-    run_func()
-""")
-    # Create a subprocess that runs the function
-    cmd = [
-        str(_PIXI_BIN),
-        "run",
-        "-e",
-        _SEM_DEDUP_ENV,
-        "python",
-        str(sfile),
-    ]
-    logger.info(f"Executing [{cmd}]")
-    _do_run_process(cmd, log_queue, ipc_status)
 
 
 def _run_in_process(

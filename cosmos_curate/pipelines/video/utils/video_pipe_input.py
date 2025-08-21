@@ -29,6 +29,7 @@ from cosmos_curate.core.utils.storage.storage_utils import (
     get_files_relative,
     get_full_path,
     get_storage_client,
+    is_parquet_file,
     path_exists,
     read_bytes,
     read_json_file,
@@ -225,11 +226,6 @@ def extract_shard_tasks(  # noqa: PLR0913
             if verbose:
                 logger.warning(clip_metadata)
     return clip_samples
-
-
-def is_parquet_file(filename: str) -> bool:
-    """Check if a file is a parquet file."""
-    return filename.lower().endswith(".parquet")
 
 
 def _load_parquet_ids(
