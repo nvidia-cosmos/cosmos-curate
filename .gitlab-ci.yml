@@ -449,7 +449,7 @@ nvcf-helm:
       - cat examples/nvcf/ci/ci_create_helm_default.json.template | envsubst > create_helm_file.json
       - cat examples/nvcf/ci/ci_deploy_helm_default.json.template | envsubst > deploy_helm_file.json
       - |
-        if [[ "$CI_PIPELINE_SOURCE" == "web" ]]; then
+        if [[ "$CI_PIPELINE_SOURCE" == "web" && "$TEST_END_TO_END" != "True" ]]; then
           cat deploy_helm_file.json | jq --arg image_repository "$NVCF_STAGING_IMAGE" '.configuration.image.repository = $image_repository' > deploy_helm_file.json.new
         else
           cat deploy_helm_file.json | jq --arg image_repository "$NVCF_DEV_IMAGE" '.configuration.image.repository = $image_repository' > deploy_helm_file.json.new
