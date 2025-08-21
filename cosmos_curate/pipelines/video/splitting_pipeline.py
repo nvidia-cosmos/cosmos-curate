@@ -309,7 +309,7 @@ def split(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912, PLR0915
                         verbose=args.verbose,
                         log_stats=args.perf_profile,
                     ),
-                    over_provision_factor=2.0,
+                    over_provision_factor=None,
                 ),
                 # TransNetV2ClipExtraction stage is generally so fast that it will be
                 # scaled down to 1 worker total even in a multi-node run.
