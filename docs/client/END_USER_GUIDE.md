@@ -151,7 +151,7 @@ cosmos-curate image build --image-name cosmos-curate --image-tag hello-world --e
 # 2. Download the GPT-2 model weights
 cosmos-curate local launch --image-name cosmos-curate --image-tag hello-world -- pixi run python -m cosmos_curate.core.managers.model_cli download --models gpt2
 
-# 3. Run the hellow-world pipeline
+# 3. Run the hello-world pipeline
 cosmos-curate local launch --image-name cosmos-curate --image-tag hello-world --curator-path . -- pixi run python -m cosmos_curate.pipelines.examples.hello_world_pipeline
 ```
 
@@ -361,8 +361,7 @@ export CONTAINER_IMAGE="${SLURM_IMAGE_DIR}/cosmos_curate+hello_world.sqsh"
 SLURM_AWS_CREDS_MOUNT="${SLURM_AWS_CREDS_DIR}/credentials:/creds/s3_creds"
 SLURM_COSMOS_CURATE_CONFIG_MOUNT="${SLURM_COSMOS_CURATE_CONFIG_DIR}/config.yaml:/cosmos_curate/config/cosmos_curate.yaml"
 SLURM_WORKSPACE_MOUNT="${SLURM_WORKSPACE}:/config"
-SLURM_SOURCE_MOUNT="${SLURM_SOURCE_DIR}/cosmos_curate/:/opt/cosmos-curate/cosmos_curate"
-export CONTAINER_MOUNTS="${SLURM_AWS_CREDS_MOUNT},${SLURM_COSMOS_CURATE_CONFIG_MOUNT},${SLURM_WORKSPACE_MOUNT},${SLURM_SOURCE_MOUNT}"
+export CONTAINER_MOUNTS="${SLURM_AWS_CREDS_MOUNT},${SLURM_COSMOS_CURATE_CONFIG_MOUNT},${SLURM_WORKSPACE_MOUNT}"
 ```
 
 Launch!
@@ -399,6 +398,32 @@ cosmos-curate slurm job-log \
   --username my_username_on_slurm_cluster \
   --job-id slurm_job_id_printed_above
 ```
+
+### Developing on Slurm
+
+If you plan to modify or create new pipelines on slurm, it is useful to mount the source code into the container so that you do not need to rebuild the container for every change.
+
+Add the following to your export commands:
+
+```bash
+SLURM_SOURCE_MOUNT="${SLURM_SOURCE_DIR}/cosmos_curate/:/opt/cosmos-curate/cosmos_curate"
+```
+
+And change the CONTAINER_MOUNTS variable to include the SLURM_SOURCE_MOUNT:
+
+```bash
+export CONTAINER_MOUNTS="${SLURM_AWS_CREDS_MOUNT},${SLURM_COSMOS_CURATE_CONFIG_MOUNT},${SLURM_WORKSPACE_MOUNT},${SLURM_SOURCE_MOUNT}"
+```
+
+This will use the source code that is located on the cluster and will override the source that is inside the container.
+
+Note that:
+
+```
+cosmos-curate slurm submit ...
+```
+
+will not copy code from your local machine to the cluster. You'll need to either edit code directly on the cluster, or use some other mechanism to synchronize your code bases.
 
 ## Launch Pipelines on NVIDIA DGX Cloud
 
