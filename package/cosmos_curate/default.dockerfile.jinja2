@@ -8,7 +8,7 @@
 
 ARG DEBIAN_FRONTEND=noninteractive
 
-FROM nvidia/cuda:12.9.1-devel-ubuntu24.04 AS main
+FROM nvcr.io/nvidia/cuda:12.9.1-devel-ubuntu24.04 AS main
 
 SHELL ["/bin/bash", "-c"]
 ENV NVIDIA_DRIVER_CAPABILITIES=compute,video,utility
