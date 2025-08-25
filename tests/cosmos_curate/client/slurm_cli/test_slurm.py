@@ -62,7 +62,7 @@ def test_submit_cmd(mock_curator_submit: Mock, command: list[str], raises: Abstr
             num_nodes=1,
             container_mounts=None,  # default
             environment=None,  # default
-            remote_files_path=pathlib.Path("/sbatch.sh"),
+            remote_files_path=pathlib.Path("/remote/files"),
         )
 
     if isinstance(raises, nullcontext):
@@ -92,7 +92,7 @@ def test_render_sbatch_script(exclude_nodes: list[str] | None) -> None:
         num_nodes=1,
         gres=GRES,
         exclusive=True,
-        remote_files_path=pathlib.Path("/remote/files"),
+        remote_job_path=pathlib.Path("/remote/files") / "test_job.20250611",
         time_limit="01:00:00",
         log_dir=pathlib.Path("/logs"),
         stop_retries_after=100,
@@ -150,7 +150,7 @@ class TestSubmitCmd(unittest.TestCase):
             num_nodes=1,
             gres=GRES,
             exclusive=True,
-            remote_files_path=pathlib.Path("/remote/files"),
+            remote_job_path=pathlib.Path("/remote/files") / "test_job.20250611",
             log_dir=pathlib.Path("/logs"),
         )
         assert job_spec.job_name == "test_job"
@@ -160,7 +160,7 @@ class TestSubmitCmd(unittest.TestCase):
         assert job_spec.num_nodes == 1
         assert job_spec.gres == GRES
         assert job_spec.exclusive
-        assert job_spec.remote_files_path == pathlib.Path("/remote/files")
+        assert job_spec.remote_job_path == pathlib.Path("/remote/files") / "test_job.20250611"
         assert job_spec.log_dir == pathlib.Path("/logs")
 
     def test_parse_job_id(self) -> None:
@@ -259,7 +259,7 @@ class TestSubmitCurationJob:
             num_nodes=1,
             gres=GRES,
             exclusive=True,
-            remote_files_path=pathlib.Path("/remote/files"),
+            remote_job_path=pathlib.Path("/remote/files") / "test_job.20250611",
             time_limit="01:00:00",
             log_dir=pathlib.Path("/logs"),
         )
@@ -283,8 +283,9 @@ class TestSubmitCurationJob:
             Mock(),  # ls call succeeds
             unexpected_exit,  # directory check should fail as expected (test -e)
             Mock(),  # mkdir call succeeds
-            Mock(),  # chmod log dir
+            Mock(),  # chmod job dir
             Mock(),  # chmod sbatch script
+            Mock(),  # chmod prometheus service discovery script
             success_result,  # sbatch command returns job ID
         ]
 
@@ -409,7 +410,7 @@ class TestLaunch:
             partition="test_partition",
             container_image="test_image",
             num_nodes=1,
-            remote_files_path=pathlib.Path("/sbatch.sh"),
+            remote_files_path=pathlib.Path("/remote/files"),
             gres=GRES,
             exclusive=True,
         )
@@ -425,7 +426,7 @@ class TestLaunch:
             container_image="test_image",
             container_mounts="src0:dst0,src1:dst1",
             num_nodes=1,
-            remote_files_path=pathlib.Path("/sbatch.sh"),
+            remote_files_path=pathlib.Path("/remote/files"),
             gres=GRES,
             exclusive=True,
         )
@@ -441,7 +442,7 @@ class TestLaunch:
             container_image="test_image",
             environment="VA1,VA2",
             num_nodes=1,
-            remote_files_path=pathlib.Path("/sbatch.sh"),
+            remote_files_path=pathlib.Path("/remote/files"),
             gres=GRES,
             exclusive=True,
         )
@@ -457,7 +458,7 @@ class TestLaunch:
                 partition="test_partition",
                 container_image="test_image",
                 num_nodes=1,
-                remote_files_path=pathlib.Path("/sbatch.sh"),
+                remote_files_path=pathlib.Path("/remote/files"),
                 gres=GRES,
                 exclusive=True,
                 container_mounts="invalid_mounts",

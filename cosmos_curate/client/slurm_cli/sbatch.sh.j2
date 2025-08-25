@@ -67,6 +67,31 @@ echo "HEAD_NODE_PORT=${HEAD_NODE_PORT}"
 echo "SLURMD_NODENAME=${SLURMD_NODENAME}"
 echo "WORLD_SIZE=${WORLD_SIZE}"
 
+# Generate a metrics service discovery file for Prometheus
+_SLURM_JOB_NODELIST_FILE="{{job_artifact_path}}/tmp/hostnames_${SLURM_JOB_ID}.txt"
+if [ "{{enable_metrics_scraping}}" == "yes" ]; then
+  # prepare the node list file
+  mkdir -p {{job_artifact_path}}/tmp/
+  scontrol show hostnames $SLURM_JOB_NODELIST > $_SLURM_JOB_NODELIST_FILE
+  # generate the metrics discovery file
+  python {{job_artifact_path}}/prometheus_service_discovery.py \
+    --path "{{prometheus_service_discovery_path}}/prometheus_service_discovery_${SLURM_JOB_ID}.json" \
+    --job-user $SLURM_JOB_USER \
+    --job-id $SLURM_JOB_ID \
+    --job-name $SLURM_JOB_NAME \
+    --hostfile $_SLURM_JOB_NODELIST_FILE \
+    --port "${RAY_METRICS_EXPORT_PORT:-9002}"
+fi
+
+cleanup_on_exit() {
+  echo "Cleaning up any mess ..."
+  if [ "{{enable_metrics_scraping}}" == "yes" ]; then
+    rm -f $_SLURM_JOB_NODELIST_FILE
+    rm -f "{{prometheus_service_discovery_path}}/prometheus_service_discovery_${SLURM_JOB_ID}.json"
+  fi
+}
+trap cleanup_on_exit EXIT SIGTERM SIGINT
+
 # Actual run command
 echo "$(date) - Calling srun..."
 

@@ -38,6 +38,7 @@ from cosmos_curate.core.utils import environment
 logger = logging.getLogger(__name__)
 
 _SBATCH_TEMPLATE_PATH = Path("sbatch.sh.j2")
+_PROM_SVC_DISC_SCRIPT_PATH = Path("prometheus_service_discovery.py")
 _START_RAY = environment.CONTAINER_PATHS_CODE_DIR / "cosmos_curate" / "scripts" / "onto_slurm.py"
 _MAX_FILE_MODE = 0o7777
 _HOME_DIR = Path(os.getenv("REMOTE_HOME_DIR", Path.home()))
@@ -88,6 +89,20 @@ def _get_log_dir(log_dir: Path | None = None, user_dir: Path | None = None) -> P
         return Path(log_dir_str)
 
     return _get_user_dir(user_dir) / "job_logs"
+
+
+def _get_remote_job_path(remote_files_path: Path, job_name: str) -> Path:
+    """Get the remote job path for the job on the cluster.
+
+    Args:
+        remote_files_path (Path): The path to the remote files directory for all jobs
+        job_name (str): The name of the job.
+
+    Returns:
+        The remote files path for the job
+
+    """
+    return remote_files_path / f"{job_name}.{datetime.now().strftime('%Y%m%dT%H%M%S.%f')}"  # noqa: DTZ005
 
 
 @attrs.define
@@ -154,7 +169,7 @@ class SlurmJobSpec:
     account: str
     partition: str
     job_name: str
-    remote_files_path: Path
+    remote_job_path: Path
     log_dir: Path
     num_nodes: int
     exclusive: bool
@@ -164,6 +179,7 @@ class SlurmJobSpec:
     stop_retries_after: int = 600
     exclude_nodes: list[str] | None = None
     comment: str | None = None
+    prometheus_service_discovery_path: Path | None = None
 
 
 def _render_sbatch_script(spec: SlurmJobSpec) -> str:
@@ -210,6 +226,9 @@ def _render_sbatch_script(spec: SlurmJobSpec) -> str:
         exclude_nodes=spec.exclude_nodes,
         log_dir=str(spec.log_dir),
         comment=spec.comment,
+        enable_metrics_scraping="yes" if spec.prometheus_service_discovery_path is not None else "no",
+        job_artifact_path=str(spec.remote_job_path),
+        prometheus_service_discovery_path=str(spec.prometheus_service_discovery_path),
     )
 
 
@@ -327,32 +346,24 @@ def create_remote_path(connection: fabric.Connection, path: Path, mode: int = 0o
     connection.run(f"chmod {mode:o} {path}")
 
 
-def create_remote_files_path(connection: fabric.Connection, job_spec: SlurmJobSpec) -> Path:
-    """Create a remote files path for the job on the cluster.
+def create_remote_job_path(connection: fabric.Connection, job_spec: SlurmJobSpec) -> None:
+    """Create a remote job files path for the particular job on the cluster.
 
     Args:
         connection (fabric.Connection): An ssh connection to the login node
         job_spec (SlurmJobSpec): The job specification, including job name,
             account, partition, and command.
 
-    Returns:
-        The remote files path
-
     Raises:
         ValueError: If the remote files path already exists
 
     """
-    remote_files_path = (
-        job_spec.remote_files_path / f"{job_spec.job_name}.{datetime.now().strftime('%Y%m%dT%H%M%S.%f')}"  # noqa: DTZ005
-    )
-
     # If the directory exists, raise an error because there might be a race condition
-    if remote_path_exists(connection, remote_files_path):
-        error_message = f"Remote files path already exists: {remote_files_path}"
+    if remote_path_exists(connection, job_spec.remote_job_path):
+        error_message = f"Remote files path already exists: {job_spec.remote_job_path}"
         raise ValueError(error_message)
 
-    create_remote_path(connection, remote_files_path)
-    return remote_files_path
+    create_remote_path(connection, job_spec.remote_job_path)
 
 
 def curator_submit(slurm_job_spec: SlurmJobSpec) -> str:
@@ -370,16 +381,21 @@ def curator_submit(slurm_job_spec: SlurmJobSpec) -> str:
 
     """
     connection = connect(slurm_job_spec.login_node, slurm_job_spec.username)
-    remote_files_path = create_remote_files_path(connection, slurm_job_spec)
+    create_remote_job_path(connection, slurm_job_spec)
 
-    slurm_job_spec.container.mounts += [MountSpec(source=str(remote_files_path), dest="/remote_files")]
+    slurm_job_spec.container.mounts += [MountSpec(source=str(slurm_job_spec.remote_job_path), dest="/remote_files")]
     logger.debug("Container mounts: %s", slurm_job_spec.container.mounts)
-    remote_sbatch_path = remote_files_path / "sbatch.sh"
+    remote_sbatch_path = slurm_job_spec.remote_job_path / "sbatch.sh"
 
     remote_files = [
         (
             _render_sbatch_script(slurm_job_spec),
             remote_sbatch_path,
+            0o700,
+        ),
+        (
+            (Path(__file__).parent / _PROM_SVC_DISC_SCRIPT_PATH).read_text(encoding="utf-8"),
+            slurm_job_spec.remote_job_path / _PROM_SVC_DISC_SCRIPT_PATH,
             0o700,
         ),
     ]
@@ -572,6 +588,16 @@ def submit_cli(  # noqa: PLR0913
         str | None,
         Option(help="Comment to add to the job", rich_help_panel="cluster"),
     ] = None,
+    prometheus_service_discovery_path: Annotated[
+        Path | None,
+        Option(
+            help=(
+                "Path on the cluster under which to create the Prometheus service discovery file. "
+                "If not provided, it will not be created."
+            ),
+            rich_help_panel="cluster",
+        ),
+    ] = None,
 ) -> None:
     """Submit a job to a SLURM cluster."""
     if not command:
@@ -595,9 +621,9 @@ def submit_cli(  # noqa: PLR0913
     slurm_job_spec = SlurmJobSpec(
         login_node=login_node,
         username=username,
-        remote_files_path=remote_files_path,
         log_dir=_get_log_dir(log_dir),
         job_name=job_name,
+        remote_job_path=_get_remote_job_path(remote_files_path, job_name),
         account=account,
         partition=partition,
         num_nodes=num_nodes,
@@ -608,6 +634,7 @@ def submit_cli(  # noqa: PLR0913
         stop_retries_after=stop_retries_after,
         exclude_nodes=exclude_nodes_list,
         comment=comment,
+        prometheus_service_discovery_path=prometheus_service_discovery_path,
     )
 
     job_id = curator_submit(slurm_job_spec)
