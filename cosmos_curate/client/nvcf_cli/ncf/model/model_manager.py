@@ -17,12 +17,20 @@
 
 from __future__ import annotations
 
+from threading import RLock
+
+from tqdm import tqdm
+
+tqdm.set_lock(RLock())
+
+# ruff: noqa: E402
 import asyncio
 import json
 import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, TypedDict, cast
 
+import huggingface_hub.utils
 import requests
 import typer
 from huggingface_hub import hf_hub_download, snapshot_download
@@ -282,6 +290,8 @@ class ModelManager(NvcfBase):
         """
         local_dir = download_dir / model["model_id"]
         local_dir.mkdir(parents=True, exist_ok=True)
+        # Disable progress bars to avoid tqdm synchronization issues
+        huggingface_hub.utils.disable_progress_bars()  # type: ignore[attr-defined]
 
         try:
             if model["filelist"] is None:
@@ -290,7 +300,6 @@ class ModelManager(NvcfBase):
                     repo_id=model["model_id"],
                     revision=model["version"],
                     local_dir=local_dir,
-                    local_dir_use_symlinks=False,
                     token=hf_token,
                     cache_dir=cache_dir,
                 )
@@ -302,13 +311,13 @@ class ModelManager(NvcfBase):
                         filename=file,
                         revision=model["version"],
                         local_dir=local_dir,
-                        local_dir_use_symlinks=False,
                         token=hf_token,
                         cache_dir=cache_dir,
                     )
                     for file in model["filelist"]
                 ]
                 await asyncio.gather(*tasks)
+            self.logger.info("Model %s downloaded successfully", model["model_id"])
         except (RepositoryNotFoundError, RevisionNotFoundError, EntryNotFoundError, HfHubHTTPError, OSError) as e:
             mname = model["model_id"]
             msg = f"Failed to download {mname} : {e!s}"
@@ -331,6 +340,7 @@ class ModelManager(NvcfBase):
             for model in models.values()
         ]
         await asyncio.gather(*tasks)
+        self.logger.info("All models downloaded successfully")
 
     def sync_models(
         self, models: dict[str, ModelManager._ModelProps], hf_token: str, download_dir: Path, cache_dir: Path | None
