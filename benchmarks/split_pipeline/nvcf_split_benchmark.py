@@ -26,17 +26,18 @@ from cosmos_curate.client.nvcf_cli.ncf.launcher.nvcf_driver import _get_s3_confi
 from cosmos_curate.client.nvcf_cli.ncf.launcher.nvcf_function import NvcfFunction, NvcfFunctionAlreadyDeployedError
 
 
-def process_and_report_summary_metrics(  # noqa: PLR0913
+def report_metrics(  # noqa: PLR0913
     summary_path: str,
     transport_params: dict[str, Any],
     num_nodes: int,
     gpus_per_node: int,
     *,
     caption: bool,
-    kratos_metrics_endpoint: str,
-    kratos_secrets: KratosSecrets,
+    kratos_metrics_endpoint: str | None = None,
+    kratos_secrets: KratosSecrets | None = None,
+    metrics_path: str | None = None,
 ) -> None:
-    """Process summary data from the pipeline and report metrics.
+    """Report metrics to Kratos or save to file.
 
     Args:
         summary_path: path to summary.json file.
@@ -45,7 +46,14 @@ def process_and_report_summary_metrics(  # noqa: PLR0913
         gpus_per_node: Number of GPUs per node.
         caption: Whether captions are enabled.
         kratos_metrics_endpoint: Endpoint for sending metrics.
+            Must be provided if reporting metrics to Kratos.
         kratos_secrets: Authentication secrets for metrics endpoint.
+            If None, metrics are not reported to Kratos.
+        metrics_path: path to save metrics to.
+            If None, metrics are not saved to a file.
+
+    Raises:
+        ValueError: If reporting metrics to Kratos and kratos_metrics_endpoint is not provided.
 
     """
     logger.info(f"Getting summary metrics from {summary_path}")
@@ -55,14 +63,25 @@ def process_and_report_summary_metrics(  # noqa: PLR0913
 
     summary_metrics = make_summary_metrics(summary_data, num_nodes, gpus_per_node, caption=caption, env="nvcf")
 
-    cloudevent = make_cloudevent(summary_metrics)
-    logger.info("Metrics to send to Kratos:")
-    print_json(json.dumps(cloudevent, indent=2))
+    logger.info("Summary metrics:")
+    print_json(json.dumps(summary_metrics, indent=2))
 
-    logger.info(f"Pushing metrics to {kratos_metrics_endpoint}")
-    response = push_cloudevent(cloudevent, kratos_metrics_endpoint, kratos_secrets)
-    logger.info("Response:")
-    print_json(json.dumps(response, indent=2))
+    if metrics_path is not None:
+        logger.info(f"Saving metrics to {metrics_path}")
+        _transport_params = transport_params if str(metrics_path).startswith("s3://") else None
+        with smart_open.open(str(metrics_path), transport_params=_transport_params, mode="w") as f:
+            json.dump(summary_metrics, f, indent=2)
+
+    if kratos_secrets is not None:
+        if kratos_metrics_endpoint is None:
+            msg = "Kratos metrics endpoint is required when reporting metrics to Kratos."
+            raise ValueError(msg)
+
+        cloudevent = make_cloudevent(summary_metrics)
+        logger.info(f"Pushing metrics to {kratos_metrics_endpoint}")
+        response = push_cloudevent(cloudevent, kratos_metrics_endpoint, kratos_secrets)
+        logger.info("Response:")
+        print_json(json.dumps(response, indent=2))
 
 
 def nvcf_split_benchmark(  # noqa: PLR0913
@@ -86,6 +105,11 @@ def nvcf_split_benchmark(  # noqa: PLR0913
     num_nodes: int,
     gpus_per_node: int,
     kratos_metrics_endpoint: str,
+    metrics_path: str | None,
+    *,
+    clip_re_chunk_size: int,
+    qwen_use_fp8_weights: bool,
+    report_metrics_to_kratos: bool,
 ) -> None:
     """Run benchmark tests."""
     nvcf_function = NvcfFunction(
@@ -118,6 +142,8 @@ def nvcf_split_benchmark(  # noqa: PLR0913
             "qwen_preprocess_dtype": "uint8" if caption == 1 else "float16",
             "generate_captions": caption == 1,
             "limit": limit,
+            "clip_re_chunk_size": clip_re_chunk_size,
+            "qwen_use_fp8_weights": qwen_use_fp8_weights,
         }
     )
 
@@ -137,6 +163,13 @@ aws_region = {s3_secrets.aws_region}
     }
     summary_path = s3_output_prefix + "/summary.json"
 
+    if report_metrics_to_kratos:
+        # Verify that the kratos secret can be successfully obtained before a long running benchmark.
+        KratosSecrets.from_env(
+            kratos_metrics_token_env,
+            kratos_bearer_url,
+        )
+
     with tempfile.TemporaryDirectory() as tmpdir:
         logger.info(f"Benchmarking with {caption=} {num_nodes=}, input: {s3_input_prefix}, output: {s3_output_prefix}")
         tmpdir_path = Path(tmpdir)
@@ -155,23 +188,27 @@ aws_region = {s3_secrets.aws_region}
             raise ValueError(msg)
 
         try:
+            # Run benchmark
             with nvcf_function.deploy(backend, gpu, instance_type, deploy_config, num_nodes, max_concurrency):
                 nvcf_function.invoke(invoke_config, s3_config_str, out_dir=tmpdir_path)
 
-            # Get secrets immediately before reporting - benchmarking time may exceed the token's expiration date.
-            kratos_secrets = KratosSecrets.from_env(
-                kratos_metrics_token_env,
-                kratos_bearer_url,
-            )
+            kratos_secrets: KratosSecrets | None = None
+            if report_metrics_to_kratos:
+                # Get secrets immediately before reporting - benchmarking time may exceed the token's expiration date.
+                kratos_secrets = KratosSecrets.from_env(
+                    kratos_metrics_token_env,
+                    kratos_bearer_url,
+                )
 
-            process_and_report_summary_metrics(
-                summary_path,
-                transport_params,
-                num_nodes,
-                gpus_per_node,
+            report_metrics(
+                summary_path=summary_path,
+                transport_params=transport_params,
+                num_nodes=num_nodes,
+                gpus_per_node=gpus_per_node,
                 caption=bool(caption),
-                kratos_metrics_endpoint=kratos_metrics_endpoint,
                 kratos_secrets=kratos_secrets,
+                kratos_metrics_endpoint=kratos_metrics_endpoint,
+                metrics_path=metrics_path,
             )
 
         except NvcfFunctionAlreadyDeployedError:
@@ -232,13 +269,15 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--kratos-metrics-endpoint",
         type=str,
-        required=True,
+        required=False,
+        default=None,
         help="URL of destination for the metrics to push to Kratos.",
     )
     parser.add_argument(
         "--kratos-bearer-url",
         type=str,
-        required=True,
+        required=False,
+        default=None,
         help="URL of the bearer token endpoint for Kratos.",
     )
     parser.add_argument(
@@ -249,6 +288,33 @@ def _parse_args() -> argparse.Namespace:
         help="Environment variable that contains the token to use to push metrics to Kratos.",
     )
     parser.add_argument("--gpus-per-node", type=int, required=True, default=8, help="Number of GPUs per node.")
+    parser.add_argument(
+        "--clip-re-chunk-size",
+        type=int,
+        required=False,
+        default=32,
+        help="Number of clips per chunk after transcoding stage.",
+    )
+    parser.add_argument(
+        "--metrics-path",
+        type=str,
+        required=False,
+        default=None,
+        help="Path to save metrics json to. Can be used to save metrics to a file instead of reporting to Kratos.",
+    )
+    parser.add_argument(
+        "--qwen-use-fp8-weights",
+        type=int,
+        required=False,
+        default=0,
+        help="Whether to use FP8 weights for Qwen.",
+    )
+    parser.add_argument(
+        "--report-metrics-to-kratos",
+        action="store_true",
+        help="Whether to report metrics to Kratos.",
+    )
+
     return parser.parse_args()
 
 
@@ -265,6 +331,25 @@ def main() -> None:
         args.aws_secret_access_key_env,
         args.aws_region_env,
     )
+
+    args.qwen_use_fp8_weights = bool(args.qwen_use_fp8_weights)
+
+    if args.metrics_path:
+        logger.info(f"Saving metrics to {args.metrics_path}")
+        if not str(args.metrics_path).startswith("s3://"):
+            args.metrics_path = Path(args.metrics_path)
+            args.metrics_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if args.report_metrics_to_kratos:
+        if not args.kratos_metrics_endpoint:
+            msg = "Kratos metrics endpoint is required when reporting metrics to Kratos."
+            raise ValueError(msg)
+        if not args.kratos_bearer_url:
+            msg = "Kratos bearer URL is required when reporting metrics to Kratos."
+            raise ValueError(msg)
+        if not args.kratos_metrics_token_env:
+            msg = "Kratos metrics token environment variable is required when reporting metrics to Kratos."
+            raise ValueError(msg)
 
     nvcf_split_benchmark(
         funcid=args.funcid,
@@ -287,6 +372,10 @@ def main() -> None:
         num_nodes=args.num_nodes,
         gpus_per_node=args.gpus_per_node,
         kratos_metrics_endpoint=args.kratos_metrics_endpoint,
+        metrics_path=args.metrics_path,
+        report_metrics_to_kratos=args.report_metrics_to_kratos,
+        clip_re_chunk_size=args.clip_re_chunk_size,
+        qwen_use_fp8_weights=args.qwen_use_fp8_weights,
     )
 
 

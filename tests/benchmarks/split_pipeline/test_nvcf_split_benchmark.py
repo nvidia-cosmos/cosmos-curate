@@ -13,7 +13,7 @@ from typing import Any
 from unittest.mock import MagicMock, mock_open, patch
 
 from benchmarks.secrets import KratosSecrets
-from benchmarks.split_pipeline.nvcf_split_benchmark import process_and_report_summary_metrics
+from benchmarks.split_pipeline.nvcf_split_benchmark import report_metrics
 
 
 @patch("benchmarks.split_pipeline.nvcf_split_benchmark.push_cloudevent")
@@ -23,7 +23,7 @@ from benchmarks.split_pipeline.nvcf_split_benchmark import process_and_report_su
 @patch("benchmarks.split_pipeline.nvcf_split_benchmark.json.load")
 @patch("benchmarks.split_pipeline.nvcf_split_benchmark.smart_open.open")
 @patch("benchmarks.split_pipeline.nvcf_split_benchmark.logger")
-def test_process_and_report_summary_metrics_happy_path(  # noqa: PLR0913
+def test_report_metrics_happy_path(  # noqa: PLR0913
     mock_logger: MagicMock,  # noqa: ARG001
     mock_smart_open: MagicMock,
     mock_json_load: MagicMock,
@@ -32,7 +32,7 @@ def test_process_and_report_summary_metrics_happy_path(  # noqa: PLR0913
     mock_make_cloudevent: MagicMock,
     mock_push_cloudevent: MagicMock,
 ) -> None:
-    """Test process_and_report_summary_metrics function happy path."""
+    """Test report_metrics function happy path."""
     # Arrange
     test_summary_path = "s3://bucket/path/summary.json"
     test_transport_params: dict[str, Any] = {
@@ -63,7 +63,7 @@ def test_process_and_report_summary_metrics_happy_path(  # noqa: PLR0913
     mock_push_cloudevent.return_value = {"status": "success", "message": "Event pushed successfully"}
 
     # Act
-    process_and_report_summary_metrics(
+    report_metrics(
         summary_path=test_summary_path,
         transport_params=test_transport_params,
         num_nodes=test_num_nodes,
