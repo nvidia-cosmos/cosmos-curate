@@ -511,7 +511,7 @@ nvcf-helm:
         '.args.output_clip_path = $output_clip_path | .args.input_video_path = $input_video_path | .args.limit = $limit | .args.transnetv2_frame_decoder_mode = $transnetv2_frame_decoder_mode | .args.transnetv2_frame_decode_raise_on_pynvc_error = $transnetv2_frame_decode_raise_on_pynvc_error | .args.transcode_use_hwaccel = $transcode_use_hwaccel | .args.qwen_use_fp8_weights = $qwen_use_fp8_weights ' > invoke_split2.json
       - cosmos-curate nvcf function invoke-function --data-file invoke_split2.json --s3-config-file aws_credentials
       # Dedup pipeline
-      - cat examples/nvcf/function/invoke_video_dedup.json | jq --arg output_path "$S3_OUTPUT_DEDUP_PATH" --arg input_embeddings_path "$S3_OUTPUT_CLIP_PATH/iv2_embd_parquet/" '.args.output_path = $output_path | .args.input_embeddings_path = $input_embeddings_path' > invoke_dedup.json
+      - cat examples/nvcf/function/invoke_video_dedup.json | jq --arg output_path "$S3_OUTPUT_DEDUP_PATH" --arg input_embeddings_path "$S3_OUTPUT_CLIP_PATH" '.args.output_path = $output_path | .args.input_embeddings_path = $input_embeddings_path' > invoke_dedup.json
       - cosmos-curate nvcf function invoke-function --data-file invoke_dedup.json --s3-config-file aws_credentials
       # Shard-dataset pipeline
       - cat examples/nvcf/function/invoke_video_shard.json | jq --arg output_dataset_path "$S3_OUTPUT_DATASET_PATH" --arg input_clip_path "$S3_OUTPUT_CLIP_PATH" --arg input_semantic_dedup_path "$S3_OUTPUT_DEDUP_PATH" '.args.output_dataset_path = $output_dataset_path | .args.input_clip_path = $input_clip_path | .args.input_semantic_dedup_path = $input_semantic_dedup_path' > invoke_shard.json

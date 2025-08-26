@@ -171,6 +171,7 @@ def write_summary(
         args.output_clip_path,
         args.output_s3_profile_name,
         output_tasks,
+        args.embedding_algorithm,
         args.limit,
         perf_profile=args.perf_profile,
         pipeline_run_time=pipeline_run_time,

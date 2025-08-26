@@ -96,12 +96,14 @@ def path_to_prefix(path: str) -> StoragePrefix:
 def read_bytes(
     filepath: StoragePrefix | pathlib.Path | str,
     client: StorageClient | None = None,
+    max_attempts: int = 5,
 ) -> bytes:
     """Read bytes from a file, whether local or on a remote storage system.
 
     Args:
         filepath: The path to the file to read.
         client: The storage client to use for remote paths.
+        max_attempts: The maximum number of attempts for reading from remote storage.
 
     Returns:
         The file contents as bytes.
@@ -120,7 +122,7 @@ def read_bytes(
             assert client is not None
             return client.download_object_as_bytes(filepath)
 
-        return do_with_retries(func_to_call, backoff_factor=4.0, max_wait_time_s=256.0)
+        return do_with_retries(func_to_call, max_attempts=max_attempts, backoff_factor=4.0, max_wait_time_s=256.0)
     # Handle local paths
     with filepath.open("rb") as fp:
         return fp.read()
@@ -129,29 +131,33 @@ def read_bytes(
 def read_text(
     filepath: StoragePrefix | pathlib.Path | str,
     client: StorageClient | None = None,
+    max_attempts: int = 5,
 ) -> str:
     """Read text from a file, whether local or on a remote storage system.
 
     Args:
         filepath: The path to the file to read.
         client: The storage client to use for remote paths.
+        max_attempts: The maximum number of attempts for reading from remote storage.
 
     Returns:
         The file contents as a string.
 
     """
-    return read_bytes(filepath, client).decode("utf-8")
+    return read_bytes(filepath, client, max_attempts).decode("utf-8")
 
 
 def read_json_file(
     filepath: StoragePrefix | pathlib.Path | str,
     client: StorageClient | None = None,
+    max_attempts: int = 5,
 ) -> dict[Any, Any]:
     """Read a JSON file, whether local or on a remote storage system.
 
     Args:
         filepath: The path to the file to read.
         client: The storage client to use for remote paths.
+        max_attempts: The maximum number of attempts for reading from remote storage.
 
     Returns:
         The parsed JSON content.
@@ -162,7 +168,7 @@ def read_json_file(
         filepath = path_to_prefix(filepath) if is_remote_path(filepath) else pathlib.Path(filepath)
 
     if isinstance(filepath, StoragePrefix):
-        buffer = read_bytes(filepath, client)
+        buffer = read_bytes(filepath, client, max_attempts)
         return json.loads(buffer.decode("utf-8"))  # type: ignore[no-any-return]
     with filepath.open() as fp:
         return json.load(fp)  # type: ignore[no-any-return]

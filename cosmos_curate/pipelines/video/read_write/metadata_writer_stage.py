@@ -232,6 +232,17 @@ class ClipWriterStage(CuratorStage):
             "t5_xxl",
         )
 
+    @staticmethod
+    def get_grouped_clips_uri(
+        video_uuid: uuid.UUID,
+        chunk_index: int,
+        path_prefix: str,
+        file_type: str,
+    ) -> storage_client.StoragePrefix | pathlib.Path:
+        """Get URI for grouped clips data (embeddings/metadata) for a chunk of clips from a video."""
+        output_clip_chunk_file = f"{video_uuid}_{chunk_index}.{file_type}"
+        return get_full_path(path_prefix, output_clip_chunk_file)
+
     def _write_data(
         self,
         buffer: bytes,
@@ -328,7 +339,7 @@ class ClipWriterStage(CuratorStage):
 
     def _write_grouped_embeddings_to_parquet(self, video: Video) -> None:
         if self._embedding_buffer and not self._dry_run:
-            path = self._get_grouped_clips_uri(
+            path = self.get_grouped_clips_uri(
                 self.get_video_uuid(video.input_path),
                 video.clip_chunk_index,
                 self.get_output_path_embd_parquets(self._output_path, self._embedding_algorithm),
@@ -348,7 +359,7 @@ class ClipWriterStage(CuratorStage):
 
     def _write_grouped_metadata_to_jsonl(self, video: Video) -> None:
         if self._metadata_buffer and not self._dry_run:
-            path = self._get_grouped_clips_uri(
+            path = self.get_grouped_clips_uri(
                 self.get_video_uuid(video.input_path),
                 video.clip_chunk_index,
                 self.get_output_path_meta_jsonls(self._output_path, "v0"),
@@ -367,7 +378,7 @@ class ClipWriterStage(CuratorStage):
 
     def _write_grouped_cvds_data_to_parquet(self, video: Video) -> None:
         if self._cvds_data_buffer and not self._dry_run:
-            path = self._get_grouped_clips_uri(
+            path = self.get_grouped_clips_uri(
                 self.get_video_uuid(video.input_path),
                 video.clip_chunk_index,
                 self.get_output_path_cvds_parquets(self._output_path),
@@ -413,16 +424,6 @@ class ClipWriterStage(CuratorStage):
     ) -> storage_client.StoragePrefix | pathlib.Path:
         output_clip_file = f"{video_span_uuid}.{file_type}"
         return get_full_path(path_prefix, output_clip_file)
-
-    def _get_grouped_clips_uri(
-        self,
-        video_uuid: uuid.UUID,
-        chunk_index: int,
-        path_prefix: str,
-        file_type: str,
-    ) -> storage_client.StoragePrefix | pathlib.Path:
-        output_clip_chunk_file = f"{video_uuid}_{chunk_index}.{file_type}"
-        return get_full_path(path_prefix, output_clip_chunk_file)
 
     def _get_video_uri(self, input_video_path: str) -> storage_client.StoragePrefix | pathlib.Path:
         assert input_video_path.startswith(self._input_path)

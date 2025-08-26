@@ -170,14 +170,12 @@ Today the dedup pipeline produces the following artifacts under the path specifi
 │   ├── dedup_summary_{eps-threshold}.csv     # dedup summary for given Epsilon threshold
 │   ├── semdedup_pruning_tables/
 │       ├── cluster_{centroid-index}.parquet  # semantic matches for a single cluster with cosine_sim_score for each clip
-│   ├── unique_ids_{eps-threshold}.parquet/
-│       ├── part.{centroid-index}.parquet     # similar clips that are within given Epsilon threshold
 ```
 
 ### Dedup Pipeline Configurable Options
 
 Below are a few key options for dedup pipeline:
-- `--input-embeddings-path`: path to input embeddings, typically ends with `iv2_embd_parquet` or `ce1_embd_parquet` depending on which embedding model is used in `split-annotate` pipeline.
+- `--input-embeddings-path`: path to input embeddings, could be either the `output_clip_path` of `split-annotate` pipeline for best performance or a path containing embedding parquet files.
 - `--output-path`: output location.
 - `--n-clusters`: number of clusters for K-Means clustering.
 - `--max-iter`: maximum iterations for clustering; default to `100`.
@@ -191,7 +189,7 @@ cosmos-curate local launch \
   --image-name cosmos-curate --image-tag 1.0.0 --curator-path . \
   -- pixi run \
   python3 -m cosmos_curate.pipelines.video.run_pipeline dedup \
-  --input-embeddings-path <local or s3 path to store clips and metadatas produced by split-annotate pipeline>/iv2_embd_parquet/ \
+  --input-embeddings-path <local or s3 path to store clips and metadatas produced by split-annotate pipeline>/ \
   --output-path <local or s3 path to store semantic-dedup output>
 ```
 

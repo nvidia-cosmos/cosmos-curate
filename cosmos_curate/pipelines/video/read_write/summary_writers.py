@@ -118,6 +118,7 @@ def _write_split_result_summary(  # noqa: PLR0913
     input_videos_relative: list[str],
     output_path: str,
     output_s3_profile_name: str,
+    embedding_algorithm: str,
     limit: int,
     pipeline_run_time: float = 0.0,
 ) -> None:
@@ -140,6 +141,7 @@ def _write_split_result_summary(  # noqa: PLR0913
     summary_data: dict[str, Any] = {
         "num_input_videos": len(input_videos_relative),
         "num_processed_videos": len(processed_videos),
+        "embedding_algorithm": embedding_algorithm,
         "total_video_duration": 0,
         "total_clip_duration": 0,
         "max_clip_duration": 0,
@@ -211,6 +213,7 @@ def write_split_summary(  # noqa: PLR0913
     output_path: str,
     output_s3_profile_name: str,
     output_tasks: list[SplitPipeTask],
+    embedding_algorithm: str,
     limit: int,
     *,
     perf_profile: bool = False,
@@ -224,6 +227,7 @@ def write_split_summary(  # noqa: PLR0913
         output_path: Path to write output files.
         output_s3_profile_name: S3 profile name for output.
         output_tasks: List of completed split pipeline tasks.
+        embedding_algorithm: Name of the embedding algorithm used.
         limit: Maximum number of videos to process.
         perf_profile: Whether to write performance statistics.
         pipeline_run_time: Total runtime of the pipeline in minutes.
@@ -235,6 +239,7 @@ def write_split_summary(  # noqa: PLR0913
         input_videos_relative,
         output_path,
         output_s3_profile_name,
+        embedding_algorithm,
         limit,
         pipeline_run_time,
     )

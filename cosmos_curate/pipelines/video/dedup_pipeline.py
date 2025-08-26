@@ -73,6 +73,7 @@ from cosmos_curate.pipelines.video.dedup.dedup_actor import (
     SemDedupConfig,
 )
 from cosmos_curate.pipelines.video.dedup.raft_actor import initialize_raft_actor_pool
+from cosmos_curate.pipelines.video.read_write.metadata_writer_stage import ClipWriterStage
 
 EPS_TO_EXTRACT_MIN = 1e-4
 
@@ -96,6 +97,33 @@ def _validate_args(args: argparse.Namespace) -> None:
         raise ValueError(error_message)
 
 
+def _get_parquet_files_from_summary(input_path: str, input_s3_profile_name: str) -> list[StoragePrefix | pathlib.Path]:
+    parquet_files: list[StoragePrefix | pathlib.Path] = []
+    try:
+        summary_file_path = storage_utils.get_full_path(input_path, "summary.json")
+        client = storage_utils.get_storage_client(str(summary_file_path), profile_name=input_s3_profile_name)
+        logger.info(f"Reading split-annotate pipeline summary from {summary_file_path}")
+        summary_data = storage_utils.read_json_file(summary_file_path, client=client, max_attempts=2)
+        embedding_parquet_path = ClipWriterStage.get_output_path_embd_parquets(
+            input_path, summary_data["embedding_algorithm"]
+        )
+        for item in summary_data.values():
+            if isinstance(item, dict) and "video_uuid" in item:
+                parquet_files.extend(
+                    [
+                        ClipWriterStage.get_grouped_clips_uri(
+                            item["video_uuid"], idx, embedding_parquet_path, "parquet"
+                        )
+                        for idx in range(item["num_clip_chunks"])
+                    ]
+                )
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"Could not derive parquet file list from split-pipeline summary: {e}")
+        return []
+    else:
+        return parquet_files
+
+
 def _get_parquet_files(args: argparse.Namespace) -> list[StoragePrefix | pathlib.Path]:
     """Resolve and validate the list of input parquet files.
 
@@ -111,12 +139,15 @@ def _get_parquet_files(args: argparse.Namespace) -> list[StoragePrefix | pathlib
         RuntimeError: If no parquet files are found for the given input path/filters.
 
     """
-    parquet_files = extract_parquet_files(
-        input_path=args.input_embeddings_path,
-        profile_name=args.input_s3_profile_name,
-        limit=args.limit,
-        verbose=args.verbose,
-    )
+    parquet_files = _get_parquet_files_from_summary(args.input_embeddings_path, args.input_s3_profile_name)
+    if not parquet_files:
+        logger.info(f"Falling back to scanning for parquet files under {args.input_embeddings_path}.")
+        parquet_files = extract_parquet_files(
+            input_path=args.input_embeddings_path,
+            profile_name=args.input_s3_profile_name,
+            limit=args.limit,
+            verbose=args.verbose,
+        )
     num_parquet_files = len(parquet_files)
     if num_parquet_files <= 0:
         error_message = "No parquet files found. Nothing to do."
@@ -252,7 +283,11 @@ def _setup_parser(parser: argparse.ArgumentParser) -> None:
         "--input-embeddings-path",
         type=str,
         required=True,
-        help="Path to input embeddings location (typically ends with iv2_embd_parquet or ce1_embd_parquet)",
+        help=(
+            "Path to input embeddings; could be either output_clip_path of split pipeline for best performance "
+            "(the path containing a summary.json and an iv2_embd_parquet/ce1_embd_parquet directory) "
+            "or a path with embedding parquet files which includes id & embedding columns."
+        ),
     )
     parser.add_argument(
         "--output-path",
