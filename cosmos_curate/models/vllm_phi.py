@@ -23,7 +23,7 @@ from torchvision import transforms  # type: ignore[import-untyped]
 from transformers import AutoProcessor
 from vllm import LLM
 
-from cosmos_curate.models.vllm_plugin import VLLMPlugin
+from cosmos_curate.models.vllm_plugin import VllmPlugin
 
 if TYPE_CHECKING:
     from PIL import Image
@@ -32,7 +32,7 @@ if TYPE_CHECKING:
 
     from cosmos_curate.pipelines.video.utils.data_model import (
         Video,
-        VLLMConfig,
+        VllmConfig,
         Window,
     )
 
@@ -123,8 +123,8 @@ def make_prompt(message: dict[str, Any], processor: AutoProcessor) -> dict[str, 
     }
 
 
-class VLLMPhi4(VLLMPlugin):
-    """Phi-4 VLLM model variant plugin."""
+class VllmPhi4(VllmPlugin):
+    """Phi-4 vLLM model variant plugin."""
 
     @staticmethod
     def model_variant() -> str:
@@ -137,7 +137,7 @@ class VLLMPhi4(VLLMPlugin):
         return "microsoft/Phi-4-multimodal-instruct"
 
     @classmethod
-    def model(cls, config: VLLMConfig) -> LLM:
+    def model(cls, config: VllmConfig) -> LLM:
         """Instantiate the vLLM model.
 
         Args:

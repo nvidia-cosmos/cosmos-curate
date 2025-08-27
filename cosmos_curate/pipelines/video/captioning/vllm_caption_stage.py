@@ -12,13 +12,13 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""VLLM caption stages.
+"""vLLM caption stages.
 
-The VLLMEncodeStage and VLLMCaptionStage classes are designed to be used
+The VllmPrepStage and VllmCaptionStage classes are designed to be used
 in any pipeline. Because they are designed to be used in any pipeline, they
 are generic and not specific to any particular pipeline or task type.
 
-For the VLLMEncodeStage and VLLMCaptionStage to function properly, the
+For the VllmPrepStage and VllmCaptionStage to function properly, the
 the tasks must have these attributes/methods:
 
 - video: The video to process.
@@ -46,7 +46,7 @@ from cosmos_curate.pipelines.video.captioning.captioning_stages import _get_prom
 from cosmos_curate.pipelines.video.utils import windowing_utils
 from cosmos_curate.pipelines.video.utils.data_model import (
     Video,
-    VLLMConfig,
+    VllmConfig,
     WindowConfig,
 )
 
@@ -57,8 +57,8 @@ if conda_utils.is_running_in_env("unified"):
 
     from cosmos_curate.models.vllm_interface import (
         auto_processor,
-        encode_windows_for_vllm,
         free_vllm_inputs,
+        prep_windows_for_vllm,
         sampling_params,
         vllm_caption,
         vllm_model,
@@ -122,11 +122,11 @@ def _get_video_from_task(task: T) -> Video:
     return video
 
 
-class VLLMModelInterface(ModelInterface):
-    """Information about a VLLM model."""
+class VllmModelInterface(ModelInterface):
+    """Information about a vLLM model."""
 
-    def __init__(self, vllm_config: VLLMConfig) -> None:
-        """Initialize the VLLM model interface."""
+    def __init__(self, vllm_config: VllmConfig) -> None:
+        """Initialize the vLLM model interface."""
         self._vllm_config = vllm_config
 
     @property
@@ -157,25 +157,25 @@ class VLLMModelInterface(ModelInterface):
         return [cast("str", model_id)]
 
     def setup(self) -> None:
-        """Set up the VLLM model interface."""
+        """Set up the vLLM model interface."""
 
 
-class VLLMEncodeStage(CuratorStage):
-    """Stage that encodes cosmos-curate video data for VLLM multimodal model processing."""
+class VllmPrepStage(CuratorStage):
+    """Stage that prepares cosmos-curate video data for vLLM multimodal model processing."""
 
     def __init__(
         self,
-        vllm_config: VLLMConfig,
+        vllm_config: VllmConfig,
         window_config: WindowConfig,
         *,
         keep_mp4: bool = False,
         verbose: bool = False,
         log_stats: bool = False,
     ) -> None:
-        """Initialize the VLLM Preparation Stage.
+        """Initialize the vLLM Preparation Stage.
 
         Args:
-            vllm_config: Configuration for the VLLM model.
+            vllm_config: Configuration for the vLLM model.
             window_config: Configuration for the windowing.
             keep_mp4: Keep mp4 bytes for the clips in memory.
             verbose: Whether to print verbose logs.
@@ -216,9 +216,9 @@ class VLLMEncodeStage(CuratorStage):
         """Set up the model for processing."""
         self._processor = auto_processor(self._vllm_config)
 
-    @nvtx.annotate("VLLMEncodeStage")  # type: ignore[misc]
+    @nvtx.annotate("VllmPrepStage")  # type: ignore[misc]
     def process_data(self, tasks: list[T]) -> list[T]:
-        """Process the data for the VLLM caption preparation stage.
+        """Prepare the data for the vLLM caption stage.
 
         Args:
             tasks: The tasks to process.
@@ -252,7 +252,7 @@ class VLLMEncodeStage(CuratorStage):
                     keep_mp4=self._keep_mp4,
                 )
 
-                encode_windows_for_vllm(
+                prep_windows_for_vllm(
                     windows,
                     frames,
                     self._vllm_config,
@@ -268,24 +268,24 @@ class VLLMEncodeStage(CuratorStage):
         return tasks
 
 
-class VLLMCaptionStage(CuratorStage):
-    """Stage that prepares video windows for VLLM multimodal model processing.
+class VllmCaptionStage(CuratorStage):
+    """Stage that prepares video windows for vLLM multimodal model processing.
 
-    This stage handles the preparation of video windows and prompts for VLLM-based models.
+    This stage handles the preparation of video windows and prompts for vLLM-based models.
     """
 
     def __init__(
         self,
-        vllm_config: VLLMConfig,
+        vllm_config: VllmConfig,
         *,
         keep_mp4: bool = False,
         verbose: bool = False,
         log_stats: bool = False,
     ) -> None:
-        """Initialize the VLLM caption stage.
+        """Initialize the vLLM caption stage.
 
         Args:
-            vllm_config: Configuration for the VLLM model.
+            vllm_config: Configuration for the vLLM model.
             keep_mp4: Whether to keep the mp4 bytes.
             verbose: Whether to print verbose logs.
             log_stats: Whether to log performance statistics.
@@ -302,7 +302,7 @@ class VLLMCaptionStage(CuratorStage):
         self._verbose = verbose
         self._log_stats = log_stats
         self._vllm_use_tqdm = False
-        self._model = VLLMModelInterface(self._vllm_config)
+        self._model = VllmModelInterface(self._vllm_config)
 
     def stage_setup(self) -> None:
         """Set up the model for processing."""
@@ -337,7 +337,7 @@ class VLLMCaptionStage(CuratorStage):
         return CuratorStageResource(gpus=self._vllm_config.num_gpus)
 
     @property
-    def model(self) -> VLLMModelInterface:
+    def model(self) -> VllmModelInterface:
         """Get the model for this stage.
 
         Returns:
@@ -362,9 +362,9 @@ class VLLMCaptionStage(CuratorStage):
                     for window in clip.windows:
                         window.mp4_bytes = None
 
-    @nvtx.annotate("VLLMCaptionStage")  # type: ignore[misc]
+    @nvtx.annotate("VllmCaptionStage")  # type: ignore[misc]
     def process_data(self, tasks: list[T]) -> list[T]:
-        """Process the data for the VLLM caption stage.
+        """Process the data for the vLLM caption stage.
 
         Args:
             tasks: The tasks to process.
@@ -374,7 +374,7 @@ class VLLMCaptionStage(CuratorStage):
 
         """
         if self._llm is None:
-            msg = "VLLM model not initialized, call stage_setup() first"
+            msg = "vLLM model not initialized, call stage_setup() first"
             raise RuntimeError(msg)
 
         if self._sampling_params is None:

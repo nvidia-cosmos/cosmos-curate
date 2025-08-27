@@ -12,7 +12,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Qwen-4 VLLM plugin."""
+"""Qwen vLLM plugin."""
 
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING, Any, TypedDict, cast
 from transformers import AutoProcessor
 from vllm import LLM
 
-from cosmos_curate.models.vllm_plugin import VLLMPlugin
+from cosmos_curate.models.vllm_plugin import VllmPlugin
 
 if TYPE_CHECKING:
     import torch
@@ -30,7 +30,7 @@ if TYPE_CHECKING:
 
     from cosmos_curate.pipelines.video.utils.data_model import (
         Video,
-        VLLMConfig,
+        VllmConfig,
         Window,
     )
 
@@ -106,11 +106,11 @@ def make_prompt(message: QwenMessage, frames: torch.Tensor, processor: AutoProce
     }
 
 
-class VLLMQwen(VLLMPlugin):
-    """Qwen VLLM model variant plugin."""
+class VllmQwen(VllmPlugin):
+    """Qwen vLLM model variant plugin."""
 
     @classmethod
-    def model(cls, config: VLLMConfig) -> LLM:
+    def model(cls, config: VllmConfig) -> LLM:
         """Instantiate the vLLM model.
 
         Args:
@@ -253,8 +253,8 @@ class VLLMQwen(VLLMPlugin):
                 window.qwen_llm_input = None
 
 
-class VLLMQwen7B(VLLMQwen):
-    """Qwen VLLM model variant plugin."""
+class VllmQwen7B(VllmQwen):
+    """Qwen-7B vLLM model variant plugin."""
 
     @staticmethod
     def model_variant() -> str:

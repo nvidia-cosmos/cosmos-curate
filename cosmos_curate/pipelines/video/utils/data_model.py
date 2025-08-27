@@ -504,7 +504,7 @@ class ShardPipeTask(PipelineTask):
 
 
 @attrs.define
-class VLLMConfig:
+class VllmConfig:
     """Configuration for a vLLM model.
 
     Args:

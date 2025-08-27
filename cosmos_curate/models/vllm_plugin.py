@@ -25,12 +25,12 @@ from vllm import LLM, RequestOutput
 from cosmos_curate.core.utils.model import model_utils
 from cosmos_curate.pipelines.video.utils.data_model import (
     Video,
-    VLLMConfig,
+    VllmConfig,
     Window,
 )
 
 
-class VLLMPlugin(ABC):
+class VllmPlugin(ABC):
     """vLLM plugin interface."""
 
     @staticmethod
@@ -55,7 +55,7 @@ class VLLMPlugin(ABC):
 
     @classmethod
     @abstractmethod
-    def model(cls, config: VLLMConfig) -> LLM:
+    def model(cls, config: VllmConfig) -> LLM:
         """Instantiate the vLLM model.
 
         Args:

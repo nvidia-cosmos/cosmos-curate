@@ -48,8 +48,8 @@ from cosmos_curate.pipelines.video.captioning.captioning_stages import (
     T5StageForSplit,
 )
 from cosmos_curate.pipelines.video.captioning.vllm_caption_stage import (
-    VLLMCaptionStage,
-    VLLMEncodeStage,
+    VllmCaptionStage,
+    VllmPrepStage,
 )
 from cosmos_curate.pipelines.video.clipping.clip_extraction_stages import (
     ClipTranscodingStage,
@@ -90,7 +90,7 @@ from cosmos_curate.pipelines.video.read_write.remux_stages import RemuxStage
 from cosmos_curate.pipelines.video.read_write.summary_writers import (
     write_split_summary,
 )
-from cosmos_curate.pipelines.video.utils.data_model import SplitPipeTask, VLLMConfig, WindowConfig
+from cosmos_curate.pipelines.video.utils.data_model import SplitPipeTask, VllmConfig, WindowConfig
 from cosmos_curate.pipelines.video.utils.decoder_utils import FrameExtractionPolicy
 from cosmos_curate.pipelines.video.utils.video_pipe_input import (
     extract_split_tasks,
@@ -431,12 +431,12 @@ def split(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912, PLR0915
         embedding_model_version = get_all_models_by_id().get(embedding_model_id, {}).get("version", "unspecified")  # type: ignore[assignment]
         logger.debug(f"Embedding model id={embedding_model_id} version={embedding_model_version}")
 
-    vllm_config: VLLMConfig | None = None
+    vllm_config: VllmConfig | None = None
     window_config: WindowConfig | None = None
     keep_mp4 = args.generate_previews or (args.generate_cosmos_predict_dataset != "disable")
 
     if args.captioning_algorithm.lower() in {"phi4", "qwen"}:
-        vllm_config = VLLMConfig(
+        vllm_config = VllmConfig(
             args.captioning_algorithm,
             prompt_variant=args.captioning_prompt_variant,
             prompt_text=args.captioning_prompt_text,
@@ -472,7 +472,7 @@ def split(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912, PLR0915
                 raise ValueError(msg)
 
             stages += [
-                VLLMEncodeStage(
+                VllmPrepStage(
                     vllm_config=vllm_config,
                     window_config=window_config,
                     keep_mp4=keep_mp4,
@@ -513,7 +513,7 @@ def split(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912, PLR0915
         # captioning
         if vllm_config is not None:
             stages += [
-                VLLMCaptionStage(
+                VllmCaptionStage(
                     vllm_config=vllm_config,
                     verbose=args.verbose,
                     keep_mp4=keep_mp4,

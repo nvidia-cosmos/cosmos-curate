@@ -21,7 +21,7 @@ from uuid import uuid4
 import pytest
 import torch
 
-from cosmos_curate.models.vllm_qwen import VLLMQwen, make_message, make_prompt
+from cosmos_curate.models.vllm_qwen import VllmQwen, make_message, make_prompt
 from cosmos_curate.pipelines.video.utils.data_model import Clip, Video, Window
 
 
@@ -40,7 +40,7 @@ def test_make_llm_input_qwen() -> None:
     prompt = "Describe the video"
 
     # Call the function
-    result = VLLMQwen.make_llm_input(prompt, frames, mock_processor)
+    result = VllmQwen.make_llm_input(prompt, frames, mock_processor)
 
     # Verify structure
     assert "multi_modal_data" in result
@@ -61,7 +61,7 @@ def test_make_llm_input_qwen_no_tokenizer() -> None:
     prompt = "Test prompt"
 
     with pytest.raises(ValueError, match=".*"):
-        VLLMQwen.make_llm_input(prompt, frames, mock_processor)
+        VllmQwen.make_llm_input(prompt, frames, mock_processor)
 
 
 @pytest.mark.env("unified")
@@ -74,7 +74,7 @@ def test_add_llm_input_to_window_qwen() -> None:
 
     window = Window(start_frame=start, end_frame=end, mp4_bytes=mp4_bytes)
 
-    VLLMQwen.add_llm_input_to_window(window, llm_input)
+    VllmQwen.add_llm_input_to_window(window, llm_input)
 
     # Verify window properties
     assert isinstance(window, Window)
@@ -91,7 +91,7 @@ def test_get_qwen_llm_input_from_window() -> None:
     window = Window(start_frame=0, end_frame=10, qwen_llm_input=llm_input)
 
     # Call the function
-    result = VLLMQwen.get_llm_input_from_window(window)
+    result = VllmQwen.get_llm_input_from_window(window)
 
     # Verify result
     assert result == llm_input
@@ -118,7 +118,7 @@ def test_free_vllm_inputs_qwen() -> None:
     assert window2.qwen_llm_input is not None
 
     # Call the function
-    VLLMQwen.free_vllm_inputs(video)
+    VllmQwen.free_vllm_inputs(video)
 
     # Verify memory was freed, but mp4 bytes are not freed, that is handled elsewhere
     assert window1.mp4_bytes is not None
@@ -133,7 +133,7 @@ def test_free_vllm_inputs_empty_video() -> None:
     video = Video(input_video=Path("test.mp4"), clips=[])
 
     # Should not raise any errors
-    VLLMQwen.free_vllm_inputs(video)
+    VllmQwen.free_vllm_inputs(video)
 
 
 @pytest.mark.env("unified")

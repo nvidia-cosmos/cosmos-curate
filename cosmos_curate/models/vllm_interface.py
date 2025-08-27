@@ -20,7 +20,7 @@ Example usage:
 model = vllm_model(config)
 sampling_params = sampling_params(config)
 processor = auto_processor(config)
-encode_windows_for_vllm(windows, frames, config, processor, prompt)
+prep_windows_for_vllm(windows, frames, config, processor, prompt)
 llm_inputs, caption_mappings = gather_vllm_inputs(videos, model_variant)
 vllm_outputs = vllm_generate(model, sampling_params, llm_inputs, batch_size, use_tqdm=use_tqdm)
 captions = decode_vllm_outputs(vllm_outputs, model_variant)
@@ -37,8 +37,8 @@ from loguru import logger
 from vllm import LLM, RequestOutput, SamplingParams
 
 from cosmos_curate.core.utils.misc import grouping
-from cosmos_curate.models.vllm_phi import VLLMPhi4
-from cosmos_curate.models.vllm_qwen import VLLMQwen7B
+from cosmos_curate.models.vllm_phi import VllmPhi4
+from cosmos_curate.models.vllm_qwen import VllmQwen7B
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -46,29 +46,29 @@ if TYPE_CHECKING:
     import torch
     from transformers import AutoProcessor
 
-    from cosmos_curate.models.vllm_plugin import VLLMPlugin
+    from cosmos_curate.models.vllm_plugin import VllmPlugin
     from cosmos_curate.pipelines.video.utils.data_model import (
         Video,
-        VLLMConfig,
+        VllmConfig,
         Window,
     )
 
 
-# Add new VLLM plugins to _VLLM_PLUGINS
+# Add new vLLM plugins to _VLLM_PLUGINS
 _VLLM_PLUGINS = {
-    VLLMPhi4.model_variant(): VLLMPhi4,
-    VLLMQwen7B.model_variant(): VLLMQwen7B,
+    VllmPhi4.model_variant(): VllmPhi4,
+    VllmQwen7B.model_variant(): VllmQwen7B,
 }
 
 
-def _get_vllm_plugin(variant: str) -> VLLMPlugin:
-    """Get the VLLM plugin for the model variant.
+def _get_vllm_plugin(variant: str) -> VllmPlugin:
+    """Get the vLLM plugin for the model variant.
 
     Args:
         variant: The variant of the model.
 
     Returns:
-        The VLLM plugin.
+        The vLLM plugin.
 
     Raises:
         ValueError: If the model variant is not supported.
@@ -76,29 +76,29 @@ def _get_vllm_plugin(variant: str) -> VLLMPlugin:
     """
     plugin = _VLLM_PLUGINS.get(variant)
     if plugin is None:
-        msg = f"VLLM Model variant {variant} not supported"
+        msg = f"vLLM model variant {variant} not supported"
         raise ValueError(msg)
-    return cast("VLLMPlugin", plugin)
+    return cast("VllmPlugin", plugin)
 
 
-def vllm_model(config: VLLMConfig) -> LLM:
-    """Create a VLLM model instance.
+def vllm_model(config: VllmConfig) -> LLM:
+    """Create a vLLM model instance.
 
     Args:
-       config: Configuration for the VLLM model.
+       config: Configuration for the vLLM model.
 
     Returns:
-        A VLLM model instance.
+        A vLLM model instance.
 
     """
     return _get_vllm_plugin(config.variant).model(config)
 
 
-def sampling_params(config: VLLMConfig) -> SamplingParams:
-    """Create a sampling parameters object for the VLLM model.
+def sampling_params(config: VllmConfig) -> SamplingParams:
+    """Create a sampling parameters object for the vLLM model.
 
     Args:
-        config: Configuration for the VLLM model.
+        config: Configuration for the vLLM model.
 
     Returns:
         A sampling parameters object.
@@ -113,7 +113,7 @@ def sampling_params(config: VLLMConfig) -> SamplingParams:
     )
 
 
-def auto_processor(config: VLLMConfig) -> AutoProcessor:
+def auto_processor(config: VllmConfig) -> AutoProcessor:
     """Get the auto process for the model.
 
     Args:
@@ -126,24 +126,24 @@ def auto_processor(config: VLLMConfig) -> AutoProcessor:
     return _get_vllm_plugin(config.variant).processor()
 
 
-def encode_windows_for_vllm(
+def prep_windows_for_vllm(
     windows: list[Window],
     frames: list[torch.Tensor],
-    config: VLLMConfig,
+    config: VllmConfig,
     processor: AutoProcessor,
     prompt: str,
 ) -> None:
-    """Encode windows for the VLLM model.
+    """Prepare windows for the vLLM model.
 
-    Takes a list of windows and frames and encodes them for the VLLM model.
+    Takes a list of windows and frames and prepares them for the vLLM model.
     The windows are modified in-place by adding LLM inputs.
 
     Args:
         windows: The windows to encode.
         frames: The frames to encode.
-        config: The configuration for the VLLM model.
-        processor: The processor to use for the VLLM model.
-        prompt: The prompt to use for the VLLM model.
+        config: The configuration for the vLLM model.
+        processor: The processor to use for the vLLM model.
+        prompt: The prompt to use for the vLLM model.
 
     Raises:
         ValueError: If the windows and frames are not the same length.
@@ -305,7 +305,7 @@ def vllm_caption(  # noqa: PLR0913
     videos: list[Video],
     llm: LLM,
     processor: AutoProcessor,
-    model_config: VLLMConfig,
+    model_config: VllmConfig,
     sampling_params: SamplingParams,
     *,
     use_tqdm: bool = False,
@@ -316,7 +316,7 @@ def vllm_caption(  # noqa: PLR0913
         videos: The videos to caption.
         llm: The vLLM model.
         processor: The processor to use.
-        model_config: The configuration for the VLLM model.
+        model_config: The configuration for the vLLM model.
         sampling_params: The sampling parameters.
         use_tqdm: Whether to use tqdm.
 

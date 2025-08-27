@@ -22,7 +22,7 @@ import pytest
 import torch
 from PIL import Image
 
-from cosmos_curate.models.vllm_phi import VLLMPhi4, get_image_placeholder, make_message, make_prompt, tensor_to_pil
+from cosmos_curate.models.vllm_phi import VllmPhi4, get_image_placeholder, make_message, make_prompt, tensor_to_pil
 from cosmos_curate.pipelines.video.utils.data_model import Clip, Video, Window
 
 
@@ -82,7 +82,7 @@ def test_make_llm_input_phi() -> None:
     prompt = "Describe the video"
 
     # Call the function
-    result = VLLMPhi4.make_llm_input(prompt, frames, mock_processor)
+    result = VllmPhi4.make_llm_input(prompt, frames, mock_processor)
 
     # Verify structure
     expected_frame_count = 2
@@ -103,7 +103,7 @@ def test_make_llm_input_phi_no_tokenizer() -> None:
     prompt = "Test prompt"
 
     with pytest.raises(ValueError, match=".*"):
-        VLLMPhi4.make_llm_input(prompt, frames, mock_processor)
+        VllmPhi4.make_llm_input(prompt, frames, mock_processor)
 
 
 @pytest.mark.env("unified")
@@ -116,7 +116,7 @@ def test_add_llm_input_to_window_phi() -> None:
 
     window = Window(start_frame=start, end_frame=end, mp4_bytes=mp4_bytes)
 
-    VLLMPhi4.add_llm_input_to_window(window, llm_input)
+    VllmPhi4.add_llm_input_to_window(window, llm_input)
 
     # Verify window properties
     assert isinstance(window, Window)
@@ -133,7 +133,7 @@ def test_get_phi_llm_input_from_window() -> None:
     window = Window(start_frame=0, end_frame=10, phi_llm_input=llm_input)
 
     # Call the function
-    result = VLLMPhi4.get_llm_input_from_window(window)
+    result = VllmPhi4.get_llm_input_from_window(window)
 
     # Verify result
     assert result == llm_input
@@ -160,7 +160,7 @@ def test_free_vllm_inputs_phi() -> None:
     assert window2.phi_llm_input is not None
 
     # Call the function
-    VLLMPhi4.free_vllm_inputs(video)
+    VllmPhi4.free_vllm_inputs(video)
 
     # Verify memory was freed, but mp4 bytes are not freed, that is handled elsewhere
     assert window1.mp4_bytes is not None
@@ -175,7 +175,7 @@ def test_free_vllm_inputs_empty_video() -> None:
     video = Video(input_video=Path("test.mp4"), clips=[])
 
     # Should not raise any errors
-    VLLMPhi4.free_vllm_inputs(video)
+    VllmPhi4.free_vllm_inputs(video)
 
 
 @pytest.mark.env("unified")
