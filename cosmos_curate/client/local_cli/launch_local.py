@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Annotated
 
 import psutil
+import tomli
 import typer
 from loguru import logger
 from typer import Argument, Option
@@ -58,6 +59,7 @@ class LaunchDocker:
 
     image_label: str
     curator_path: str | None
+    mount_xenna: bool
     command: str
     gpus: str | None
     mount_s3_creds: bool
@@ -85,10 +87,21 @@ def launch(  # noqa: PLR0913
     curator_path: Annotated[
         str | None,
         Option(
-            help=("Path to the cosmos-curate repo directory"),
+            help=("Path to the cosmos-curate repo directory; set to mount local curator code into the container."),
             rich_help_panel="local-docker",
         ),
     ] = None,
+    mount_xenna: Annotated[
+        bool,
+        Option(
+            help=(
+                "Mount the local cosmos_xenna into the container; python code & default env only. "
+                "WARNING: very hacky, for local development only."
+            ),
+            rich_help_panel="local-docker",
+            is_flag=True,
+        ),
+    ] = False,
     gpus: Annotated[
         str | None,
         Option(
@@ -124,6 +137,7 @@ def launch(  # noqa: PLR0913
     opts = LaunchDocker(
         image_label=get_image_label(image_name, image_tag),
         curator_path=curator_path,
+        mount_xenna=mount_xenna,
         command=command_str,
         gpus=gpus,
         mount_s3_creds=mount_s3_creds,
@@ -190,6 +204,34 @@ def _get_config_file_mount_strings(*, is_model_cli: bool) -> list[str]:
     return config_file_strings
 
 
+def _get_python_version_from_pixi_toml(curator_path: Path) -> str | None:
+    pixi_toml_path = curator_path / Path("pixi.toml")
+    if not pixi_toml_path.exists():
+        return None
+    try:
+        with pixi_toml_path.open("rb") as fp:
+            pixi_toml = tomli.load(fp)
+        python_version = pixi_toml["dependencies"]["python"]
+    except (tomli.TOMLDecodeError, KeyError, AttributeError, ValueError) as e:
+        logger.warning(f"Failed to parse python version from pixi.toml: {e}")
+        return None
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"Unexpected error reading pixi.toml: {e}")
+        return None
+    else:
+        # validate the version format
+        if not python_version or not isinstance(python_version, str):
+            logger.warning("Python version not found or invalid in pixi.toml")
+            return None
+        # strip the minor version
+        version_parts = python_version.split(".")
+        _TARGET_PYTHON_VERSION_PARTS = 2
+        if len(version_parts) < _TARGET_PYTHON_VERSION_PARTS:
+            logger.warning(f"Invalid python version format in pixi.toml: {python_version}")
+            return None
+        return ".".join(version_parts[:_TARGET_PYTHON_VERSION_PARTS])
+
+
 def _get_code_mount_strings(opts: LaunchDocker) -> list[str]:
     code_path_strings = []
     if opts.curator_path is not None:
@@ -200,8 +242,17 @@ def _get_code_mount_strings(opts: LaunchDocker) -> list[str]:
             sys.exit(1)
         code_path_strings += ["-v", f"{curator_code_path.absolute()}:{CONTAINER_PATHS_CODE_DIR}/cosmos_curate"]
 
-        xenna_path = Path(opts.curator_path) / Path("cosmos-xenna") / Path("cosmos_xenna")
-        code_path_strings += ["-v", f"{xenna_path.absolute()}:{CONTAINER_PATHS_CODE_DIR}/cosmos_xenna"]
+        if opts.mount_xenna:
+            xenna_path = Path(opts.curator_path) / Path("cosmos-xenna") / Path("cosmos_xenna")
+            _python_version = _get_python_version_from_pixi_toml(Path(opts.curator_path))
+            if xenna_path.exists() and _python_version is not None:
+                xenna_lib_path = (
+                    CONTAINER_PATHS_CODE_DIR
+                    / Path(".pixi/envs/default/lib")
+                    / f"python{_python_version}"
+                    / Path("site-packages/cosmos_xenna")
+                )
+                code_path_strings += ["-v", f"{xenna_path.absolute()}:{xenna_lib_path}"]
 
         tests_path = Path(opts.curator_path) / Path("tests") / Path("cosmos_curate")
         code_path_strings += ["-v", f"{tests_path.absolute()}:{CONTAINER_PATHS_CODE_DIR}/tests/cosmos_curate"]

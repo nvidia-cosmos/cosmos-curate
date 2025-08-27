@@ -1155,27 +1155,25 @@ test-no-images = ["pytest", "pytest-cov", "pytest-rerunfailures", "pytest-xdist"
 
 [[package]]
 name = "cosmos-xenna"
-version = "0.1.0"
-description = "TODO:Add your description here"
+version = "0.1.2"
+description = "A framework for building and running distributed, AI-powered data pipelines using Ray"
 optional = true
 python-versions = ">=3.9"
 groups = ["main"]
 markers = "extra == \"local\""
-files = []
-develop = true
+files = [
+    {file = "cosmos_xenna-0.1.2-py3-none-any.whl", hash = "sha256:e22565a5e8f5939a77e37a06d77bd3fa2301034e8c4749053fe9c97009b9b3b8"},
+    {file = "cosmos_xenna-0.1.2.tar.gz", hash = "sha256:7beac6fcb3bf771f3a72c1c3443460ee9ab22143962803374cf5b62b5d15d231"},
+]
 
 [package.dependencies]
-attrs = ">=25.3.0"
-cattrs = ">=24.1.3"
-jinja2 = ">=3.1.6"
-loguru = ">=0.7.3"
-pulp = ">=3.1.1"
+attrs = "*"
+cattrs = "*"
+jinja2 = "*"
+loguru = "*"
+pulp = "*"
 ray = {version = ">=2.46.0", extras = ["default"]}
-tabulate = ">=0.9.0"
-
-[package.source]
-type = "directory"
-url = "cosmos-xenna"
+tabulate = "*"
 
 [[package]]
 name = "coverage"
@@ -9970,4 +9968,4 @@ local = ["Pillow", "aiofiles", "astral", "attrs", "av", "azure-identity", "azure
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.10,<3.12"
-content-hash = "56c4030099f9e29d15f1d15ba8160258ad62b682ab362af1f5879e996cc99dd9"
+content-hash = "22c2c623cde313d34cb179dc0611b889852274e6c01c9e7ab2fc073920026b5d"

@@ -119,8 +119,7 @@ local = [
     "webdataset==0.2.111",
     "fabric (>=3.2.2,<4.0.0)",
     "open3d (==0.19.0)",
-    # cosmos-xenna is a local package; its path is defined below
-    "cosmos-xenna",
+    "cosmos-xenna==0.1.2",
 ]
 
 [tool.coverage.run]
@@ -240,8 +239,3 @@ types-tensorflow = "*"
 types-toml = "*"
 types-tqdm = "*"
 
-[tool.poetry.dependencies]
-cosmos-xenna = { path = "cosmos-xenna", develop = true }
-
-[tool.uv.sources]
-cosmos-xenna = { path = "cosmos-xenna", editable = true }
