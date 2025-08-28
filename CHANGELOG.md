@@ -3,6 +3,15 @@
 
 ## Latest
 
+## [1.1.2]
+
+### Released
+- 2025-08-28
+
+### Added
+- Upgrade to [cosmos-xenna 0.1.3](https://pypi.org/project/cosmos-xenna/0.1.3/) for improved scalability and observability.
+- Enable Semantic Deduplication on Ray and improve IO efficiency for improved throughput.
+
 ## [1.1.1]
 
 ### Released
