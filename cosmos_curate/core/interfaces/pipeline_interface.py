@@ -224,12 +224,15 @@ def run_pipeline(
     # Construct the pipeline configuration
     pipeline_config = PipelineConfig(
         execution_mode=execution_mode,
+        enable_work_stealing=False,
         return_last_stage_outputs=True,
         actor_pool_verbosity_level=VerbosityLevel.NONE,
         monitoring_verbosity_level=VerbosityLevel.NONE
         if is_running_on_the_cloud() and not is_running_on_slurm()
         else VerbosityLevel.INFO,
         mode_specific=StreamingSpecificSpec(
+            max_queued_multiplier=1.5,
+            max_queued_lower_bound=16,
             autoscaler_verbosity_level=VerbosityLevel.NONE,
             executor_verbosity_level=VerbosityLevel.NONE,
         ),

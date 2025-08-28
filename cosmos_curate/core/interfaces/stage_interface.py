@@ -18,8 +18,8 @@ import attrs
 
 from cosmos_curate.core.interfaces.model_interface import ModelInterface
 from cosmos_curate.core.utils.pixi_runtime_envs import PixiRuntimeEnv
+from cosmos_xenna.pipelines.private.resources import Resources, WorkerMetadata
 from cosmos_xenna.pipelines.private.specs import Stage, StageSpec
-from cosmos_xenna.ray_utils.resources import Resources, WorkerMetadata
 from cosmos_xenna.ray_utils.runtime_envs import RuntimeEnv
 
 

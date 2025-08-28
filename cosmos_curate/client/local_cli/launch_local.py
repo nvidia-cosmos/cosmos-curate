@@ -243,7 +243,7 @@ def _get_code_mount_strings(opts: LaunchDocker) -> list[str]:
         code_path_strings += ["-v", f"{curator_code_path.absolute()}:{CONTAINER_PATHS_CODE_DIR}/cosmos_curate"]
 
         if opts.mount_xenna:
-            xenna_path = Path(opts.curator_path) / Path("cosmos-xenna") / Path("cosmos_xenna")
+            xenna_path = (Path(opts.curator_path) / Path("cosmos-xenna") / Path("cosmos_xenna")).absolute()
             _python_version = _get_python_version_from_pixi_toml(Path(opts.curator_path))
             if xenna_path.exists() and _python_version is not None:
                 xenna_lib_path = (
@@ -252,7 +252,8 @@ def _get_code_mount_strings(opts: LaunchDocker) -> list[str]:
                     / f"python{_python_version}"
                     / Path("site-packages/cosmos_xenna")
                 )
-                code_path_strings += ["-v", f"{xenna_path.absolute()}:{xenna_lib_path}"]
+                for python_module in ["pipelines", "ray_utils", "utils"]:
+                    code_path_strings += ["-v", f"{xenna_path / python_module}:{xenna_lib_path / python_module}"]
 
         tests_path = Path(opts.curator_path) / Path("tests") / Path("cosmos_curate")
         code_path_strings += ["-v", f"{tests_path.absolute()}:{CONTAINER_PATHS_CODE_DIR}/tests/cosmos_curate"]

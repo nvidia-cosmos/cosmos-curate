@@ -20,3 +20,5 @@ trace.log
 
 /cosmos-curate-*.tgz
 /run-all.sh
+/run-benchmark.sh
+

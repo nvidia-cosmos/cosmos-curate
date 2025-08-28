@@ -11,7 +11,7 @@ extra-index-urls = ["https://pypi.nvidia.com"]
 python = "3.10.*"
 
 [pypi-dependencies]
-cosmos-xenna = "==0.1.2"
+cosmos-xenna = "==0.1.3"
 ray = { version = "==2.48.0", extras = ["default"] } # conda-forge package pulls in an old version of protobuf
 
 [feature.core.system-requirements]
