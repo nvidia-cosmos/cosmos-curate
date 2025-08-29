@@ -73,6 +73,12 @@ cosmos-curate/
 ├── examples                # Example configuration files and scripts
 ```
 
+Note: To initialize and update the `cosmos-xenna` submodule, run:
+```
+git submodule update --init --recursive
+```
+This ensures all submodule content is checked out correctly.
+
 ## Support
 
 For support and questions:
