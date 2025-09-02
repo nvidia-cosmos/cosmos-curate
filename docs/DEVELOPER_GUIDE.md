@@ -74,7 +74,7 @@ When adding new dependencies to a pixi environment:
 4. Test your changes inside the Docker container to ensure compatibility
 5. Commit both `pixi.toml` and the updated `pixi.lock` file to version control to ensure reproducibility
 
-Note: Environment names in pixi use hyphens (e.g., `video-splitting`) rather than underscores, as per pixi conventions.
+Note: Environment names in pixi use hyphens (e.g., `model-download`) rather than underscores, as per pixi conventions.
 
 #### Updating Pixi Environments
 
@@ -110,8 +110,8 @@ pixi list -e <env-name>
 # For a specific package
 pixi list -e <env-name> <package-name>
 
-# Example: see the pytorch packages in the 'video-splitting' environment
-pixi list -e video-splitting pytorch
+# Example: see the pytorch packages in the 'unified' environment
+pixi list -e unified pytorch
 ```
 
 #### Running Commands in Pixi Environments
@@ -125,8 +125,8 @@ pixi run python -m <module>
 # Run in a specific environment
 pixi run -e <env-name> python -m <module>
 
-# Example: check if PyTorch is CUDA enabled in the video-splitting environment
-pixi run -e video-splitting python -c "import torch; print(torch.cuda.is_available())"
+# Example: check if PyTorch is CUDA enabled in the unified environment
+pixi run -e unified python -c "import torch; print(torch.cuda.is_available())"
 ```
 
 Note: For pipeline execution, always use the Docker container as shown in the testing section.
@@ -184,7 +184,7 @@ tests/cosmos_curate/pipelines/video/utils/test_decoder_utils.py ................
 Launch the docker container locally and simply run `pytest` command:
 
 ```bash
-for conda_env in default video-splitting unified; do
+for conda_env in default unified; do
    cosmos-curate local launch --image-name cosmos-curate --image-tag 1.0.0 --curator-path . \
    -- pixi run -e $conda_env pytest -m env tests/cosmos_curate/pipelines/;
 done

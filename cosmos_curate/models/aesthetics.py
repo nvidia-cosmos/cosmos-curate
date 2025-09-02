@@ -125,7 +125,7 @@ class AestheticScorer(ModelInterface):
             Name of the conda environment.
 
         """
-        return "video-splitting"
+        return "unified"
 
     @property
     def model_id_names(self) -> list[str]:

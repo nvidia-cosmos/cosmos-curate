@@ -25,7 +25,7 @@ from transformers import CLIPModel
 from cosmos_curate.core.interfaces.model_interface import ModelInterface
 from cosmos_curate.core.utils.model import conda_utils, model_utils
 
-if conda_utils.is_running_in_env("video-splitting"):
+if conda_utils.is_running_in_env("unified"):
     from torchvision import transforms  # type: ignore[import-untyped]
 else:
     transforms = None
@@ -43,7 +43,7 @@ class _CLIPImageEmbeddings(torch.nn.Module):
 
         # torchvision transforms that match CLIP preprocessor_config.json:
         if transforms is None:
-            msg = "torchvision.transforms is unavailable; ensure you're in the 'video-splitting' environment"
+            msg = "torchvision.transforms is unavailable; ensure you're in the 'unified' environment"
             raise RuntimeError(msg)
         self.transforms = transforms.Compose(
             [
@@ -89,7 +89,7 @@ class CLIPImageEmbeddings(ModelInterface):
             The conda environment name.
 
         """
-        return "video-splitting"
+        return "unified"
 
     @property
     def model_id_names(self) -> list[str]:

@@ -542,7 +542,7 @@ class TransNetV2(ModelInterface):
             The conda environment name.
 
         """
-        return "video-splitting"
+        return "unified"
 
     @property
     def model_id_names(self) -> list[str]:

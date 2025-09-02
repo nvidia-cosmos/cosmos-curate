@@ -29,7 +29,7 @@ from cosmos_curate.core.utils.infra.performance_utils import StageTimer
 from cosmos_curate.core.utils.model import conda_utils
 from cosmos_curate.pipelines.video.utils.data_model import SplitPipeTask
 
-if conda_utils.is_running_in_env("video-splitting") and torch.cuda.is_available():
+if conda_utils.is_running_in_env("unified") and torch.cuda.is_available():
     from cosmos_curate.pipelines.video.utils.nvcodec_utils import PyNvcFrameExtractor
 else:
     PyNvcFrameExtractor = None
@@ -133,7 +133,7 @@ class VideoFrameExtractionStage(CuratorStage):
         """Initialize stage resources and configuration."""
         if self.decoder_mode == "pynvc":
             if PyNvcFrameExtractor is None:
-                msg = "decoder_mode='pynvc' requires running inside the 'video-splitting' environment with GPU support."
+                msg = "decoder_mode='pynvc' requires running inside the 'unified' environment with GPU support."
                 raise RuntimeError(msg)
             self.pynvc_frame_extractor = PyNvcFrameExtractor(self.output_hw[1], self.output_hw[0], batch_size=64)
 
@@ -145,7 +145,7 @@ class VideoFrameExtractionStage(CuratorStage):
             The conda environment name.
 
         """
-        return "video-splitting"
+        return "unified"
 
     @nvtx.annotate("VideoFrameExtractionStage")  # type: ignore[misc]
     def process_data(self, tasks: list[SplitPipeTask]) -> list[SplitPipeTask] | None:

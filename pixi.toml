@@ -47,7 +47,7 @@ tblib = "*"
 tenacity = "*"
 timezonefinder = "*"
 tqdm = "*"
-transformers = "*"
+transformers = "==4.55.4" # pin to avoid issues with `Cosmos-Embed1-336p/modeling_qformer.py`
 typer = "*"
 uvicorn = "*"
 webdataset = "*"
@@ -124,28 +124,22 @@ cuda-libraries-dev = "*"
 flash-attn = "*"
 flash-attn-fused-dense = "*"
 flash-attn-layer-norm = "*"
-
-[feature.unified.pypi-dependencies]
-timm = "*" # conda-forge package pulls in torchvision, which is behind
-vllm = ">=0.10.0" # not available on conda-forge
-
-[feature.video-splitting.dependencies]
 pycuda = "*"
 
-[feature.video-splitting.pypi-dependencies]
+[feature.unified.pypi-dependencies]
 cvcuda-cu12 = "*" # not available on conda-forge
 PyNvVideoCodec = "*" # not available on conda-forge
 timm = "*" # conda-forge package pulls in torchvision, which is behind
+vllm = ">=0.10.0" # not available on conda-forge
 
 [feature.pip.dependencies]
 pip = "*"
 
 [environments]
-cuml = ["default", "cuml"]
-default = ["default", "core"]
+cuml = ["cuml"]
+default = ["core"]
 model-download = ["model-download"]
-phi = ["default", "phi"]
+phi = ["phi"]
 paddle-ocr = ["core", "pip"]
 transformers = ["core"]
 unified = ["core", "unified"]
-video-splitting = ["core", "video-splitting"]
