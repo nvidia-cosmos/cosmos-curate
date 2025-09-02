@@ -29,11 +29,12 @@ from loguru import logger
 from cosmos_curate.client.utils import conda_envs
 
 
-def generate_dockerfile(
+def generate_dockerfile(  # noqa: PLR0913
     *,
     dockerfile_template_path: pathlib.Path,
     conda_env_names: list[str],
-    code_paths: list[str],
+    use_local_xenna_build: bool = False,
+    code_paths: list[str] | None = None,
     dockerfile_output_path: pathlib.Path | None = None,
     verbose: bool = False,
 ) -> pathlib.Path:
@@ -42,6 +43,7 @@ def generate_dockerfile(
     Args:
         dockerfile_template_path (pathlib.Path): The path to the Dockerfile template.
         conda_env_names (List[str]): The list of conda environment names to include in the Docker image.
+        use_local_xenna_build (bool): If True, uses a local build of Xenna.
         code_paths (List[conda_envs.CodePath]): The list of code paths to include in the Docker image.
         dockerfile_output_path (Optional[pathlib.Path]): The path to write the rendered Dockerfile.
                                                          If None, writes to Dockerfile.
@@ -51,6 +53,8 @@ def generate_dockerfile(
         pathlib.Path: The path to the generated Dockerfile.
 
     """
+    if code_paths is None:
+        code_paths = []
     env_list = sorted(conda_env_names)
     post_install_env_list = [
         env for env in env_list if pathlib.Path(f"package/cosmos_curate/envs/{env}/post_install.sh").is_file()
@@ -63,6 +67,7 @@ def generate_dockerfile(
     contents = template.render(
         envs=env_list,
         post_install_envs=post_install_env_list,
+        use_local_xenna_build=use_local_xenna_build,
         code_paths=code_paths,
         **attrs.asdict(common_template_params),
     )

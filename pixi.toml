@@ -9,6 +9,7 @@ extra-index-urls = ["https://pypi.nvidia.com"]
 
 [dependencies]
 python = "3.10.*"
+pip = "*"
 
 [pypi-dependencies]
 cosmos-xenna = "==0.1.3"
@@ -132,14 +133,11 @@ PyNvVideoCodec = "*" # not available on conda-forge
 timm = "*" # conda-forge package pulls in torchvision, which is behind
 vllm = ">=0.10.0" # not available on conda-forge
 
-[feature.pip.dependencies]
-pip = "*"
-
 [environments]
 cuml = ["cuml"]
 default = ["core"]
 model-download = ["model-download"]
 phi = ["phi"]
-paddle-ocr = ["core", "pip"]
+paddle-ocr = ["core"]
 transformers = ["core"]
 unified = ["core", "unified"]

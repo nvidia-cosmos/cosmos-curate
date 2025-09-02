@@ -153,6 +153,18 @@ RUN cd {{code_dir_str}} && \
     pixi run -e {{ env }} bash /tmp/cosmos_curate_build_envs/{{ env }}/post_install.sh
 {% endfor %}
 
+# For cosmos-xenna development
+# For every environment, uninstall cosmos-xenna and then reinstall from local build.
+{% if use_local_xenna_build %}
+COPY cosmos-xenna /tmp/cosmos-xenna
+{% set all_envs = envs + ['default'] %}
+{% for env in all_envs %}
+RUN cd {{code_dir_str}} && \
+    pixi run -e {{ env }} pip uninstall -y cosmos-xenna && \
+    pixi run -e {{ env }} pip install /tmp/cosmos-xenna
+{% endfor %}
+{% endif %}
+
 # Copy the video pipeline code
 COPY cosmos_curate {{code_dir_str}}/cosmos_curate
 COPY tests {{code_dir_str}}/tests

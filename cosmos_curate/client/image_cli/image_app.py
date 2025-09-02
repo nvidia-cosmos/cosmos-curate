@@ -82,6 +82,16 @@ def build(  # noqa: PLR0913
             rich_help_panel="conda_envs",
         ),
     ] = "cuml,unified",
+    use_local_xenna_build: Annotated[
+        bool,
+        Option(
+            help=(
+                "When enabled, build cosmos-xenna package from local checkout. "
+                "Otherwise, install cosmos-xenna from PyPI."
+            ),
+            rich_help_panel="common",
+        ),
+    ] = False,
     dockerfile_output_path: Annotated[
         str | None,
         Option(
@@ -153,6 +163,7 @@ def build(  # noqa: PLR0913
     dockerfile_path = docker_utils.generate_dockerfile(
         dockerfile_template_path=dockerfile_template_path,
         conda_env_names=env_names,
+        use_local_xenna_build=use_local_xenna_build,
         code_paths=code_paths,
         dockerfile_output_path=_dockerfile_output_path,
         verbose=verbose,
