@@ -121,7 +121,7 @@ def build(  # noqa: PLR0913
         str | None,
         Option(
             help=(
-                "Comma-separated list of paths to additional code paths to copy into the image."
+                "Comma-separated list of paths to additional code paths to copy into the image. "
                 f"These paths will be copied into the image under {CONTAINER_PATHS_CODE_DIR.as_posix()}."
             ),
             rich_help_panel="common",

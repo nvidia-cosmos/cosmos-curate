@@ -4,30 +4,35 @@
   - [Documentation Structure](#documentation-structure)
     - [1. End User Guide and Reference Pipelines Guide for Video \& AV](#1-end-user-guide-and-reference-pipelines-guide-for-video--av)
     - [2. Architecture Guide and Pipeline Design Guide](#2-architecture-guide-and-pipeline-design-guide)
-    - [3. Developer Guide](#3-developer-guide)
+    - [3. Observability Guide and Deployment Guide for NVCF](#3-observability-guide-and-deployment-guide-for-nvcf)
+    - [4. Developer Guide](#4-developer-guide)
   - [Guide Relationships](#guide-relationships)
   - [Getting Started](#getting-started)
   - [Support](#support)
   - [Contributing to Documentation](#contributing-to-documentation)
 
-Welcome to the Cosmos-Curate documentation. This documentation is organized into three main categories to help you understand and use the system effectively.
+Welcome to the Cosmos-Curate documentation. This documentation is organized into four main categories to help you understand and use the system effectively.
 
 ## Documentation Structure
 
 ### 1. [End User Guide](client/END_USER_GUIDE.md) and Reference Pipelines Guide for [Video](curator/REFERENCE_PIPELINES_VIDEO.md) & [AV](curator/REFERENCE_PIPELINES_AV.md)
-The end user guide is designed for users who want to use the Cosmos-Curate to process and curate videos. It covers:
+The end user guide is designed for users who want to use the Cosmos-Curate to process and curate videos:
 - Prerequisites and environment setup
 - Basic usage instructions
 - Running pipelines
 - Troubleshooting common issues
 
-**When to use this guide:**
+The reference pipelines guides are for users to understand the details of reference pipelines:
+- Output directory structure of the reference pipelines
+- Explanation of the extensive list of configuration parameters
+
+**When to use these guides:**
 - If you're new to Cosmos-Curate
 - If you want to run existing pipelines
 - If you need help with basic operations
 
 ### 2. [Architecture Guide](curator/ARCHITECTURE_GUIDE.md) and [Pipeline Design Guide](curator/PIPELINE_DESIGN_GUIDE.md)
-The architecture and pipeline design guides are for developers who want to create new pipelines or modify existing ones. It covers:
+The architecture and pipeline design guides are for developers who want to create new pipelines or modify existing ones:
 - Core architecture
 - Pipeline development
 - New model integration
@@ -38,8 +43,19 @@ The architecture and pipeline design guides are for developers who want to creat
 - If you're modifying an existing pipeline
 - If you need to understand the pipeline architecture
 
-### 3. [Developer Guide](DEVELOPER_GUIDE.md)
-The developer guide is for contributors who want to work on the Cosmos-Curate codebase. It covers:
+### 3. [Observability Guide](curator/OBSERVABILITY_GUIDE.md) and Deployment Guide for [NVCF](client/NVCF_GUIDE.md)
+
+The observability and deployment guides are for users who want to run curation pipelines at scale:
+- List of key PromQL queries
+- Monitoring dashboard
+- Deployment instructions on [NVCF](https://docs.nvidia.com/cloud-functions/user-guide/latest/cloud-function/overview.html) and K8s (coming soon)
+
+**When to use this guide:**
+- If you want to run pipelines at scale
+- If you want to optimize the pipeline performance
+
+### 4. [Developer Guide](DEVELOPER_GUIDE.md)
+The developer guide is for contributors who want to work on the Cosmos-Curate codebase:
 - Development environment setup
 - Code quality standards
 - Testing procedures

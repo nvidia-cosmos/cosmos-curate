@@ -80,7 +80,7 @@ if [ "{{enable_metrics_scraping}}" == "yes" ]; then
     --job-id $SLURM_JOB_ID \
     --job-name $SLURM_JOB_NAME \
     --hostfile $_SLURM_JOB_NODELIST_FILE \
-    --port "${RAY_METRICS_EXPORT_PORT:-9002}"
+    --port "${XENNA_RAY_METRICS_PORT:-9002}"
 fi
 
 cleanup_on_exit() {

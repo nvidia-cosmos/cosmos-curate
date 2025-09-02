@@ -22,9 +22,11 @@
     - [Sync Source Code to the Slurm Cluster](#sync-source-code-to-the-slurm-cluster)
     - [Launch on Slurm](#launch-on-slurm)
     - [Find Logs](#find-logs)
+    - [Developing on Slurm](#developing-on-slurm)
   - [Launch Pipelines on NVIDIA DGX Cloud](#launch-pipelines-on-nvidia-dgx-cloud)
   - [Launch Pipelines on K8s Cluster (coming soon)](#launch-pipelines-on-k8s-cluster-coming-soon)
-  - [Building the Client package](#building-the-client-package)
+  - [Observability for Pipelines](#observability-for-pipelines)
+  - [Build the Client package](#build-the-client-package)
   - [Troubleshooting](#troubleshooting)
   - [Support](#support)
   - [Responsible Use of AI Models](#responsible-use-of-ai-models)
@@ -53,7 +55,7 @@ Note that the docker daemon needs to be restarted after the installation of NVID
 
 #### Additional Requirement
 - [Hugging Face account and access token](https://huggingface.co/settings/tokens) (a read token should suffice for accessing the InternVideo2 model)
-- [NGC API key](https://docs.nvidia.com/ngc/gpu-cloud/ngc-private-registry-user-guide/index.html#generating-api-key) for the NGC Registry to access the [NVIDIA-accelebrated container image for PyTorch](https://catalog.ngc.nvidia.com/orgs/nvidia/containers/pytorch) (ensure your API key has the Private Registry permission)
+- [NGC API key](https://docs.nvidia.com/ngc/gpu-cloud/ngc-private-registry-user-guide/index.html#generating-api-key) for the NGC Registry to access the [NVIDIA CUDA container image](https://catalog.ngc.nvidia.com/orgs/nvidia/containers/cuda) (your API key should at least have catalog permission)
 - Cloud storage access credentials if using cloud storage
   - full support for S3-compatible object storage
   - basic support for Azure blob storage
@@ -68,7 +70,7 @@ huggingface:
     api_key: "<your-huggingface-token>"
 ```
 
-2. To use InternVideo2 embedding model:
+2. To use `InternVideo2` embedding model:
    - Visit [InternVideo2 Hugging Face page](https://huggingface.co/OpenGVLab/InternVideo2-Stage2_1B-224p-f4/tree/main)
    - Log in to your Hugging Face account
    - Click "agree" to accept the model terms; this is required before you can download this model using HuggingFace API with your token
@@ -76,7 +78,7 @@ huggingface:
 3. By default, `~/cosmos_curate_local_workspace/` is used as the local workspace for model weights and temporary files at runtime. To configure its location, set environment variable `COSMOS_CURATE_LOCAL_WORKSPACE_PREFIX` to move it to `${COSMOS_CURATE_LOCAL_WORKSPACE_PREFIX}/cosmos_curate_local_workspace/`.
    - In other words, `"${COSMOS_CURATE_LOCAL_WORKSPACE_PREFIX:-$HOME}/cosmos_curate_local_workspace"` is used as the local workspace.
 
-4. Log into the NGC container registry via the Docker CLI. For the username, enter `'$oauthtoken'` exactly as shown. It is a special name that indicates that you will authenticate with an API key. Paste your key value at the password prompt.
+4. Log into the NGC container registry via the Docker CLI. For the username, use `'$oauthtoken'` exactly as shown. It is a special name that indicates that you will authenticate with an API key. Paste your key value at the password prompt.
 ```bash
 docker login --username '$oauthtoken' nvcr.io
 ```
@@ -90,7 +92,7 @@ docker login --username '$oauthtoken' nvcr.io
 
 ## Quick Start for Local Run
 
-The overall workflow is as follows:
+**The overall workflow is as follows:**
 1. Setup environment and install dependencies
    - This will give you a CLI for steps below
 2. Build a docker container image
@@ -106,7 +108,9 @@ The overall workflow is as follows:
 - It is strongly recommended to use a Python virtual environment management system that can specify the Python version, such as
   [conda](https://docs.conda.io/projects/conda/en/latest/user-guide/install/index.html),
   [mamba](https://mamba.readthedocs.io/en/latest/installation/mamba-installation.html),
-  [micromamba](https://mamba.readthedocs.io/en/latest/installation/micromamba-installation.html), etc.
+  [micromamba](https://mamba.readthedocs.io/en/latest/installation/micromamba-installation.html),
+  [uv](https://docs.astral.sh/uv/),
+  etc.
   - Also it is best to prevent packages under `$HOME/.local/` being used in the virtual environment,
     you can set environment variable **`export PYTHONNOUSERSITE=1`** to exclude user site-package directory.
 - In case you are running in a headless display environment,
@@ -142,6 +146,9 @@ The hello-world example pipeline aims to provide a minimal example to help under
   - stage 3: call GPT2 to generate some output;
 - Call `cosmos_curate.core.interfaces.pipeline_interface.run_pipeline`.
 
+There is a detailed walk-through in [Pipeline Design Guide](../curator/PIPELINE_DESIGN_GUIDE.md) to help understand how to build a pipeline.
+The steps below only shows how to run the pipeline.
+
 ```bash
 # 1. Build a docker image for hello-world pipeline
 #    - The hello-world pipeline uses the GPT-2 model
@@ -162,7 +169,7 @@ This section of the instructions references the concept of local paths. Note tha
 1. **Build a docker image.**
    - Unlike the hello-world example, we run more than one models in this pipeline.
    - It's not always easy to run different models in the same python environment; so we need to build a new image with more conda environments included.
-   - This could take up to 45 minutes for a fresh new build.
+   - This could take up to 30 minutes for a fresh new build.
 
 ```bash
 cosmos-curate image build --image-name cosmos-curate --image-tag 1.0.0 --envs cuml,unified,video-splitting
@@ -233,9 +240,9 @@ curl -X POST http://localhost:8000/v1/run_pipeline -H "NVCF-REQID: 1234-5678" -d
 
 To stop the service, press `Ctrl+C` in the terminal where you ran the launch command.
 
-> **Note:** When Ray starts up, it will print instructions including `ray stop` - do not use this command directly on
-> the host. The Ray cluster runs inside the container and is managed by the service. Always stop the service using
-> `Ctrl+C` for proper cleanup.
+**Note:** When Ray starts up, it will print instructions including `ray stop` - do not use this command directly on
+the host. The Ray cluster runs inside the container and is managed by the service. Always stop the service using
+`Ctrl+C` for proper cleanup.
 
 ### Generate Dataset for Cosmos-Predict2 Post-Training
 
@@ -435,8 +442,23 @@ If you have already onboarded to NVCF and have an NVCF Org, please follow this [
 
 ## Launch Pipelines on K8s Cluster (coming soon)
 
-## Building the Client package
-   - The `cosmos-curate` client can be built as a wheel and installed in a standalone mode, without the need for the rest of the source environment
+## Observability for Pipelines
+
+The resource usage and bottleneck of the pipeline can vary with:
+- input data, e.g. when you have ~10MB videos vs. ~10GB videos,
+  or in the most difficult case you have a mix of 10MB & 10GB videos in the same input set;
+- hardware configuration, e.g. ratio of CPU core count & GPU count & system memory size.
+
+Therefore, it is critical to have good observability in place to help debug reliability problems and optimize pipeline throughput.
+
+We have implemented a set of metrics in [Cosmos-Xenna](https://github.com/nvidia-cosmos/cosmos-xenna)
+and included a [Grafana dashboard](../../examples/observability/grafana/cosmos-curate-oss.json) for `Cosmos-Curate` pipelines.
+More details can be found in [Observability Guide](../curator/OBSERVABILITY_GUIDE.md).
+
+## Build the Client package
+
+The `cosmos-curate` client can be built as a wheel and installed in a standalone mode, without the need for the rest of the source environment
+
 ```bash
 poetry build
 pip3 install dist/cosmos_curate*.whl

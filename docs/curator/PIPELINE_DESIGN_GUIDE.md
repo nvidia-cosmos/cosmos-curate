@@ -10,10 +10,8 @@
       - [StageSpec Customization](#stagespec-customization)
   - [Quiz: Adding WordCount Stage to Hello-World Pipeline](#quiz-adding-wordcount-stage-to-hello-world-pipeline)
   - [Pipeline Performance](#pipeline-performance)
-    - [Performance Monitoring](#performance-monitoring)
-    - [Improving GPU Utilization](#improving-gpu-utilization)
-      - [Extract CPU Processing to Separate Stages](#extract-cpu-processing-to-separate-stages)
-      - [Pack Multiple GPU Workers to One GPU](#pack-multiple-gpu-workers-to-one-gpu)
+    - [Extract CPU Processing to Separate Stages](#extract-cpu-processing-to-separate-stages)
+    - [Pack Multiple GPU Workers to One GPU](#pack-multiple-gpu-workers-to-one-gpu)
 
 This guide explains how to modify existing pipelines or add new pipelines into the Cosmos-Curate system.
 
@@ -215,66 +213,7 @@ As a simple exercise, consider adding a `WordCountStage` after the `_GPT2Stage` 
 
 ## Pipeline Performance
 
-### Performance Monitoring
-
-[Prometheus](https://prometheus.io/)-compatible metrics are exported at port `localhost:9002/metrics`.
-
-A list of useful [PromQL](https://prometheus.io/docs/prometheus/latest/querying/basics/) queries for performance debugging are summarized below:
-
-```bash
-# Measured stage speed, i.e. process time per task per actor for each stage
-sum by (stage) (ray_pipeline_actor_process_time)
-
-# Number of busy vs. idle workers per stage
-sum by (stage, state) (ray_pipeline_actor_count{state!="target", state!="pending"})
-
-# Input & output queue sizes per stage
-sum by (stage) (ray_pipeline_input_queue_size)
-sum by (stage) (ray_pipeline_output_queue_size)
-
-# Cross-stage object size
-(sum by (stage) (ray_pipeline_stage_deserialize_size_total))
-/ on (stage) group_left ()
-(sum by (stage) (ray_pipeline_stage_deserialize_count_total))
-
-# Communication time / process time; i.e. are we able to hide cross-stage data movement
-(sum by (stage) (ray_pipeline_stage_deserialize_time_total))
-/ on (stage) group_left ()
-(sum by (stage) (ray_pipeline_stage_process_time_total))
-
-# GPU utilization averaged by stage
-avg by (stage) (
-    ray_pipeline_stage_gpu_alloc * on (SessionName, NodeAddress, GpuIndex) group_left
-    label_replace(ray_node_gpus_utilization, "NodeAddress","$1","ip", "(.+)")
-)
-
-# GPU memory usage averaged by stage
-avg by (stage) (
-    ray_pipeline_stage_gpu_alloc * on (SessionName, NodeAddress, GpuIndex) group_left
-    label_replace(ray_node_gram_used, "NodeAddress","$1","ip", "(.+)")
-)
-
-# CPU usage aggregated per stage
-sum by (stage) (ray_pipeline_actor_resource_usage{stage!="", resource="cpu"}) / 100
-
-# Average CPU usage per actor for each stage
-(sum by (stage) (ray_pipeline_actor_resource_usage{stage!="", resource="cpu"}))
-/ on (stage)
-(sum by (stage) (ray_pipeline_actor_count{state="running"})) / 100
-
-# System memory usage aggregated per stage
-sum by (stage) (ray_pipeline_actor_resource_usage{stage!="", resource="memory"})
-```
-
-And a sample [Grafana](https://grafana.com/) dashboard will be released soon.
-
-### Improving GPU Utilization
-
-GPU utilization is a first-order metric to gauge the pipeline performance.
-Down to the model inference, there are many optimization techniques;
-but in this section, we will focus on the pipeline-level considerations to improve GPU utilization.
-
-#### Extract CPU Processing to Separate Stages
+### Extract CPU Processing to Separate Stages
 
 Some models require non-trivial preprocessing on CPU before sending to GPU for inference.
 For example, vision models would require the input video to be first decoded into frames and then resize, normalized, etc.
@@ -285,7 +224,7 @@ We can simply extract such CPU work into a separate stage and pass the processed
 As a result, the GPU stage will push the GPU utilization higher while the CPU stage would be effectively free by hidding under the GPU processing time.
 The `QwenInputPreparationStage` and `QwenCaptionStage` in [cosmos_curate/pipelines/video/captioning/captioning_stage.py](../../cosmos_curate/pipelines/video/captioning/captioning_stages.py) are an example of such optimizations.
 
-#### Pack Multiple GPU Workers to One GPU
+### Pack Multiple GPU Workers to One GPU
 
 For small models, sometimes it is difficult to push up the GPU utilization.
 One way is to request a fraction of GPU and allow multiple stage workers to be allocated on the same GPU.

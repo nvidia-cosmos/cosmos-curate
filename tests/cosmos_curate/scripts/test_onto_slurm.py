@@ -152,7 +152,7 @@ class TestRayConfig:
             "RAY_NODE_MANAGER_PORT",
             "RAY_DASHBOARD_AGENT_GRPC_PORT",
             "RAY_RUNTIME_ENV_AGENT_PORT",
-            "RAY_METRICS_EXPORT_PORT",
+            "XENNA_RAY_METRICS_PORT",
         ]:
             if var in os.environ:
                 monkeypatch.delenv(var)
@@ -182,7 +182,7 @@ class TestRayConfig:
         monkeypatch.setenv("RAY_NODE_MANAGER_PORT", "3456")
         monkeypatch.setenv("RAY_DASHBOARD_AGENT_GRPC_PORT", "7890")
         monkeypatch.setenv("RAY_RUNTIME_ENV_AGENT_PORT", "1245")
-        monkeypatch.setenv("RAY_METRICS_EXPORT_PORT", "6789")
+        monkeypatch.setenv("XENNA_RAY_METRICS_PORT", "6789")
         config = RayConfig.from_env()
 
         assert config.gcs_server_port == 1234  # noqa: PLR2004

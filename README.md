@@ -33,14 +33,16 @@ which is now open-sourced independently as [Cosmos-Xenna](https://github.com/nvi
 Comprehensive documentation is available under [docs/](docs/README.md) directory.
 
 ### User Documentation
-- [End User Guide](docs/client/END_USER_GUIDE.md) - For user to run video processing pipelines
-- [Reference Video Pipelines Guide](docs/curator/REFERENCE_PIPELINES_VIDEO.md) - general video processing pipelines
-- [Reference AV Pipelines Guide](docs/curator/REFERENCE_PIPELINES_AV.md) - multi-camera video, and (upcoming) GPS & LiDAR processing pipelines for autonomous vehicle (AV)
+- [End User Guide](docs/client/END_USER_GUIDE.md) - instructions to setup environment and run data pipelines
+- [Reference Video Pipelines Guide](docs/curator/REFERENCE_PIPELINES_VIDEO.md) - details for general video processing pipelines
+- [Reference AV Pipelines Guide](docs/curator/REFERENCE_PIPELINES_AV.md) - details for multi-camera video, and (upcoming) GPS & LiDAR processing pipelines for autonomous vehicle (AV)
+- [NVCF Guide](docs/client/NVCF_GUIDE.md) - deployment instruction on [Nvidia Cloud Functions](https://docs.nvidia.com/cloud-functions/user-guide/latest/cloud-function/overview.html)
 
 ### Developer Documentation
-- [Developer Guide](docs/DEVELOPER_GUIDE.md) - For contributors
-- [Architecture Guide](docs/curator/ARCHITECTURE_GUIDE.md) - For developer to understand the core architecture
-- [Pipeline Design Guide](docs/curator/PIPELINE_DESIGN_GUIDE.md) - For developer to add or modify pipelines
+- [Developer Guide](docs/DEVELOPER_GUIDE.md) - information for contributors
+- [Architecture Guide](docs/curator/ARCHITECTURE_GUIDE.md) - diagrams and description to help understand core architecture
+- [Pipeline Design Guide](docs/curator/PIPELINE_DESIGN_GUIDE.md) - detailed walk-through of the hello-world pipeline and performance optimization points
+- [Observability Guide](docs/curator/OBSERVABILITY_GUIDE.md) - instructions to setup and understand monitoring dashboard
 
 ## Directory Structure
 

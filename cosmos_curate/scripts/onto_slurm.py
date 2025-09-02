@@ -201,7 +201,7 @@ class RayConfig:
                 os.environ.get("RAY_DASHBOARD_AGENT_GRPC_PORT", str(_RAY_DASHBOARD_AGENT_GRPC_PORT))
             ),
             runtime_env_agent_port=int(os.environ.get("RAY_RUNTIME_ENV_AGENT_PORT", str(_RAY_RUNTIME_ENV_AGENT_PORT))),
-            metrics_export_port=int(os.environ.get("RAY_METRICS_EXPORT_PORT", str(_RAY_METRICS_EXPORT_PORT))),
+            metrics_export_port=int(os.environ.get("XENNA_RAY_METRICS_PORT", str(_RAY_METRICS_EXPORT_PORT))),
         )
 
 
