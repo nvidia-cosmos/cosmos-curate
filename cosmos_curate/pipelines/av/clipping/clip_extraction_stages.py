@@ -168,7 +168,7 @@ class ClipTranscodingStage(CuratorStage):
         if cpus is not None:
             kwargs["cpus"] = cpus
 
-        return CuratorStageResource(**kwargs)  # type: ignore[arg-type]
+        return CuratorStageResource(**kwargs)
 
     @nvtx.annotate("ClipLoadingStage:_extract_clips")  # type: ignore[misc]
     def _extract_clips(  # noqa: PLR0912, C901

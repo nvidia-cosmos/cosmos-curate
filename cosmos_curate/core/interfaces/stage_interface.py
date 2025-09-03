@@ -54,9 +54,6 @@ class CuratorStageResource:
 
     cpus: float = 1.0
     gpus: float | int = 0
-    nvdecs: int = 0
-    nvencs: int = 0
-    entire_gpu: bool = False
 
 
 class CuratorStage(Stage[PipelineTask, PipelineTask]):
@@ -71,7 +68,7 @@ class CuratorStage(Stage[PipelineTask, PipelineTask]):
     @property
     def resources(self) -> CuratorStageResource:
         """Need to override this method to define the resource requirements for the stage."""
-        return CuratorStageResource(cpus=1.0, gpus=0.0, entire_gpu=False)
+        return CuratorStageResource(cpus=1.0, gpus=0.0)
 
     @property
     def model(self) -> ModelInterface | None:
@@ -128,9 +125,6 @@ class CuratorStage(Stage[PipelineTask, PipelineTask]):
         return Resources(
             cpus=self.resources.cpus,
             gpus=self.resources.gpus,
-            nvdecs=self.resources.nvdecs,
-            nvencs=self.resources.nvencs,
-            entire_gpu=self.resources.entire_gpu,
         )
 
     # Should not override
@@ -180,6 +174,4 @@ class CuratorStageSpec(StageSpec[PipelineTask, PipelineTask]):
         res += f" num_workers_per_node={self.num_workers_per_node}"
         res += f" cpus={self.stage.required_resources.cpus}"
         res += f" gpus={self.stage.required_resources.gpus}"
-        res += f" nvdecs={self.stage.required_resources.nvdecs}"
-        res += f" nvencs={self.stage.required_resources.nvencs}"
         return res

@@ -306,7 +306,7 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/df/6a/effb671afa31d35805d0760b45676136fd1209e263641861456b4566ae9b/botocore-1.40.21-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/18/b0/215274ef0d835bbc1056392a367646648b6084e39d489099959aefcca2af/cattrs-25.1.1-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/e2/98/0d791b3d1eaed89d7d370b5cf9b8079b124da0545559417f394ba21b5532/colorful-0.5.7-py2.py3-none-any.whl
-      - pypi: https://files.pythonhosted.org/packages/f2/ba/a1fcd0149acb14e215c5b6df59bf5124c572b446ba7255bc35113886a843/cosmos_xenna-0.1.3-cp39-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
+      - pypi: https://files.pythonhosted.org/packages/6e/7b/e230877822cb7f5c2fc5da23bccda82f5e8800d8607a8d16d127937cfff5/cosmos_xenna-0.1.4-cp39-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/33/6b/e0547afaf41bf2c42e52430072fa5658766e3d65bd4b03a563d1b6336f57/distlib-0.4.0-py2.py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/e3/26/57c6fb270950d476074c087527a558ccb6f4436657314bfb6cdf484114c4/docker-7.1.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/36/f4/c6e662dade71f56cd2f3735141b265c3c79293c109549c1e6933b0651ffc/exceptiongroup-1.3.0-py3-none-any.whl
@@ -694,7 +694,7 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/df/6a/effb671afa31d35805d0760b45676136fd1209e263641861456b4566ae9b/botocore-1.40.21-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/72/76/20fa66124dbe6be5cafeb312ece67de6b61dd91a0247d1ea13db4ebb33c2/cachetools-5.5.2-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/e2/98/0d791b3d1eaed89d7d370b5cf9b8079b124da0545559417f394ba21b5532/colorful-0.5.7-py2.py3-none-any.whl
-      - pypi: https://files.pythonhosted.org/packages/f2/ba/a1fcd0149acb14e215c5b6df59bf5124c572b446ba7255bc35113886a843/cosmos_xenna-0.1.3-cp39-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
+      - pypi: https://files.pythonhosted.org/packages/6e/7b/e230877822cb7f5c2fc5da23bccda82f5e8800d8607a8d16d127937cfff5/cosmos_xenna-0.1.4-cp39-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/33/6b/e0547afaf41bf2c42e52430072fa5658766e3d65bd4b03a563d1b6336f57/distlib-0.4.0-py2.py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/e3/26/57c6fb270950d476074c087527a558ccb6f4436657314bfb6cdf484114c4/docker-7.1.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/14/4b/ead00905132820b623732b175d66354e9d3e69fcf2a5dcdab780664e7896/google_api_core-2.25.1-py3-none-any.whl
@@ -875,7 +875,7 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/72/76/20fa66124dbe6be5cafeb312ece67de6b61dd91a0247d1ea13db4ebb33c2/cachetools-5.5.2-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/85/32/10bb5764d90a8eee674e9dc6f4db6a0ab47c8c4d0d83c27f7c39ac415a4d/click-8.2.1-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/e2/98/0d791b3d1eaed89d7d370b5cf9b8079b124da0545559417f394ba21b5532/colorful-0.5.7-py2.py3-none-any.whl
-      - pypi: https://files.pythonhosted.org/packages/f2/ba/a1fcd0149acb14e215c5b6df59bf5124c572b446ba7255bc35113886a843/cosmos_xenna-0.1.3-cp39-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
+      - pypi: https://files.pythonhosted.org/packages/6e/7b/e230877822cb7f5c2fc5da23bccda82f5e8800d8607a8d16d127937cfff5/cosmos_xenna-0.1.4-cp39-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/33/6b/e0547afaf41bf2c42e52430072fa5658766e3d65bd4b03a563d1b6336f57/distlib-0.4.0-py2.py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/e3/26/57c6fb270950d476074c087527a558ccb6f4436657314bfb6cdf484114c4/docker-7.1.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/13/47/f9179ee5ee4f55629e4f28c660b3fdf2775c8bfde8f9c53f2de2d93f52a9/frozenlist-1.7.0-cp310-cp310-manylinux_2_5_x86_64.manylinux1_x86_64.manylinux_2_17_x86_64.manylinux2014_x86_64.whl
@@ -1272,7 +1272,7 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/df/6a/effb671afa31d35805d0760b45676136fd1209e263641861456b4566ae9b/botocore-1.40.21-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/72/76/20fa66124dbe6be5cafeb312ece67de6b61dd91a0247d1ea13db4ebb33c2/cachetools-5.5.2-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/e2/98/0d791b3d1eaed89d7d370b5cf9b8079b124da0545559417f394ba21b5532/colorful-0.5.7-py2.py3-none-any.whl
-      - pypi: https://files.pythonhosted.org/packages/f2/ba/a1fcd0149acb14e215c5b6df59bf5124c572b446ba7255bc35113886a843/cosmos_xenna-0.1.3-cp39-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
+      - pypi: https://files.pythonhosted.org/packages/6e/7b/e230877822cb7f5c2fc5da23bccda82f5e8800d8607a8d16d127937cfff5/cosmos_xenna-0.1.4-cp39-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/33/6b/e0547afaf41bf2c42e52430072fa5658766e3d65bd4b03a563d1b6336f57/distlib-0.4.0-py2.py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/e3/26/57c6fb270950d476074c087527a558ccb6f4436657314bfb6cdf484114c4/docker-7.1.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/14/4b/ead00905132820b623732b175d66354e9d3e69fcf2a5dcdab780664e7896/google_api_core-2.25.1-py3-none-any.whl
@@ -1504,7 +1504,7 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/72/76/20fa66124dbe6be5cafeb312ece67de6b61dd91a0247d1ea13db4ebb33c2/cachetools-5.5.2-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/85/32/10bb5764d90a8eee674e9dc6f4db6a0ab47c8c4d0d83c27f7c39ac415a4d/click-8.2.1-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/e2/98/0d791b3d1eaed89d7d370b5cf9b8079b124da0545559417f394ba21b5532/colorful-0.5.7-py2.py3-none-any.whl
-      - pypi: https://files.pythonhosted.org/packages/f2/ba/a1fcd0149acb14e215c5b6df59bf5124c572b446ba7255bc35113886a843/cosmos_xenna-0.1.3-cp39-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
+      - pypi: https://files.pythonhosted.org/packages/6e/7b/e230877822cb7f5c2fc5da23bccda82f5e8800d8607a8d16d127937cfff5/cosmos_xenna-0.1.4-cp39-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/33/6b/e0547afaf41bf2c42e52430072fa5658766e3d65bd4b03a563d1b6336f57/distlib-0.4.0-py2.py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/e3/26/57c6fb270950d476074c087527a558ccb6f4436657314bfb6cdf484114c4/docker-7.1.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/13/47/f9179ee5ee4f55629e4f28c660b3fdf2775c8bfde8f9c53f2de2d93f52a9/frozenlist-1.7.0-cp310-cp310-manylinux_2_5_x86_64.manylinux1_x86_64.manylinux_2_17_x86_64.manylinux2014_x86_64.whl
@@ -1912,7 +1912,7 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/df/6a/effb671afa31d35805d0760b45676136fd1209e263641861456b4566ae9b/botocore-1.40.21-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/72/76/20fa66124dbe6be5cafeb312ece67de6b61dd91a0247d1ea13db4ebb33c2/cachetools-5.5.2-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/e2/98/0d791b3d1eaed89d7d370b5cf9b8079b124da0545559417f394ba21b5532/colorful-0.5.7-py2.py3-none-any.whl
-      - pypi: https://files.pythonhosted.org/packages/f2/ba/a1fcd0149acb14e215c5b6df59bf5124c572b446ba7255bc35113886a843/cosmos_xenna-0.1.3-cp39-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
+      - pypi: https://files.pythonhosted.org/packages/6e/7b/e230877822cb7f5c2fc5da23bccda82f5e8800d8607a8d16d127937cfff5/cosmos_xenna-0.1.4-cp39-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/33/6b/e0547afaf41bf2c42e52430072fa5658766e3d65bd4b03a563d1b6336f57/distlib-0.4.0-py2.py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/e3/26/57c6fb270950d476074c087527a558ccb6f4436657314bfb6cdf484114c4/docker-7.1.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/14/4b/ead00905132820b623732b175d66354e9d3e69fcf2a5dcdab780664e7896/google_api_core-2.25.1-py3-none-any.whl
@@ -2338,7 +2338,7 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/7e/e8/64c37fadfc2816a7701fa8a6ed8d87327c7d54eacfbfb6edab14a2f2be75/cloudpickle-3.1.1-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/e2/98/0d791b3d1eaed89d7d370b5cf9b8079b124da0545559417f394ba21b5532/colorful-0.5.7-py2.py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/43/ac/56bb4b6b3150783119479e2f05e32ebfc39ca6ff8e6fcd45eb178743b39e/compressed_tensors-0.10.2-py3-none-any.whl
-      - pypi: https://files.pythonhosted.org/packages/f2/ba/a1fcd0149acb14e215c5b6df59bf5124c572b446ba7255bc35113886a843/cosmos_xenna-0.1.3-cp39-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
+      - pypi: https://files.pythonhosted.org/packages/6e/7b/e230877822cb7f5c2fc5da23bccda82f5e8800d8607a8d16d127937cfff5/cosmos_xenna-0.1.4-cp39-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/53/2b/8064d94a6ab6b5c4e643d8535ab6af6cabe5455765540931f0ef60a0bc3b/cupy_cuda12x-13.6.0-cp310-cp310-manylinux2014_x86_64.whl
       - pypi: https://pypi.nvidia.com/cvcuda-cu12/cvcuda_cu12-0.15.0-cp310.cp311.cp312.cp313.cp38.cp39-cp310.cp311.cp312.cp313.cp38.cp39-manylinux2014_x86_64.manylinux_2_17_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/28/4d/1192acbcdc5e843f5e5d51f6e8788f2b60a9fe0b578ac385ded67a0b0b26/depyf-0.19.0-py3-none-any.whl
@@ -3427,10 +3427,10 @@ packages:
   - pkg:pypi/contourpy?source=hash-mapping
   size: 261280
   timestamp: 1744743236964
-- pypi: https://files.pythonhosted.org/packages/f2/ba/a1fcd0149acb14e215c5b6df59bf5124c572b446ba7255bc35113886a843/cosmos_xenna-0.1.3-cp39-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
+- pypi: https://files.pythonhosted.org/packages/6e/7b/e230877822cb7f5c2fc5da23bccda82f5e8800d8607a8d16d127937cfff5/cosmos_xenna-0.1.4-cp39-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
   name: cosmos-xenna
-  version: 0.1.3
-  sha256: f769275521ed54d8ea2e0066f8f960439c81c29dd5b7983a3b5b0ffc60e45d39
+  version: 0.1.4
+  sha256: 8c80ca5ca47aa06e9870181df9e5eaacf13a5858fc0f54180853d14000a84b9e
   requires_dist:
   - attrs
   - cattrs

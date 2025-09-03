@@ -84,7 +84,7 @@ class _GPT2Stage(CuratorStage):
 
     @property
     def resources(self) -> CuratorStageResource:
-        return CuratorStageResource(cpus=1.0, gpus=0.1, entire_gpu=False)
+        return CuratorStageResource(cpus=1.0, gpus=0.1)
 
     @property
     def model(self) -> ModelInterface | None:
