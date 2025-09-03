@@ -15,6 +15,9 @@ trace.log
 **/client.key
 **/client.crt
 **/charts/*.tgz
+
+ci_secrets.env
+vault-ci/ci-secrets-runtime.tmpl
 # pixi environments
 .pixi
 
