@@ -16,12 +16,14 @@
 
 from __future__ import annotations
 
+import secrets
 from typing import TYPE_CHECKING, Any, TypedDict, cast
 
 from transformers import AutoProcessor
 from vllm import LLM
 
 from cosmos_curate.models.vllm_plugin import VllmPlugin
+from cosmos_curate.pipelines.video.utils.data_model import VllmCaptionRequest
 
 if TYPE_CHECKING:
     import torch
@@ -100,9 +102,16 @@ def make_prompt(message: QwenMessage, frames: torch.Tensor, processor: AutoProce
         msg = "Tokenizer is not set"
         raise ValueError(msg)
 
+    prompt_ids = tokenizer.apply_chat_template(
+        [message],
+        add_generation_prompt=True,
+        tokenize=True,
+        return_tensors="pt",
+    )[0].tolist()
+
     return {
-        "prompt": tokenizer.apply_chat_template([message], tokenize=False, add_generation_prompt=True),
-        "multi_modal_data": {"video": [frames]},
+        "prompt_token_ids": prompt_ids,
+        "multi_modal_data": ({"video": frames}),
     }
 
 
@@ -170,46 +179,52 @@ class VllmQwen(VllmPlugin):
         return make_prompt(message, frames, processor)
 
     @staticmethod
-    def make_refined_llm_input(
-        caption: str, prev_input: dict[str, Any], processor: AutoProcessor, refine_prompt: str | None = None
-    ) -> dict[str, Any]:
-        """Get a prompt to refine an existing caption.
+    def make_refined_llm_request(
+        request: VllmCaptionRequest,
+        processor: AutoProcessor,
+        refine_prompt: str | None = None,
+    ) -> VllmCaptionRequest:
+        """Make a refined LLM request.
 
         Args:
-            caption: The caption to refine
-            prev_input: The prompt that was used to generate the caption
+            request: The request to refine.
             processor: The processor to use for the stage 2 prompt
             refine_prompt: An optional prompt to use to refine the caption. If
                 None, the default refine prompt will be used.
 
         Returns:
-            A refined prompt
+            A refined LLM request.
 
         """
         _refine_prompt = _DEFAULT_REFINE_PROMPT if refine_prompt is None else refine_prompt
-        final_prompt = _refine_prompt + caption
 
-        if "multi_modal_data" not in prev_input:
+        if request.caption is None:
+            msg = "Request caption is None"
+            raise ValueError(msg)
+
+        final_prompt = _refine_prompt + request.caption
+
+        if "multi_modal_data" not in request.inputs:
             msg = "Message does not contain multi_modal_data"
             raise ValueError(msg)
 
-        if "video" not in prev_input["multi_modal_data"]:
+        if "video" not in request.inputs["multi_modal_data"]:
             msg = "Message does not contain video"
             raise ValueError(msg)
 
-        videos = prev_input["multi_modal_data"]["video"]
-
-        if len(videos) == 0:
-            msg = "No videos provided"
-            raise ValueError(msg)
-
-        if len(videos) > 1:
-            msg = "Multiple videos provided, only one is supported"
-            raise ValueError(msg)
+        video_frames = request.inputs["multi_modal_data"]["video"]
 
         message = make_message(final_prompt)
-        video = videos[0]
-        return make_prompt(message, video, processor)
+        inputs = make_prompt(message, video_frames, processor)
+
+        return VllmCaptionRequest(
+            request_id=secrets.token_hex(8),
+            inputs=inputs,
+            video_idx=request.video_idx,
+            clip_idx=request.clip_idx,
+            window_idx=request.window_idx,
+            iterations=request.iterations,
+        )
 
     @staticmethod
     def add_llm_input_to_window(window: Window, llm_input: dict[str, Any]) -> None:

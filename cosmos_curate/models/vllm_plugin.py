@@ -25,6 +25,7 @@ from vllm import LLM, RequestOutput
 from cosmos_curate.core.utils.model import model_utils
 from cosmos_curate.pipelines.video.utils.data_model import (
     Video,
+    VllmCaptionRequest,
     VllmConfig,
     Window,
 )
@@ -100,6 +101,26 @@ class VllmPlugin(ABC):
 
         Returns:
             A prompt used to refine an existing caption.
+
+        """
+
+    @staticmethod
+    @abstractmethod
+    def make_refined_llm_request(
+        request: VllmCaptionRequest,
+        processor: AutoProcessor,
+        refine_prompt: str | None = None,
+    ) -> VllmCaptionRequest:
+        """Make a refined LLM request.
+
+        Args:
+            request: The request to refine.
+            processor: The processor to use for the stage 2 prompt
+            refine_prompt: An optional prompt to use to refine the caption. If
+                None, the default refineprompt will be used.
+
+        Returns:
+            A refined LLM request.
 
         """
 

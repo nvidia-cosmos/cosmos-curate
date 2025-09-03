@@ -110,6 +110,7 @@ def nvcf_split_benchmark(  # noqa: PLR0913
     clip_re_chunk_size: int,
     qwen_use_fp8_weights: bool,
     report_metrics_to_kratos: bool,
+    vllm_use_inflight_batching: bool,
 ) -> None:
     """Run benchmark tests."""
     nvcf_function = NvcfFunction(
@@ -144,8 +145,15 @@ def nvcf_split_benchmark(  # noqa: PLR0913
             "limit": limit,
             "clip_re_chunk_size": clip_re_chunk_size,
             "qwen_use_fp8_weights": qwen_use_fp8_weights,
+            "vllm_use_inflight_batching": vllm_use_inflight_batching,
         }
     )
+
+    logger.info("Invoke data:")
+    print_json(json.dumps(invoke_data, indent=2))
+
+    logger.info("Deploy data:")
+    print_json(json.dumps(deploy_data, indent=2))
 
     # Prepare S3 credentials
     s3_config = f"""[default]
@@ -314,7 +322,13 @@ def _parse_args() -> argparse.Namespace:
         action="store_true",
         help="Whether to report metrics to Kratos.",
     )
-
+    parser.add_argument(
+        "--vllm-use-inflight-batching",
+        type=int,
+        required=False,
+        default=1,
+        help="Whether to use inflight batching with vllm.",
+    )
     return parser.parse_args()
 
 
@@ -333,6 +347,7 @@ def main() -> None:
     )
 
     args.qwen_use_fp8_weights = bool(args.qwen_use_fp8_weights)
+    args.vllm_use_inflight_batching = bool(args.vllm_use_inflight_batching)
 
     if args.metrics_path:
         logger.info(f"Saving metrics to {args.metrics_path}")
@@ -376,6 +391,7 @@ def main() -> None:
         report_metrics_to_kratos=args.report_metrics_to_kratos,
         clip_re_chunk_size=args.clip_re_chunk_size,
         qwen_use_fp8_weights=args.qwen_use_fp8_weights,
+        vllm_use_inflight_batching=args.vllm_use_inflight_batching,
     )
 
 

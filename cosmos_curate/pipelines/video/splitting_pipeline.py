@@ -518,7 +518,8 @@ def split(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912, PLR0915
                     verbose=args.verbose,
                     keep_mp4=keep_mp4,
                     log_stats=args.perf_profile,
-                ),
+                    inflight_batching=args.vllm_use_inflight_batching,
+                )
             ]
         elif "cosmos_r1" in args.captioning_algorithm.lower():
             stages += [
@@ -854,7 +855,7 @@ def _setup_parser(parser: argparse.ArgumentParser) -> None:  # noqa: PLR0915
     parser.add_argument(
         "--clip-re-chunk-size",
         type=int,
-        default=32,
+        default=64,
         help="Number of clips per chunk after transcoding stage.",
     )
     parser.add_argument(
@@ -1208,6 +1209,12 @@ def _setup_parser(parser: argparse.ArgumentParser) -> None:  # noqa: PLR0915
         type=str,
         default=None,
         help="Presigned S3 URL where the zipped output clips will be uploaded.",
+    )
+    parser.add_argument(
+        "--vllm-use-inflight-batching",
+        type=int,
+        default=1,
+        help="Whether to use inflight batching for vLLM captioning stage.",
     )
 
     # add common args applicable to all pipelines

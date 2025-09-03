@@ -28,6 +28,7 @@ the tasks must have these attributes/methods:
 """
 
 import logging
+from collections.abc import Iterable
 from typing import TYPE_CHECKING, TypeVar, cast
 
 import nvtx  # type: ignore[import-untyped]
@@ -49,6 +50,9 @@ from cosmos_curate.pipelines.video.utils.data_model import (
     VllmConfig,
     WindowConfig,
 )
+
+if TYPE_CHECKING:
+    from vllm import SamplingParams
 
 if conda_utils.is_running_in_env("unified"):
     if TYPE_CHECKING:
@@ -274,10 +278,12 @@ class VllmCaptionStage(CuratorStage):
     This stage handles the preparation of video windows and prompts for vLLM-based models.
     """
 
-    def __init__(
+    def __init__(  # noqa: PLR0913
         self,
         vllm_config: VllmConfig,
+        max_inflight_requests: int = 0,
         *,
+        inflight_batching: bool = False,
         keep_mp4: bool = False,
         verbose: bool = False,
         log_stats: bool = False,
@@ -286,6 +292,10 @@ class VllmCaptionStage(CuratorStage):
 
         Args:
             vllm_config: Configuration for the vLLM model.
+            max_inflight_requests: Maximum number of inflight requests to vLLM
+               engine. Set to 0 for unlimited inflight requests. Ignored if
+               inflight_batching is False.
+            inflight_batching: set to True to enable inflight batching.
             keep_mp4: Whether to keep the mp4 bytes.
             verbose: Whether to print verbose logs.
             log_stats: Whether to log performance statistics.
@@ -303,6 +313,8 @@ class VllmCaptionStage(CuratorStage):
         self._log_stats = log_stats
         self._vllm_use_tqdm = False
         self._model = VllmModelInterface(self._vllm_config)
+        self._max_inflight_requests = max_inflight_requests
+        self._inflight_batching = inflight_batching
 
     def stage_setup(self) -> None:
         """Set up the model for processing."""
@@ -346,7 +358,7 @@ class VllmCaptionStage(CuratorStage):
         """
         return self._model
 
-    def free_unused(self, tasks: list[T]) -> None:
+    def free_unused(self, tasks: Iterable[T]) -> None:
         """Free unused memory, if enabled.
 
         Args:
@@ -387,6 +399,7 @@ class VllmCaptionStage(CuratorStage):
 
         major_size = _get_major_size_tasks(tasks)
         self._timer.reinit(self, major_size)
+
         videos = [_get_video_from_task(task) for task in tasks]
 
         with self._timer.time_process():
@@ -394,9 +407,11 @@ class VllmCaptionStage(CuratorStage):
                 videos,
                 self._llm,
                 self._processor,
-                self._vllm_config,
                 self._sampling_params,
-                use_tqdm=self._vllm_use_tqdm,
+                self._vllm_config,
+                inflight_batching=self._inflight_batching,
+                max_inflight_requests=self._max_inflight_requests,
+                verbose=self._verbose,
             )
 
         if self._verbose:

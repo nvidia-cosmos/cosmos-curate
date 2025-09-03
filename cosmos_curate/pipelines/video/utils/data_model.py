@@ -558,3 +558,23 @@ class WindowConfig:
     model_does_preprocess: bool = False
     preprocess_dtype: str = "float32"
     use_input_bit_rate: bool = False
+
+
+@attrs.define
+class VllmCaptionRequest:
+    """A vLLM captioning task for a single clip window.
+
+    Args:
+        request_id: The request ID.
+        inputs: The inputs for the VLLM model.
+
+    """
+
+    request_id: str
+    inputs: dict[str, Any]
+    video_idx: int
+    clip_idx: int
+    window_idx: int
+    caption: str | None = None
+    iterations: int = 0
+    finished: bool = False

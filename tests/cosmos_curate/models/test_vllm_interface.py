@@ -22,7 +22,7 @@ import pytest
 
 from cosmos_curate.models.vllm_interface import (
     _VLLM_PLUGINS,
-    gather_vllm_inputs,
+    gather_vllm_requests,
     scatter_vllm_captions,
 )
 from cosmos_curate.pipelines.video.utils.data_model import Clip, Video, Window
@@ -32,8 +32,8 @@ VALID_VARIANTS = list(_VLLM_PLUGINS.keys())
 
 @pytest.mark.env("unified")
 @patch("cosmos_curate.models.vllm_interface._get_vllm_plugin")
-def test_gather_vllm_inputs(mock_get_plugin: MagicMock) -> None:
-    """Test get_llm_inputs_from_videos function."""
+def test_gather_vllm_requests(mock_get_plugin: MagicMock) -> None:
+    """Test gather_vllm_requests function."""
     # Mock the plugin with get_llm_input_from_window method
     mock_plugin = MagicMock()
     mock_plugin.get_llm_input_from_window.return_value = {"test": "data"}
@@ -55,46 +55,47 @@ def test_gather_vllm_inputs(mock_get_plugin: MagicMock) -> None:
     videos = [video1, video2]
 
     # Call the function
-    llm_inputs, caption_mappings = gather_vllm_inputs(videos, VALID_VARIANTS[0])
+    vllm_requests = list(gather_vllm_requests(videos, VALID_VARIANTS[0]))
+
+    assert len(vllm_requests) == 4  # noqa: PLR2004
 
     # Verify results
     expected_mappings = [(0, 0, 0), (0, 0, 1), (1, 0, 0), (1, 0, 1)]
-    assert len(llm_inputs) == len(expected_mappings)
-    assert caption_mappings == expected_mappings
+    for req, expected_mapping in zip(vllm_requests, expected_mappings, strict=True):
+        assert req.video_idx == expected_mapping[0]
+        assert req.clip_idx == expected_mapping[1]
+        assert req.window_idx == expected_mapping[2]
 
 
 @pytest.mark.env("unified")
 @patch("cosmos_curate.models.vllm_interface._get_vllm_plugin")
-def test_gather_vllm_inputs_empty(mock_get_plugin: MagicMock) -> None:
-    """Test gather_vllm_inputs with empty videos list."""
+def test_gather_vllm_requests_empty(mock_get_plugin: MagicMock) -> None:
+    """Test gather_vllm_requests with empty videos list."""
     # Mock the plugin with get_llm_input_from_window method
     mock_plugin = MagicMock()
     mock_plugin.get_llm_input_from_window.return_value = {"test": "data"}
     mock_get_plugin.return_value = mock_plugin
 
-    llm_inputs, caption_mappings = gather_vllm_inputs([], VALID_VARIANTS[0])
+    vllm_requests = list(gather_vllm_requests([], VALID_VARIANTS[0]))
 
-    assert llm_inputs == []
-    assert caption_mappings == []
+    assert len(vllm_requests) == 0
 
 
 @pytest.mark.env("unified")
-def test_gather_vllm_inputs_empty_clip() -> None:
-    """Test gather_vllm_inputs with empty clip."""
+def test_gather_vllm_requests_empty_clip() -> None:
+    """Test gather_vllm_requests with empty clip."""
     clip = Clip(uuid=uuid4(), source_video="test.mp4", span=(0.0, 5.0), windows=[])
     video = Video(input_video=Path("test.mp4"), clips=[clip])
     videos = [video]
 
-    llm_inputs, caption_mappings = gather_vllm_inputs(videos, VALID_VARIANTS[0])
-
-    assert llm_inputs == []
-    assert caption_mappings == []
+    vllm_requests = list(gather_vllm_requests(videos, VALID_VARIANTS[0]))
+    assert len(vllm_requests) == 0
     assert clip.errors["clip_windowing"]
 
 
 @pytest.mark.env("unified")
-def test_gather_vllm_inputs_empty_llm_inputs() -> None:
-    """Test gather_vllm_inputs with empty llm_inputs in window."""
+def test_gather_vllm_requests_empty_llm_inputs() -> None:
+    """Test gather_vllm_requests with empty llm_inputs in window."""
     window = Window(start_frame=0, end_frame=10)
     clip = Clip(uuid=uuid4(), source_video="test.mp4", span=(0.0, 5.0), windows=[window])
     video = Video(input_video=Path("test.mp4"), clips=[clip])
@@ -102,10 +103,9 @@ def test_gather_vllm_inputs_empty_llm_inputs() -> None:
 
     assert not clip.errors
 
-    llm_inputs, caption_mappings = gather_vllm_inputs(videos, VALID_VARIANTS[0])
+    vllm_requests = list(gather_vllm_requests(videos, VALID_VARIANTS[0]))
 
-    assert llm_inputs == []
-    assert caption_mappings == []
+    assert vllm_requests == []
     assert clip.errors
 
 
