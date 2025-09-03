@@ -17,12 +17,13 @@
     - [Prerequisites for Slurm Run](#prerequisites-for-slurm-run)
       - [Setup Password-less SSH to the Cluster](#setup-password-less-ssh-to-the-cluster)
       - [Identify User Path on the Cluster](#identify-user-path-on-the-cluster)
-    - [Copy Config File, Cloud Storage Credential, and Model Files](#copy-config-file-cloud-storage-credential-and-model-files)
+    - [Copy Config File, Cloud Storage Credential, and Model Files to Cluster](#copy-config-file-cloud-storage-credential-and-model-files-to-cluster)
     - [Create sqsh Image and Copy to the Slurm Cluster](#create-sqsh-image-and-copy-to-the-slurm-cluster)
-    - [Sync Source Code to the Slurm Cluster](#sync-source-code-to-the-slurm-cluster)
     - [Launch on Slurm](#launch-on-slurm)
     - [Find Logs](#find-logs)
     - [Developing on Slurm](#developing-on-slurm)
+      - [Add the source-code mount to the `$CONTAINER_MOUNTS`:](#add-the-source-code-mount-to-the-container_mounts)
+      - [Sync source code to the slurm cluster](#sync-source-code-to-the-slurm-cluster)
   - [Launch Pipelines on NVIDIA DGX Cloud](#launch-pipelines-on-nvidia-dgx-cloud)
   - [Launch Pipelines on K8s Cluster (coming soon)](#launch-pipelines-on-k8s-cluster-coming-soon)
   - [Observability for Pipelines](#observability-for-pipelines)
@@ -293,26 +294,42 @@ Assume the login node of your Slurm cluster is `my-slurm-login-01.my-cluster.com
 You can verify the password-less SSH setup by `ssh my-slurm-login-01.my-cluster.com`
 and it should login directly without asking for password.
 
+One trick to make things easier is to define `my-slurm-login-01.my-cluster.com` in your `~/.ssh/config`, like
+
+```bash
+Host my-slurm-login-01.my-cluster.com
+  HostName <my-real-slurm-cluster-hostname>
+```
+
+Then you can login to your cluster literally using `ssh my-slurm-login-01.my-cluster.com`.
+
 #### Identify User Path on the Cluster
 
 Assume your user directory on the Slurm cluster is `/home/myusername/`. Note
 - this path should be **accessible to all compute nodes**.
 - this path should have enough disk quota to hold the image and model weights.
 
-Set these environment variables on your local host.
+Set `$SLURM_USER_DIR` environment variable **on your local host**.
 
 ```bash
 export SLURM_USER_DIR="/home/myusername"
-export SLURM_LOG_DIR="${SLURM_USER_DIR}/job_logs"
-export SLURM_COSMOS_CURATE_CONFIG_DIR="${SLURM_USER_DIR}/.config/cosmos_curate"
-export SLURM_AWS_CREDS_DIR="${SLURM_USER_DIR}/.aws"
-export SLURM_WORKSPACE="${SLURM_USER_DIR}/cosmos_curate_local_workspace"
-export SLURM_IMAGE_DIR="${SLURM_USER_DIR}/container_images"
-export SLURM_SOURCE_DIR="${SLURM_USER_DIR}/src/cosmos-curate"
 ```
 
+Then set other dependent environment variables.
 
-### Copy Config File, Cloud Storage Credential, and Model Files
+```bash
+source examples/slurm/source_me_env_vars.sh
+```
+
+### Copy Config File, Cloud Storage Credential, and Model Files to Cluster
+
+If you have defined `my-slurm-login-01.my-cluster.com` in your `/.ssh/config` like mentioned above, you can simply run
+
+```bash
+./examples/slurm/sync_config_creds_models.sh
+```
+
+Otherwise you can replace `my-slurm-login-01.my-cluster.com` with your real login hostname in the following commands.
 
 ```bash
 # Copy ~/.config/cosmos_curate/config.yaml
@@ -335,21 +352,23 @@ rsync -avh --progress ${COSMOS_CURATE_LOCAL_WORKSPACE_PREFIX:-$HOME}/cosmos_cura
 2. Import the hello world docker image built above to create a `.sqsh` file.
 
 ```bash
-enroot import --output cosmos_curate+hello_world.sqsh dockerd://cosmos-curate:hello-world
+export COSMOS_CURATE_IMAGE_NAME="cosmos-curate_hello-world.sqsh"
+enroot import --output $COSMOS_CURATE_IMAGE_NAME dockerd://cosmos-curate:hello-world
 ```
 
 3. Copy the sqsh file to slurm cluster.
 
+Again if you have defined `my-slurm-login-01.my-cluster.com` in your `/.ssh/config`, you can simply run
+
 ```bash
-ssh my-slurm-login-01.my-cluster.com mkdir -p ${SLURM_IMAGE_DIR}
-rsync -avh --progress ./cosmos_curate+hello_world.sqsh my-slurm-login-01.my-cluster.com:${SLURM_IMAGE_DIR}/
+./examples/slurm/upload_image.sh
 ```
 
-### Sync Source Code to the Slurm Cluster
+Otherwise replace `my-slurm-login-01.my-cluster.com` with your real login hostname in the following commands.
 
 ```bash
-ssh my-slurm-login-01.my-cluster.com mkdir -p ${SLURM_SOURCE_DIR}/cosmos_curate/
-rsync -avh ./cosmos_curate/ my-slurm-login-01.my-cluster.com:${SLURM_SOURCE_DIR}/cosmos_curate/
+ssh my-slurm-login-01.my-cluster.com mkdir -p ${SLURM_IMAGE_DIR}
+rsync -avh --progress $COSMOS_CURATE_IMAGE_NAME "my-slurm-login-01.my-cluster.com:${SLURM_IMAGE_DIR}/"
 ```
 
 ### Launch on Slurm
@@ -360,30 +379,19 @@ Figure out the following information for your Slurm cluster
 - slurm partition to use
 - GRES, e.g. `gpu:4` or `gpu:8`
 
-Configure the image path and container mounts
-
-```bash
-export CONTAINER_IMAGE="${SLURM_IMAGE_DIR}/cosmos_curate+hello_world.sqsh"
-
-SLURM_AWS_CREDS_MOUNT="${SLURM_AWS_CREDS_DIR}/credentials:/creds/s3_creds"
-SLURM_COSMOS_CURATE_CONFIG_MOUNT="${SLURM_COSMOS_CURATE_CONFIG_DIR}/config.yaml:/cosmos_curate/config/cosmos_curate.yaml"
-SLURM_WORKSPACE_MOUNT="${SLURM_WORKSPACE}:/config"
-export CONTAINER_MOUNTS="${SLURM_AWS_CREDS_MOUNT},${SLURM_COSMOS_CURATE_CONFIG_MOUNT},${SLURM_WORKSPACE_MOUNT}"
-```
-
 Launch!
 
 ```bash
 cosmos-curate slurm submit \
   --login-node my-slurm-login-01.my-cluster.com \
-  --username my_username_on_slurm_cluster \
+  --username my_username_on_slurm_cluster_if_different_than_local_username \
   --account my_slurm_account \
   --partition my_slurm_gpu_partition \
   --job-name "hello-world" \
   --gres=my_slurm_cluster_gres \
   --num-nodes 1 \
   --remote-files-path "${SLURM_USER_DIR}/job_info" \
-  --container-image "${CONTAINER_IMAGE}" \
+  --container-image "${SLURM_IMAGE_DIR}/${COSMOS_CURATE_IMAGE_NAME}" \
   --container-mounts "${CONTAINER_MOUNTS}" \
     -- python -m cosmos_curate.pipelines.examples.hello_world_pipeline
 ```
@@ -402,7 +410,7 @@ You can also use the CLI to monitor the log:
 ```bash
 cosmos-curate slurm job-log \
   --login-node my-slurm-login-01.my-cluster.com \
-  --username my_username_on_slurm_cluster \
+  --username my_username_on_slurm_cluster_if_different_than_local_username \
   --job-id slurm_job_id_printed_above
 ```
 
@@ -410,27 +418,36 @@ cosmos-curate slurm job-log \
 
 If you plan to modify or create new pipelines on slurm, it is useful to mount the source code into the container so that you do not need to rebuild the container for every change.
 
-Add the following to your export commands:
+#### Add the source-code mount to the `$CONTAINER_MOUNTS`:
+
+This will use the source code that is located at `"${SLURM_SOURCE_DIR}/cosmos_curate/"` on the cluster and will override the source that is inside the container.
 
 ```bash
-SLURM_SOURCE_MOUNT="${SLURM_SOURCE_DIR}/cosmos_curate/:/opt/cosmos-curate/cosmos_curate"
+source examples/slurm/source_me_source_code_mount.sh
 ```
 
-And change the CONTAINER_MOUNTS variable to include the SLURM_SOURCE_MOUNT:
+#### Sync source code to the slurm cluster
+
+Again if you have defined `my-slurm-login-01.my-cluster.com` in your `/.ssh/config`, you can simply run
 
 ```bash
-export CONTAINER_MOUNTS="${SLURM_AWS_CREDS_MOUNT},${SLURM_COSMOS_CURATE_CONFIG_MOUNT},${SLURM_WORKSPACE_MOUNT},${SLURM_SOURCE_MOUNT}"
+./examples/slurm/sync_source_code.sh
 ```
 
-This will use the source code that is located on the cluster and will override the source that is inside the container.
+Otherwise replace `my-slurm-login-01.my-cluster.com` with your real login hostname in the following commands.
+
+```bash
+ssh my-slurm-login-01.my-cluster.com mkdir -p ${SLURM_SOURCE_DIR}/cosmos_curate/
+rsync -avh ./cosmos_curate/ my-slurm-login-01.my-cluster.com:${SLURM_SOURCE_DIR}/cosmos_curate/
+```
 
 Note that:
 
-```
+```bash
 cosmos-curate slurm submit ...
 ```
 
-will not copy code from your local machine to the cluster. You'll need to either edit code directly on the cluster, or use some other mechanism to synchronize your code bases.
+will not sync code from your local machine to the cluster. You'll need to either edit code directly on the cluster, or call the above source-code sync-ing command(s) again.
 
 ## Launch Pipelines on NVIDIA DGX Cloud
 

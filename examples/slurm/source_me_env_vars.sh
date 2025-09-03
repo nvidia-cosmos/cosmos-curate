@@ -2,7 +2,7 @@
 
 # check if env var SLURM_USER_DIR is defined
 if [ -z "$SLURM_USER_DIR" ]; then
-    echo "SLURM_USER_DIR is not defined. Please set it to your SLURM user directory."
+    echo "Error: SLURM_USER_DIR is not defined. Please set it to your SLURM user directory."
     return
 fi
 
@@ -29,8 +29,7 @@ echo "Setting CONTAINER_MOUNTS..."
 SLURM_AWS_CREDS_MOUNT="${SLURM_AWS_CREDS_DIR}/credentials:/creds/s3_creds"
 SLURM_COSMOS_CURATE_CONFIG_MOUNT="${SLURM_COSMOS_CURATE_CONFIG_DIR}/config.yaml:/cosmos_curate/config/cosmos_curate.yaml"
 SLURM_WORKSPACE_MOUNT="${SLURM_WORKSPACE}:/config"
-SLURM_SOURCE_MOUNT="${SLURM_SOURCE_DIR}/cosmos_curate/:/opt/cosmos-curate/cosmos_curate"
-export CONTAINER_MOUNTS="${SLURM_AWS_CREDS_MOUNT},${SLURM_COSMOS_CURATE_CONFIG_MOUNT},${SLURM_WORKSPACE_MOUNT},${SLURM_SOURCE_MOUNT}"
+export CONTAINER_MOUNTS="${SLURM_AWS_CREDS_MOUNT},${SLURM_COSMOS_CURATE_CONFIG_MOUNT},${SLURM_WORKSPACE_MOUNT}"
 
 echo "--------------------------------"
 echo "CONTAINER_MOUNTS: $CONTAINER_MOUNTS"

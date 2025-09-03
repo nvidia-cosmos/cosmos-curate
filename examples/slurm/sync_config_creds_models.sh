@@ -1,7 +1,7 @@
 #!/bin/bash
 
 if [ -z "${SLURM_COSMOS_CURATE_CONFIG_DIR}" ]; then
-    echo "SLURM_COSMOS_CURATE_CONFIG_DIR is not defined"
+    echo "Error: SLURM_COSMOS_CURATE_CONFIG_DIR is not defined"
 else
     echo "sync-ing cosmos_curate config yaml"
     ssh my-slurm-login-01.my-cluster.com mkdir -p "${SLURM_COSMOS_CURATE_CONFIG_DIR}"
@@ -9,7 +9,7 @@ else
 fi
 
 if [ -z "${SLURM_AWS_CREDS_DIR}" ]; then
-    echo "SLURM_AWS_CREDS_DIR is not defined"
+    echo "Error: SLURM_AWS_CREDS_DIR is not defined"
 else
     echo "sync-ing aws creds"
     ssh my-slurm-login-01.my-cluster.com mkdir -p "${SLURM_AWS_CREDS_DIR}"
@@ -17,7 +17,7 @@ else
 fi
 
 if [ -z "${SLURM_WORKSPACE}" ]; then
-    echo "SLURM_WORKSPACE is not defined"
+    echo "Error: SLURM_WORKSPACE is not defined"
 else
     echo "sync-ing models"
     ssh my-slurm-login-01.my-cluster.com mkdir -p "${SLURM_WORKSPACE}/models"

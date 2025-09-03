@@ -82,7 +82,7 @@ graph TD
 1. **New Users**:
    - Start with the [End User Guide](client/END_USER_GUIDE.md) to learn how to use the system
    - Refer to the [Reference Video Pipelines Guide](curator/REFERENCE_PIPELINES_VIDEO.md) to explore the many options to configure the reference pipelines targeting general videos
-   - Refer to the [Reference AV Pipelines Guide](curator/REFERENCE_PIPELINES_VIDEO.md) to explore the many options to configure the reference pipelines targeting autonomous vehicle
+   - Refer to the [Reference AV Pipelines Guide](curator/REFERENCE_PIPELINES_AV.md) to explore the many options to configure the reference pipelines targeting autonomous vehicle
 2. **Developers**:
    - Begin with the [Developer Guide](DEVELOPER_GUIDE.md) to set up your development environment
    - Read the [Architecture Guide](curator/ARCHITECTURE_GUIDE.md) to understand the big picture
@@ -97,6 +97,6 @@ If you need additional help:
 ## Contributing to Documentation
 
 If you find any issues or want to improve the documentation:
-1. Follow the contribution guidelines in the [Developer Guide](curator/DEVELOPER_GUIDE.md)
+1. Follow the contribution guidelines in the [Developer Guide](DEVELOPER_GUIDE.md)
 2. Make sure your changes are consistent with the existing documentation style
 3. Update all relevant guides if your changes affect multiple areas
