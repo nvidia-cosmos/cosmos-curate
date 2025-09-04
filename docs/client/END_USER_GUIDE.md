@@ -387,9 +387,9 @@ cosmos-curate slurm submit \
   --username my_username_on_slurm_cluster_if_different_than_local_username \
   --account my_slurm_account \
   --partition my_slurm_gpu_partition \
-  --job-name "hello-world" \
   --gres=my_slurm_cluster_gres \
   --num-nodes 1 \
+  --job-name "hello-world" \
   --remote-files-path "${SLURM_USER_DIR}/job_info" \
   --container-image "${SLURM_IMAGE_DIR}/${COSMOS_CURATE_IMAGE_NAME}" \
   --container-mounts "${CONTAINER_MOUNTS}" \
