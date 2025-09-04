@@ -126,7 +126,7 @@ metrics:
 opentelemetry-collector:
   mode: deployment
   image:
-    tag: "0.127.0"
+    tag: "0.133.0"
     repository: ghcr.io/open-telemetry/opentelemetry-collector-releases/opentelemetry-collector-contrib
     #nvcr.io/FILL_IN
   extraEnvs:
@@ -138,7 +138,7 @@ opentelemetry-collector:
   - name: inference-container-pull-secret
   initContainers:
     - name: secret-extractor
-      image: nvcr.io/nvidia/distroless/python:3.13-v3.0.11
+      image: nvcr.io/nvidia/distroless/python:3.13-v3.0.12
       command: ["python"]
       args: ["/scripts/extractor.py"]
       volumeMounts:
