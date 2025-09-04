@@ -769,7 +769,7 @@ nvcf_split_benchmark:
     - docker buildx imagetools create -t ${PERF_NVCF_IMAGE} ${PERF_FULL_IMAGE}
     - echo "Copied to image ${PERF_NVCF_IMAGE} from curator commit [${CI_COMMIT_SHA}]"
     - date_str=$(date +%Y%m%d%H%M%S)
-    - LIMIT_CLIPS=100
+    - LIMIT_VIDEOS=5000
     # Run benchmark
     - |
       for caption in 1 0 ; do
@@ -793,7 +793,7 @@ nvcf_split_benchmark:
             --max-concurrency 2 \
             --kratos-metrics-endpoint "${PERF_KRATOS_METRICS_ENDPOINT}" \
             --kratos-bearer-url "${PERF_KRATOS_BEARER_URL}" \
-            --limit ${LIMIT_CLIPS}
+            --limit ${LIMIT_VIDEOS}
         done
       done
     # Cleanup
