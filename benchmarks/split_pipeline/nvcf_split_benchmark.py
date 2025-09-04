@@ -233,7 +233,7 @@ def _parse_args() -> argparse.Namespace:
         "--ngc-org-env",
         type=str,
         required=False,
-        default="PERF_NGC_NVCF_ORG",
+        default="PERF_NGC_NVCF_ORG_ID",
         help="NGC organization ID environment variable.",
     )
     parser.add_argument(
