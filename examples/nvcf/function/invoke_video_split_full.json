@@ -44,6 +44,7 @@
         "aesthetic_reduction": "min",
         "aesthetic_gpus_per_worker": 0.25,
         "embedding_gpus_per_worker": 0.25,
+        "embedding_batch_size": 8,
         "qwen_filter_enable": true,
         "qwen_filter_model_variant": "qwen",
         "qwen_filter_prompt_variant": "default",

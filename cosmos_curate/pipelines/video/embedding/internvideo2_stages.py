@@ -29,6 +29,7 @@ from cosmos_curate.core.utils.infra.gpu_start_helper import (
 from cosmos_curate.core.utils.infra.performance_utils import StageTimer
 from cosmos_curate.models.internvideo2_mm import InternVideo2MultiModality
 from cosmos_curate.pipelines.video.utils.data_model import (
+    Clip,
     SplitPipeTask,
 )
 from cosmos_curate.pipelines.video.utils.decoder_utils import (
@@ -160,6 +161,7 @@ class InternVideo2EmbeddingStage(CuratorStage):
     def __init__(
         self,
         num_gpus_per_worker: float = 0.25,
+        batch_size: int = 8,
         *,
         verbose: bool = False,
         log_stats: bool = False,
@@ -169,6 +171,7 @@ class InternVideo2EmbeddingStage(CuratorStage):
 
         Args:
             num_gpus_per_worker: Number of GPUs per worker.
+            batch_size: Batch size for processing.
             verbose: Whether to print verbose logs.
             log_stats: Whether to log performance statistics.
             texts_to_verify: Optional list of texts to verify against embeddings.
@@ -176,6 +179,7 @@ class InternVideo2EmbeddingStage(CuratorStage):
         """
         self._timer = StageTimer(self)
         self._num_gpus_per_worker = num_gpus_per_worker
+        self._batch_size = batch_size
         self._verbose = verbose
         self._log_stats = log_stats
         self._texts_to_verify = texts_to_verify
@@ -212,6 +216,12 @@ class InternVideo2EmbeddingStage(CuratorStage):
         """
         return CuratorStageResource(gpus=self._num_gpus_per_worker)
 
+    def _verify_with_texts(self, clip: Clip) -> None:
+        if self._texts_to_verify is not None and clip.intern_video_2_embedding is not None:
+            text_embeddings = [self._model.get_text_embedding(x) for x in self._texts_to_verify]
+            probs, idxs = self._model.evaluate(torch.from_numpy(clip.intern_video_2_embedding), text_embeddings)
+            clip.intern_video_2_text_match = (self._texts_to_verify[idxs[0]], probs[0])
+
     @nvtx.annotate("InternVideo2EmbeddingStage")  # type: ignore[misc]
     def process_data(self, tasks: list[SplitPipeTask]) -> list[SplitPipeTask] | None:
         """Process video data to generate embeddings.
@@ -226,26 +236,34 @@ class InternVideo2EmbeddingStage(CuratorStage):
         for task in tasks:
             self._timer.reinit(self, task.get_major_size())
             video = task.video
+            mapping: dict[int, int] = {}
+            idx = 0
+            inputs = []
             with self._timer.time_process(len(video.clips)):
-                for clip in video.clips:
+                for clip_idx, clip in enumerate(video.clips):
                     if clip.intern_video_2_frames is None:
+                        clip.errors["iv2_frames"] = "none"
+                        continue
+                    if clip.intern_video_2_frames.size == 0:
                         clip.errors["iv2_frames"] = "empty"
                         continue
-                    embedding = self._model.encode_video_frames(clip.intern_video_2_frames)
-                    if embedding.numel() == 0:
-                        logger.error(f"Unable to compute internvideo embedding for clip={clip.uuid}")
-                        clip.errors["iv2_embedding"] = "failed"
-                    else:
-                        clip.intern_video_2_embedding = embedding.cpu().numpy()
-                    if self._texts_to_verify:
-                        text_embeddings = [self._model.get_text_embedding(x) for x in self._texts_to_verify]
-                        probs, idxs = self._model.evaluate(embedding, text_embeddings)
-                        clip.intern_video_2_text_match = (
-                            self._texts_to_verify[idxs[0]],
-                            probs[0],
-                        )
+                    mapping[idx] = clip_idx
+                    inputs.append(clip.intern_video_2_frames)
+                    idx += 1
+
+                if len(inputs) > 0:
+                    embeddings = self._model.encode_batched_videos(inputs, self._batch_size)
+                    assert len(embeddings) == len(mapping), (
+                        f"Expected {len(mapping)} embeddings, but got {len(embeddings)}"
+                    )
+                    for idx, clip_idx in mapping.items():
+                        video.clips[clip_idx].intern_video_2_embedding = embeddings[idx]
+
+                for clip in video.clips:
+                    self._verify_with_texts(clip)
                     # done with intern_vidoe_2_frames
                     clip.intern_video_2_frames = None
+
             if self._log_stats:
                 stage_name, stage_perf_stats = self._timer.log_stats()
                 task.stage_perf[stage_name] = stage_perf_stats

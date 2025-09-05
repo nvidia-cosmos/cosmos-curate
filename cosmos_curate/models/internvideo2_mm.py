@@ -29,6 +29,7 @@ from transformers import BatchEncoding, PreTrainedTokenizer  # type: ignore[attr
 
 from cosmos_curate.core.interfaces.model_interface import ModelInterface
 from cosmos_curate.core.utils.environment import CONTAINER_PATHS_CODE_DIR
+from cosmos_curate.core.utils.misc import grouping
 from cosmos_curate.core.utils.model import conda_utils, model_utils
 
 # pyright: reportMissingImports=false
@@ -430,12 +431,31 @@ class InternVideo2MultiModality(ModelInterface):
             The encoded video frames.
 
         """
-        if iv2_frames.size == 0:
-            return torch.empty(0)
         target_device = torch.device(self._config.device)
         frames_tensor = torch.from_numpy(iv2_frames).to(target_device).float()
         assert self._model is not None
         return self._model.get_vid_feat(frames_tensor)
+
+    def encode_batched_videos(
+        self,
+        videos: list[npt.NDArray[np.float32]],
+        batch_size: int = 8,
+    ) -> list[npt.NDArray[np.float32]]:
+        """Encode batched videos for the model.
+
+        Args:
+            videos: List of input video frames.
+            batch_size: The batch size.
+
+        Returns:
+            The encoded video frames.
+
+        """
+        per_video_embeddings = []
+        for batched_frames in grouping.split_by_chunk_size(videos, chunk_size=batch_size):
+            embeddings = self.encode_video_frames(np.concatenate(batched_frames, axis=0))
+            per_video_embeddings.extend(np.split(embeddings.cpu().numpy(), embeddings.shape[0], axis=0))
+        return per_video_embeddings
 
     def get_text_embedding(self, text: str) -> torch.Tensor:
         """Get the text embedding for the given text.
@@ -461,8 +481,10 @@ class InternVideo2MultiModality(ModelInterface):
             The predicted probabilities and indices.
 
         """
+        target_device = torch.device(self._config.device)
         count = len(text_embds)
-        text_embds_tensor = torch.cat(text_embds, 0)
+        text_embds_tensor = torch.cat(text_embds, 0).to(target_device)
+        video_embd_tensor = video_embd.to(target_device)
         assert self._model is not None
-        probs, idxs = self._model.predict_label(video_embd, text_embds_tensor, top=count)
+        probs, idxs = self._model.predict_label(video_embd_tensor, text_embds_tensor, top=count)
         return probs.cpu().numpy()[0].tolist(), idxs.cpu().long().numpy()[0].tolist()

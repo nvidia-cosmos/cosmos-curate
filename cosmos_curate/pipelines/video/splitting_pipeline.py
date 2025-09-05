@@ -209,6 +209,7 @@ def get_embedding_stages(args: argparse.Namespace) -> list[CuratorStage | Curato
                 InternVideo2FrameCreationStage(target_fps=2.0, verbose=args.verbose, log_stats=args.perf_profile),
                 InternVideo2EmbeddingStage(
                     num_gpus_per_worker=args.embedding_gpus_per_worker,
+                    batch_size=args.embedding_batch_size,
                     verbose=args.verbose,
                     log_stats=args.perf_profile,
                 ),
@@ -1009,6 +1010,12 @@ def _setup_parser(parser: argparse.ArgumentParser) -> None:  # noqa: PLR0915
         type=float,
         default=0.25,
         help="Number of GPUs per worker for InternVideo2 or Cosmos-Embed1 embedding stage.",
+    )
+    parser.add_argument(
+        "--embedding-batch-size",
+        type=int,
+        default=8,
+        help="Batch size for InternVideo2 embedding stage.",
     )
     parser.add_argument(
         "--captioning-algorithm",
