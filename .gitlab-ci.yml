@@ -770,6 +770,7 @@ nvcf_split_benchmark:
     - echo "Copied to image ${PERF_NVCF_IMAGE} from curator commit [${CI_COMMIT_SHA}]"
     - date_str=$(date +%Y%m%d%H%M%S)
     - LIMIT_VIDEOS=5000
+    - export RUST_BACKTRACE=1
     # Run benchmark
     - |
       for caption in 1 0 ; do
