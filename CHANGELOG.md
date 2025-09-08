@@ -3,6 +3,19 @@
 
 ## Latest
 
+## [1.1.3]
+
+### Released
+- 2025-09-08
+
+### Added
+- Release Grafana dashboard for pipeline monitoring.
+- Add inflight batching for VLM captioning throughput.
+
+### Changed
+- Merge `video-splitting` env into `unified` env.
+- Improve Slurm instructions.
+
 ## [1.1.2]
 
 ### Released
