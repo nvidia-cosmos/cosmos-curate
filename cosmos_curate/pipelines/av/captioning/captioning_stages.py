@@ -20,10 +20,10 @@ from cosmos_curate.core.interfaces.stage_interface import CuratorStage, CuratorS
 from cosmos_curate.core.utils.config.operation_context import is_running_on_the_cloud
 from cosmos_curate.core.utils.infra.performance_utils import StageTimer
 from cosmos_curate.models import (
-    qwen_lm,
     qwen_vl,
     t5_encoder,
 )
+from cosmos_curate.models.chat_lm import ChatLM, make_chat_lm_input
 from cosmos_curate.pipelines.av.utils.av_data_info import CAMERA_MAPPING
 from cosmos_curate.pipelines.av.utils.av_data_model import (
     AvClipAnnotationTask,
@@ -683,20 +683,20 @@ def _add_prefix_to_captions(
 
 def enhance_captions(  # noqa: PLR0913
     clips: list[ClipForAnnotation],
-    model: qwen_lm.QwenLM,
+    model: ChatLM,
     caption_prefixes: dict[str, str],
     prompt_variant_key: str,
     prompt_variants: dict[str, str],
     prompt_text: str | None,
 ) -> None:
-    """Enhance captions for a list of clips using a qwen language model.
+    """Enhance captions for a list of clips using a chat language model.
 
     Modifies the list of clips by:
 
     1. Extracting the last caption in the chain
     2. Adding the chosen prefix based on the prompt variant
     3. Picks a new prompt based on the prompt variant or prompt text
-    4. Passes the batch of clips to the LLM to generate new captions
+    4. Passes the batch of clips to the chat LM to generate new captions
     5. Appends the new caption to each clip's caption chain
 
     Args:
@@ -722,7 +722,7 @@ def enhance_captions(  # noqa: PLR0913
         prompt_variant_key=prompt_variant_key,
         prompt_prefixes=caption_prefixes,
     )
-    next_prompts = qwen_lm.make_qwen_lm_input(
+    next_prompts = make_chat_lm_input(
         user_content=prefixed_captions,
         prompt_variant_key=prompt_variant_key,
         prompt_variants=prompt_variants,
@@ -771,9 +771,10 @@ class EnhanceCaptionStage(CuratorStage):
         self._batch_size = batch_size
         self._verbose = verbose
         self._log_stats = log_stats
-        self._raw_model = qwen_lm.QwenLM(
-            fp8=fp8_enable,
+        self._raw_model = ChatLM(
+            "qwen_lm",
             max_output_tokens=max_output_tokens,
+            quantization="fp8" if fp8_enable else None,
         )
         self._prompt_variants = ["default"] if prompt_variants is None else prompt_variants
         self._prompt_text = prompt_text

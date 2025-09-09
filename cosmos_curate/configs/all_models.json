@@ -35,12 +35,58 @@
         "precision": "FP32",
         "nvcf_model_id": "clip_vit_large_patch14"
     },
+    "cosmos_embed1_224p": {
+        "model_id": "nvidia/Cosmos-Embed1-224p",
+        "version": "85f56274be7ce439175b4587fa6e3525556d4832",
+        "filelist": null,
+        "precision": "BF16",
+        "nvcf_model_id": "cosmos_embed1_224p"
+    },
+    "cosmos_embed1_336p": {
+        "model_id": "nvidia/Cosmos-Embed1-336p",
+        "version": "5d8309dd5c9ec8f856b16d589693004c907c9a57",
+        "filelist": null,
+        "precision": "BF16",
+        "nvcf_model_id": "cosmos_embed1_336p"
+    },
+    "cosmos_embed1_448p": {
+        "model_id": "nvidia/Cosmos-Embed1-448p",
+        "version": "9f4ff4d8d3df0968276b2191806344000d6752a9",
+        "filelist": null,
+        "precision": "BF16",
+        "nvcf_model_id": "cosmos_embed1_448p"
+    },
+    "cosmos_reason1": {
+        "model_id": "nvidia/Cosmos-Reason1-7B",
+        "version": "0caf724f837efea5e25bf6d5818dcdeec0a36604",
+        "filelist": null,
+        "precision": "BF16",
+        "nvcf_model_id": "cosmos_reason1_7b"
+    },
     "gpt2": {
         "model_id": "openai-community/gpt2",
         "version": "607a30d783dfa663caf39e06633721c8d4cfcd7e",
         "filelist": null,
         "precision": "FP32",
         "nvcf_model_id": "gpt2"
+    },
+    "gpt_oss_20b": {
+        "model_id": "openai/gpt-oss-20b",
+        "version": "6cee5e81ee83917806bbde320786a8fb61efebee",
+        "filelist": [
+            "chat_template.jinja",
+            "config.json",
+            "generation_config.json",
+            "tokenizer.json",
+            "tokenizer_config.json",
+            "special_tokens_map.json",
+            "model.safetensors.index.json",
+            "model-00000-of-00002.safetensors",
+            "model-00001-of-00002.safetensors",
+            "model-00002-of-00002.safetensors"
+        ],
+        "precision": "BF16",
+        "nvcf_model_id": "gpt_oss_20b"
     },
     "internvideo2_mm": {
         "model_id": "OpenGVLab/InternVideo2-Stage2_1B-224p-f4",
@@ -88,33 +134,5 @@
         "filelist": null,
         "precision": "FP32",
         "nvcf_model_id": "sn4kehead_transnetv2"
-    },
-    "cosmos_embed1_224p": {
-        "model_id": "nvidia/Cosmos-Embed1-224p",
-        "version": "85f56274be7ce439175b4587fa6e3525556d4832",
-        "filelist": null,
-        "precision": "BF16",
-        "nvcf_model_id": "cosmos_embed1_224p"
-    },
-    "cosmos_embed1_336p": {
-        "model_id": "nvidia/Cosmos-Embed1-336p",
-        "version": "5d8309dd5c9ec8f856b16d589693004c907c9a57",
-        "filelist": null,
-        "precision": "BF16",
-        "nvcf_model_id": "cosmos_embed1_336p"
-    },
-    "cosmos_embed1_448p": {
-        "model_id": "nvidia/Cosmos-Embed1-448p",
-        "version": "9f4ff4d8d3df0968276b2191806344000d6752a9",
-        "filelist": null,
-        "precision": "BF16",
-        "nvcf_model_id": "cosmos_embed1_448p"
-    },
-    "cosmos_reason1": {
-        "model_id": "nvidia/Cosmos-Reason1-7B",
-        "version": "0caf724f837efea5e25bf6d5818dcdeec0a36604",
-        "filelist": null,
-        "precision": "BF16",
-        "nvcf_model_id": "cosmos_reason1_7b"
     }
 }

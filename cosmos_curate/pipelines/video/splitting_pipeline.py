@@ -545,10 +545,11 @@ def split(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912, PLR0915
         if args.enhance_captions:
             stages += [
                 EnhanceCaptionStage(
-                    batch_size=args.qwen_lm_batch_size,
+                    model_variant=args.enhance_captions_lm_variant,
+                    batch_size=args.enhance_captions_batch_size,
                     fp8_enable=args.qwen_lm_use_fp8_weights,
                     max_output_tokens=args.captioning_max_output_tokens,
-                    prompt_variant=args.enhance_captioning_prompt_variant,
+                    prompt_variant=args.enhance_captions_prompt_variant,
                     prompt_text=args.enhance_captions_prompt_text,
                     verbose=args.verbose,
                     log_stats=args.perf_profile,
@@ -582,7 +583,7 @@ def split(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912, PLR0915
                 embedding_model_version=embedding_model_version,
                 generate_previews=args.generate_previews,
                 caption_models=[args.captioning_algorithm],
-                enhanced_caption_models=["qwen_lm"],
+                enhanced_caption_models=[args.enhance_captions_lm_variant],
                 generate_cosmos_predict_dataset=args.generate_cosmos_predict_dataset,
                 verbose=args.verbose,
                 log_stats=args.perf_profile,
@@ -1137,10 +1138,17 @@ def _setup_parser(parser: argparse.ArgumentParser) -> None:  # noqa: PLR0915
         dest="enhance_captions",
         action="store_true",
         default=False,
-        help="Whether to further enhance captions w/ Qwen-LM",
+        help="Whether to further enhance captions with a language model",
     )
     parser.add_argument(
-        "--enhance-captioning-prompt-variant",
+        "--enhance-captions-lm-variant",
+        type=str,
+        default="qwen_lm",
+        choices=["qwen_lm", "gpt_oss_20b"],
+        help="Select language model for enhance captions stage.",
+    )
+    parser.add_argument(
+        "--enhance-captions-prompt-variant",
         type=str,
         default="default",
         choices=[
@@ -1154,13 +1162,13 @@ def _setup_parser(parser: argparse.ArgumentParser) -> None:  # noqa: PLR0915
         "--enhance-captions-prompt-text",
         type=str,
         default=None,
-        help="Prompt text for further enhancing captions using EnhanceCaptionStage w/ Qwen-LM.",
+        help="Prompt text for further enhancing captions using EnhanceCaptionStage.",
     )
     parser.add_argument(
-        "--qwen-lm-batch-size",
+        "--enhance-captions-batch-size",
         type=int,
         default=32,
-        help="Batch size for Qwen-LM enahnce captioning stage.",
+        help="Batch size for enhance captioning stage.",
     )
     parser.add_argument(
         "--qwen-lm-use-fp8-weights",

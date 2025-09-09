@@ -29,7 +29,11 @@ from cosmos_curate.pipelines.video.captioning.captioning_stages import (  # type
 from cosmos_curate.pipelines.video.clipping.clip_extraction_stages import (  # type: ignore[import-untyped]
     ClipTranscodingStage,
 )
-from cosmos_curate.pipelines.video.utils.data_model import Clip, SplitPipeTask, Video  # type: ignore[import-untyped]
+from cosmos_curate.pipelines.video.utils.data_model import (
+    Clip,
+    SplitPipeTask,
+    Video,
+)  # type: ignore[import-untyped]
 from tests.utils.sequential_runner import run_pipeline
 
 _THRESHOLD = 0.8
@@ -75,7 +79,7 @@ def cosine_similarity(s1: str, s2: str) -> float:
 
 @pytest.fixture
 def sample_captioning_task(sample_video_data: bytes) -> SplitPipeTask:
-    """Fixture to create a sample embedding task."""
+    """Fixture to create a sample captioning task."""
     clips = []
     for start, end in [(2.5, 6.5), (8.0, 14.0)]:
         clip = Clip(
@@ -96,7 +100,7 @@ def sample_captioning_task(sample_video_data: bytes) -> SplitPipeTask:
 
 
 @pytest.mark.env("unified")
-def test_generate_embedding(sample_captioning_task: SplitPipeTask) -> None:
+def test_qwen_caption_generation(sample_captioning_task: SplitPipeTask) -> None:
     """Test the QwenCaptioning result."""
     stages = [
         ClipTranscodingStage(encoder="libopenh264"),

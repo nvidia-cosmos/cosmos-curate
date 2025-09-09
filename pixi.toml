@@ -129,6 +129,7 @@ pycuda = "*"
 
 [feature.unified.pypi-dependencies]
 cvcuda-cu12 = "*" # not available on conda-forge
+flashinfer-python = "*" # not available on conda-forge
 PyNvVideoCodec = "*" # not available on conda-forge
 timm = "*" # conda-forge package pulls in torchvision, which is behind
 vllm = ">=0.10.0" # not available on conda-forge

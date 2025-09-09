@@ -74,8 +74,8 @@ def clip1(prompt_type: str) -> ClipForAnnotation:
 
 @pytest.fixture
 def mock_qwen_lm() -> Generator[MagicMock, None, None]:
-    """Mock QwenLM."""
-    with patch("cosmos_curate.pipelines.av.captioning.captioning_stages.qwen_lm.QwenLM") as mock:
+    """Mock ChatLM used by EnhanceCaptionStage."""
+    with patch("cosmos_curate.pipelines.av.captioning.captioning_stages.ChatLM") as mock:
         mock_instance = MagicMock()
         # Return number of captions based on input length
         mock_instance.generate.side_effect = lambda inputs: [f"Enhanced caption {i + 1}" for i in range(len(inputs))]

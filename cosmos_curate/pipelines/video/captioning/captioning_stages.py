@@ -33,10 +33,10 @@ from cosmos_curate.core.utils.infra.performance_utils import StageTimer
 from cosmos_curate.models import (
     cosmos_reason1_vl,
     phi_vl,
-    qwen_lm,
     qwen_vl,
     t5_encoder,
 )
+from cosmos_curate.models.chat_lm import ChatLM
 from cosmos_curate.pipelines.video.utils import windowing_utils
 from cosmos_curate.pipelines.video.utils.data_model import (
     Clip,
@@ -1414,14 +1414,15 @@ class T5StageForShard(_T5Stage):
 # Post-Caption-Stage to further enhance the generated Caption, either using
 # additional Metadata or just 'Tuned Instructions in the Prompt'
 class EnhanceCaptionStage(CuratorStage):
-    """Stage that enhances video captions using the Qwen language model.
+    """Stage that enhances video captions using a chat language model.
 
-    This stage takes existing captions and uses the Qwen language model to generate
+    This stage takes existing captions and uses a chat language model to generate
     more detailed and refined descriptions of the video content.
     """
 
     def __init__(  # noqa: PLR0913
         self,
+        model_variant: str = "qwen_lm",
         prompt_variant: str = "default",
         prompt_text: str | None = None,
         batch_size: int = 32,
@@ -1434,6 +1435,8 @@ class EnhanceCaptionStage(CuratorStage):
         """Initialize the caption enhancement stage.
 
         Args:
+            model_variant: Language model to use for enhancement. One of
+                "qwen_lm" or "gpt_oss_20b".
             prompt_variant: Type of prompt to use.
             prompt_text: Custom prompt text if provided.
             batch_size: Number of samples to process in parallel.
@@ -1447,7 +1450,12 @@ class EnhanceCaptionStage(CuratorStage):
         self._batch_size = batch_size
         self._verbose = verbose
         self._log_stats = log_stats
-        self._raw_model = qwen_lm.QwenLM(fp8=fp8_enable, max_output_tokens=max_output_tokens)
+        self._enhanced_key = model_variant
+        self._raw_model = ChatLM(
+            model_variant,
+            max_output_tokens=max_output_tokens,
+            quantization=("fp8" if fp8_enable and model_variant == "qwen_lm" else None),
+        )
         self._prompt_variant = prompt_variant
         self._prompt_text = prompt_text
         self._prompt = _get_enhance_prompt(
@@ -1529,10 +1537,10 @@ class EnhanceCaptionStage(CuratorStage):
 
                     for idx, result in enumerate(captions):
                         clip_idx, window_idx = mapping[idx]
-                        video.clips[clip_idx].windows[window_idx].enhanced_caption["qwen_lm"] = result
+                        video.clips[clip_idx].windows[window_idx].enhanced_caption[self._enhanced_key] = result
                         if self._verbose:
                             logger.info(
-                                f"Enhanced QwenLM Caption for clip {video.clips[clip_idx].uuid} "
+                                f"Enhanced {self._enhanced_key} Caption for clip {video.clips[clip_idx].uuid} "
                                 f"window {window_idx}: {result}",
                             )
 
