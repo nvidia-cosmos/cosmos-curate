@@ -302,6 +302,8 @@ class ClipForAnnotation:
     span_end: float | None = None
     # for tags
     vri_tags: dict[str, str] = attrs.field(factory=dict)
+    # for error tracking
+    errors: dict[str, str] = attrs.field(factory=dict)
 
     def get_major_size(self) -> int:
         """Get the major size of the clip.

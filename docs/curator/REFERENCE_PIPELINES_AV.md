@@ -135,6 +135,7 @@ This text file can be passed in with
 - `--limit-clips`: Limit the number of clips from each video to generate (for testing). Default is 0, which is unlimited.
 - `--target-clip-size`: Size in frame count for each clip; default is 256
 - `--prompt-types`: list of pre-defined prompts to use when captioning the videos. Default is - 
+- `--output-format`: default, or cosmos_predict2.
 
 **Options for Performance**
 

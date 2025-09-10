@@ -254,9 +254,11 @@ class QwenInputPreparationStage(CuratorStage):
         sampling_fps: float = 2.0,
         num_cpus_per_actor: float = 4.0,
         preprocess_dtype: str = "float16",
-        model_does_preprocess: bool = False,  # noqa: FBT001, FBT002
-        verbose: bool = False,  # noqa: FBT001, FBT002
-        log_stats: bool = False,  # noqa: FBT001, FBT002
+        *,
+        model_does_preprocess: bool = False,
+        keep_mp4: bool = False,
+        verbose: bool = False,
+        log_stats: bool = False,
     ) -> None:
         """Initialize the QwenInputPreparationStage.
 
@@ -271,6 +273,7 @@ class QwenInputPreparationStage(CuratorStage):
             num_cpus_per_actor: The number of CPUs per actor.
             preprocess_dtype: The preprocess dtype.
             model_does_preprocess: Whether the model does preprocess.
+            keep_mp4: If True, preserve clip buffer after processing.
             verbose: If True, log verbose information.
             log_stats: If True, log statistics.
 
@@ -284,6 +287,7 @@ class QwenInputPreparationStage(CuratorStage):
         self._num_cpus_per_actor = num_cpus_per_actor
         self._preprocess_dtype = preprocess_dtype
         self._model_does_preprocess = model_does_preprocess
+        self._keep_mp4 = keep_mp4
         self._verbose = verbose
         self._log_stats = log_stats
         self._qwen_utils = qwen_vl.QwenUtils(model_variant)
@@ -389,7 +393,9 @@ class QwenInputPreparationStage(CuratorStage):
 
                     clip.caption_windows.append(caption_window)
 
-                clip.buffer = None
+                # Only clear buffer if not keeping it for dataset generation
+                if not self._keep_mp4:
+                    clip.buffer = None
 
         if self._log_stats:
             stage_name, stage_perf_stats = self._timer.log_stats()

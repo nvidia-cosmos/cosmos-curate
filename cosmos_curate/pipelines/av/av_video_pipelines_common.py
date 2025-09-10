@@ -32,6 +32,9 @@ from cosmos_curate.pipelines.av.writers.annotation_writer_stage import (
     AnnotationDbWriterStage,
     AnnotationJsonWriterStage,
 )
+from cosmos_curate.pipelines.av.writers.cosmos_predict2_writer_stage import (
+    CosmosPredict2WriterStage,
+)
 from cosmos_curate.pipelines.av.writers.t5_writer_stage import (
     T5WriterStage,
 )
@@ -66,10 +69,12 @@ def build_caption_pipeline_stages(
             target_clip_size=args.target_clip_size,
             front_window_size=args.front_window_size,
             prompt_variants=args.prompt_types,
+            prompt_text=args.prompt_text,
             sampling_fps=2.0,
             num_cpus_per_actor=args.qwen_input_prepare_cpus_per_actor,
             preprocess_dtype="float16",
             model_does_preprocess=False,
+            keep_mp4=(args.output_format == "cosmos_predict2"),
             verbose=args.verbose,
             log_stats=args.perf_profile,
         )
@@ -111,26 +116,22 @@ def build_caption_pipeline_stages(
         )
 
     if not args.dry_run:
-        if t5_embedding_stage:
-            stages.append(
-                CuratorStageSpec(
-                    T5WriterStage(
-                        env=args.db_profile,
-                        output_prefix=args.output_prefix,
-                        run_id=run_uuid,
-                        version=args.caption_version,
-                        prompt_variants=args.prompt_types,
-                        verbose=args.verbose,
-                    ),
-                    num_workers_per_node=4,
+        if args.output_format == "cosmos_predict2":
+            # cosmos_predict2 format only works with single prompt type
+            if len(args.prompt_types) != 1:
+                error_msg = (
+                    f"cosmos_predict2 output format requires exactly one prompt type, "
+                    f"got {len(args.prompt_types)}: {args.prompt_types}. "
+                    f"Please specify a single prompt type with --prompt-types."
                 )
-            )
+                raise ValueError(error_msg)
 
-        if db is None:
             stages.append(
                 CuratorStageSpec(
-                    AnnotationJsonWriterStage(
+                    CosmosPredict2WriterStage(
                         output_prefix=args.output_prefix,
+                        dataset_name=args.dataset_name,
+                        camera_format_id=args.camera_format_id,
                         verbose=args.verbose,
                         log_stats=args.perf_profile,
                     ),
@@ -138,20 +139,48 @@ def build_caption_pipeline_stages(
                 )
             )
         else:
-            stages.append(
-                CuratorStageSpec(
-                    AnnotationDbWriterStage(
-                        db,
-                        output_prefix=args.output_prefix,
-                        run_id=run_uuid,
-                        version=args.caption_version,
-                        caption_prompt_types=args.prompt_types,
-                        caption_chain_lens=caption_chain_lens,
-                        verbose=args.verbose,
-                        log_stats=args.perf_profile,
-                    ),
-                    num_workers_per_node=4,
+            # Use existing writers (current behavior)
+            if t5_embedding_stage:
+                stages.append(
+                    CuratorStageSpec(
+                        T5WriterStage(
+                            env=args.db_profile,
+                            output_prefix=args.output_prefix,
+                            run_id=run_uuid,
+                            version=args.caption_version,
+                            prompt_variants=args.prompt_types,
+                            verbose=args.verbose,
+                        ),
+                        num_workers_per_node=4,
+                    )
                 )
-            )
+
+            if db is None:
+                stages.append(
+                    CuratorStageSpec(
+                        AnnotationJsonWriterStage(
+                            output_prefix=args.output_prefix,
+                            verbose=args.verbose,
+                            log_stats=args.perf_profile,
+                        ),
+                        num_workers_per_node=4,
+                    )
+                )
+            else:
+                stages.append(
+                    CuratorStageSpec(
+                        AnnotationDbWriterStage(
+                            db,
+                            output_prefix=args.output_prefix,
+                            run_id=run_uuid,
+                            version=args.caption_version,
+                            caption_prompt_types=args.prompt_types,
+                            caption_chain_lens=caption_chain_lens,
+                            verbose=args.verbose,
+                            log_stats=args.perf_profile,
+                        ),
+                        num_workers_per_node=4,
+                    )
+                )
 
     return stages

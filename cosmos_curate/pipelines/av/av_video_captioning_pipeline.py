@@ -21,12 +21,14 @@ import argparse
 import time
 import uuid
 
+import ray
 from loguru import logger
 
 from cosmos_curate.core.interfaces.pipeline_interface import run_pipeline
 from cosmos_curate.core.interfaces.stage_interface import CuratorStage, CuratorStageSpec
 from cosmos_curate.core.utils.config import args_utils
 from cosmos_curate.core.utils.db.database_types import EnvType, PostgresDB
+from cosmos_curate.core.utils.infra import ray_cluster_utils
 from cosmos_curate.core.utils.misc.grouping import split_by_chunk_size
 from cosmos_curate.pipelines.av.av_video_pipelines_common import (
     build_caption_pipeline_stages,
@@ -43,6 +45,9 @@ from cosmos_curate.pipelines.av.utils.av_pipe_input import (
     read_session_file,
 )
 from cosmos_curate.pipelines.av.utils.run_utils import add_run_to_postrges
+from cosmos_curate.pipelines.av.writers.cosmos_predict2_writer_stage import (
+    generate_cosmos_predict2_prefix_cache,
+)
 
 
 def caption(args: argparse.Namespace) -> None:
@@ -128,6 +133,27 @@ def caption(args: argparse.Namespace) -> None:
 
     pipeline_start = time.time()
     output_tasks = run_pipeline(input_tasks, stages=stages)
+
+    # Post-pipeline cache generation (only for cosmos_predict2 format)
+    if args.output_format == "cosmos_predict2":
+        # cluster is torn down after pipeline run, reinit
+        ray_cluster_utils.init_or_connect_to_cluster()
+        try:
+            logger.info("Generating prefix embeddings cache...")
+            cache_future = generate_cosmos_predict2_prefix_cache.remote(
+                args.output_prefix,
+                args.dataset_name,
+                args.camera_format_id,
+                args.prompt_types[0],  # Single prompt type guaranteed by validation
+                args.prompt_text,
+                args.verbose,
+            )
+            ray.get(cache_future)
+            logger.info("Prefix embeddings cache generation completed successfully")
+        except Exception as cache_error:  # noqa: BLE001
+            logger.warning(f"Failed to generate prefix embeddings cache: {cache_error}")
+            logger.info("Dataset generation completed successfully (cache generation failed)")
+
     if args.perf_profile:
         total_object_size = 0
         for task in output_tasks:

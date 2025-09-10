@@ -100,6 +100,20 @@ def add_common_args(parser: argparse.ArgumentParser, pipeline_name: str) -> None
             choices=["libopenh264", "h264_nvenc"],
             help="Codec for transcoding clips",
         )
+        parser.add_argument(
+            "--output-format",
+            type=str,
+            default="default",
+            choices=["default", "cosmos_predict2"],
+            help="Output dataset format",
+        )
+        parser.add_argument(
+            "--dataset-name",
+            type=str,
+            default=None,
+            required=True,
+            help="Name for the dataset (used in cosmos-predict2 directory structure)",
+        )
 
     if pipeline_name in ["split", "caption"]:
         parser.add_argument(
@@ -174,6 +188,12 @@ def add_common_args(parser: argparse.ArgumentParser, pipeline_name: str) -> None
             help=(
                 f"Comma-separated list of prompt types for captioning. Valid values: default, {', '.join(VRI_PROMPTS)}"
             ),
+        )
+        parser.add_argument(
+            "--prompt-text",
+            type=str,
+            default=None,
+            help="Custom prompt text to use instead of predefined prompt types",
         )
 
     if pipeline_name in ["shard"]:

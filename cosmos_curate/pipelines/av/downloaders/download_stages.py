@@ -392,19 +392,7 @@ class ClipDownloader(CuratorStage):
         """
         self._client = s3_client.create_s3_client(self._output_prefix)
 
-    @nvtx.annotate("ClipDownloader")  # type: ignore[misc]
-    def process_data(self, task: AvClipAnnotationTask) -> list[AvClipAnnotationTask] | None:
-        """Process the data.
-
-        This method processes the data.
-
-        Args:
-            task: The task to process.
-
-        Returns:
-            The processed task.
-
-        """
+    def _process_data(self, task: AvClipAnnotationTask) -> AvClipAnnotationTask:
         self._timer.reinit(self, task.get_major_size())
         num_clips_downloaded = 0
 
@@ -425,4 +413,19 @@ class ClipDownloader(CuratorStage):
             stage_name, stage_perf_stats = self._timer.log_stats()
             task.stage_perf[stage_name] = stage_perf_stats
 
-        return [task]
+        return task
+
+    @nvtx.annotate("ClipDownloader")  # type: ignore[misc]
+    def process_data(self, tasks: list[AvClipAnnotationTask]) -> list[AvClipAnnotationTask] | None:
+        """Process the data.
+
+        This method processes the data.
+
+        Args:
+            tasks: The tasks to process.
+
+        Returns:
+            The processed task.
+
+        """
+        return [self._process_data(task) for task in tasks]
