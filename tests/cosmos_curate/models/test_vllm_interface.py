@@ -20,14 +20,23 @@ from uuid import uuid4
 
 import pytest
 
-from cosmos_curate.models.vllm_interface import (
-    _VLLM_PLUGINS,
-    gather_vllm_requests,
-    scatter_vllm_captions,
+from cosmos_curate.core.utils.model import conda_utils
+from cosmos_curate.pipelines.video.utils.data_model import (
+    Clip,
+    Video,
+    VllmCaptionRequest,
+    VllmConfig,
+    Window,
 )
-from cosmos_curate.pipelines.video.utils.data_model import Clip, Video, Window
 
-VALID_VARIANTS = list(_VLLM_PLUGINS.keys())
+if conda_utils.is_running_in_env("unified"):
+    from cosmos_curate.models.vllm_interface import (
+        _VLLM_PLUGINS,
+        gather_vllm_requests,
+        scatter_vllm_captions,
+    )
+
+    VALID_VARIANTS = list(_VLLM_PLUGINS.keys())
 
 
 @pytest.mark.env("unified")
@@ -54,8 +63,8 @@ def test_gather_vllm_requests(mock_get_plugin: MagicMock) -> None:
     video2 = Video(input_video=Path("test2.mp4"), clips=[clip2])
     videos = [video1, video2]
 
-    # Call the function
-    vllm_requests = list(gather_vllm_requests(videos, VALID_VARIANTS[0]))
+    cfg = VllmConfig(variant=VALID_VARIANTS[0])
+    vllm_requests = list(gather_vllm_requests(videos, cfg))
 
     assert len(vllm_requests) == 4  # noqa: PLR2004
 
@@ -76,7 +85,8 @@ def test_gather_vllm_requests_empty(mock_get_plugin: MagicMock) -> None:
     mock_plugin.get_llm_input_from_window.return_value = {"test": "data"}
     mock_get_plugin.return_value = mock_plugin
 
-    vllm_requests = list(gather_vllm_requests([], VALID_VARIANTS[0]))
+    cfg = VllmConfig(variant=VALID_VARIANTS[0])
+    vllm_requests = list(gather_vllm_requests([], cfg))
 
     assert len(vllm_requests) == 0
 
@@ -88,7 +98,8 @@ def test_gather_vllm_requests_empty_clip() -> None:
     video = Video(input_video=Path("test.mp4"), clips=[clip])
     videos = [video]
 
-    vllm_requests = list(gather_vllm_requests(videos, VALID_VARIANTS[0]))
+    cfg = VllmConfig(variant=VALID_VARIANTS[0])
+    vllm_requests = list(gather_vllm_requests(videos, cfg))
     assert len(vllm_requests) == 0
     assert clip.errors["clip_windowing"]
 
@@ -103,7 +114,8 @@ def test_gather_vllm_requests_empty_llm_inputs() -> None:
 
     assert not clip.errors
 
-    vllm_requests = list(gather_vllm_requests(videos, VALID_VARIANTS[0]))
+    cfg = VllmConfig(variant=VALID_VARIANTS[0])
+    vllm_requests = list(gather_vllm_requests(videos, cfg))
 
     assert vllm_requests == []
     assert clip.errors
@@ -126,13 +138,40 @@ def test_scatter_vllm_captions() -> None:
     video2 = Video(input_video=Path("test2.mp4"), clips=[clip2])
     videos = [video1, video2]
 
-    # Define mapping and captions
-    mapping = [(0, 0, 0), (0, 0, 1), (1, 0, 0)]  # video_idx, clip_idx, window_idx
-    captions = ["First caption", "Second caption", "Third caption"]
+    # Build requests corresponding to mapping
     model_variant = "test_model"
+    requests = [
+        VllmCaptionRequest(
+            request_id="r1",
+            inputs={},
+            video_idx=0,
+            clip_idx=0,
+            window_idx=0,
+            caption="First caption",
+            finished=True,
+        ),
+        VllmCaptionRequest(
+            request_id="r2",
+            inputs={},
+            video_idx=0,
+            clip_idx=0,
+            window_idx=1,
+            caption="Second caption",
+            finished=True,
+        ),
+        VllmCaptionRequest(
+            request_id="r3",
+            inputs={},
+            video_idx=1,
+            clip_idx=0,
+            window_idx=0,
+            caption="Third caption",
+            finished=True,
+        ),
+    ]
 
     # Call the function
-    scatter_vllm_captions(model_variant, videos, mapping, captions)
+    scatter_vllm_captions(model_variant, videos, requests)
 
     # Verify captions were assigned correctly
     assert videos[0].clips[0].windows[0].caption[model_variant] == "First caption"
@@ -149,13 +188,12 @@ def test_scatter_vllm_captions_empty() -> None:
     video = Video(input_video=Path("test.mp4"), clips=[clip])
     videos = [video]
 
-    # Empty mapping and captions
-    mapping: list[tuple[int, int, int]] = []
-    captions: list[str] = []
+    # Empty requests
     model_variant = "test_model"
+    requests: list[VllmCaptionRequest] = []
 
     # Call the function - should not raise any errors
-    scatter_vllm_captions(model_variant, videos, mapping, captions)
+    scatter_vllm_captions(model_variant, videos, requests)
 
     # Verify no captions were added
     assert model_variant not in videos[0].clips[0].windows[0].caption
@@ -170,11 +208,37 @@ def test_scatter_vllm_captions_multiple_models() -> None:
     video = Video(input_video=Path("test.mp4"), clips=[clip])
     videos = [video]
 
-    mapping = [(0, 0, 0)]
-
     # Assign captions from different models
-    scatter_vllm_captions("model1", videos, mapping, ["Caption from model 1"])
-    scatter_vllm_captions("model2", videos, mapping, ["Caption from model 2"])
+    scatter_vllm_captions(
+        "model1",
+        videos,
+        [
+            VllmCaptionRequest(
+                request_id="r1",
+                inputs={},
+                video_idx=0,
+                clip_idx=0,
+                window_idx=0,
+                caption="Caption from model 1",
+                finished=True,
+            )
+        ],
+    )
+    scatter_vllm_captions(
+        "model2",
+        videos,
+        [
+            VllmCaptionRequest(
+                request_id="r2",
+                inputs={},
+                video_idx=0,
+                clip_idx=0,
+                window_idx=0,
+                caption="Caption from model 2",
+                finished=True,
+            )
+        ],
+    )
 
     # Verify both captions exist
     assert videos[0].clips[0].windows[0].caption["model1"] == "Caption from model 1"
@@ -190,13 +254,40 @@ def test_scatter_vllm_captions_overwrite() -> None:
     video = Video(input_video=Path("test.mp4"), clips=[clip])
     videos = [video]
 
-    mapping = [(0, 0, 0)]
     model_variant = "test_model"
 
     # Assign initial caption
-    scatter_vllm_captions(model_variant, videos, mapping, ["Initial caption"])
+    scatter_vllm_captions(
+        model_variant,
+        videos,
+        [
+            VllmCaptionRequest(
+                request_id="r1",
+                inputs={},
+                video_idx=0,
+                clip_idx=0,
+                window_idx=0,
+                caption="Initial caption",
+                finished=True,
+            )
+        ],
+    )
     assert videos[0].clips[0].windows[0].caption[model_variant] == "Initial caption"
 
     # Assign new caption - should overwrite
-    scatter_vllm_captions(model_variant, videos, mapping, ["Updated caption"])
+    scatter_vllm_captions(
+        model_variant,
+        videos,
+        [
+            VllmCaptionRequest(
+                request_id="r2",
+                inputs={},
+                video_idx=0,
+                clip_idx=0,
+                window_idx=0,
+                caption="Updated caption",
+                finished=True,
+            )
+        ],
+    )
     assert videos[0].clips[0].windows[0].caption[model_variant] == "Updated caption"

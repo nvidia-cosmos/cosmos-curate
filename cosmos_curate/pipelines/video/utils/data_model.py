@@ -76,6 +76,7 @@ class Window:
         # TODO: this is probably inaccurate
         total_size += sys.getsizeof(self.qwen_llm_input) if self.qwen_llm_input else 0
         total_size += sys.getsizeof(self.phi_llm_input) if self.phi_llm_input else 0
+        total_size += sys.getsizeof(self.cosmos_reason1_llm_input) if self.cosmos_reason1_llm_input else 0
         total_size += sys.getsizeof(self.caption)
         total_size += sys.getsizeof(self.enhanced_caption)
         total_size += len(self.webp_bytes) if self.webp_bytes else 0

@@ -21,8 +21,11 @@ from uuid import uuid4
 import pytest
 import torch
 
-from cosmos_curate.models.vllm_qwen import VllmQwen, make_message, make_prompt
+from cosmos_curate.core.utils.model import conda_utils
 from cosmos_curate.pipelines.video.utils.data_model import Clip, Video, Window
+
+if conda_utils.is_running_in_env("unified"):
+    from cosmos_curate.models.vllm_qwen import VllmQwen, make_message, make_prompt
 
 
 @pytest.mark.env("unified")
@@ -30,7 +33,9 @@ def test_make_llm_input_qwen() -> None:
     """Test make_llm_input_qwen function."""
     # Create mock processor with tokenizer
     mock_tokenizer = MagicMock()
-    mock_tokenizer.apply_chat_template.return_value = "mocked_prompt"
+    # Mock the tokenizer to return a tensor that can be indexed and converted to list
+    mock_tensor = torch.tensor([[1, 2, 3, 4, 5]])  # Shape: (1, 5)
+    mock_tokenizer.apply_chat_template.return_value = mock_tensor
 
     mock_processor = MagicMock()
     mock_processor.tokenizer = mock_tokenizer
@@ -45,9 +50,8 @@ def test_make_llm_input_qwen() -> None:
     # Verify structure
     assert "multi_modal_data" in result
     assert "video" in result["multi_modal_data"]
-    assert result["prompt"] == "mocked_prompt"
-    assert len(result["multi_modal_data"]["video"]) == 1
-    assert result["multi_modal_data"]["video"][0].shape == (2, 3, 32, 32)
+    assert result["prompt_token_ids"] == [1, 2, 3, 4, 5]  # Should be the token IDs as list
+    assert result["multi_modal_data"]["video"].shape == (2, 3, 32, 32)
 
 
 # Hmmm, might not be needed for qwen
@@ -154,7 +158,9 @@ def test_make_prompt() -> None:
     """Test make_prompt function."""
     # Create mock processor with tokenizer
     mock_tokenizer = MagicMock()
-    mock_tokenizer.apply_chat_template.return_value = "mocked_prompt"
+    # Mock the tokenizer to return a tensor that can be indexed and converted to list
+    mock_tensor = torch.tensor([[10, 20, 30, 40]])  # Shape: (1, 4)
+    mock_tokenizer.apply_chat_template.return_value = mock_tensor
 
     mock_processor = MagicMock()
     mock_processor.tokenizer = mock_tokenizer
@@ -163,5 +169,5 @@ def test_make_prompt() -> None:
     frames = torch.rand(2, 3, 32, 32)
     message = make_message(prompt)
     result = make_prompt(message, frames, mock_processor)
-    assert result["prompt"] == "mocked_prompt"
-    assert result["multi_modal_data"]["video"] == [frames]
+    assert result["prompt_token_ids"] == [10, 20, 30, 40]  # Should be the token IDs as list
+    assert result["multi_modal_data"]["video"].shape == (2, 3, 32, 32)

@@ -22,8 +22,11 @@ import pytest
 import torch
 from PIL import Image
 
-from cosmos_curate.models.vllm_phi import VllmPhi4, get_image_placeholder, make_message, make_prompt, tensor_to_pil
+from cosmos_curate.core.utils.model import conda_utils
 from cosmos_curate.pipelines.video.utils.data_model import Clip, Video, Window
+
+if conda_utils.is_running_in_env("unified"):
+    from cosmos_curate.models.vllm_phi import VllmPhi4, get_image_placeholder, make_message, make_prompt, tensor_to_pil
 
 
 @pytest.mark.env("unified")
