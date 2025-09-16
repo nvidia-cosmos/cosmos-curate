@@ -71,12 +71,52 @@ def _raise_timeout_err(msg: str | dict[str, Any]) -> None:
         msg: The error message to include in the exception.
 
     Raises:
-        RuntimeError: Always raises this exception with the provided message.
+        TimeoutError: Always raises this exception with the provided message.
 
     """
     if isinstance(msg, str):
         raise TimeoutError(msg)
     raise TimeoutError(json.dumps(msg))
+
+
+def _extract_nvcf_error_details(resp: dict[str, Any], context: str, funcid: str | None = None) -> str:
+    """Extract error details from NVCF API response with informative context.
+
+    Args:
+        resp: The NVCF API response dictionary
+        context: Context string for the error (e.g., "function with name 'X'")
+        funcid: Optional function ID to check if already present in detail message
+
+    Returns:
+        Formatted error message with key details
+
+    """
+    # Check prioritized list of detail keys for all error types
+    detail_keys = [
+        ("requestStatus", "statusDescription"),  # body.requestStatus.statusDescription
+        ("detail",),  # body.detail
+        ("issue", "detail"),  # body.issue.detail
+        ("cause",),  # body.cause
+    ]
+
+    # Initialize with fallback value
+    base_error = resp.get_error(context) if hasattr(resp, "get_error") else f"Error with {context}"
+    result = base_error
+
+    for key_path in detail_keys:
+        value: Any = resp
+        for key in key_path:
+            value = value.get(key) if isinstance(value, dict) else None
+            if value is None:
+                break
+
+        if value:
+            # If the detail already contains the specific function ID, just return the detail
+            # Otherwise, prepend with the base error for context
+            result = str(value) if funcid and funcid in str(value) else f"{base_error}\nDetails: {value}"
+            break
+
+    return result
 
 
 class CloudError(Exception):
@@ -326,9 +366,9 @@ class NvcfHelper(NvcfBase):
         health_ep: str,
         health_port: int,
         args: str,
-        data_file: str,
-        helm_chart: str | None,
-        helm_service_name: str | None,
+        data_file: str | None = None,
+        helm_chart: str | None = None,
+        helm_service_name: str | None = None,
     ) -> dict[str, Any]:
         """Create a new NVCF function with the specified parameters.
 
@@ -426,7 +466,8 @@ class NvcfHelper(NvcfBase):
         if resp is None:
             raise RuntimeError(_EXCEPTION_MESSAGE)
         if resp.is_error:
-            _raise_runtime_err(resp.get_error(f"function with name '{name}'"))
+            error_msg = _extract_nvcf_error_details(resp, f"function with name '{name}'")
+            _raise_runtime_err(error_msg)
 
         func = resp.get("function", {})
         if not func:
@@ -447,7 +488,7 @@ class NvcfHelper(NvcfBase):
         min_instances: int,
         max_instances: int,
         max_concurrency: int,
-        data_file: str,
+        data_file: str | None = None,
         instance_count: int = 1,
     ) -> dict[str, Any]:
         """Deploy a function to NVCF with the specified parameters.
@@ -533,16 +574,22 @@ class NvcfHelper(NvcfBase):
 
         if resp is None:
             raise RuntimeError(_EXCEPTION_MESSAGE)
+        # Check for specific "already deployed" error first
         desc = resp.get_detail()
-        if isinstance(desc, str):
-            pos = desc.find(", use PUT")
-            if pos > 0:
-                desc = desc[:pos]
+        if isinstance(desc, str) and (", use PUT" in desc or "already has a deployment" in desc):
+            if ", use PUT" in desc:
+                pos = desc.find(", use PUT")
+                if pos > 0:
+                    desc = desc[:pos]
             desc = f"{desc}, run '{self.exe} nvcf function undeploy-function' before (re)deploying"
-            _raise_runtime_err(f"{desc}")
+            _raise_runtime_err(desc)
 
+        # Handle any other deployment errors with full details
         if resp.is_error:
-            _raise_runtime_err(resp.get_error(f"Function with Id '{funcid}' and version '{version}'"))
+            error_msg = _extract_nvcf_error_details(
+                resp, f"Function with Id '{funcid}' and version '{version}'", funcid
+            )
+            _raise_runtime_err(error_msg)
 
         dep = resp.get("deployment", {})
         if not dep:

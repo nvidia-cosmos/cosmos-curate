@@ -18,6 +18,7 @@
 import json
 from io import StringIO
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -25,9 +26,10 @@ from _pytest.monkeypatch import MonkeyPatch
 from rich.console import Console
 from rich.table import Table
 
-from cosmos_curate.client.nvcf_cli.ncf.common import NotFoundError, NVCFResponse  # type: ignore[import-untyped]
-from cosmos_curate.client.nvcf_cli.ncf.launcher.nvcf_helper import (  # type: ignore[import-untyped]
+from cosmos_curate.client.nvcf_cli.ncf.common import NotFoundError, NVCFResponse
+from cosmos_curate.client.nvcf_cli.ncf.launcher.nvcf_helper import (
     NvcfHelper,
+    _extract_nvcf_error_details,
     _raise_runtime_err,
     _raise_timeout_err,
 )
@@ -892,9 +894,9 @@ def test_nvcf_helper_invoke_batch_fail(monkeypatch: MonkeyPatch, tmp_path: Path)
     with pytest.raises(ValueError):  # noqa: PT011
         nvcf_helper.nvcf_helper_invoke_batch(
             data_file=str(tmp_file),
-            id_file=None,
-            job_variant_file=None,
-            ddir=None,
+            id_file="",
+            job_variant_file="",
+            ddir="",
             s3_config=None,
             legacy_cf=False,
             retry_cnt=2,
@@ -937,7 +939,7 @@ def test_nvcf_helper_invoke_function_failures(
     with pytest.raises(exception):
         nvcf_helper.nvcf_helper_invoke_function(
             funcid="test-id",
-            ddir=None,
+            ddir="",
             version=None,
             data_file=None,
             prompt_file=None,
@@ -1071,7 +1073,7 @@ def test_nvcf_helper_get_request_status_failures(
     nvcf_helper.nvcf_api_hdl = mock_nvcf_client
 
     with pytest.raises(exception):
-        nvcf_helper.nvcf_helper_get_request_status(reqid="test-reqid", ddir=None)
+        nvcf_helper.nvcf_helper_get_request_status(reqid="test-reqid", ddir="")
 
 
 def test_nvcf_helper_get_request_status_success(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
@@ -1209,7 +1211,7 @@ def test_nvcf_helper_get_request_status_with_wait_get_failures(
     nvcf_helper.nvcf_api_hdl = mock_nvcf_client
 
     with pytest.raises(exception):
-        nvcf_helper.nvcf_helper_get_request_status_with_wait(reqid="test-reqid", ddir=None)
+        nvcf_helper.nvcf_helper_get_request_status_with_wait(reqid="test-reqid", ddir="")
 
 
 def test_nvcf_helper_get_request_status_with_wait_success(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
@@ -1527,3 +1529,265 @@ def test_nvcf_helper_get_request_status_new_success(monkeypatch: MonkeyPatch, tm
     assert result is not None
     assert result["reqid"] == "test-reqid"
     assert result["status"] == "test-status"
+
+
+@pytest.mark.parametrize(
+    ("status", "reason", "body", "context", "expected_content"),
+    [
+        (
+            401,
+            "Unauthorized",
+            {
+                "requestStatus": {
+                    "requestId": "12345678-109856",
+                    "statusCode": "UNAUTHORIZED",
+                    "statusDescription": "Authentication Failed",
+                }
+            },
+            "function with name 'test-function'",
+            ["Details: Authentication Failed"],
+        ),
+        (
+            400,
+            "Bad Request",
+            {
+                "requestStatus": {
+                    "requestId": "abcd1234-567890",
+                    "statusCode": "INVALID_REQUEST",
+                    "statusDescription": "GPU type L4 and instance type AWS.L40.foo not found in cluster vfm-eks",
+                }
+            },
+            "function with name 'test-function'",
+            ["Details: GPU type L4 and instance type AWS.L40.foo not found in cluster vfm-eks"],
+        ),
+        (
+            400,
+            "Bad Request",
+            {
+                "cause": (
+                    "403 FORBIDDEN, ProblemDetail[type='urn:kaizen:problem-details:forbidden', "
+                    "title='Forbidden', status=403, detail='From upstream endpoint "
+                    "'https://api.ngc.nvidia.com/v2/org/example-org/team/dev/helm-charts/"
+                    "cosmos-curate/versions/2.1.1': "
+                    '{"requestStatus":{"statusCode":"FORBIDDEN","statusDescription":"Access Denied",'
+                    '"requestId":"abcd1234-365006"}}\', '
+                    "instance='null', properties='null']"
+                ),
+                "detail": "Function '12345678-1234-5678-9abc-123456789abc': Invalid artifact provided",
+                "instance": "/v2/nvcf/accounts/test-account-id/functions",
+                "status": 400,
+                "title": "Bad Request",
+                "type": "urn:kaizen:problem-details:bad-request",
+            },
+            "function with name 'test-function'",
+            ["Function '12345678-1234-5678-9abc-123456789abc': Invalid artifact provided"],
+        ),
+        (
+            400,
+            "Bad Request",
+            {
+                "cause": (
+                    "Account 'test-account-id', Function '11111111-2222-3333-4444-555555555555', "
+                    "Version 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee': Missing CONTAINER registry for hostname 'foo.tgz'"
+                ),
+                "detail": (
+                    "Account 'test-account-id', Function '11111111-2222-3333-4444-555555555555', "
+                    "Version 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee': Missing CONTAINER registry for hostname 'foo.tgz'"
+                ),
+                "instance": "/v2/nvcf/accounts/test-account-id/functions",
+                "status": 400,
+                "title": "Bad Request",
+                "type": "urn:kaizen:problem-details:bad-request",
+            },
+            "function with name 'test-function'",
+            ["Account 'test-account-id'", "Missing CONTAINER registry"],
+        ),
+        (
+            400,
+            "Bad Request",
+            {
+                "detail": (
+                    "JSON parse error: Cannot deserialize value of type "
+                    "`java.util.HashSet<com.nvidia.kaizen.nvcf.rest.function.management.dto.ArtifactDto>` "
+                    "from String value (token `JsonToken.VALUE_STRING`)"
+                ),
+                "instance": "/v2/nvcf/accounts/test-account-id/functions",
+                "status": 400,
+                "title": "Bad Request",
+                "type": "about:blank",
+            },
+            "function with name 'test-function'",
+            ["Details: JSON parse error", "ArtifactDto"],
+        ),
+        (
+            400,
+            "Bad Request",
+            {
+                "detail": (
+                    "Function id '12345678-1234-5678-9abc-123456789abc', "
+                    "version 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee': The configuration field in Gpu specification "
+                    "should be empty for container based functions."
+                ),
+                "instance": (
+                    "/v2/nvcf/accounts/test-account-id/deployments/functions/"
+                    "12345678-1234-5678-9abc-123456789abc/versions/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+                ),
+                "status": 400,
+                "title": "Bad Request",
+                "type": "urn:kaizen:problem-details:bad-request",
+            },
+            "function with name 'test-function'",
+            [
+                "Function id '12345678-1234-5678-9abc-123456789abc'",
+                "configuration field in Gpu specification should be empty",
+            ],
+        ),
+        (
+            400,
+            "Bad Request",
+            {
+                "detail": (
+                    "Function id '11111111-2222-3333-4444-555555555555', "
+                    "version 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee': Status DEPLOYING, "
+                    "use PUT to update current deployment"
+                ),
+                "instance": (
+                    "/v2/nvcf/accounts/test-account-id/deployments/functions/"
+                    "11111111-2222-3333-4444-555555555555/versions/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+                ),
+                "status": 400,
+                "title": "Bad Request",
+                "type": "urn:kaizen:problem-details:bad-request",
+            },
+            "function with name 'test-function'",
+            ["Function id '11111111-2222-3333-4444-555555555555'", "Status DEPLOYING, use PUT to update"],
+        ),
+        (
+            400,
+            "Bad Request",
+            {
+                "detail": (
+                    "Function id '11111111-2222-3333-4444-555555555555', "
+                    "version 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee': Function already has a deployment with errors"
+                ),
+                "instance": (
+                    "/v2/nvcf/accounts/test-account-id/deployments/functions/"
+                    "11111111-2222-3333-4444-555555555555/versions/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+                ),
+                "status": 400,
+                "title": "Bad Request",
+                "type": "urn:kaizen:problem-details:bad-request",
+            },
+            (
+                "Function with Id '11111111-2222-3333-4444-555555555555' "
+                "and version 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'"
+            ),
+            ["Function id '11111111-2222-3333-4444-555555555555'", "Function already has a deployment with errors"],
+        ),
+        (
+            404,
+            "Not Found",
+            {
+                "detail": (
+                    "Function id '12345678-1234-5678-9abc-123456789abc': "
+                    "Version 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee' not found"
+                ),
+                "instance": (
+                    "/v2/nvcf/accounts/test-account-id/functions/"
+                    "12345678-1234-5678-9abc-123456789abc/versions/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+                ),
+                "status": 404,
+                "title": "Not Found",
+                "type": "urn:kaizen:problem-details:not-found",
+            },
+            "function with ID '12345678-1234-5678-9abc-123456789abc'",
+            [
+                (
+                    "Function id '12345678-1234-5678-9abc-123456789abc': "
+                    "Version 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee' not found"
+                )
+            ],
+        ),
+        (
+            409,
+            "Conflict",
+            {
+                "cause": (
+                    "409 CONFLICT, ProblemDetail[type='urn:kaizen:problem-details:exists', "
+                    "title='Conflict', status=409, detail='From upstream endpoint "
+                    "'https://spot.gdn.nvidia.com/v1/si': "
+                    '{"error":"There are no available clusters with capacity for  L4 GPU or '
+                    'AWS.GPU.L4_1x instance type"}'
+                    "', instance='null', properties='null']"
+                ),
+                "detail": (
+                    "Function id '11111111-2222-3333-4444-555555555555', "
+                    "version 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee': Failed to deploy, "
+                    "reverting state to 'INACTIVE': 409 CONFLICT, "
+                    "ProblemDetail[type='urn:kaizen:problem-details:exists', "
+                    "title='Conflict', status=409, detail='From upstream endpoint 'https://spot.gdn.nvidia.com/v1/si': "
+                    '{"error":"There are no available clusters with capacity for  L4 GPU or '
+                    'AWS.GPU.L4_1x instance type"}'
+                    "', instance='null', properties='null']"
+                ),
+                "instance": (
+                    "/v2/nvcf/accounts/test-account-id/deployments/functions/"
+                    "11111111-2222-3333-4444-555555555555/versions/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+                ),
+                "status": 409,
+                "title": "Conflict",
+                "type": "urn:kaizen:problem-details:exists",
+            },
+            "function with ID '11111111-2222-3333-4444-555555555555'",
+            ["Function id '11111111-2222-3333-4444-555555555555'", "Failed to deploy, reverting state to 'INACTIVE'"],
+        ),
+        (
+            409,
+            "Conflict",
+            {
+                "issue": {
+                    "type": "urn:kaizen:problem-details:exists",
+                    "title": "Conflict",
+                    "detail": (
+                        "Function id '11111111-2222-3333-4444-555555555555', "
+                        "version 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee': Failed to deploy, "
+                        "reverting state to 'INACTIVE': 409 CONFLICT, "
+                        "ProblemDetail[type='urn:kaizen:problem-details:exists', "
+                        "title='Conflict', status=409, detail='From upstream endpoint "
+                        "'https://spot.gdn.nvidia.com/v1/si': "
+                        '{"error":"There are no available clusters with capacity for  L4 GPU or '
+                        'AWS.GPU.L4_1x instance type"}'
+                        "', instance='null', properties='null']"
+                    ),
+                    "instance": (
+                        "/v2/nvcf/accounts/test-account-id/deployments/functions/"
+                        "11111111-2222-3333-4444-555555555555/versions/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+                    ),
+                    "cause": (
+                        "409 CONFLICT, ProblemDetail[type='urn:kaizen:problem-details:exists', "
+                        "title='Conflict', status=409, detail='From upstream endpoint "
+                        "'https://spot.gdn.nvidia.com/v1/si': "
+                        '{"error":"There are no available clusters with capacity for  L4 GPU or '
+                        'AWS.GPU.L4_1x instance type"}'
+                        "', instance='null', properties='null']"
+                    ),
+                },
+                "status": 409,
+            },
+            "function with ID '11111111-2222-3333-4444-555555555555'",
+            ["Function id '11111111-2222-3333-4444-555555555555'", "Failed to deploy, reverting state to 'INACTIVE'"],
+        ),
+    ],
+)
+def test_extract_nvcf_error_details(
+    status: int, reason: str, body: dict[str, Any], context: str, expected_content: list[str]
+) -> None:
+    """Test _extract_nvcf_error_details with various response formats."""
+    # Construct response_data from the separate components
+    response_data = {"status": status, "reason": reason, **body}
+    mock_response = NVCFResponse(response_data)
+    funcid = body.get("detail", "").split("'")[1] if "Function id" in body.get("detail", "") else None
+    result = _extract_nvcf_error_details(mock_response, context, funcid=funcid)
+
+    for expected in expected_content:
+        assert expected in result
