@@ -3,6 +3,17 @@
 
 ## Latest
 
+## [1.1.4]
+
+### Released
+- 2025-09-17
+
+### Added
+
+- Add [gpt-oss-20b](https://huggingface.co/openai/gpt-oss-20b) as an option for `EnhanceCaption` stage.
+- Enable batching for internvideo2 embedding stage for improved throughput.
+- Upgrade to [cosmos-xenna 0.1.5](https://pypi.org/project/cosmos-xenna/0.1.5/) for improved performance and stability.
+
 ## [1.1.3]
 
 ### Released
