@@ -2,11 +2,12 @@
 
 The AV pipelines are similar to the video pipelines, but are designed around dataset curation for autonomous vehicles.
 
-- [Cosmos-Curate - AV Reference Pipelines](#cosmos-curate---reference-pipelines)
-  - [Split-Annotate Pipeline](#split-annotate-pipeline)
-    - [Split-Annotate Pipeline Stages](#split-annotate-pipeline-stages)
-    - [Split-Annotate Pipeline Output Format](#split-annotate-pipeline-output-format)
-    - [Split-Annotate Pipeline Configurable Options](#split-annotate-pipeline-configurable-options)
+- [Cosmos-Curate - AV Reference Pipelines](#cosmos-curate---av-reference-pipelines)
+  - [AV Split-Caption Pipeline](#av-split-caption-pipeline)
+    - [AV Split-Caption Pipeline Stages](#av-split-caption-pipeline-stages)
+    - [AV Split-Caption Terminology](#av-split-caption-terminology)
+    - [AV Split-Caption Pipeline Output Format](#av-split-caption-pipeline-output-format)
+    - [AV Split-Caption Pipeline Configurable Options](#av-split-caption-pipeline-configurable-options)
 
 ## AV Split-Caption Pipeline
 
@@ -95,7 +96,7 @@ Below is a summary of the important options for the av-split-caption pipeline. T
 ```bash
 cosmos-curate local launch \
     --image-name cosmos-curate --image-tag 1.0.0 --curator-path . \
-    -- python3 -m cosmos_curate.pipelines.video.av.run_pipeline split --help
+    -- pixi run python3 -m cosmos_curate.pipelines.av.run_pipeline split --help
 ```
 
 **Options for Input/Output**
@@ -116,8 +117,8 @@ session3/video1.mp4
 The session name that precedes the video name can have any number of levels, for example:
 
 ```
-date/car_unique_id1/timestamp/video1.mp4
-date/car_unique_id2/timestamp/video1.mp4
+session_date/car_unique_id1/session_timestamp/video1.mp4
+session_date/car_unique_id2/session_timestamp/video1.mp4
 ```
 
 This text file can be passed in with

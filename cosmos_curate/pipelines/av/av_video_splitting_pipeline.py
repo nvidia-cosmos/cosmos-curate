@@ -159,7 +159,7 @@ def split(args: argparse.Namespace) -> None:  # noqa: C901
         if args.continue_captioning:
             extra_info["clip_version"] = args.clip_version
             extra_info["caption_version"] = args.caption_version
-            extra_info["prompt_type"] = args.prompt_type
+            extra_info["prompt_types"] = args.prompt_types
         add_run_to_postrges(
             db,
             str(run_uuid),

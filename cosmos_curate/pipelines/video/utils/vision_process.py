@@ -228,8 +228,7 @@ def fetch_video(  # noqa: C901, PLR0911, PLR0913
         video = resizeNormTransform(video)
         if flip_input:
             # Flip along the width and height dims
-            # TODO: is this a bug?
-            video = [torch.flip(frame, dims=[1, 2]) for frame in video]  # type: ignore[assignment]
+            video = torch.stack([torch.flip(frame, dims=[1, 2]) for frame in video], dim=0)
         if preprocess_dtype == "uint8":
             return video.to(torch.uint8), frame_counts
         return video, frame_counts
@@ -240,7 +239,7 @@ def fetch_video(  # noqa: C901, PLR0911, PLR0913
         antialias=True,
     )
     if flip_input:
-        video = [torch.flip(frame, dims=[1, 2]) for frame in video]  # type: ignore[assignment]
+        video = torch.stack([torch.flip(frame, dims=[1, 2]) for frame in video], dim=0)
     if preprocess_dtype == "float32":
         return video.float(), frame_counts
     if preprocess_dtype == "float16":
