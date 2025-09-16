@@ -737,7 +737,7 @@ build-packages:
     - VERSION=$(grep -m 1 'version = ' pyproject.toml | cut -d'"' -f2)
     - PKG_VERSION="${VERSION}.dev${TIMESTAMP}"
     - echo "Building package for ${PKG_VERSION}"
-    - pip install twine --disable-pip-version-check
+    - pip install twine==6.1.0 --disable-pip-version-check
     - poetry version "${PKG_VERSION}"
     - poetry build --no-interaction
   script:
