@@ -133,11 +133,6 @@ class VllmPhi4(VllmPlugin):
         """Return the model variant name."""
         return "phi4"
 
-    @staticmethod
-    def model_id() -> str:
-        """Return the model ID."""
-        return "microsoft/Phi-4-multimodal-instruct"
-
     @classmethod
     def model(cls, config: VllmConfig) -> LLM:
         """Instantiate the vLLM model.

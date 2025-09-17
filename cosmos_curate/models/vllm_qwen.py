@@ -275,8 +275,3 @@ class VllmQwen7B(VllmQwen):
     def model_variant() -> str:
         """Return the model variant name."""
         return "qwen"
-
-    @staticmethod
-    def model_id() -> str:
-        """Return the model ID."""
-        return "Qwen/Qwen2.5-VL-7B-Instruct"

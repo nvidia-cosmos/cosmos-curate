@@ -23,6 +23,7 @@ from transformers import AutoProcessor
 from vllm import LLM, RequestOutput
 
 from cosmos_curate.core.utils.model import model_utils
+from cosmos_curate.models.vllm_model_ids import get_vllm_model_id
 from cosmos_curate.pipelines.video.utils.data_model import (
     Video,
     VllmCaptionRequest,
@@ -39,10 +40,10 @@ class VllmPlugin(ABC):
     def model_variant() -> str:
         """Return the model variant name."""
 
-    @staticmethod
-    @abstractmethod
-    def model_id() -> str:
+    @classmethod
+    def model_id(cls) -> str:
         """Return the model ID."""
+        return get_vllm_model_id(cls.model_variant())
 
     @classmethod
     def model_path(cls) -> Path:

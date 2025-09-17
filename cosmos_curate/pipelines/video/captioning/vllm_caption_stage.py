@@ -43,6 +43,7 @@ from cosmos_curate.core.utils.infra.gpu_start_helper import (
 from cosmos_curate.core.utils.infra.performance_utils import StageTimer
 from cosmos_curate.core.utils.model import conda_utils
 from cosmos_curate.models.all_models import get_all_models_by_id
+from cosmos_curate.models.vllm_model_ids import get_vllm_model_id
 from cosmos_curate.pipelines.video.captioning.captioning_stages import _get_prompt
 from cosmos_curate.pipelines.video.utils import windowing_utils
 from cosmos_curate.pipelines.video.utils.data_model import (
@@ -73,13 +74,6 @@ if conda_utils.is_running_in_env("unified"):
 
 
 T = TypeVar("T", bound=PipelineTask)
-
-
-# Map of model variants to model IDs.
-_VLLM_VARIANTS = {
-    "qwen": "Qwen/Qwen2.5-VL-7B-Instruct",
-    "phi4": "microsoft/Phi-4-multimodal-instruct",
-}
 
 
 def _get_major_size_task(task: T) -> int:
@@ -141,16 +135,12 @@ class VllmModelInterface(ModelInterface):
     @property
     def model_id_names(self) -> list[str]:
         """Get the model ID names."""
-        variant = _VLLM_VARIANTS.get(self._vllm_config.variant)
-        if variant is None:
-            msg = f"Variant {self._vllm_config.variant} not supported"
-            raise ValueError(msg)
-
+        variant = get_vllm_model_id(self._vllm_config.variant)
         models = get_all_models_by_id()
         model = models.get(variant)
 
         if model is None:
-            msg = f"Model not found for{self._vllm_config.variant} -> {variant}"
+            msg = f"Model not found for {self._vllm_config.variant} -> {variant}"
             raise ValueError(msg)
 
         model_id = model.get("model_id")
