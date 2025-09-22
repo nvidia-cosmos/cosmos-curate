@@ -356,9 +356,9 @@ class TestRemuxStage:
         failing_task.video.source_bytes = b"failing_video_data"
         failing_task.video.metadata = Mock()
         failing_task.video.metadata.format_name = "mpegts"  # Needs remuxing
+        failing_task.video.errors = {}  # Add errors dict to mock
         failing_task.get_major_size.return_value = 1000
         failing_task.stage_perf = {}
-        failing_task.error = None
 
         succeeding_task = Mock(spec=SplitPipeTask)
         succeeding_task.video = Mock(spec=Video)
@@ -366,9 +366,9 @@ class TestRemuxStage:
         succeeding_task.video.source_bytes = b"good_video_data"
         succeeding_task.video.metadata = Mock()
         succeeding_task.video.metadata.format_name = "mov,mp4,m4a,3gp,3g2,mj2"  # Already MP4
+        succeeding_task.video.errors = {}  # Add errors dict to mock
         succeeding_task.get_major_size.return_value = 2000
         succeeding_task.stage_perf = {}
-        succeeding_task.error = None
 
         tasks = [failing_task, succeeding_task]
 
@@ -381,11 +381,12 @@ class TestRemuxStage:
         # Assert
         assert result == tasks  # Both tasks should be returned
 
-        # Failing task should have error set
-        assert isinstance(failing_task.error, str)
+        # Failing task should have error set in video.errors
+        assert "remux" in failing_task.video.errors
+        assert isinstance(failing_task.video.errors["remux"], str)
 
         # Succeeding task should not be affected
-        assert succeeding_task.error is None
+        assert succeeding_task.video.errors == {}
 
         # remux_to_mp4 should only be called for the failing task (the succeeding one is already MP4)
         mock_remux_to_mp4.assert_called_once_with(b"failing_video_data", threads=1)

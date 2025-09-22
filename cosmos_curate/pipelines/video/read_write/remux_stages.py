@@ -159,7 +159,7 @@ class RemuxStage(CuratorStage):
                 try:
                     remux_if_needed(task.video, threads=ceil(self.resources.cpus))
                 except Exception as e:  # noqa: BLE001
-                    task.error = f"{e.__class__.__name__}: {e}"
+                    task.video.errors["remux"] = str(e)
                     logger.exception(f"Failed to remux video {task.video.input_video}")
 
             if self._log_stats:

@@ -415,7 +415,6 @@ class SplitPipeTask(PipelineTask):
 
     video: Video
     stage_perf: dict[str, StagePerfStats] = attrs.Factory(dict)
-    error: str | None = None
 
     @property
     def fraction(self) -> float:

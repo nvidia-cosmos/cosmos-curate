@@ -422,8 +422,7 @@ class VllmCaptionStage(CuratorStage):
                 verbose=self._verbose,
             )
 
-        if self._verbose:
-            logger.info(f"Generated {num_captions} captions for {len(tasks)} tasks")
+        logger.info(f"Generated {num_captions} captions for {len(tasks)} tasks")
 
         if self._log_stats:
             # Because there's a single call to caption all tasks, just log the first task's stage_perf.
