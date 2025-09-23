@@ -37,6 +37,7 @@ from cosmos_curate.models import (
     t5_encoder,
 )
 from cosmos_curate.models.chat_lm import ChatLM
+from cosmos_curate.models.prompts import get_enhance_prompt, get_prompt
 from cosmos_curate.pipelines.video.utils import windowing_utils
 from cosmos_curate.pipelines.video.utils.data_model import (
     Clip,
@@ -46,72 +47,6 @@ from cosmos_curate.pipelines.video.utils.data_model import (
     Window,
 )
 from cosmos_curate.pipelines.video.utils.decoder_utils import DEFAULT_TRANSCODE_BITRATE_M
-
-_PROMPTS = {
-    "default": """
-        Elaborate on the visual and narrative elements of the video in detail.
-    """,
-    "av": """
-        The video depicts the view from a camera mounted on a car as it is driving.
-        Pay special attention to the motion of the cars, including the primary car
-        whose point-of-view we observe in the video. Also note important factors
-        that would relate to driving safety like the relative positions of pedestrians,
-        lane markers, road signs, traffic signals, and any aggressive driving behavior
-        of other vehicles. Also pay attention to interesting landmarks and describe
-        them in detail.
-    """,
-    "av-surveillance": """
-        The video depicts the view from a surveillance camera. Pay special attention
-        to the motion of the cars and other important factors that would relate to
-        driving safety like the relative positions of pedestrians, lane markers,
-        road signs, traffic signals, and any aggressive driving behavior of vehicles.
-        Also pay attention to interesting landmarks and describe them in detail.
-    """,
-}
-
-_ENHANCE_PROMPTS = {
-    "default": """
-        You are a chatbot that enhances video caption inputs, adding more color and details to the text.
-        The output should be longer than the provided input caption.
-    """,
-    "av-surveillance": """
-        You are a chatbot that enhances video captions from vehicle dashboard cameras or surveillance cameras.
-        Add more details and generate a summary from the original text.
-        The output should be longer than the provided input caption.
-    """,
-}
-
-
-# Use with Captioning Stage
-def _get_prompt(
-    prompt_variant: str,
-    prompt_text: str | None,
-    *,
-    verbose: bool = False,
-) -> str:
-    if prompt_text is not None:
-        prompt = prompt_text
-    else:
-        if prompt_variant not in _PROMPTS:
-            error_msg = f"Invalid prompt variant: {prompt_variant}"
-            raise ValueError(error_msg)
-        prompt = _PROMPTS[prompt_variant]
-    if verbose:
-        logger.debug(f"Captioning prompt: {prompt}")
-    return prompt
-
-
-def _get_enhance_prompt(prompt_variant: str, prompt_text: str | None, *, verbose: bool = False) -> str:
-    if prompt_text is not None:
-        prompt = prompt_text
-    else:
-        if prompt_variant not in _ENHANCE_PROMPTS:
-            error_msg = f"Invalid prompt variant: {prompt_variant}"
-            raise ValueError(error_msg)
-        prompt = _ENHANCE_PROMPTS[prompt_variant]
-    if verbose:
-        logger.debug(f"Enhance Captioning prompt: {prompt}")
-    return prompt
 
 
 def _assign_captions(  # noqa: PLR0913
@@ -363,7 +298,7 @@ class QwenInputPreparationStage(CuratorStage):
                             num_threads=max(int(self.resources.cpus), 1),
                         ),
                     ):
-                        prompt = _get_prompt(
+                        prompt = get_prompt(
                             self._prompt_variant,
                             self._prompt_text,
                             verbose=self._verbose,
@@ -723,7 +658,7 @@ class CosmosReason1InputPreparationStage(CuratorStage):
                             num_threads=max(int(self.resources.cpus), 1),
                         ),
                     ):
-                        prompt = _get_prompt(
+                        prompt = get_prompt(
                             self._prompt_variant,
                             self._prompt_text,
                             verbose=self._verbose,
@@ -1091,7 +1026,7 @@ class PhiInputPreparationStage(CuratorStage):
                             num_threads=max(int(self.resources.cpus), 1),
                         ),
                     ):
-                        prompt = _get_prompt(
+                        prompt = get_prompt(
                             self._prompt_variant,
                             self._prompt_text,
                             verbose=self._verbose,
@@ -1458,7 +1393,7 @@ class EnhanceCaptionStage(CuratorStage):
         )
         self._prompt_variant = prompt_variant
         self._prompt_text = prompt_text
-        self._prompt = _get_enhance_prompt(
+        self._prompt = get_enhance_prompt(
             prompt_variant,
             prompt_text,
             verbose=verbose,

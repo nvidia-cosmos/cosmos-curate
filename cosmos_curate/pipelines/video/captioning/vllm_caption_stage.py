@@ -43,8 +43,8 @@ from cosmos_curate.core.utils.infra.gpu_start_helper import (
 from cosmos_curate.core.utils.infra.performance_utils import StageTimer
 from cosmos_curate.core.utils.model import conda_utils
 from cosmos_curate.models.all_models import get_all_models_by_id
+from cosmos_curate.models.prompts import get_prompt
 from cosmos_curate.models.vllm_model_ids import get_vllm_model_id
-from cosmos_curate.pipelines.video.captioning.captioning_stages import _get_prompt
 from cosmos_curate.pipelines.video.utils import windowing_utils
 from cosmos_curate.pipelines.video.utils.data_model import (
     Video,
@@ -234,7 +234,7 @@ class VllmPrepStage(CuratorStage):
             msg = "self._processor not initialized, call stage_setup() first"
             raise RuntimeError(msg)
 
-        prompt = _get_prompt(
+        prompt = get_prompt(
             self._vllm_config.prompt_variant,
             self._vllm_config.prompt_text,
             verbose=self._verbose,
