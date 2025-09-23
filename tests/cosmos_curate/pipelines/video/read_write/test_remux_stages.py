@@ -99,6 +99,12 @@ def synthetic_avi_video() -> io.BytesIO:
     return _make_synthetic_video("avi")
 
 
+@pytest.fixture
+def synthetic_mkv_video() -> io.BytesIO:
+    """Create a synthetic MKV video in memory."""
+    return _make_synthetic_video("matroska")
+
+
 @pytest.mark.env("cosmos-curate")
 def test_remux_bad_source_bytes() -> None:
     """Test that remuxing fails if the source bytes are not set."""
@@ -151,7 +157,7 @@ def test_remux_if_needed_mpegts_to_mp4(synthetic_mpegts_video: io.BytesIO) -> No
 
 @pytest.mark.env("cosmos-curate")
 def test_remux_if_needed_avi_to_mp4(synthetic_avi_video: io.BytesIO) -> None:
-    """Test that AVI videos are remuxed to MP4."""
+    """Test that AVI videos are unchanged."""
     # Arrange
     original_bytes = synthetic_avi_video.getvalue()
     video = Video(source_bytes=original_bytes, input_video="test.avi")
@@ -160,19 +166,46 @@ def test_remux_if_needed_avi_to_mp4(synthetic_avi_video: io.BytesIO) -> None:
     # Verify it starts as AVI
     assert video.metadata is not None
     assert video.metadata.format_name is not None
-    assert "mp4" not in video.metadata.format_name.lower()
+    assert "avi" in video.metadata.format_name.lower()
 
     # Act
     remux_if_needed(video, threads=1)
 
     # Assert
-    assert video.source_bytes != original_bytes  # Should be changed
+    assert video.source_bytes == original_bytes  # Should be changed
     assert video.source_bytes is not None
 
-    # Verify the result is valid MP4
+    # Verify the result remains AVI (unchanged)
     result_stream = io.BytesIO(video.source_bytes)
     with av.open(result_stream) as container:
-        assert "mp4" in container.format.name.lower()
+        assert "avi" in container.format.name.lower()
+        assert len(container.streams.video) > 0
+
+
+@pytest.mark.env("cosmos-curate")
+def test_remux_if_needed_mkv_to_mp4(synthetic_mkv_video: io.BytesIO) -> None:
+    """Test that MKV videos are unchanged."""
+    # Arrange
+    original_bytes = synthetic_mkv_video.getvalue()
+    video = Video(source_bytes=original_bytes, input_video="test.mkv")
+    video.populate_metadata()
+
+    # Verify it starts as MKV
+    assert video.metadata is not None
+    assert video.metadata.format_name is not None
+    assert "matroska,webm" in video.metadata.format_name.lower()
+
+    # Act
+    remux_if_needed(video, threads=1)
+
+    # Assert
+    assert video.source_bytes == original_bytes  # Should be unchanged
+    assert video.source_bytes is not None
+
+    # Verify the result remains MKV (unchanged)
+    result_stream = io.BytesIO(video.source_bytes)
+    with av.open(result_stream) as container:
+        assert "matroska,webm" in container.format.name.lower()
         assert len(container.streams.video) > 0
 
 

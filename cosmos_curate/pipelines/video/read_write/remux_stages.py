@@ -29,6 +29,8 @@ from cosmos_curate.pipelines.video.utils.data_model import (
     Video,
 )
 
+REMUX_FORMATS = {"mpegts"}
+
 
 def remux_to_mp4(source_bytes: bytes, threads: int = 1) -> bytes:
     """Remux a video to a MP4 container using ffmpeg.
@@ -110,9 +112,10 @@ def remux_if_needed(video: Video, threads: int) -> None:
         logger.warning(f"Video {video.input_video} has no metadata, skipping remux")
         return
 
-    if video.metadata.format_name is None or "mp4" not in video.metadata.format_name.lower():
-        format_name = video.metadata.format_name if video.metadata else "unknown"
-        logger.info(f"Video {video.input_video} is in {format_name} format, remuxing to mp4")
+    format_name = video.metadata.format_name.lower() if video.metadata.format_name else "unknown"
+
+    if any(remux_format in format_name for remux_format in REMUX_FORMATS):
+        logger.info(f"Video {video.input_video} is in `{format_name}` format, remuxing to mp4")
         video.source_bytes = remux_to_mp4(video.source_bytes, threads=threads)
         video.populate_metadata()
 
