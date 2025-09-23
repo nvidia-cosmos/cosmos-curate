@@ -65,8 +65,8 @@ variables:
   HELM_THANOS_RECEIVER_URL: "$HELM_THANOS_RECEIVER_URL"
   HELM_BYO_METRICS_RECEIVER_CLIENT_CRT: $HELM_BYO_METRICS_RECEIVER_CLIENT_CRT
   HELM_BYO_METRICS_RECEIVER_CLIENT_KEY: $HELM_BYO_METRICS_RECEIVER_CLIENT_KEY
-  HELM_GPU_REQUESTS: 4
-  HELM_GPU_LIMITS: 4
+  HELM_GPU_REQUESTS: 1
+  HELM_GPU_LIMITS: 1
   HELM_SHMEM_LIMIT: 500Gi
   HELM_IMAGE_TAG:
   TEST_END_TO_END:
@@ -94,7 +94,7 @@ variables:
     value: "L40S"
   NVCF_INSTANCE_TYPE:
     description: "Instance type for NVCF testing (e.g., OCI.GPU.L40S_1x, OCI.GPU.H100_1x)"
-    value: "OCI.GPU.L40S_4x"
+    value: "OCI.GPU.L40S_1x"
   NVCF_CUSTOM_BACKEND:
     description: "Custom NVCF backend for testing (overrides default GitLab CI/CD variable)"
     value: ""
@@ -538,8 +538,14 @@ nvcf-helm:
       - cosmos-curate nvcf function invoke-function --data-file invoke_split1.json --s3-config-file aws_credentials
       # use GPU decoding & FP8/TP2 for Qwen to process 1 more video
       - |
+        if [ "$HELM_GPU_REQUESTS" -ge 2 ]; then
+          export _QWEN_TP_SIZE="2"
+        else
+          export _QWEN_TP_SIZE="1"
+        fi
+      - |
         cat examples/nvcf/function/invoke_video_split_full.json | \
-        jq --arg output_clip_path "$S3_OUTPUT_CLIP_PATH" --arg input_video_path "$S3_INPUT_VIDEO_PATH" --argjson limit 1 --arg transnetv2_frame_decoder_mode pynvc --argjson transnetv2_frame_decode_raise_on_pynvc_error "$DECODE_RAISE_ON_ERROR" --argjson transcode_use_hwaccel true --argjson qwen_use_fp8_weights true --argjson qwen_num_gpus_per_worker 2 \
+        jq --arg output_clip_path "$S3_OUTPUT_CLIP_PATH" --arg input_video_path "$S3_INPUT_VIDEO_PATH" --argjson limit 1 --arg transnetv2_frame_decoder_mode pynvc --argjson transnetv2_frame_decode_raise_on_pynvc_error "$DECODE_RAISE_ON_ERROR" --argjson transcode_use_hwaccel true --argjson qwen_use_fp8_weights true --argjson qwen_num_gpus_per_worker $_QWEN_TP_SIZE \
         '.args.output_clip_path = $output_clip_path | .args.input_video_path = $input_video_path | .args.limit = $limit | .args.transnetv2_frame_decoder_mode = $transnetv2_frame_decoder_mode | .args.transnetv2_frame_decode_raise_on_pynvc_error = $transnetv2_frame_decode_raise_on_pynvc_error | .args.transcode_use_hwaccel = $transcode_use_hwaccel | .args.qwen_use_fp8_weights = $qwen_use_fp8_weights | .args.qwen_num_gpus_per_worker = $qwen_num_gpus_per_worker ' > invoke_split2.json
       - cosmos-curate nvcf function invoke-function --data-file invoke_split2.json --s3-config-file aws_credentials
       # Dedup pipeline
