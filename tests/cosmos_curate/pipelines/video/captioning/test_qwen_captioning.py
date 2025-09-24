@@ -20,19 +20,21 @@ import uuid
 from collections import Counter
 
 import pytest
-from scipy.spatial.distance import cosine  # type: ignore[import-untyped]
+from scipy.spatial.distance import cosine
 
-from cosmos_curate.pipelines.video.captioning.captioning_stages import (  # type: ignore[import-untyped]
-    QwenCaptionStage,
-    QwenInputPreparationStage,
+from cosmos_curate.pipelines.video.captioning.vllm_caption_stage import (
+    VllmCaptionStage,
+    VllmPrepStage,
 )
-from cosmos_curate.pipelines.video.clipping.clip_extraction_stages import (  # type: ignore[import-untyped]
+from cosmos_curate.pipelines.video.clipping.clip_extraction_stages import (
     ClipTranscodingStage,
 )
 from cosmos_curate.pipelines.video.utils.data_model import (
     Clip,
     SplitPipeTask,
     Video,
+    VllmConfig,
+    WindowConfig,
 )  # type: ignore[import-untyped]
 from tests.utils.sequential_runner import run_pipeline
 
@@ -102,10 +104,16 @@ def sample_captioning_task(sample_video_data: bytes) -> SplitPipeTask:
 @pytest.mark.env("unified")
 def test_qwen_caption_generation(sample_captioning_task: SplitPipeTask) -> None:
     """Test the QwenCaptioning result."""
+    vllm_config = VllmConfig(
+        variant="qwen",
+    )
+    window_config = WindowConfig(
+        sampling_fps=2.0,
+    )
     stages = [
         ClipTranscodingStage(encoder="libopenh264"),
-        QwenInputPreparationStage(sampling_fps=2.0),
-        QwenCaptionStage(),
+        VllmPrepStage(vllm_config=vllm_config, window_config=window_config),
+        VllmCaptionStage(vllm_config=vllm_config),
     ]
     tasks = run_pipeline([sample_captioning_task], stages)
 
