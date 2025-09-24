@@ -127,11 +127,6 @@ The file can tell [Prometheus](https://prometheus.io/) where to find the metrics
       "slurm_job_name": "hao-test"
     },
     "targets": [
-      "pool0-0218:9002"
-      "pool0-0219:9002"
-      "pool0-0220:9002"
-      "pool0-0221:9002"
-    "targets": [
       "pool0-0218:9002",
       "pool0-0219:9002",
       "pool0-0220:9002",
