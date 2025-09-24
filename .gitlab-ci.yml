@@ -65,8 +65,8 @@ variables:
   HELM_THANOS_RECEIVER_URL: "$HELM_THANOS_RECEIVER_URL"
   HELM_BYO_METRICS_RECEIVER_CLIENT_CRT: $HELM_BYO_METRICS_RECEIVER_CLIENT_CRT
   HELM_BYO_METRICS_RECEIVER_CLIENT_KEY: $HELM_BYO_METRICS_RECEIVER_CLIENT_KEY
-  HELM_GPU_REQUESTS: 1
-  HELM_GPU_LIMITS: 1
+  HELM_GPU_REQUESTS: 2
+  HELM_GPU_LIMITS: 2
   HELM_SHMEM_LIMIT: 500Gi
   HELM_IMAGE_TAG:
   TEST_END_TO_END:
@@ -94,7 +94,7 @@ variables:
     value: "L40S"
   NVCF_INSTANCE_TYPE:
     description: "Instance type for NVCF testing (e.g., OCI.GPU.L40S_1x, OCI.GPU.H100_1x)"
-    value: "OCI.GPU.L40S_1x"
+    value: "OCI.GPU.L40S_2x"
   NVCF_CUSTOM_BACKEND:
     description: "Custom NVCF backend for testing (overrides default GitLab CI/CD variable)"
     value: ""
