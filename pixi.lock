@@ -321,7 +321,7 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/bf/9c/8c95d856233c1f82500c2450b8c68576b4cf1c871db3afac5c34ff84e6fd/jsonschema-4.25.1-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/41/45/1a4ed80516f02155c51f51e8cedb3c1902296743db0bbc66608a0db2814f/jsonschema_specifications-2025.9.1-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/05/a9/48d1bd111fc2f8fb98b2ed7f9a115c55a9355358432a19f53c0b74d8425d/multidict-6.6.4-cp310-cp310-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl
-      - pypi: https://pypi.nvidia.com/ngcsdk/ngcsdk-3.169.4-py3-none-any.whl
+      - pypi: https://pypi.nvidia.com/ngcsdk/ngcsdk-4.3.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/cd/18/3c2926db735dd78c35d925c3809d929061c0410d33c7fe82429c40a6870f/obstore-0.8.1-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/b5/ed/9fbdeb23a09e430d87b7d72d430484b88184633dc50f6bfb792354b6f661/opencensus-0.11.4-py2.py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/10/68/162c97ea78c957d68ecf78a5c5041d2e25bd5562bdf5d89a6cbf7f8429bf/opencensus_context-0.1.3-py2.py3-none-any.whl
@@ -707,7 +707,7 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/bf/9c/8c95d856233c1f82500c2450b8c68576b4cf1c871db3afac5c34ff84e6fd/jsonschema-4.25.1-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/41/45/1a4ed80516f02155c51f51e8cedb3c1902296743db0bbc66608a0db2814f/jsonschema_specifications-2025.9.1-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/20/8e/0bb8c977efecfe6ea7116e2ed73a78a8d32a947f94d272586cf02a9757db/msgpack-1.1.1-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
-      - pypi: https://pypi.nvidia.com/ngcsdk/ngcsdk-3.169.4-py3-none-any.whl
+      - pypi: https://pypi.nvidia.com/ngcsdk/ngcsdk-4.3.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/cd/18/3c2926db735dd78c35d925c3809d929061c0410d33c7fe82429c40a6870f/obstore-0.8.1-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/b5/ed/9fbdeb23a09e430d87b7d72d430484b88184633dc50f6bfb792354b6f661/opencensus-0.11.4-py2.py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/10/68/162c97ea78c957d68ecf78a5c5041d2e25bd5562bdf5d89a6cbf7f8429bf/opencensus_context-0.1.3-py2.py3-none-any.whl
@@ -896,7 +896,7 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/b3/38/89ba8ad64ae25be8de66a6d463314cf1eb366222074cfda9ee839c56a4b4/mdurl-0.1.2-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/20/8e/0bb8c977efecfe6ea7116e2ed73a78a8d32a947f94d272586cf02a9757db/msgpack-1.1.1-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/05/a9/48d1bd111fc2f8fb98b2ed7f9a115c55a9355358432a19f53c0b74d8425d/multidict-6.6.4-cp310-cp310-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl
-      - pypi: https://pypi.nvidia.com/ngcsdk/ngcsdk-3.169.4-py3-none-any.whl
+      - pypi: https://pypi.nvidia.com/ngcsdk/ngcsdk-4.3.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/cd/18/3c2926db735dd78c35d925c3809d929061c0410d33c7fe82429c40a6870f/obstore-0.8.1-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/b5/ed/9fbdeb23a09e430d87b7d72d430484b88184633dc50f6bfb792354b6f661/opencensus-0.11.4-py2.py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/10/68/162c97ea78c957d68ecf78a5c5041d2e25bd5562bdf5d89a6cbf7f8429bf/opencensus_context-0.1.3-py2.py3-none-any.whl
@@ -1287,7 +1287,7 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/bf/9c/8c95d856233c1f82500c2450b8c68576b4cf1c871db3afac5c34ff84e6fd/jsonschema-4.25.1-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/41/45/1a4ed80516f02155c51f51e8cedb3c1902296743db0bbc66608a0db2814f/jsonschema_specifications-2025.9.1-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/20/8e/0bb8c977efecfe6ea7116e2ed73a78a8d32a947f94d272586cf02a9757db/msgpack-1.1.1-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
-      - pypi: https://pypi.nvidia.com/ngcsdk/ngcsdk-3.169.4-py3-none-any.whl
+      - pypi: https://pypi.nvidia.com/ngcsdk/ngcsdk-4.3.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/cd/18/3c2926db735dd78c35d925c3809d929061c0410d33c7fe82429c40a6870f/obstore-0.8.1-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/b5/ed/9fbdeb23a09e430d87b7d72d430484b88184633dc50f6bfb792354b6f661/opencensus-0.11.4-py2.py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/10/68/162c97ea78c957d68ecf78a5c5041d2e25bd5562bdf5d89a6cbf7f8429bf/opencensus_context-0.1.3-py2.py3-none-any.whl
@@ -1527,7 +1527,7 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/b3/38/89ba8ad64ae25be8de66a6d463314cf1eb366222074cfda9ee839c56a4b4/mdurl-0.1.2-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/20/8e/0bb8c977efecfe6ea7116e2ed73a78a8d32a947f94d272586cf02a9757db/msgpack-1.1.1-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/05/a9/48d1bd111fc2f8fb98b2ed7f9a115c55a9355358432a19f53c0b74d8425d/multidict-6.6.4-cp310-cp310-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl
-      - pypi: https://pypi.nvidia.com/ngcsdk/ngcsdk-3.169.4-py3-none-any.whl
+      - pypi: https://pypi.nvidia.com/ngcsdk/ngcsdk-4.3.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/cd/18/3c2926db735dd78c35d925c3809d929061c0410d33c7fe82429c40a6870f/obstore-0.8.1-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/b5/ed/9fbdeb23a09e430d87b7d72d430484b88184633dc50f6bfb792354b6f661/opencensus-0.11.4-py2.py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/10/68/162c97ea78c957d68ecf78a5c5041d2e25bd5562bdf5d89a6cbf7f8429bf/opencensus_context-0.1.3-py2.py3-none-any.whl
@@ -1929,7 +1929,7 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/bf/9c/8c95d856233c1f82500c2450b8c68576b4cf1c871db3afac5c34ff84e6fd/jsonschema-4.25.1-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/41/45/1a4ed80516f02155c51f51e8cedb3c1902296743db0bbc66608a0db2814f/jsonschema_specifications-2025.9.1-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/20/8e/0bb8c977efecfe6ea7116e2ed73a78a8d32a947f94d272586cf02a9757db/msgpack-1.1.1-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
-      - pypi: https://pypi.nvidia.com/ngcsdk/ngcsdk-3.169.4-py3-none-any.whl
+      - pypi: https://pypi.nvidia.com/ngcsdk/ngcsdk-4.3.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/cd/18/3c2926db735dd78c35d925c3809d929061c0410d33c7fe82429c40a6870f/obstore-0.8.1-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/b5/ed/9fbdeb23a09e430d87b7d72d430484b88184633dc50f6bfb792354b6f661/opencensus-0.11.4-py2.py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/10/68/162c97ea78c957d68ecf78a5c5041d2e25bd5562bdf5d89a6cbf7f8429bf/opencensus_context-0.1.3-py2.py3-none-any.whl
@@ -2372,7 +2372,7 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/d6/4f/756a66c608a767c7af7010b23992343e97558ce7f86c5c15929f1215f6ef/mistral_common-1.8.4-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/20/8e/0bb8c977efecfe6ea7116e2ed73a78a8d32a947f94d272586cf02a9757db/msgpack-1.1.1-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/c6/65/080509c5774a1592b2779d902a70b5fe008532759927e011f068145a16cb/msgspec-0.19.0-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
-      - pypi: https://pypi.nvidia.com/ngcsdk/ngcsdk-3.169.4-py3-none-any.whl
+      - pypi: https://pypi.nvidia.com/ngcsdk/ngcsdk-4.3.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/ed/de/0e6edf44d6a04dabd0318a519125ed0415ce437ad5a1ec9b9be03d9048cf/ninja-1.13.0-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/e2/7d/bfb2805bcfbd479f04f835241ecf28519f6e3609912e3a985aed45e21370/numba-0.61.2-cp310-cp310-manylinux2014_x86_64.manylinux_2_17_x86_64.whl
       - pypi: https://pypi.nvidia.com/nvidia-cudnn-frontend/nvidia_cudnn_frontend-1.14.1-cp310-cp310-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl
@@ -7600,10 +7600,10 @@ packages:
   - pkg:pypi/networkx?source=hash-mapping
   size: 1265008
   timestamp: 1731521053408
-- pypi: https://pypi.nvidia.com/ngcsdk/ngcsdk-3.169.4-py3-none-any.whl
+- pypi: https://pypi.nvidia.com/ngcsdk/ngcsdk-4.3.0-py3-none-any.whl
   name: ngcsdk
-  version: 3.169.4
-  sha256: 02679cc1344ca53c9a2cc18cbec33a02a982801212c82c9f6fc40166e35adbc5
+  version: 4.3.0
+  sha256: 574c9c2bace471d02fe30f060b3cfa2dbe72746cb3a8c84b349d2f0002ea27ce
   requires_dist:
   - aiofiles>=23.2.1
   - aiohttp>=3.10.11

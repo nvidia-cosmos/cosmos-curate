@@ -33,7 +33,7 @@ dependencies = [
     "jinja2",
     "loguru",
     "multidict==6.6.3",
-    "ngcsdk==3.64.4",
+    "ngcsdk==4.3.0",
     "pyopenssl",
     "pyyaml==6.0.2",
     "ray[default]==2.48.0",
@@ -86,7 +86,7 @@ local = [
     "jinja2",
     "kubernetes>=28.0",
     "loguru",
-    "ngcsdk==3.64.4",
+    "ngcsdk==4.3.0",
     "numpy<2.0.0",
     "nvtx==0.2.11",
     # opencv-python-headless>=4.12 requires numpy>=2, which breaks our stack
