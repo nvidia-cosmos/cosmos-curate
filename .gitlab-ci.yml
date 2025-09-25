@@ -754,7 +754,7 @@ build-packages:
 
 nvcf_split_benchmark:
   stage: test
-  timeout: 20h
+  timeout: 30h
   rules:
     - if: $CI_PIPELINE_SOURCE == "schedule" && $SCHEDULE_TYPE == "weekly"
     - when: never   # fallback: never run otherwise
