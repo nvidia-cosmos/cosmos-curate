@@ -3,6 +3,17 @@
 
 ## Latest
 
+## [1.1.5]
+
+### Released
+- 2025-09-26
+
+### Added
+- Upgrade to [cosmos-xenna 0.1.6](https://pypi.org/project/cosmos-xenna/0.1.6/) for improved performance.
+
+### Changed
+- Update default parameters for stages' cpu resource requests for higher throughput
+
 ## [1.1.4]
 
 ### Released
