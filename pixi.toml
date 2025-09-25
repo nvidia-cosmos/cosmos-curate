@@ -12,7 +12,7 @@ python = "3.10.*"
 pip = "*"
 
 [pypi-dependencies]
-cosmos-xenna = "==0.1.5"
+cosmos-xenna = "==0.1.6"
 ray = { version = "==2.48.0", extras = ["default"] } # conda-forge package pulls in an old version of protobuf
 
 [feature.core.system-requirements]

@@ -231,6 +231,8 @@ def run_pipeline(
         if is_running_on_the_cloud() and not is_running_on_slurm()
         else VerbosityLevel.INFO,
         mode_specific=StreamingSpecificSpec(
+            autoscale_interval_s=60 * 3.0,
+            autoscale_speed_estimation_window_duration_s=60 * 3.0,
             max_queued_multiplier=1.5,
             max_queued_lower_bound=16,
             autoscaler_verbosity_level=VerbosityLevel.NONE,

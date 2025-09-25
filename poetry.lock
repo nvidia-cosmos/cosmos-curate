@@ -1159,16 +1159,16 @@ test-no-images = ["pytest", "pytest-cov", "pytest-rerunfailures", "pytest-xdist"
 
 [[package]]
 name = "cosmos-xenna"
-version = "0.1.5"
+version = "0.1.6"
 description = "A framework for building and running distributed, AI-powered data pipelines using Ray"
 optional = true
 python-versions = ">=3.9"
 groups = ["main"]
 markers = "extra == \"local\""
 files = [
-    {file = "cosmos_xenna-0.1.5-cp39-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:65a9aa80f71c02470cacd1d6212c29fef633151e0a9b5d22c77100eb93a0f4f9"},
-    {file = "cosmos_xenna-0.1.5-cp39-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:045a52bb9a27bb68bd5fa0598657c8405fee9843c0462a8d696ed31c25ee6e6c"},
-    {file = "cosmos_xenna-0.1.5.tar.gz", hash = "sha256:9f45e149f8c38d3c524e12a692848f9e24f04283c6e468a41f572fdce9877eab"},
+    {file = "cosmos_xenna-0.1.6-cp39-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:160b09e538c1f0f0e3f56e09f68f1496d1075270c801c90d8d3493617dfc4494"},
+    {file = "cosmos_xenna-0.1.6-cp39-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:c2ea0a3c4993e84c68dbb658f9c1298f4747cbf3bdecec780f42c98acf474255"},
+    {file = "cosmos_xenna-0.1.6.tar.gz", hash = "sha256:f7a2653b11b4f372f7bf138d3e0b3b8171ecfbe5928c8b480c8d6b1a0395fb10"},
 ]
 
 [package.dependencies]
@@ -10056,4 +10056,4 @@ local = ["Pillow", "aiofiles", "astral", "attrs", "av", "azure-identity", "azure
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.10,<3.12"
-content-hash = "7876a66472e3fd0a5dfa23b19ad28244344f40bce2276ce11f00b9a95c55ecbd"
+content-hash = "71a8e1440790a4539f398d659697211a4b33688ee126b8823d4ef80c9a883109"
