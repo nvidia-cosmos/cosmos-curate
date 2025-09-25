@@ -32,7 +32,7 @@ from cosmos_curate.pipelines.video.utils.data_model import (
 REMUX_FORMATS = {"mpegts"}
 
 
-def remux_to_mp4(source_bytes: bytes, threads: int = 1) -> bytes:
+def remux_to_mp4(encoded_data: bytes, threads: int = 1) -> bytes:
     """Remux a video to a MP4 container using ffmpeg.
 
     Notes:
@@ -55,7 +55,7 @@ def remux_to_mp4(source_bytes: bytes, threads: int = 1) -> bytes:
     of being able to operate purely in memory.
 
     Args:
-        source_bytes: The bytes of the input video (e.g., MPEG-TS).
+        encoded_data: The bytes of the input video (e.g., MPEG-TS).
         threads: The number of threads to use for ffmpeg.
 
     Returns:
@@ -84,7 +84,7 @@ def remux_to_mp4(source_bytes: bytes, threads: int = 1) -> bytes:
 
         logger.debug(f"ffmpeg cmd: {' '.join(cmd)}")
         proc = subprocess.run(  # noqa: S603
-            cmd, input=source_bytes, capture_output=True, check=False
+            cmd, input=encoded_data, capture_output=True, check=False
         )
 
         if proc.returncode != 0:
@@ -104,7 +104,7 @@ def remux_if_needed(video: Video, threads: int) -> None:
         threads: The number of threads to use for ffmpeg.
 
     """
-    if video.source_bytes is None:
+    if video.encoded_data is None:
         msg = "Video source bytes are not set"
         raise ValueError(msg)
 
@@ -116,7 +116,7 @@ def remux_if_needed(video: Video, threads: int) -> None:
 
     if any(remux_format in format_name for remux_format in REMUX_FORMATS):
         logger.info(f"Video {video.input_video} is in `{format_name}` format, remuxing to mp4")
-        video.source_bytes = remux_to_mp4(video.source_bytes, threads=threads)
+        video.encoded_data = remux_to_mp4(video.encoded_data, threads=threads)
         video.populate_metadata()
 
 

@@ -334,9 +334,9 @@ def write_cosmos_predict2_dataset(  # noqa: PLR0913, C901
         # Check for required data - all must be present for cosmos-predict2
         clip_valid = True
 
-        # Check for video buffer
-        if clip.buffer is None:
-            clip.errors["buffer"] = "no video buffer present"
+        # Check for video encoded_data
+        if clip.encoded_data is None:
+            clip.errors["encoded_data"] = "no video encoded_data present"
             clip_valid = False
 
         # Check for captions
@@ -427,16 +427,16 @@ def write_video_clip(
         verbose: Whether to enable verbose logging
 
     Raises:
-        ValueError: If clip has no buffer data
+        ValueError: If clip has no encoded_data data
         Exception: If storage write operation fails
 
     """
-    if clip.buffer is None:
-        error_msg = f"Clip {clip.uuid} has no buffer data"
+    if clip.encoded_data is None:
+        error_msg = f"Clip {clip.uuid} has no encoded_data data"
         raise ValueError(error_msg)
 
     write_bytes(
-        clip.buffer,
+        clip.encoded_data,
         dest_url,
         f"clip-{clip.clip_session_uuid}",
         "video_clip",

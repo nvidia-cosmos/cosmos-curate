@@ -307,7 +307,7 @@ def test_fixed_stride_extraction_no_clips_short_video() -> None:
     # Create a task with a very short video duration
     video = Video(
         input_video=pathlib.Path("short_video.mp4"),
-        source_bytes=b"dummy_bytes",  # We'll mock the metadata
+        encoded_data=b"dummy_bytes",  # We'll mock the metadata
     )
 
     # Mock metadata for a very short video
@@ -344,17 +344,17 @@ def test_fixed_stride_extraction_no_clips_short_video() -> None:
     assert len(video.clips) == 0
 
 
-def test_error_handling_no_source_bytes() -> None:
+def test_error_handling_no_encoded_data() -> None:
     """Test error handling when video has no source bytes."""
     video = Video(
         input_video=pathlib.Path("no_bytes_video.mp4"),
-        source_bytes=None,  # No source bytes
+        encoded_data=None,  # No encoded_data
     )
     task = SplitPipeTask(video=video, stage_perf={})
 
     stage = FixedStrideExtractorStage(log_stats=True)
 
-    # Should raise ValueError for missing source bytes
+    # Should raise ValueError for missing encoded_data
     with pytest.raises(ValueError, match="Please load video bytes!"):
         run_pipeline([task], [stage])
 
@@ -363,7 +363,7 @@ def test_error_handling_incomplete_metadata() -> None:
     """Test error handling when video has incomplete metadata."""
     video = Video(
         input_video=pathlib.Path("incomplete_metadata_video.mp4"),
-        source_bytes=b"dummy_bytes",
+        encoded_data=b"dummy_bytes",
     )
 
     # Don't extract metadata, leaving it incomplete
@@ -441,7 +441,7 @@ def test_clip_properties(sample_splitting_task: SplitPipeTask) -> None:
     for clip in video.clips:
         # Check that clip has required attributes
         assert hasattr(clip, "uuid")
-        assert hasattr(clip, "source_video")
+        assert hasattr(clip, "encoded_data")
         assert hasattr(clip, "span")
 
         # Check that source_video matches input

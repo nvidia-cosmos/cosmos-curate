@@ -122,8 +122,8 @@ def make_video_spans(
                 error = f"Clip {clip.uuid} has no timestamps"
                 raise ValueError(error)
 
-            if clip.buffer is None:
-                error = f"Clip {clip.uuid} has no buffer"
+            if clip.encoded_data is None:
+                error = f"Clip {clip.uuid} has no encoded_data"
                 raise ValueError(error)
 
             yield VideoSpan(
@@ -140,13 +140,13 @@ def make_video_spans(
                 timestamps=clip.timestamps_ms.tobytes(),
                 encoder=task.encoder,
                 url=clip.url,
-                byte_size=len(clip.buffer) if clip.buffer else 0,
+                byte_size=len(clip.encoded_data) if clip.encoded_data else 0,
                 duration=clip.span_end - clip.span_start,
                 framerate=video.metadata.framerate,
-                num_frames=get_frame_count(clip.buffer),
+                num_frames=get_frame_count(clip.encoded_data),
                 height=video.metadata.height,
                 width=video.metadata.width,
-                sha256=_calculate_sha256(clip.buffer),
+                sha256=_calculate_sha256(clip.encoded_data),
                 run_uuid=run_uuid,
             )
 

@@ -102,7 +102,7 @@ class ClipTranscodingStage(CuratorStage):
         for task in tasks:
             self._timer.reinit(self, task.get_major_size())
             video = task.video
-            if video.source_bytes is None:
+            if video.encoded_data is None:
                 error_msg = "Please load video!"
                 raise ValueError(error_msg)
             with self._timer.time_process(
@@ -111,12 +111,12 @@ class ClipTranscodingStage(CuratorStage):
             ):
                 if not video.clips:
                     logger.warning(f"No clips to transcode for {video.input_video}. Skipping...")
-                    video.source_bytes = None
+                    video.encoded_data = None
                     continue
                 with make_pipeline_temporary_dir(sub_dir="transcode") as tmp_dir:
                     # write video to file
                     video_file = tmp_dir / "input.mp4"
-                    video_file.write_bytes(video.source_bytes)
+                    video_file.write_bytes(video.encoded_data)
                     force_pix_fmt = video.is_10_bit_color() or False
 
                     # use input video bit-rate
@@ -135,8 +135,8 @@ class ClipTranscodingStage(CuratorStage):
                             clips=batch,
                             input_video=str(video.input_video),
                         )
-            # we are done with source_bytes
-            video.source_bytes = None
+            # we are done with encoded_data
+            video.encoded_data = None
 
             if self._log_stats:
                 stage_name, stage_perf_stats = self._timer.log_stats()
@@ -304,7 +304,7 @@ class ClipTranscodingStage(CuratorStage):
 
         # read clips back into memory
         for clip in clips:
-            clip.buffer = (working_dir / f"{clip.uuid}.mp4").read_bytes()
+            clip.encoded_data = (working_dir / f"{clip.uuid}.mp4").read_bytes()
 
 
 class FixedStrideExtractorStage(CuratorStage):
@@ -357,7 +357,7 @@ class FixedStrideExtractorStage(CuratorStage):
         for task in tasks:
             self._timer.reinit(self, task.get_major_size())
             video = task.video
-            if video.source_bytes is None:
+            if video.encoded_data is None:
                 error_msg = "Please load video bytes!"
                 raise ValueError(error_msg)
 

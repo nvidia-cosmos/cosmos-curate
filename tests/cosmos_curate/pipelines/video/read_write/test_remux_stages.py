@@ -106,8 +106,8 @@ def synthetic_mkv_video() -> io.BytesIO:
 
 
 @pytest.mark.env("cosmos-curate")
-def test_remux_bad_source_bytes() -> None:
-    """Test that remuxing fails if the source bytes are not set."""
+def test_remux_bad_encoded_data() -> None:
+    """Test that remuxing fails if encoded_data is not set."""
     with pytest.raises(RuntimeError):
         remux_to_mp4(b"", threads=1)
 
@@ -116,23 +116,23 @@ def test_remux_bad_source_bytes() -> None:
 def test_remux_if_needed_mp4_no_change(synthetic_mp4_video: io.BytesIO) -> None:
     """Test that MP4 videos are not remuxed."""
     # Arrange
-    original_bytes = synthetic_mp4_video.getvalue()
-    video = Video(source_bytes=original_bytes, input_video="test.mp4")
+    original_data = synthetic_mp4_video.getvalue()
+    video = Video(encoded_data=original_data, input_video="test.mp4")
     video.populate_metadata()
 
     # Act
     remux_if_needed(video, threads=1)
 
     # Assert
-    assert video.source_bytes == original_bytes  # Should be unchanged
+    assert video.encoded_data == original_data  # Should be unchanged
 
 
 @pytest.mark.env("cosmos-curate")
 def test_remux_if_needed_mpegts_to_mp4(synthetic_mpegts_video: io.BytesIO) -> None:
     """Test that MPEG-TS videos are remuxed to MP4."""
     # Arrange
-    original_bytes = synthetic_mpegts_video.getvalue()
-    video = Video(source_bytes=original_bytes, input_video="test.ts")
+    original_data = synthetic_mpegts_video.getvalue()
+    video = Video(encoded_data=original_data, input_video="test.ts")
     video.populate_metadata()
 
     # Verify it starts as MPEG-TS
@@ -144,11 +144,11 @@ def test_remux_if_needed_mpegts_to_mp4(synthetic_mpegts_video: io.BytesIO) -> No
     remux_if_needed(video, threads=1)
 
     # Assert
-    assert video.source_bytes != original_bytes  # Should be changed
-    assert video.source_bytes is not None
+    assert video.encoded_data != original_data  # Should be changed
+    assert video.encoded_data is not None
 
     # Verify the result is valid MP4
-    result_stream = io.BytesIO(video.source_bytes)
+    result_stream = io.BytesIO(video.encoded_data)
     with av.open(result_stream) as container:
         assert "mp4" in video.metadata.format_name.lower()
         assert "mp4" in container.format.name.lower()
@@ -159,8 +159,8 @@ def test_remux_if_needed_mpegts_to_mp4(synthetic_mpegts_video: io.BytesIO) -> No
 def test_remux_if_needed_avi_to_mp4(synthetic_avi_video: io.BytesIO) -> None:
     """Test that AVI videos are unchanged."""
     # Arrange
-    original_bytes = synthetic_avi_video.getvalue()
-    video = Video(source_bytes=original_bytes, input_video="test.avi")
+    original_data = synthetic_avi_video.getvalue()
+    video = Video(encoded_data=original_data, input_video="test.avi")
     video.populate_metadata()
 
     # Verify it starts as AVI
@@ -172,11 +172,10 @@ def test_remux_if_needed_avi_to_mp4(synthetic_avi_video: io.BytesIO) -> None:
     remux_if_needed(video, threads=1)
 
     # Assert
-    assert video.source_bytes == original_bytes  # Should be changed
-    assert video.source_bytes is not None
+    assert video.encoded_data == original_data  # Should be unchanged
 
-    # Verify the result remains AVI (unchanged)
-    result_stream = io.BytesIO(video.source_bytes)
+    # Verify the result is valid MP4
+    result_stream = io.BytesIO(video.encoded_data)
     with av.open(result_stream) as container:
         assert "avi" in container.format.name.lower()
         assert len(container.streams.video) > 0
@@ -186,8 +185,8 @@ def test_remux_if_needed_avi_to_mp4(synthetic_avi_video: io.BytesIO) -> None:
 def test_remux_if_needed_mkv_to_mp4(synthetic_mkv_video: io.BytesIO) -> None:
     """Test that MKV videos are unchanged."""
     # Arrange
-    original_bytes = synthetic_mkv_video.getvalue()
-    video = Video(source_bytes=original_bytes, input_video="test.mkv")
+    encoded_data = synthetic_mkv_video.getvalue()
+    video = Video(encoded_data=encoded_data, input_video="test.mkv")
     video.populate_metadata()
 
     # Verify it starts as MKV
@@ -199,11 +198,11 @@ def test_remux_if_needed_mkv_to_mp4(synthetic_mkv_video: io.BytesIO) -> None:
     remux_if_needed(video, threads=1)
 
     # Assert
-    assert video.source_bytes == original_bytes  # Should be unchanged
-    assert video.source_bytes is not None
+    assert video.encoded_data == encoded_data  # Should be unchanged
+    assert video.encoded_data is not None
 
     # Verify the result remains MKV (unchanged)
-    result_stream = io.BytesIO(video.source_bytes)
+    result_stream = io.BytesIO(video.encoded_data)
     with av.open(result_stream) as container:
         assert "matroska,webm" in container.format.name.lower()
         assert len(container.streams.video) > 0
@@ -221,29 +220,29 @@ def test_remux_if_needed_preserves_video_content(synthetic_mpegts_video: io.Byte
         raise RuntimeError(msg)
 
     # Arrange
-    original_bytes = synthetic_mpegts_video.getvalue()
-    video = Video(source_bytes=original_bytes, input_video="test.ts")
+    original_data = synthetic_mpegts_video.getvalue()
+    video = Video(encoded_data=original_data, input_video="test.ts")
     video.populate_metadata()
 
     # Get original frame count
-    original_stream = io.BytesIO(original_bytes)
+    original_stream = io.BytesIO(original_data)
     with av.open(original_stream) as container:
         original_width = container.streams.video[0].width
         original_height = container.streams.video[0].height
 
-    original_frame_count = _frame_count(original_bytes)
+    original_frame_count = _frame_count(original_data)
 
     # Act
     remux_if_needed(video, threads=1)
 
     # Assert
-    assert video.source_bytes is not None
+    assert video.encoded_data is not None
 
-    result_frame_count = _frame_count(video.source_bytes)
+    result_frame_count = _frame_count(video.encoded_data)
     assert result_frame_count == original_frame_count
 
     # Verify the result is valid MP4
-    result_stream = io.BytesIO(video.source_bytes)
+    result_stream = io.BytesIO(video.encoded_data)
     with av.open(result_stream) as container:
         result_width = container.streams.video[0].width
         result_height = container.streams.video[0].height
@@ -260,13 +259,13 @@ def test_remux_stage_integration(synthetic_mpegts_video: io.BytesIO) -> None:
     # Arrange
     stage = RemuxStage()
 
-    original_bytes = synthetic_mpegts_video.getvalue()
-    video = Video(source_bytes=original_bytes, input_video="test.ts")
+    original_data = synthetic_mpegts_video.getvalue()
+    video = Video(encoded_data=original_data, input_video="test.ts")
     video.populate_metadata()
 
     task = Mock(spec=SplitPipeTask)
     task.video = video
-    task.get_major_size.return_value = len(original_bytes)
+    task.get_major_size.return_value = len(original_data)
     task.stage_perf = {}
 
     tasks = [task]
@@ -281,11 +280,11 @@ def test_remux_stage_integration(synthetic_mpegts_video: io.BytesIO) -> None:
 
     # Assert
     assert result == tasks
-    assert video.source_bytes != original_bytes  # Should be remuxed
-    assert video.source_bytes is not None
+    assert video.encoded_data != original_data  # Should be remuxed
+    assert video.encoded_data is not None
 
     # Verify result is MP4
-    result_stream = io.BytesIO(video.source_bytes)
+    result_stream = io.BytesIO(video.encoded_data)
     with av.open(result_stream) as container:
         assert "mp4" in container.format.name.lower()
 
@@ -386,7 +385,7 @@ class TestRemuxStage:
         failing_task = Mock(spec=SplitPipeTask)
         failing_task.video = Mock(spec=Video)
         failing_task.video.input_video = "failing_video.ts"
-        failing_task.video.source_bytes = b"failing_video_data"
+        failing_task.video.encoded_data = b"failing_video_data"
         failing_task.video.metadata = Mock()
         failing_task.video.metadata.format_name = "mpegts"  # Needs remuxing
         failing_task.video.errors = {}  # Add errors dict to mock
@@ -396,7 +395,7 @@ class TestRemuxStage:
         succeeding_task = Mock(spec=SplitPipeTask)
         succeeding_task.video = Mock(spec=Video)
         succeeding_task.video.input_video = "good_video.mp4"
-        succeeding_task.video.source_bytes = b"good_video_data"
+        succeeding_task.video.encoded_data = b"good_video_data"
         succeeding_task.video.metadata = Mock()
         succeeding_task.video.metadata.format_name = "mov,mp4,m4a,3gp,3g2,mj2"  # Already MP4
         succeeding_task.video.errors = {}  # Add errors dict to mock

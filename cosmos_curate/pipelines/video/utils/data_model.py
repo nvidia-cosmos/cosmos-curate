@@ -94,7 +94,7 @@ class Clip:
     uuid: UUID
     source_video: str
     span: tuple[float, float]
-    buffer: bytes | None = None
+    encoded_data: bytes | None = None
     extracted_frames: dict[str, npt.NDArray[np.uint8]] = attrs.Factory(dict)
     # motion
     decoded_motion_data: motion.DecodedData | None = None
@@ -129,20 +129,20 @@ class Clip:
         return captions
 
     def extract_metadata(self) -> dict[str, Any] | None:
-        """Extract metadata from the clip's buffer.
+        """Extract metadata from the clip's encoded_data.
 
         Returns:
             A dictionary containing the extracted metadata (width, height, framerate,
-            num_frames, video_codec, num_bytes) if buffer exists, None otherwise.
+            num_frames, video_codec, num_bytes) if encoded_data exists, None otherwise.
 
         Raises:
             Exception: Any exception from extract_video_metadata is propagated.
 
         """
-        if self.buffer is None:
+        if self.encoded_data is None:
             return None
 
-        metadata = extract_video_metadata(self.buffer)
+        metadata = extract_video_metadata(self.encoded_data)
 
         return {
             "width": metadata.width,
@@ -150,7 +150,7 @@ class Clip:
             "framerate": metadata.fps,
             "num_frames": metadata.num_frames,
             "video_codec": metadata.video_codec,
-            "num_bytes": len(self.buffer),
+            "num_bytes": len(self.encoded_data),
         }
 
     @property
@@ -171,8 +171,8 @@ class Clip:
 
         """
         total_size = len(self.uuid.bytes)
-        if self.buffer:
-            total_size += len(self.buffer)
+        if self.encoded_data:
+            total_size += len(self.encoded_data)
         if self.extracted_frames:
             for x in self.extracted_frames.values():
                 total_size += x.nbytes
@@ -254,10 +254,11 @@ class Video:
     """
 
     input_video: storage_client.StoragePrefix | pathlib.Path
-    source_bytes: bytes | None = None
+    # encoded video bytes
+    encoded_data: bytes | None = None
     # video metadata
     metadata: VideoMetadata = attrs.Factory(VideoMetadata)
-    # transnetv2 decoded input
+    # decoded video frames
     frame_array: npt.NDArray[np.uint8] | None = None
     # clips
     clips: list[Clip] = attrs.Factory(list)
@@ -272,25 +273,25 @@ class Video:
     errors: dict[str, str] = attrs.Factory(dict)
 
     def populate_metadata(self) -> None:
-        """Extract and assign video metadata from source_bytes.
+        """Extract and assign video metadata from encoded_data.
 
-        This method extracts metadata from the video data in source_bytes and
+        This method extracts metadata from the video data in encoded_data and
         assigns it to self.metadata.
 
         Raises:
-            ValueError: If source_bytes is None.
+            ValueError: If encoded_data is None.
             Exception: Any exception from extract_video_metadata is propagated.
 
         """
-        if self.source_bytes is None:
-            error_msg = "No video data available: source_bytes is None"
+        if self.encoded_data is None:
+            error_msg = "No video data available: encoded_data is None"
             raise ValueError(error_msg)
 
         # Extract metadata using the existing function
-        extracted_metadata = extract_video_metadata(self.source_bytes)
+        extracted_metadata = extract_video_metadata(self.encoded_data)
 
-        # Set the size from source_bytes
-        self.metadata.size = len(self.source_bytes)
+        # Set the size from encoded_data
+        self.metadata.size = len(self.encoded_data)
 
         # Map the extracted metadata to our metadata object
         self.metadata.height = extracted_metadata.height
@@ -401,7 +402,7 @@ class Video:
 
         """
         total_size = 0
-        total_size += len(self.source_bytes) if self.source_bytes else 0
+        total_size += len(self.encoded_data) if self.encoded_data else 0
         total_size += sys.getsizeof(self.frame_array)
         for clip in self.clips:
             total_size += clip.get_major_size()
@@ -461,7 +462,7 @@ class ClipSample:
     num_bytes: int
     clip_location: storage_client.StoragePrefix | pathlib.Path
     clip_metadata: dict[str, Any] = attrs.Factory(dict)
-    buffer: bytes | None = None
+    encoded_data: bytes | None = None
     t5_xxl_embeddings: list[npt.NDArray[np.int32]] = attrs.Factory(list)
 
     def get_major_size(self) -> int:
@@ -472,7 +473,7 @@ class ClipSample:
 
         """
         total_size = sys.getsizeof(self.clip_metadata)
-        total_size += len(self.buffer) if self.buffer else 0
+        total_size += len(self.encoded_data) if self.encoded_data else 0
         total_size += sum(x.nbytes for x in self.t5_xxl_embeddings)
         return total_size
 

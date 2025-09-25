@@ -273,7 +273,7 @@ class QwenInputPreparationStage(CuratorStage):
             num_cpus_per_actor: The number of CPUs per actor.
             preprocess_dtype: The preprocess dtype.
             model_does_preprocess: Whether the model does preprocess.
-            keep_mp4: If True, preserve clip buffer after processing.
+            keep_mp4: If True, preserve clip.encoded_data after processing.
             verbose: If True, log verbose information.
             log_stats: If True, log statistics.
 
@@ -338,7 +338,7 @@ class QwenInputPreparationStage(CuratorStage):
 
     def _process_data(self, task: AvClipAnnotationTask) -> AvClipAnnotationTask:
         for clip in task.clips:
-            if clip.buffer is None:
+            if clip.encoded_data is None:
                 logger.warning(f"Clip {clip.uuid} has no buffer.")
                 continue
             with self._timer.time_process():
@@ -353,7 +353,7 @@ class QwenInputPreparationStage(CuratorStage):
                 # Cache decoded video for reuse
                 video_frames = {
                     frame_count: windowing_utils.split_video_into_windows(
-                        clip.buffer,
+                        clip.encoded_data,
                         sampling_fps=self._sampling_fps,
                         model_does_preprocess=self._model_does_preprocess,
                         preprocess_dtype=self._preprocess_dtype,
@@ -393,9 +393,9 @@ class QwenInputPreparationStage(CuratorStage):
 
                     clip.caption_windows.append(caption_window)
 
-                # Only clear buffer if not keeping it for dataset generation
+                # Only clear encoded_data if not keeping it for dataset generation
                 if not self._keep_mp4:
-                    clip.buffer = None
+                    clip.encoded_data = None
 
         if self._log_stats:
             stage_name, stage_perf_stats = self._timer.log_stats()

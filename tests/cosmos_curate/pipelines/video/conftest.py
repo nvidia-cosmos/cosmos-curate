@@ -84,7 +84,7 @@ def sample_splitting_task(sample_video_data: bytes) -> SplitPipeTask:
     """
     video = Video(
         input_video=pathlib.Path("sample_video.mp4"),
-        source_bytes=sample_video_data,
+        encoded_data=sample_video_data,
     )
     video.populate_metadata()
 
@@ -133,7 +133,7 @@ def sample_filtering_task(sample_clip_data: bytes) -> SplitPipeTask:
         uuid=uuid.UUID("12345678-1234-5678-1234-567812345678"),
         source_video="sample_video.mp4",
         span=(0.0, 15.0),
-        buffer=sample_clip_data,
+        encoded_data=sample_clip_data,
     )
 
     # Always extract frames at 1.0 fps for simplicity in tests

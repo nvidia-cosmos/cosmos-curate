@@ -229,18 +229,18 @@ class ClipWriterStage(BaseWriterStage):
             Number of clips successfully uploaded
 
         Raises:
-            ValueError: If a clip has no buffer data
+            ValueError: If a clip has no encoded_data
 
         """
         num_uploaded_clips = 0
         for clip in video.clips:
-            if not clip.buffer:
-                error = f"Clip-{clip.span_index} from {video.source_video} has no buffer"
+            if not clip.encoded_data:
+                error = f"Clip-{clip.span_index} from {video.source_video} has no encoded_data"
                 raise ValueError(error)
             dest = self._get_clip_url(clip.uuid, encoder)
             clip.url = str(dest)
             write_bytes(
-                clip.buffer,
+                clip.encoded_data,
                 dest,
                 f"clip-{clip.span_index}",
                 video.source_video,
@@ -293,7 +293,7 @@ class ClipWriterStage(BaseWriterStage):
                 camera_id=video.camera_id,
                 span_index=clip.span_index,
                 url=clip.url,  # type: ignore[arg-type]
-                buffer=clip.buffer,
+                encoded_data=clip.encoded_data,
                 span_start=clip.span_start,
                 span_end=clip.span_end,
             )
@@ -372,7 +372,7 @@ class ClipWriterStage(BaseWriterStage):
             for video in task.videos:
                 for clip in video.clips:
                     if not self._continue_captioning:
-                        clip.buffer = None
+                        clip.encoded_data = None
                     clip.timestamps_ms = None
 
         if self._log_stats:

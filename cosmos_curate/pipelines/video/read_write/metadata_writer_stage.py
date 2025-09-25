@@ -321,7 +321,7 @@ class ClipWriterStage(CuratorStage):
 
                 # clean up intermediate data
                 for clip in video.clips:
-                    clip.buffer = None
+                    clip.encoded_data = None
                     clip.intern_video_2_embedding = None
                     clip.cosmos_embed1_embedding = None
                     for window in clip.windows:
@@ -466,14 +466,14 @@ class ClipWriterStage(CuratorStage):
 
     def _write_clip_mp4(self, clip: Clip, *, filtered: bool = False) -> ClipStats:
         clip_stats = ClipStats()
-        if clip.buffer:
+        if clip.encoded_data:
             dest = self._get_clip_uri(
                 clip.uuid,
                 self.get_output_path_clips(self._output_path, filtered=filtered),
                 "mp4",
             )
             if self._upload_clips and not self._dry_run:
-                self._write_data(clip.buffer, dest, f"clip {clip.uuid}", clip.source_video)
+                self._write_data(clip.encoded_data, dest, f"clip {clip.uuid}", clip.source_video)
             clip_stats.num_transcoded += 1
         else:
             logger.warning(f"Clip {clip.uuid} from {clip.source_video} has no buffer, skip uploading to s3")
@@ -578,7 +578,7 @@ class ClipWriterStage(CuratorStage):
                 if model in window.enhanced_caption:
                     curr_window[f"{model}_enhanced_caption"] = window.enhanced_caption[model]
             data["windows"].append(curr_window)
-        data["valid"] = bool(clip.buffer and len(clip.windows) > 0)
+        data["valid"] = bool(clip.encoded_data and len(clip.windows) > 0)
         data["has_caption"] = has_caption
 
         return data

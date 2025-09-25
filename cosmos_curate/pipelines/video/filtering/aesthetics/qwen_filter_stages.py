@@ -244,14 +244,14 @@ class QwenInputPreparationStageFiltering(CuratorStage):
             self._timer.reinit(self, task.get_major_size())
             video = task.video
             for clip in video.clips:
-                if clip.buffer is None:
-                    logger.warning(f"Clip {clip.uuid} has no buffer.")
-                    clip.errors["buffer"] = "empty"
+                if clip.encoded_data is None:
+                    logger.warning(f"Clip {clip.uuid} has no encoded_data.")
+                    clip.errors["encoded_data"] = "empty"
                     continue
                 with self._timer.time_process():
                     for window_bytes, window_frames, window_frame_info in zip_longest(
                         *windowing_utils.split_video_into_windows(
-                            clip.buffer,
+                            clip.encoded_data,
                             window_size=self._window_size,
                             remainder_threshold=self._remainder_threshold,
                             sampling_fps=self._sampling_fps,

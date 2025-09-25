@@ -162,7 +162,7 @@ class VideoFrameExtractionStage(CuratorStage):
         height, width = self.output_hw
         for task in tasks:
             video = task.video
-            if video.source_bytes is None:
+            if video.encoded_data is None:
                 error_msg = "Please load video bytes!"
                 raise ValueError(error_msg)
             if not video.has_metadata():
@@ -174,7 +174,7 @@ class VideoFrameExtractionStage(CuratorStage):
                 make_pipeline_named_temporary_file(sub_dir="video_frame_extraction") as video_path,
             ):
                 with video_path.open("wb") as fp:
-                    fp.write(video.source_bytes)
+                    fp.write(video.encoded_data)
                 if self.decoder_mode == "pynvc":
                     try:
                         video.frame_array = self.pynvc_frame_extractor(video_path).cpu().numpy().astype(np.uint8)

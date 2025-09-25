@@ -132,9 +132,9 @@ class AestheticFilterStage(CuratorStage):
             video = task.video
             passed_clips = []
             for clip in video.clips:
-                if not clip.buffer:
-                    logger.warning(f"Clip {clip.uuid} has no buffer.")
-                    clip.errors["buffer"] = "empty"
+                if not clip.encoded_data:
+                    logger.warning(f"Clip {clip.uuid} has no encoded_data.")
+                    clip.errors["encoded_data"] = "empty"
                     clip.aesthetic_score = -1.0
                 elif self._frame_extraction_signature not in clip.extracted_frames:
                     clip.errors[f"frames-{self._frame_extraction_signature}"] = "missing"

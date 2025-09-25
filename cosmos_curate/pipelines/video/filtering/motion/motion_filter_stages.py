@@ -86,11 +86,11 @@ class MotionVectorDecodeStage(CuratorStage):
             self._timer.reinit(self, task.get_major_size())
             video = task.video
             for clip in video.clips:
-                if not clip.buffer:
-                    logger.warning(f"Clip {clip.uuid} has no buffer.")
-                    clip.errors["buffer"] = "empty"
+                if not clip.encoded_data:
+                    logger.warning(f"Clip {clip.uuid} has no encoded_data.")
+                    clip.errors["encoded_data"] = "empty"
                     continue
-                with self._timer.time_process(), io.BytesIO(clip.buffer) as fp:
+                with self._timer.time_process(), io.BytesIO(clip.encoded_data) as fp:
                     try:
                         clip.decoded_motion_data = motion.decode_for_motion(
                             fp,

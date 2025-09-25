@@ -89,7 +89,7 @@ class ClipTranscodingStage(CuratorStage):
         self._timer.reinit(self, task.get_major_size())
         task.encoder = self._encoder
         for video in task.videos:
-            if video.source_bytes is None:
+            if video.encoded_data is None:
                 error = "Please load video!"
                 raise ValueError(error)
             with self._timer.time_process(
@@ -98,12 +98,12 @@ class ClipTranscodingStage(CuratorStage):
             ):
                 if not video.clips:
                     logger.warning(f"No clips to transcode for {video.source_video}. Skipping...")
-                    video.source_bytes = None
+                    video.encoded_data = None
                     continue
                 with make_pipeline_temporary_dir(sub_dir="transcode") as tmp_dir:
                     # write video to file
                     video_file = tmp_dir / "input.mp4"
-                    video_file.write_bytes(video.source_bytes)
+                    video_file.write_bytes(video.encoded_data)
                     force_pix_fmt = video.is_10_bit_color() or False
 
                     # extract clips in batches
@@ -117,8 +117,8 @@ class ClipTranscodingStage(CuratorStage):
                             str(video.source_video),
                         )
                     logger.info(f"Finished transcoding {len(video.clips)} clips from {video.source_video}")
-            # we are done with source_bytes
-            video.source_bytes = None
+            # we are done with encoded_data
+            video.encoded_data = None
         if self._log_stats:
             stage_name, stage_perf_stats = self._timer.log_stats()
             task.stage_perf[stage_name] = stage_perf_stats
@@ -273,7 +273,7 @@ class ClipTranscodingStage(CuratorStage):
 
         # read clips back into memory
         for clip in clips:
-            clip.buffer = (working_dir / f"{clip.uuid}.mp4").read_bytes()
+            clip.encoded_data = (working_dir / f"{clip.uuid}.mp4").read_bytes()
 
 
 class FixedStrideExtractorStage(CuratorStage):
@@ -417,8 +417,8 @@ class FixedStrideExtractorStage(CuratorStage):
             True if the video is valid, False otherwise.
 
         """
-        if video.source_bytes is None:
-            logger.warning(f"Empty source bytes for {video.source_video}. Skipping entire session.")
+        if video.encoded_data is None:
+            logger.warning(f"Empty encoded_data for {video.source_video}. Skipping entire session.")
             return False
         if not video.has_metadata():
             logger.warning(f"Incomplete metadata for {video.source_video}. Skipping entire session.")

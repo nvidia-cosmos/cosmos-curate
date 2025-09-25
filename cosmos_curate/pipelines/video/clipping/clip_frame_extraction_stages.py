@@ -103,9 +103,9 @@ class ClipFrameExtractionStage(CuratorStage):
             self._timer.reinit(self, task.get_major_size())
             video = task.video
             for clip in video.clips:
-                if clip.buffer is None:
-                    logger.warning(f"Clip {clip.uuid} has no buffer.")
-                    clip.errors["buffer"] = "empty"
+                if clip.encoded_data is None:
+                    logger.warning(f"Clip {clip.uuid} has no encoded_data.")
+                    clip.errors["encoded_data"] = "empty"
                     continue
                 with self._timer.time_process():
                     try:
@@ -120,7 +120,7 @@ class ClipFrameExtractionStage(CuratorStage):
                             )
                             if use_lcm_fps:
                                 lcm = self.lcm_multiple(self._target_fps)
-                                with io.BytesIO(clip.buffer) as fp:
+                                with io.BytesIO(clip.encoded_data) as fp:
                                     frames = extract_frames(
                                         fp,
                                         extraction_policy=policy,
@@ -136,7 +136,7 @@ class ClipFrameExtractionStage(CuratorStage):
                                         clip.extracted_frames[signature] = frames[:: int(lcm / fps)]
                             else:
                                 for fps in self._target_fps:
-                                    with io.BytesIO(clip.buffer) as fp:
+                                    with io.BytesIO(clip.encoded_data) as fp:
                                         frames = extract_frames(
                                             fp,
                                             extraction_policy=policy,
@@ -157,7 +157,7 @@ class ClipFrameExtractionStage(CuratorStage):
                         logger.exception(f"Error extracting frames from clip {clip.uuid}: {e}")
                         clip.errors["frame_extraction"] = "video_decode_failed"
                         # reset the buffer to disable further operations on this clip
-                        clip.buffer = None
+                        clip.encoded_data = None
                         continue
 
             if self._log_stats:

@@ -45,7 +45,7 @@ def sample_filtering_task(sample_video_data: bytes) -> SplitPipeTask:
 
     video = Video(
         input_video=pathlib.Path("sample_video.mp4"),
-        source_bytes=sample_video_data,
+        encoded_data=sample_video_data,
         clips=clips,
     )
     return SplitPipeTask(

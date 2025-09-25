@@ -208,7 +208,7 @@ class TestCosmosPredict2WriterStage:
         # Set up clips to be processed successfully
         for clip in task.clips:
             clip.camera_id = 2  # Supported camera
-            clip.buffer = b"fake_video_data"
+            clip.encoded_data = b"fake_video_data"
             clip.caption_windows = [
                 CaptionWindow(
                     start_frame=0,
@@ -319,12 +319,12 @@ class TestWriteCosmosPredict2Dataset:
         # Calculate expected result
         if expected_result == "dynamic":
             # For filtering case, calculate expected clips dynamically
-            # Note: clips must have all required data (buffer, captions, embeddings)
+            # Note: clips must have all required data (encoded_data, captions, embeddings)
             expected_clips = [
                 clip
                 for clip in clips
                 if clip.camera_id in supported_cameras
-                and clip.buffer is not None
+                and clip.encoded_data is not None
                 and any(window.captions.get("default", []) for window in clip.caption_windows)
                 and any(window.t5_xxl_embeddings.get("default", None) is not None for window in clip.caption_windows)
             ]
@@ -341,7 +341,7 @@ class TestWriteCosmosPredict2Dataset:
         # Ensure clips have all required data and set camera_id to supported value
         for clip in clips:
             clip.camera_id = 2  # Set to supported camera
-            clip.buffer = b"fake_video_data"
+            clip.encoded_data = b"fake_video_data"
             clip.caption_windows = [
                 CaptionWindow(
                     start_frame=0,
@@ -411,7 +411,7 @@ class TestWriteCosmosPredict2Dataset:
 
         # Ensure clip has all required data and set camera_id to supported value
         clip.camera_id = 2  # Set to supported camera
-        clip.buffer = b"fake_video_data"
+        clip.encoded_data = b"fake_video_data"
         clip.caption_windows = [
             CaptionWindow(
                 start_frame=0,
@@ -462,7 +462,7 @@ class TestWriteCosmosPredict2Dataset:
 
         # Ensure clip has all required data and set camera_id to supported value
         clip.camera_id = 2  # Set to supported camera
-        clip.buffer = b"fake_video_data"
+        clip.encoded_data = b"fake_video_data"
         clip.caption_windows = [
             CaptionWindow(
                 start_frame=0,
@@ -511,13 +511,13 @@ class TestWriteVideoClip:
 
     def test_write_video_clip_success(self, tmp_path: pathlib.Path) -> None:
         """Test successful video clip writing."""
-        # Create test clip with buffer
+        # Create test clip with encoded_data
         task = create_test_annotation_task()
         clip = task.clips[0]
 
-        # Ensure clip has buffer data
-        if clip.buffer is None:
-            clip.buffer = b"fake_video_data"
+        # Ensure clip has encoded_data
+        if clip.encoded_data is None:
+            clip.encoded_data = b"fake_video_data"
 
         # Create destination URL
         dest_url = tmp_path / "datasets" / "test_dataset" / "videos" / "pinhole_front" / f"{clip.uuid}.mp4"
@@ -533,20 +533,20 @@ class TestWriteVideoClip:
 
         # Verify file was written
         assert dest_url.exists()
-        assert dest_url.read_bytes() == clip.buffer
+        assert dest_url.read_bytes() == clip.encoded_data
 
-    def test_write_video_clip_no_buffer(self, tmp_path: pathlib.Path) -> None:
-        """Test video clip writing fails when no buffer data."""
-        # Create test clip without buffer
+    def test_write_video_clip_no_encoded_data(self, tmp_path: pathlib.Path) -> None:
+        """Test video clip writing fails when no encoded_data."""
+        # Create test clip without encoded_data
         task = create_test_annotation_task()
         clip = task.clips[0]
-        clip.buffer = None
+        clip.encoded_data = None
 
         # Create destination URL
         dest_url = tmp_path / "datasets" / "test_dataset" / "videos" / "pinhole_front" / f"{clip.uuid}.mp4"
 
-        # Should raise ValueError for missing buffer
-        with pytest.raises(ValueError, match=f"Clip {clip.uuid} has no buffer data"):
+        # Should raise ValueError for missing encoded_data
+        with pytest.raises(ValueError, match=f"Clip {clip.uuid} has no encoded_data"):
             write_video_clip(
                 clip=clip,
                 camera_view="pinhole_front",

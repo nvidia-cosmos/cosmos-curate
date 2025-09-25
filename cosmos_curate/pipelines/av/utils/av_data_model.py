@@ -49,13 +49,13 @@ class ClipForTranscode:
     span_start: float
     span_end: float
     timestamps_ms: npt.NDArray[np.int64] | None = None
-    buffer: bytes | None = None
+    encoded_data: bytes | None = None
     url: str | None = None
 
     def get_major_size(self) -> int:
         """Get the major size of the clip."""
         total_size = self.timestamps_ms.nbytes if self.timestamps_ms is not None else 0
-        total_size += len(self.buffer) if self.buffer else 0
+        total_size += len(self.encoded_data) if self.encoded_data else 0
         return total_size
 
 
@@ -65,30 +65,30 @@ class AvVideo:
 
     source_video: str
     camera_id: int
-    source_bytes: bytes | None = None
+    encoded_data: bytes | None = None
     metadata: VideoMetadata = attrs.field(factory=VideoMetadata)
     timestamps_ms: npt.NDArray[np.int64] | None = None
     clips: list[ClipForTranscode] = attrs.field(factory=list)
 
     def populate_metadata(self) -> None:
-        """Extract and assign video metadata from source_bytes.
+        """Extract and assign video metadata from encoded_data.
 
-        This method extracts metadata from the video data in source_bytes.
+        This method extracts metadata from the video data in encoded_data.
 
         Raises:
-            ValueError: If source_bytes is None.
+            ValueError: If encoded_data is None.
             Exception: Any exception from extract_video_metadata is propagated.
 
         """
-        if self.source_bytes is None:
-            error_msg = "No video data available: source_bytes is None"
+        if self.encoded_data is None:
+            error_msg = "No video data available: encoded_data is None"
             raise ValueError(error_msg)
 
         # Extract metadata using the existing function
-        extracted_metadata = extract_video_metadata(self.source_bytes)
+        extracted_metadata = extract_video_metadata(self.encoded_data)
 
-        # Set the size from source_bytes
-        self.metadata.size = len(self.source_bytes)
+        # Set the size from encoded_data
+        self.metadata.size = len(self.encoded_data)
 
         # Map the extracted metadata to our metadata object
         self.metadata.height = extracted_metadata.height
@@ -124,7 +124,7 @@ class AvVideo:
 
     def get_major_size(self) -> int:
         """Get the major size of the video."""
-        total_size = len(self.source_bytes) if self.source_bytes else 0
+        total_size = len(self.encoded_data) if self.encoded_data else 0
         total_size += self.timestamps_ms.nbytes if self.timestamps_ms is not None else 0
         for clip in self.clips:
             total_size += clip.get_major_size()
@@ -262,7 +262,7 @@ class CaptionWindow:
             last_caption_only: If True, only include the last caption for each
                 prompt variant. If False, include all captions.
             attr_white_list: A list of attribute names to include in the dictionary.
-                If None, include all attributes except buffer.
+                If None, include start_frame, end_frame, and captions.
             use_formatted_vri_tags: If True, use formatted VRI tags.
 
         Returns:
@@ -293,7 +293,8 @@ class ClipForAnnotation:
     camera_id: int
     span_index: int
     url: str
-    buffer: bytes | None = None
+    # encoded video bytes
+    encoded_data: bytes | None = None
     # for captioning
     caption_windows: list[CaptionWindow] = attrs.field(factory=list)
     t5_xxl_embedding_urls: dict[str, str] = attrs.field(factory=dict)
@@ -312,7 +313,7 @@ class ClipForAnnotation:
             The major size of the clip.
 
         """
-        total_size = len(self.buffer) if self.buffer else 0
+        total_size = len(self.encoded_data) if self.encoded_data else 0
         total_size += sum(x.get_major_size() for x in self.caption_windows)
         return total_size
 

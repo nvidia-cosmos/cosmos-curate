@@ -80,9 +80,9 @@ def _assign_captions(  # noqa: PLR0913
 
 
 # utilities common for different captioning stages
-def _handle_empty_clip_buffer(clip: Clip) -> None:
-    logger.warning(f"Clip {clip.uuid} has no buffer.")
-    clip.errors["buffer"] = "empty"
+def _handle_empty_clip_data(clip: Clip) -> None:
+    logger.warning(f"Clip {clip.uuid} has no encoded_data.")
+    clip.errors["encoded_data"] = "empty"
 
 
 def _handle_empty_clip_windows(clip: Clip) -> None:
@@ -154,14 +154,14 @@ class WindowingStage(CuratorStage):
             self._timer.reinit(self, task.get_major_size())
             video = task.video
             for clip in video.clips:
-                if clip.buffer is None:
-                    logger.warning(f"Clip {clip.uuid} has no buffer.")
-                    clip.errors["buffer"] = "empty"
+                if clip.encoded_data is None:
+                    logger.warning(f"Clip {clip.uuid} has no encoded_data.")
+                    clip.errors["encoded_data"] = "empty"
                     continue
                 with self._timer.time_process():
                     for window_mp4_bytes, _, window_frame_info in zip(
                         *windowing_utils.split_video_into_windows(
-                            clip.buffer,
+                            clip.encoded_data,
                             window_size=self._window_size,
                             remainder_threshold=self._remainder_threshold,
                             num_threads=max(int(self.resources.cpus), 1),
@@ -281,13 +281,13 @@ class QwenInputPreparationStage(CuratorStage):
             self._timer.reinit(self, task.get_major_size())
             video = task.video
             for clip in video.clips:
-                if clip.buffer is None:
-                    _handle_empty_clip_buffer(clip)
+                if clip.encoded_data is None:
+                    _handle_empty_clip_data(clip)
                     continue
                 with self._timer.time_process():
                     for window_bytes, window_frames, window_frame_info in zip_longest(
                         *windowing_utils.split_video_into_windows(
-                            clip.buffer,
+                            clip.encoded_data,
                             window_size=self._window_size,
                             remainder_threshold=self._remainder_threshold,
                             sampling_fps=self._sampling_fps,
@@ -641,13 +641,13 @@ class CosmosReason1InputPreparationStage(CuratorStage):
             self._timer.reinit(self, task.get_major_size())
             video = task.video
             for clip in video.clips:
-                if clip.buffer is None:
-                    _handle_empty_clip_buffer(clip)
+                if clip.encoded_data is None:
+                    _handle_empty_clip_data(clip)
                     continue
                 with self._timer.time_process():
                     for window_bytes, window_frames, window_frame_info in zip_longest(
                         *windowing_utils.split_video_into_windows(
-                            clip.buffer,
+                            clip.encoded_data,
                             window_size=self._window_size,
                             remainder_threshold=self._remainder_threshold,
                             sampling_fps=self._sampling_fps,
@@ -1009,13 +1009,13 @@ class PhiInputPreparationStage(CuratorStage):
             self._timer.reinit(self, task.get_major_size())
             video = task.video
             for clip in video.clips:
-                if clip.buffer is None:
-                    _handle_empty_clip_buffer(clip)
+                if clip.encoded_data is None:
+                    _handle_empty_clip_data(clip)
                     continue
                 with self._timer.time_process():
                     for window_bytes, window_frames, window_frame_info in zip_longest(
                         *windowing_utils.split_video_into_windows(
-                            clip.buffer,
+                            clip.encoded_data,
                             window_size=self._window_size,
                             remainder_threshold=self._remainder_threshold,
                             sampling_fps=self._sampling_fps,

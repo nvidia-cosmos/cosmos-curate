@@ -61,7 +61,7 @@ def sample_embedding_task(sample_video_data: bytes) -> SplitPipeTask:
     ]
     video = Video(
         input_video=pathlib.Path("sample_video.mp4"),
-        source_bytes=sample_video_data,
+        encoded_data=sample_video_data,
         clips=clips,
     )
     return SplitPipeTask(
@@ -88,7 +88,7 @@ def test_generate_embedding(sample_embedding_task: SplitPipeTask) -> None:
     clip = result_task.video.clips[0]
 
     for clip, matching_text_idx in zip(result_task.video.clips, [0, 4], strict=True):
-        assert clip.buffer is not None, "Expected clip buffer to be not None, but it is None."
+        assert clip.encoded_data is not None, "Expected clip.encoded_data to be not None, but it is None."
         assert clip.intern_video_2_embedding is not None, (
             "Expected InternVideo2 embedding to be not None, but it is None."
         )

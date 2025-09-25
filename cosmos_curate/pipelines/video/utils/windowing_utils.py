@@ -210,14 +210,14 @@ def _make_windows_for_clip(
     windows: list[Window] = []
     frames: list[torch.Tensor] = []
 
-    if clip.buffer is None:
-        logger.error(f"clip {clip.uuid} does not have a buffer")
-        clip.errors["clip_windowing"] = "clip.buffer is None"
+    if clip.encoded_data is None:
+        logger.error(f"clip {clip.uuid} does not have a encoded_data")
+        clip.errors["clip_windowing"] = "clip.encoded_data is None"
         return windows, frames
 
     for window_bytes, window_frames, window_frame_info in zip_longest(
         *split_video_into_windows(
-            clip.buffer,
+            clip.encoded_data,
             window_size=config.window_size,
             remainder_threshold=config.remainder_threshold,
             sampling_fps=config.sampling_fps,
@@ -274,9 +274,9 @@ def make_windows_for_video(
     frames: list[torch.Tensor] = []
 
     for clip in video.clips:
-        if clip.buffer is None:
-            logger.warning(f"Clip {clip.uuid} has no buffer.")
-            clip.errors["buffer"] = "empty"
+        if clip.encoded_data is None:
+            logger.warning(f"Clip {clip.uuid} has no encoded_data.")
+            clip.errors["encoded_data"] = "empty"
             continue
 
         _windows, _frames = _make_windows_for_clip(

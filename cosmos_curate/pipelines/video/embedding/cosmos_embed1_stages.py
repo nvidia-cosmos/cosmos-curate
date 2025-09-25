@@ -113,8 +113,8 @@ class CosmosEmbed1FrameCreationStage(CuratorStage):
             self._timer.reinit(self, task.get_major_size())
             video = task.video
             for clip in video.clips:
-                if clip.buffer is None:
-                    clip.errors["buffer"] = "empty"
+                if clip.encoded_data is None:
+                    clip.errors["encoded_data"] = "empty"
                     continue
                 if self._frame_extraction_signature not in clip.extracted_frames:
                     clip.errors[f"frames-{self._frame_extraction_signature}"] = "missing"
@@ -136,7 +136,7 @@ class CosmosEmbed1FrameCreationStage(CuratorStage):
                                 f"Re-extracting with higher target_fps={regen_fps}. "
                                 f"Current # frames={frames.shape[0]}.",
                             )
-                        with io.BytesIO(clip.buffer) as fp:
+                        with io.BytesIO(clip.encoded_data) as fp:
                             frames = extract_frames(
                                 fp,
                                 extraction_policy=FrameExtractionPolicy.sequence,

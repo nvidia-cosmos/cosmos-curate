@@ -227,13 +227,13 @@ class VideoDownloader(CuratorStage):
             video_url = get_full_path(task.session_url, item)
             video = AvVideo(str(video_url), camera_id)
             try:
-                raw_source_bytes = read_bytes(video_url, self._client)
+                encoded_data = read_bytes(video_url, self._client)
                 with make_pipeline_named_temporary_file("download") as mp4_file:
                     if is_h264_file(str(video_url)):
-                        self._convert_h264_to_mp4(mp4_file, raw_source_bytes)
+                        self._convert_h264_to_mp4(mp4_file, encoded_data)
                     else:
-                        mp4_file.write_bytes(raw_source_bytes)
-                    video.source_bytes = mp4_file.read_bytes()
+                        mp4_file.write_bytes(encoded_data)
+                    video.encoded_data = mp4_file.read_bytes()
                     video.populate_metadata()
             except Exception as e:  # noqa: BLE001
                 logger.error(f"Got an exception {e!s} when trying to read {video_url}")
@@ -398,7 +398,7 @@ class ClipDownloader(CuratorStage):
 
         def download_clip(clip: ClipForAnnotation) -> int:
             try:
-                clip.buffer = read_bytes(clip.url, self._client)
+                clip.encoded_data = read_bytes(clip.url, self._client)
             except Exception as e:  # noqa: BLE001
                 logger.error(f"Error downloading {clip.url}: {e!s}")
                 return 0
