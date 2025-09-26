@@ -39,12 +39,13 @@ class ClipFrameExtractionStage(CuratorStage):
     target frame rate selection, and frame extraction signature creation.
     """
 
-    def __init__(
+    def __init__(  # noqa: PLR0913
         self,
         extraction_policies: tuple[FrameExtractionPolicy, ...] = (FrameExtractionPolicy.sequence,),
         target_fps: list[float | int] | None = None,
         target_res: tuple[int, int] | None = None,
         *,
+        num_cpus_per_worker: float = 3.0,
         verbose: bool = False,
         log_stats: bool = False,
     ) -> None:
@@ -54,6 +55,7 @@ class ClipFrameExtractionStage(CuratorStage):
             extraction_policies: Frame extraction policies to use.
             target_fps: Target frames per second for extraction.
             target_res: Target resolution for extracted frames.
+            num_cpus_per_worker: Number of CPU cores to allocate per worker.
             verbose: Whether to print verbose logs.
             log_stats: Whether to log performance statistics.
 
@@ -66,7 +68,8 @@ class ClipFrameExtractionStage(CuratorStage):
         self._extraction_policies = extraction_policies
         self._target_fps = target_fps
         self._target_res = target_res
-        self._num_cpus = 4
+        self._num_cpus = num_cpus_per_worker
+        self._num_threads = max(1, int(num_cpus_per_worker) + 1)
         self._verbose = verbose
         self._log_stats = log_stats
 
@@ -126,7 +129,7 @@ class ClipFrameExtractionStage(CuratorStage):
                                         extraction_policy=policy,
                                         sample_rate_fps=lcm,
                                         target_res=self._target_res,
-                                        num_threads=self._num_cpus,
+                                        num_threads=self._num_threads,
                                     )
                                     for fps in self._target_fps:
                                         signature = FrameExtractionSignature(
@@ -142,7 +145,7 @@ class ClipFrameExtractionStage(CuratorStage):
                                             extraction_policy=policy,
                                             sample_rate_fps=fps,
                                             target_res=self._target_res,
-                                            num_threads=self._num_cpus,
+                                            num_threads=self._num_threads,
                                         )
                                         signature = FrameExtractionSignature(
                                             extraction_policy=policy,

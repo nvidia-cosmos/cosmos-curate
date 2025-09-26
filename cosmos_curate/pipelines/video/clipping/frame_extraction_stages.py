@@ -41,6 +41,7 @@ def get_frames_from_ffmpeg(
     height: int,
     *,
     use_gpu: bool = False,
+    num_cpu_threads: int = 4,
 ) -> npt.NDArray[np.uint8] | None:
     """Fetch resized frames for video."""
     if use_gpu:
@@ -72,7 +73,7 @@ def get_frames_from_ffmpeg(
             "-loglevel",
             "warning",
             "-threads",
-            "4",
+            str(num_cpu_threads),
             "-i",
             video_file.as_posix(),
             "-f",
@@ -101,11 +102,12 @@ class VideoFrameExtractionStage(CuratorStage):
     converting video content into standardized frame arrays for downstream processing.
     """
 
-    def __init__(
+    def __init__(  # noqa: PLR0913
         self,
         output_hw: tuple[int, int] = (27, 48),
         decoder_mode: str = "ffmpeg_cpu",
         *,
+        num_cpus_per_worker: float = 3.0,
         raise_on_pynvc_error_without_cpu_fallback: bool = False,
         verbose: bool = False,
         log_stats: bool = False,
@@ -116,6 +118,7 @@ class VideoFrameExtractionStage(CuratorStage):
             output_hw: (tuple) output height and width of frame array.
                 Default is (27, 48), which is the default for TransNetV2 and AutoShot models.
             decoder_mode: (str) decoder mode
+            num_cpus_per_worker: (float) number of CPU cores to allocate per worker
             raise_on_pynvc_error_without_cpu_fallback: (bool) raise an exception if PyNvCodec fails without CPU fallback
             log_stats: (bool) whether to log stats
             verbose: (bool) verbose
@@ -124,6 +127,8 @@ class VideoFrameExtractionStage(CuratorStage):
         super().__init__()
         self.output_hw = output_hw
         self.decoder_mode = decoder_mode
+        self._num_cpus_per_worker = num_cpus_per_worker
+        self._num_cpu_threads = max(1, int(num_cpus_per_worker) + 1)
         self._raise_on_pynvc_error_without_cpu_fallback = raise_on_pynvc_error_without_cpu_fallback
         self._verbose = verbose
         self._log_stats = log_stats
@@ -186,6 +191,7 @@ class VideoFrameExtractionStage(CuratorStage):
                                 width=width,
                                 height=height,
                                 use_gpu=False,
+                                num_cpu_threads=self._num_cpu_threads,
                             )
                         else:
                             # for CI to test PyNvCodec path without CPU fallback
@@ -220,4 +226,4 @@ class VideoFrameExtractionStage(CuratorStage):
         """
         if self.decoder_mode != "ffmpeg_cpu":
             return CuratorStageResource(gpus=0.1)
-        return CuratorStageResource(cpus=4.0)
+        return CuratorStageResource(cpus=self._num_cpus_per_worker)

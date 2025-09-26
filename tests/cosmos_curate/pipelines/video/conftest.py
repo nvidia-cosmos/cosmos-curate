@@ -22,6 +22,7 @@ from unittest.mock import patch
 
 import pytest
 import requests
+from loguru import logger
 
 from cosmos_curate.pipelines.video.utils.data_model import Clip, SplitPipeTask, Video
 from cosmos_curate.pipelines.video.utils.decoder_utils import (
@@ -49,6 +50,7 @@ def sample_clip_data() -> bytes:
     """
     response = requests.get(_SAMPLE_CLIP_URL, timeout=_REQUEST_TIMEOUT)
     assert response.status_code == _HTTP_OK, f"Failed to download sample clip from {_SAMPLE_CLIP_URL}"
+    logger.info(f"Downloaded clip from {_SAMPLE_CLIP_URL}, size={len(response.content)} bytes")
     return response.content
 
 
@@ -64,6 +66,7 @@ def sample_video_data() -> bytes:
     """
     response = requests.get(_SAMPLE_VIDEO_URL, timeout=_REQUEST_TIMEOUT)
     assert response.status_code == _HTTP_OK, f"Failed to download sample video from {_SAMPLE_VIDEO_URL}"
+    logger.info(f"Downloaded video from {_SAMPLE_VIDEO_URL}, size={len(response.content)} bytes")
     return response.content
 
 

@@ -256,7 +256,7 @@ unit_tests:
   script:
     - *setup_micromamba
     - *setup_curator
-    - pytest
+    - pytest -s
     # Save the raw coverage data file
     - cp .coverage .coverage.unit_tests || true
     - *teardown_micromamba
@@ -568,6 +568,9 @@ nvcf-helm:
       else
         echo "Intentionally leaving deployment behind for debugging. This must be manually cleaned up later."
       fi
+  retry:
+    max: 2
+    when: always
   artifacts:
     when: always
     paths:

@@ -63,6 +63,7 @@ def motion_filter_stage() -> MotionFilterStage:
     )
 
 
+@pytest.mark.env("cosmos-curate")
 def test_motion_vector_decode(
     motion_decode_stage: MotionVectorDecodeStage, sample_filtering_task: SplitPipeTask
 ) -> None:

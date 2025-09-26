@@ -64,6 +64,7 @@ class MotionVectorDecodeStage(CuratorStage):
         """
         self._timer = StageTimer(self)
         self._num_cpus_per_worker = num_cpus_per_worker
+        self._num_threads = max(1, int(num_cpus_per_worker) + 1)
         self._target_fps = target_fps
         self._target_duration_ratio = target_duration_ratio
         self._verbose = verbose
@@ -94,7 +95,7 @@ class MotionVectorDecodeStage(CuratorStage):
                     try:
                         clip.decoded_motion_data = motion.decode_for_motion(
                             fp,
-                            thread_count=int(self._num_cpus_per_worker),
+                            thread_count=int(self._num_threads),
                             target_fps=self._target_fps,
                             target_duration_ratio=self._target_duration_ratio,
                         )

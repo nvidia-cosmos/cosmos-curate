@@ -203,7 +203,7 @@ class VllmPrepStage(CuratorStage):
             The resource requirements for this stage.
 
         """
-        return CuratorStageResource(cpus=4.0)
+        return CuratorStageResource(cpus=self._vllm_config.num_cpus_for_prepare)
 
     @property
     def conda_env_name(self) -> str:
@@ -245,7 +245,7 @@ class VllmPrepStage(CuratorStage):
             self._timer.reinit(self, major_size)
 
             video = _get_video_from_task(task)
-            num_video_decode_threads = max(int(self.resources.cpus), 1)
+            num_video_decode_threads = max(1, int(self.resources.cpus) + 1)
 
             with self._timer.time_process():
                 windows, frames = windowing_utils.make_windows_for_video(

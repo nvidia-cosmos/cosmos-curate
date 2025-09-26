@@ -530,6 +530,7 @@ class VllmConfig:
     max_output_tokens: int = 512
     preprocess: bool = False
     disable_mmcache: bool = False
+    num_cpus_for_prepare: float = 2.0
     num_gpus: int = 1
     temperature: float = 0.1
     top_p: float = 0.001

@@ -73,7 +73,7 @@ local = [
     "aiofiles",
     "astral",
     "attrs",
-    "av",
+    "av==15.1.0",
     "azure-identity==1.22.0",
     "azure-storage-blob==12.26.0b1",
     "boto3",

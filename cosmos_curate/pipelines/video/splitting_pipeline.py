@@ -291,6 +291,7 @@ def split(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912, PLR0915
                 CuratorStageSpec(
                     VideoFrameExtractionStage(
                         decoder_mode=args.transnetv2_frame_decoder_mode,
+                        num_cpus_per_worker=args.transnetv2_frame_decode_cpus_per_worker,
                         raise_on_pynvc_error_without_cpu_fallback=args.transnetv2_frame_decode_raise_on_pynvc_error,
                         verbose=args.verbose,
                         log_stats=args.perf_profile,
@@ -373,6 +374,7 @@ def split(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912, PLR0915
                     args.clip_extraction_target_res,
                     args.clip_extraction_target_res,
                 ),
+                num_cpus_per_worker=args.clip_extraction_cpus_per_worker,
                 log_stats=args.perf_profile,
             ),
         ]
@@ -440,6 +442,7 @@ def split(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912, PLR0915
             prompt_variant=args.captioning_prompt_variant,
             prompt_text=args.captioning_prompt_text,
             max_output_tokens=args.captioning_max_output_tokens,
+            num_cpus_for_prepare=args.vllm_prepare_num_cpus_per_worker,
         )
 
         window_config = WindowConfig(
@@ -716,6 +719,12 @@ def _setup_parser(parser: argparse.ArgumentParser) -> None:  # noqa: PLR0915
         help="Choose between ffmpeg on CPU or GPU or PyNvVideoCodec for video decode.",
     )
     parser.add_argument(
+        "--transnetv2-frame-decode-cpus-per-worker",
+        type=float,
+        default=3.0,
+        help="Number of CPU threads per worker for video frame decoding when using ffmpeg_cpu mode.",
+    )
+    parser.add_argument(
         "--transnetv2-frame-decode-raise-on-pynvc-error",
         dest="transnetv2_frame_decode_raise_on_pynvc_error",
         action="store_true",
@@ -789,9 +798,9 @@ def _setup_parser(parser: argparse.ArgumentParser) -> None:  # noqa: PLR0915
     parser.add_argument(
         "--transcode-cpus-per-worker",
         type=float,
-        default=6.0,
+        default=5.0,
         help="Number of CPU threads per worker. The stage uses a batched ffmpeg "
-        "commandline with batch_size (-transcode-ffmpeg-batch-size) of ~64 and per-batch thread count of 1.",
+        "commandline with batch_size (--transcode-ffmpeg-batch-size) of ~64 and per-batch thread count of 1.",
     )
     parser.add_argument(
         "--transcode-encoder",
@@ -828,7 +837,7 @@ def _setup_parser(parser: argparse.ArgumentParser) -> None:  # noqa: PLR0915
     parser.add_argument(
         "--clip-re-chunk-size",
         type=int,
-        default=64,
+        default=32,
         help="Number of clips per chunk after transcoding stage.",
     )
     parser.add_argument(
@@ -878,7 +887,7 @@ def _setup_parser(parser: argparse.ArgumentParser) -> None:  # noqa: PLR0915
     parser.add_argument(
         "--motion-decode-cpus-per-worker",
         type=float,
-        default=4.0,
+        default=2.0,
         help="Number of CPUs per worker allocated to motion vector decoding.",
     )
     parser.add_argument(
@@ -898,6 +907,12 @@ def _setup_parser(parser: argparse.ArgumentParser) -> None:  # noqa: PLR0915
         type=int,
         default=-1,
         help="Target resolution for clip extraction as (height, width). A value of -1 implies disables resize",
+    )
+    parser.add_argument(
+        "--clip-extraction-cpus-per-worker",
+        type=float,
+        default=3.0,
+        help="Number of CPUs per worker allocated to clip frame extraction.",
     )
     parser.add_argument(
         "--aesthetic-threshold",
@@ -1031,6 +1046,12 @@ def _setup_parser(parser: argparse.ArgumentParser) -> None:  # noqa: PLR0915
         help="Controls number of frames sampled per second from input clip for captioning model",
     )
     parser.add_argument(
+        "--captioning-max-output-tokens",
+        type=int,
+        default=512,
+        help="Max number of output tokens requested from captioning model",
+    )
+    parser.add_argument(
         "--qwen-preprocess-dtype",
         type=str,
         default="float16",
@@ -1069,10 +1090,28 @@ def _setup_parser(parser: argparse.ArgumentParser) -> None:  # noqa: PLR0915
         help="Batch size for Qwen captioning stage.",
     )
     parser.add_argument(
+        "--qwen-use-vllm-mmcache",
+        action="store_true",
+        default=False,
+        help="vLLM MultiModal Cache Usage, default disabled for better performance and GPU Utilization",
+    )
+    parser.add_argument(
         "--qwen-use-fp8-weights",
         action="store_true",
         default=False,
         help="Whether to use fp8 weights for Qwen VL model or not.",
+    )
+    parser.add_argument(
+        "--qwen-use-async-engine",
+        action="store_true",
+        default=False,
+        help="Whether to use async engine for Qwen VL model or not.",
+    )
+    parser.add_argument(
+        "--qwen-num-gpus-per-worker",
+        type=float,
+        default=1.0,
+        help="Number of GPUs per worker for Qwen captioning stage.",
     )
     parser.add_argument(
         "--phi4-stage2-caption",
@@ -1088,28 +1127,16 @@ def _setup_parser(parser: argparse.ArgumentParser) -> None:  # noqa: PLR0915
         help="Specify the input prompt used to generate stage2 Phi4 captions",
     )
     parser.add_argument(
-        "--captioning-max-output-tokens",
-        type=int,
-        default=512,
-        help="Max number of output tokens requested from captioning model",
-    )
-    parser.add_argument(
-        "--qwen-use-vllm-mmcache",
-        action="store_true",
-        default=False,
-        help="vLLM MultiModal Cache Usage, default disabled for better performance and GPU Utilization",
-    )
-    parser.add_argument(
-        "--qwen-use-async-engine",
-        action="store_true",
-        default=False,
-        help="Whether to use async engine for Qwen VL model or not.",
-    )
-    parser.add_argument(
-        "--qwen-num-gpus-per-worker",
+        "--vllm-prepare-num-cpus-per-worker",
         type=float,
-        default=1.0,
-        help="Number of GPUs per worker for Qwen captioning stage.",
+        default=3.0,
+        help="Number of CPUs per worker for VllmPrepStage.",
+    )
+    parser.add_argument(
+        "--vllm-use-inflight-batching",
+        type=int,
+        default=1,
+        help="Whether to use inflight batching for vLLM captioning stage.",
     )
     parser.add_argument(
         "--enhance-captions",
@@ -1195,12 +1222,6 @@ def _setup_parser(parser: argparse.ArgumentParser) -> None:  # noqa: PLR0915
         type=str,
         default=None,
         help="Presigned S3 URL where the zipped output clips will be uploaded.",
-    )
-    parser.add_argument(
-        "--vllm-use-inflight-batching",
-        type=int,
-        default=1,
-        help="Whether to use inflight batching for vLLM captioning stage.",
     )
 
     # add common args applicable to all pipelines
