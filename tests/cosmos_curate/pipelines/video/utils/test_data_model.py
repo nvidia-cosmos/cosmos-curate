@@ -78,6 +78,13 @@ class TestGetObjectSize:
         expected_size = 0
         assert _get_object_size(obj) == expected_size
 
+    def test_none(self) -> None:
+        """Test size calculation for None."""
+        obj = None
+        # None should return 0 since it represents absence of data
+        expected_size = 0
+        assert _get_object_size(obj) == expected_size
+
 
 class TestAddChildrenToQueue:
     """Test _add_children_to_queue function."""

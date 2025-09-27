@@ -63,6 +63,8 @@ def _get_object_size(obj: object) -> int:
         The size of the object in bytes.
 
     """
+    if obj is None:
+        return 0
     if isinstance(obj, (np.ndarray, np.generic)):
         return obj.nbytes
     if TensorType is not None and isinstance(obj, TensorType):
