@@ -19,9 +19,11 @@ from __future__ import annotations
 
 import pathlib
 import sys
+from collections import deque
 from typing import TYPE_CHECKING, Any
 
 import attrs
+import numpy as np
 import numpy.typing as npt
 from loguru import logger
 
@@ -29,15 +31,94 @@ from cosmos_curate.core.interfaces.stage_interface import PipelineTask
 from cosmos_curate.core.utils.storage import storage_client
 from cosmos_curate.pipelines.video.utils.decoder_utils import extract_video_metadata
 
+try:
+    import torch
+
+    TensorType = getattr(torch, "Tensor", None)
+except ImportError:
+    TensorType = None
+
 if TYPE_CHECKING:
     import pathlib
+    from collections.abc import Iterable
     from uuid import UUID
 
-    import numpy as np
     import numpy.typing as npt
 
     import cosmos_curate.pipelines.video.filtering.motion.motion_vector_backend as motion
     from cosmos_curate.core.utils.infra.performance_utils import StagePerfStats
+
+
+def _get_object_size(obj: object) -> int:
+    """Get the size of a single object.
+
+    Lists, tuples, sets, and frozensets return 0 since we only count contents,
+    not the container itself. The calling function is expected to extract the
+    contents of the container and call this function on each item.
+
+    Arguments:
+        obj: The object to get the size of.
+
+    Returns:
+        The size of the object in bytes.
+
+    """
+    if isinstance(obj, (np.ndarray, np.generic)):
+        return obj.nbytes
+    if TensorType is not None and isinstance(obj, TensorType):
+        if hasattr(obj, "element_size") and hasattr(obj, "nelement"):
+            return int(obj.element_size() * obj.nelement())
+        return sys.getsizeof(obj)  # Fallback for unexpected tensor types
+    # For containers, only count contents, not the container itself
+    if isinstance(obj, (dict, list, tuple, set, frozenset)):
+        return 0
+    return sys.getsizeof(obj)
+
+
+def _add_children_to_queue(obj: object, q: deque[object], visited: set[int]) -> None:
+    """Add child objects to the queue for processing."""
+    children: Iterable[object] = iter([])
+
+    if isinstance(obj, dict):
+        children = obj.values()
+    elif isinstance(obj, (list, tuple, set, frozenset)):
+        children = obj
+    elif attrs.has(obj.__class__):
+        children = (getattr(obj, field.name) for field in attrs.fields(obj.__class__) if field.name != "stage_perf")
+
+    for child in children:
+        if id(child) not in visited:
+            q.append(child)
+
+
+def get_major_size(obj: object) -> int:
+    """Get the memory size of an attrs instance in bytes.
+
+    This function is used to get the memory size of an attrs instance in bytes.
+    It can handle circular references and nested structures. It does not count
+    the size of the containers themselves, only the contents.
+
+    Args:
+        obj: The object to get the memory size of.
+
+    Returns:
+        The memory size of the object in bytes.
+
+    """
+    size = 0
+    visited: set[int] = set()
+    q: deque[object] = deque([obj])
+
+    while q:
+        current_obj = q.popleft()
+        if id(current_obj) in visited:
+            continue
+        visited.add(id(current_obj))
+
+        size += _get_object_size(current_obj)
+        _add_children_to_queue(current_obj, q, visited)
+
+    return size
 
 
 @attrs.define
@@ -71,16 +152,7 @@ class Window:
             Total size in bytes.
 
         """
-        total_size = 0
-        total_size += len(self.mp4_bytes) if self.mp4_bytes else 0
-        # TODO: this is probably inaccurate
-        total_size += sys.getsizeof(self.qwen_llm_input) if self.qwen_llm_input else 0
-        total_size += sys.getsizeof(self.phi_llm_input) if self.phi_llm_input else 0
-        total_size += sys.getsizeof(self.cosmos_reason1_llm_input) if self.cosmos_reason1_llm_input else 0
-        total_size += sys.getsizeof(self.caption)
-        total_size += sys.getsizeof(self.enhanced_caption)
-        total_size += len(self.webp_bytes) if self.webp_bytes else 0
-        return total_size
+        return get_major_size(self)
 
 
 @attrs.define
