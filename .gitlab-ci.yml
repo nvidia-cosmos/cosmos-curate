@@ -146,8 +146,23 @@ stages:
 
   # Rules for merge result pipelines and web triggers
   merge_result_and_web_rules: &merge_result_and_web_rules
+    # MR pipelines (excluding merge trains)
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_EVENT_TYPE != "merge_train" && $NVCF_HELM_STRICT == "true"'
+      when: on_success
+      allow_failure: false
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_EVENT_TYPE != "merge_train"'
+      when: on_success
+      allow_failure: true
+
+    # Web-triggered pipelines
+    - if: '$CI_PIPELINE_SOURCE == "web" && $NVCF_HELM_STRICT == "true"'
+      when: on_success
+      allow_failure: false
     - if: '$CI_PIPELINE_SOURCE == "web"'
+      when: on_success
+      allow_failure: true
+
+    # Default: skip if none of the above match
     - when: never
 
   # Rules for jobs that should run both before and after merging
@@ -439,7 +454,6 @@ nvcf-helm:
   stage: end-to-end
   needs: [ "build_deploy_curator" ]
   rules: *merge_result_and_web_rules
-  allow_failure: false
   image: mambaorg/micromamba:latest
   tags:
     - build-runner  # Override to Docker executor
@@ -586,7 +600,6 @@ nvcf-helm-validate:
   stage: end-to-end
   needs: [ "nvcf-helm" ]
   rules: *merge_result_and_web_rules
-  allow_failure: false
   image: mambaorg/micromamba:latest
   tags:
     - build-runner  # Override to Docker executor
