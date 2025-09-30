@@ -30,11 +30,8 @@ if TYPE_CHECKING:
     from vllm import RequestOutput
     from vllm.model_executor.layers.quantization import QuantizationMethods
 
-    from cosmos_curate.pipelines.video.utils.data_model import (
-        Video,
-        VllmConfig,
-        Window,
-    )
+    from cosmos_curate.pipelines.video.utils.data_model import VllmConfig
+
 
 MAX_SEQ_LEN_TO_CAPTURE = 32768
 MAX_MODEL_LEN = 32768
@@ -227,45 +224,9 @@ class VllmQwen(VllmPlugin):
         )
 
     @staticmethod
-    def add_llm_input_to_window(window: Window, llm_input: dict[str, Any]) -> None:
-        """Add LLM input to a Qwen window.
-
-        Args:
-            window: The window.
-            llm_input: The LLM input for the window.
-
-        """
-        window.qwen_llm_input = llm_input
-
-    @staticmethod
-    def get_llm_input_from_window(window: Window) -> dict[str, Any] | None:
-        """Get the LLM input for a Qwen window.
-
-        Args:
-            window: The window.
-
-        Returns:
-            The LLM input for the window.
-
-        """
-        return window.qwen_llm_input
-
-    @staticmethod
     def decode(vllm_output: RequestOutput) -> str:
         """Decode vllm output into a caption."""
         return vllm_output.outputs[0].text
-
-    @staticmethod
-    def free_vllm_inputs(video: Video) -> None:
-        """Free vllm inputs from the video for this model.
-
-        Args:
-            video: The video.
-
-        """
-        for clip in video.clips:
-            for window in clip.windows:
-                window.qwen_llm_input = None
 
 
 class VllmQwen7B(VllmQwen):

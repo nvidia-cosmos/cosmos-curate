@@ -25,10 +25,8 @@ from vllm import LLM, RequestOutput
 from cosmos_curate.core.utils.model import model_utils
 from cosmos_curate.models.vllm_model_ids import get_vllm_model_id
 from cosmos_curate.pipelines.video.utils.data_model import (
-    Video,
     VllmCaptionRequest,
     VllmConfig,
-    Window,
 )
 
 
@@ -135,39 +133,5 @@ class VllmPlugin(ABC):
 
         Returns:
             A caption string.
-
-        """
-
-    @staticmethod
-    @abstractmethod
-    def add_llm_input_to_window(window: Window, llm_input: dict[str, Any]) -> None:
-        """Add LLM input to a Window.
-
-        Args:
-            window: The window.
-            llm_input: The LLM input for the window.
-
-        """
-
-    @staticmethod
-    @abstractmethod
-    def get_llm_input_from_window(window: Window) -> dict[str, Any] | None:
-        """Get the LLM input for a window.
-
-        Args:
-            window: The window.
-
-        Returns:
-            The LLM input for the window, None if the window has no LLM input.
-
-        """
-
-    @staticmethod
-    @abstractmethod
-    def free_vllm_inputs(video: Video) -> None:
-        """Free unused memory for this model variant.
-
-        Args:
-            video: The video to free unused memory for.
 
         """

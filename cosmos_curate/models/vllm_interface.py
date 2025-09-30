@@ -173,7 +173,7 @@ def prep_windows_for_vllm(
 
     for window, frame in zip(windows, frames, strict=True):
         llm_input = vllm_plugin.make_llm_input(prompt, frame, processor)
-        vllm_plugin.add_llm_input_to_window(window, llm_input)
+        window.model_input[vllm_plugin.model_variant()] = llm_input
 
 
 def gather_vllm_requests(
@@ -203,7 +203,7 @@ def gather_vllm_requests(
                 continue
 
             for window_idx, window in enumerate(clip.windows):
-                llm_input = vllm_plugin.get_llm_input_from_window(window)
+                llm_input = window.model_input.get(vllm_plugin.model_variant())
 
                 if not llm_input:
                     logger.error(f"Clip {clip.uuid} window {window_idx} has no prepared inputs.")
@@ -300,7 +300,10 @@ def free_vllm_inputs(video: Video, model_variant: str) -> None:
         model_variant: The variant of the model.
 
     """
-    _get_vllm_plugin(model_variant).free_vllm_inputs(video)
+    vllm_plugin = _get_vllm_plugin(model_variant)
+    for clip in video.clips:
+        for window in clip.windows:
+            window.model_input.pop(vllm_plugin.model_variant(), None)
 
 
 def make_refined_llm_input(

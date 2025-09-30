@@ -14,7 +14,9 @@
 # limitations under the License.
 """Test vllm_interface.py."""
 
+from contextlib import AbstractContextManager, nullcontext
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
@@ -30,29 +32,31 @@ from cosmos_curate.pipelines.video.utils.data_model import (
 )
 
 if conda_utils.is_running_in_env("unified"):
+    import torch
+
     from cosmos_curate.models.vllm_interface import (
         _VLLM_PLUGINS,
+        free_vllm_inputs,
         gather_vllm_requests,
+        prep_windows_for_vllm,
         scatter_vllm_captions,
     )
 
     VALID_VARIANTS = list(_VLLM_PLUGINS.keys())
+else:
+    VALID_VARIANTS = []
 
 
 @pytest.mark.env("unified")
-@patch("cosmos_curate.models.vllm_interface._get_vllm_plugin")
-def test_gather_vllm_requests(mock_get_plugin: MagicMock) -> None:
+def test_gather_vllm_requests() -> None:
     """Test gather_vllm_requests function."""
-    # Mock the plugin with get_llm_input_from_window method
-    mock_plugin = MagicMock()
-    mock_plugin.get_llm_input_from_window.return_value = {"test": "data"}
-    mock_get_plugin.return_value = mock_plugin
+    variant = VALID_VARIANTS[0]
 
     # Create test windows
-    window1 = Window(start_frame=0, end_frame=10)  # Will be extracted (even start_frame)
-    window2 = Window(start_frame=1, end_frame=11)  # Will not be extracted (odd start_frame)
-    window3 = Window(start_frame=2, end_frame=12)  # Will be extracted (even start_frame)
-    window4 = Window(start_frame=3, end_frame=13)  # Will not be extracted (odd start_frame)
+    window1 = Window(start_frame=0, end_frame=10, model_input={variant: {"test": "data"}})
+    window2 = Window(start_frame=1, end_frame=11, model_input={variant: {"test": "data"}})
+    window3 = Window(start_frame=2, end_frame=12, model_input={variant: {"test": "data"}})
+    window4 = Window(start_frame=3, end_frame=13, model_input={variant: {"test": "data"}})
 
     # Create test clips
     clip1 = Clip(uuid=uuid4(), source_video="test1.mp4", span=(0.0, 5.0), windows=[window1, window2])
@@ -63,7 +67,7 @@ def test_gather_vllm_requests(mock_get_plugin: MagicMock) -> None:
     video2 = Video(input_video=Path("test2.mp4"), clips=[clip2])
     videos = [video1, video2]
 
-    cfg = VllmConfig(variant=VALID_VARIANTS[0])
+    cfg = VllmConfig(variant=variant)
     vllm_requests = list(gather_vllm_requests(videos, cfg))
 
     assert len(vllm_requests) == 4  # noqa: PLR2004
@@ -77,14 +81,8 @@ def test_gather_vllm_requests(mock_get_plugin: MagicMock) -> None:
 
 
 @pytest.mark.env("unified")
-@patch("cosmos_curate.models.vllm_interface._get_vllm_plugin")
-def test_gather_vllm_requests_empty(mock_get_plugin: MagicMock) -> None:
+def test_gather_vllm_requests_empty() -> None:
     """Test gather_vllm_requests with empty videos list."""
-    # Mock the plugin with get_llm_input_from_window method
-    mock_plugin = MagicMock()
-    mock_plugin.get_llm_input_from_window.return_value = {"test": "data"}
-    mock_get_plugin.return_value = mock_plugin
-
     cfg = VllmConfig(variant=VALID_VARIANTS[0])
     vllm_requests = list(gather_vllm_requests([], cfg))
 
@@ -291,3 +289,55 @@ def test_scatter_vllm_captions_overwrite() -> None:
         ],
     )
     assert videos[0].clips[0].windows[0].caption[model_variant] == "Updated caption"
+
+
+@pytest.mark.env("unified")
+@pytest.mark.parametrize(
+    ("windows_count", "frames_count", "raises"),
+    [
+        (2, 2, nullcontext()),
+        (1, 2, pytest.raises(ValueError, match=r".*")),
+        (3, 1, pytest.raises(ValueError, match=r".*")),
+    ],
+)
+@pytest.mark.parametrize("model_variant", VALID_VARIANTS)
+@patch("cosmos_curate.models.vllm_interface._get_vllm_plugin")
+def test_prep_windows_for_vllm_and_free_vllm_inputs(
+    mock_get_plugin: MagicMock,
+    model_variant: str,
+    windows_count: int,
+    frames_count: int,
+    raises: AbstractContextManager[Any],
+) -> None:
+    """Test prep_windows_for_vllm function and free_vllm_inputs functions."""
+    processor = MagicMock()
+    mock_plugin = MagicMock()
+    mock_plugin.processor.return_value = MagicMock()
+    mock_plugin.model_variant.return_value = model_variant
+    mock_plugin.make_llm_input.return_value = {"test": "data"}
+
+    mock_get_plugin.return_value = mock_plugin
+
+    config = VllmConfig(variant=model_variant)
+    prompt = "test prompt"
+
+    # Create test data
+    windows = [Window(start_frame=0, end_frame=frames_count) for _ in range(windows_count)]
+    frames = [torch.randn(frames_count, 3, 224, 224) for _ in range(frames_count)]
+    video = Video(
+        input_video=Path("test.mp4"),
+        clips=[Clip(uuid=uuid4(), source_video="test.mp4", span=(0.0, 5.0), windows=windows)],
+    )
+
+    with raises:
+        prep_windows_for_vllm(windows, frames, config, processor, prompt)
+
+        for window in windows:
+            llm_input = window.model_input.get(model_variant)
+            assert isinstance(llm_input, dict)
+
+        free_vllm_inputs(video, config.variant)
+
+        for clip in video.clips:
+            for window in clip.windows:
+                assert model_variant not in window.model_input

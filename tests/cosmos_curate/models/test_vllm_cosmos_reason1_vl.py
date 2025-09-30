@@ -19,18 +19,12 @@ from __future__ import annotations
 import re
 from pathlib import Path
 from unittest.mock import MagicMock
-from uuid import uuid4
 
 import pytest
 import torch
 
 from cosmos_curate.core.utils.model import conda_utils
-from cosmos_curate.pipelines.video.utils.data_model import (
-    Clip,
-    Video,
-    VllmCaptionRequest,
-    Window,
-)
+from cosmos_curate.pipelines.video.utils.data_model import VllmCaptionRequest
 
 if conda_utils.is_running_in_env("unified"):
     from cosmos_curate.models.vllm_cosmos_reason1_vl import (
@@ -39,6 +33,8 @@ if conda_utils.is_running_in_env("unified"):
         make_message,
         make_prompt,
     )
+
+    _MODEL_VARIANT = VllmCosmosReason1VL.model_variant()
 
 
 @pytest.mark.env("unified")
@@ -58,34 +54,6 @@ def test_make_llm_input_cosmos_r1() -> None:
     assert result["prompt"] == "mocked_reasoning_prompt"
     assert len(result["multi_modal_data"]["video"]) == 1
     assert result["multi_modal_data"]["video"][0].shape == (2, 3, 32, 32)
-
-
-@pytest.mark.env("unified")
-def test_add_and_get_llm_input_window_cosmos_r1() -> None:
-    """Test adding and retrieving llm input on Window for cosmos_reason1."""
-    window = Window(start_frame=0, end_frame=10)
-    llm_input = {"prompt": "p", "multi_modal_data": {"video": [torch.rand(1, 3, 8, 8)]}}
-
-    VllmCosmosReason1VL.add_llm_input_to_window(window, llm_input)
-    assert window.cosmos_reason1_llm_input == llm_input
-
-    got = VllmCosmosReason1VL.get_llm_input_from_window(window)
-    assert got == llm_input
-
-
-@pytest.mark.env("unified")
-def test_free_vllm_inputs_cosmos_r1() -> None:
-    """Test freeing vllm inputs for cosmos_reason1 windows."""
-    window1 = Window(start_frame=0, end_frame=10, cosmos_reason1_llm_input={"a": 1})
-    window2 = Window(start_frame=10, end_frame=20, cosmos_reason1_llm_input={"b": 2})
-
-    clip1 = Clip(uuid=uuid4(), source_video="test1.mp4", span=(0.0, 5.0), windows=[window1])
-    clip2 = Clip(uuid=uuid4(), source_video="test2.mp4", span=(5.0, 10.0), windows=[window2])
-    video = Video(input_video=Path("test.mp4"), clips=[clip1, clip2])
-
-    VllmCosmosReason1VL.free_vllm_inputs(video)
-    assert window1.cosmos_reason1_llm_input is None
-    assert window2.cosmos_reason1_llm_input is None
 
 
 @pytest.mark.env("unified")

@@ -137,9 +137,7 @@ def _assign_captions(  # noqa: PLR0913
 
     for clip in video.clips:
         for window in clip.windows:
-            window.qwen_llm_input = None
-            window.cosmos_reason1_llm_input = None
-            window.phi_llm_input = None
+            window.model_input.clear()
             if not keep_mp4_bytes:
                 window.mp4_bytes = None
 
@@ -306,6 +304,7 @@ class QwenInputPreparationStage(CuratorStage):
         self._generate_previews = generate_previews
         self._prepare_cosmos_predict_dataset = prepare_cosmos_predict_dataset
         self._use_input_bit_rate = use_input_bit_rate
+        self._model_variant = model_variant
 
     @property
     def resources(self) -> CuratorStageResource:
@@ -382,7 +381,7 @@ class QwenInputPreparationStage(CuratorStage):
                                     window_frame_info.start,
                                     window_frame_info.end,
                                     mp4_bytes=window_bytes,
-                                    qwen_llm_input=llm_input,
+                                    model_input={self._model_variant: llm_input},
                                 ),
                             )
 
@@ -507,11 +506,12 @@ class QwenCaptionStage(CuratorStage):
                     if len(clip.windows) == 0:
                         _handle_empty_clip_windows(clip)
                     for window_idx, window in enumerate(clip.windows):
-                        if window.qwen_llm_input is None:
+                        llm_input = window.model_input.get(self._model_variant)
+                        if llm_input is None:
                             _handle_empty_llm_inputs(clip, window_idx)
                             continue
                         mapping[idx] = (clip_idx, window_idx)
-                        inputs.append(window.qwen_llm_input)
+                        inputs.append(llm_input)
                         idx += 1
 
                 captions = self._raw_model.generate(
@@ -547,13 +547,14 @@ class QwenCaptionStage(CuratorStage):
                     if len(clip.windows) == 0:
                         _handle_empty_clip_windows(clip)
                     for window_idx, window in enumerate(clip.windows):
-                        if window.qwen_llm_input is None:
+                        llm_input = window.model_input.get(self._model_variant)
+                        if llm_input is None:
                             _handle_empty_llm_inputs(clip, window_idx)
                             continue
                         mapping[input_req_id] = (clip_idx, window_idx)
                         vllm_task = asyncio.create_task(
                             self._raw_model.generate_async(
-                                window.qwen_llm_input,
+                                llm_input,
                                 input_req_id,
                                 generate_stage2_caption=self._generate_stage2_caption,
                             ),
@@ -666,6 +667,7 @@ class CosmosReason1InputPreparationStage(CuratorStage):
         self._generate_previews = generate_previews
         self._prepare_cosmos_predict_dataset = prepare_cosmos_predict_dataset
         self._use_input_bit_rate = use_input_bit_rate
+        self._model_variant = "cosmos_r1"
 
     @property
     def resources(self) -> CuratorStageResource:
@@ -744,7 +746,7 @@ class CosmosReason1InputPreparationStage(CuratorStage):
                                     window_frame_info.start,
                                     window_frame_info.end,
                                     mp4_bytes=window_bytes,
-                                    cosmos_reason1_llm_input=llm_input,
+                                    model_input={self._model_variant: llm_input},
                                 ),
                             )
 
@@ -875,11 +877,12 @@ class CosmosReason1CaptionStage(CuratorStage):
                     if len(clip.windows) == 0:
                         _handle_empty_clip_windows(clip)
                     for window_idx, window in enumerate(clip.windows):
-                        if window.cosmos_reason1_llm_input is None:
+                        llm_input = window.model_input.get(self._model_variant)
+                        if llm_input is None:
                             _handle_empty_llm_inputs(clip, window_idx)
                             continue
                         mapping[idx] = (clip_idx, window_idx)
-                        inputs.append(window.cosmos_reason1_llm_input)
+                        inputs.append(llm_input)
                         idx += 1
 
                 captions = self._raw_model.generate(
@@ -915,13 +918,14 @@ class CosmosReason1CaptionStage(CuratorStage):
                     if len(clip.windows) == 0:
                         _handle_empty_clip_windows(clip)
                     for window_idx, window in enumerate(clip.windows):
-                        if window.cosmos_reason1_llm_input is None:
+                        llm_input = window.model_input.get(self._model_variant)
+                        if llm_input is None:
                             _handle_empty_llm_inputs(clip, window_idx)
                             continue
                         mapping[input_req_id] = (clip_idx, window_idx)
                         vllm_task = asyncio.create_task(
                             self._raw_model.generate_async(
-                                window.cosmos_reason1_llm_input,
+                                llm_input,
                                 input_req_id,
                                 generate_stage2_caption=self._generate_stage2_caption,
                             ),
@@ -1034,6 +1038,7 @@ class PhiInputPreparationStage(CuratorStage):
         self._generate_previews = generate_previews
         self._prepare_cosmos_predict_dataset = prepare_cosmos_predict_dataset
         self._use_input_bit_rate = use_input_bit_rate
+        self._model_variant = model_variant
 
     @property
     def resources(self) -> CuratorStageResource:
@@ -1110,7 +1115,7 @@ class PhiInputPreparationStage(CuratorStage):
                                     window_frame_info.start,
                                     window_frame_info.end,
                                     mp4_bytes=window_bytes,
-                                    phi_llm_input=llm_input,
+                                    model_input={self._model_variant: llm_input},
                                 ),
                             )
 
@@ -1224,12 +1229,12 @@ class PhiCaptionStage(CuratorStage):
                     if len(clip.windows) == 0:
                         _handle_empty_clip_windows(clip)
                     for window_idx, window in enumerate(clip.windows):
-                        if window.phi_llm_input is None:
+                        llm_input = window.model_input.get(self._model_variant)
+                        if llm_input is None:
                             _handle_empty_llm_inputs(clip, window_idx)
                             continue
                         mapping[idx] = (clip_idx, window_idx)
-                        assert window.phi_llm_input is not None
-                        inputs.append(window.phi_llm_input)
+                        inputs.append(llm_input)
                         idx += 1
 
                 captions = self._raw_model.generate(

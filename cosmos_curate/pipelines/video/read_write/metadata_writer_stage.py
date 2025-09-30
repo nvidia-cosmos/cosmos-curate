@@ -326,7 +326,8 @@ class ClipWriterStage(CuratorStage):
                     clip.cosmos_embed1_embedding = None
                     for window in clip.windows:
                         window.mp4_bytes = None
-                        window.qwen_llm_input = None
+                        for model_variant in window.model_input:
+                            del window.model_input[model_variant]
                         window.caption.clear()
                         window.enhanced_caption.clear()
                         window.webp_bytes = None

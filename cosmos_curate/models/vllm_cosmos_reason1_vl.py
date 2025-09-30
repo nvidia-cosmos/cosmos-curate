@@ -30,11 +30,7 @@ if TYPE_CHECKING:
     import torch
     from vllm.model_executor.layers.quantization import QuantizationMethods
 
-    from cosmos_curate.pipelines.video.utils.data_model import (
-        Video,
-        VllmConfig,
-        Window,
-    )
+    from cosmos_curate.pipelines.video.utils.data_model import VllmConfig
 
 
 # Constants tuned similarly to existing plugins
@@ -230,42 +226,6 @@ class VllmCosmosReason1VL(VllmPlugin):
         )
 
     @staticmethod
-    def add_llm_input_to_window(window: Window, llm_input: dict[str, Any]) -> None:
-        """Add LLM input to a Cosmos-Reason1 window.
-
-        Args:
-            window: The window.
-            llm_input: The LLM input for the window.
-
-        """
-        window.cosmos_reason1_llm_input = llm_input
-
-    @staticmethod
-    def get_llm_input_from_window(window: Window) -> dict[str, Any] | None:
-        """Get the LLM input for a Cosmos-Reason1 window.
-
-        Args:
-            window: The window.
-
-        Returns:
-            The LLM input for the window.
-
-        """
-        return window.cosmos_reason1_llm_input
-
-    @staticmethod
     def decode(vllm_output: RequestOutput) -> str:
         """Decode vLLM output into a caption (extract <answer> section)."""
         return _extract_from_reasoning_format(vllm_output.outputs[0].text)
-
-    @staticmethod
-    def free_vllm_inputs(video: Video) -> None:
-        """Free vllm inputs from the video for this model.
-
-        Args:
-            video: The video.
-
-        """
-        for clip in video.clips:
-            for window in clip.windows:
-                window.cosmos_reason1_llm_input = None

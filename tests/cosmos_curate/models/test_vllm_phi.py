@@ -14,19 +14,18 @@
 # limitations under the License.
 """Test vllm_phi.py."""
 
-from pathlib import Path
 from unittest.mock import MagicMock
-from uuid import uuid4
 
 import pytest
 import torch
 from PIL import Image
 
 from cosmos_curate.core.utils.model import conda_utils
-from cosmos_curate.pipelines.video.utils.data_model import Clip, Video, Window
 
 if conda_utils.is_running_in_env("unified"):
     from cosmos_curate.models.vllm_phi import VllmPhi4, get_image_placeholder, make_message, make_prompt, tensor_to_pil
+
+    _MODEL_VARIANT = VllmPhi4.model_variant()
 
 
 @pytest.mark.env("unified")
@@ -107,78 +106,6 @@ def test_make_llm_input_phi_no_tokenizer() -> None:
 
     with pytest.raises(ValueError, match=r".*"):
         VllmPhi4.make_llm_input(prompt, frames, mock_processor)
-
-
-@pytest.mark.env("unified")
-def test_add_llm_input_to_window_phi() -> None:
-    """Test add_llm_input_to_window function."""
-    start = 0
-    end = 10
-    mp4_bytes = b"mock_mp4_data"
-    llm_input = {"prompt": "test", "data": "mock"}
-
-    window = Window(start_frame=start, end_frame=end, mp4_bytes=mp4_bytes)
-
-    VllmPhi4.add_llm_input_to_window(window, llm_input)
-
-    # Verify window properties
-    assert isinstance(window, Window)
-    assert window.start_frame == start
-    assert window.end_frame == end
-    assert window.mp4_bytes == mp4_bytes
-    assert window.phi_llm_input == llm_input
-
-
-@pytest.mark.env("unified")
-def test_get_phi_llm_input_from_window() -> None:
-    """Test get_phi_llm_input_from_window function."""
-    llm_input = {"prompt": "test", "data": "mock"}
-    window = Window(start_frame=0, end_frame=10, phi_llm_input=llm_input)
-
-    # Call the function
-    result = VllmPhi4.get_llm_input_from_window(window)
-
-    # Verify result
-    assert result == llm_input
-
-
-@pytest.mark.env("unified")
-def test_free_vllm_inputs_phi() -> None:
-    """Test free_vllm_inputs function."""
-    # Create windows with data
-    window1 = Window(start_frame=0, end_frame=10, mp4_bytes=b"data1", phi_llm_input={"test": "data1"})
-    window2 = Window(start_frame=10, end_frame=20, mp4_bytes=b"data2", phi_llm_input={"test": "data2"})
-
-    # Create clips with windows
-    clip1 = Clip(uuid=uuid4(), source_video="test1.mp4", span=(0.0, 5.0), windows=[window1])
-    clip2 = Clip(uuid=uuid4(), source_video="test2.mp4", span=(5.0, 10.0), windows=[window2])
-
-    # Create video with clips
-    video = Video(input_video=Path("test.mp4"), clips=[clip1, clip2])
-
-    # Verify initial state
-    assert window1.mp4_bytes is not None
-    assert window1.phi_llm_input is not None
-    assert window2.mp4_bytes is not None
-    assert window2.phi_llm_input is not None
-
-    # Call the function
-    VllmPhi4.free_vllm_inputs(video)
-
-    # Verify memory was freed, but mp4 bytes are not freed, that is handled elsewhere
-    assert window1.mp4_bytes is not None
-    assert window1.phi_llm_input is None
-    assert window2.mp4_bytes is not None
-    assert window2.phi_llm_input is None
-
-
-@pytest.mark.env("unified")
-def test_free_vllm_inputs_empty_video() -> None:
-    """Test free_unused_phi with empty video."""
-    video = Video(input_video=Path("test.mp4"), clips=[])
-
-    # Should not raise any errors
-    VllmPhi4.free_vllm_inputs(video)
 
 
 @pytest.mark.env("unified")

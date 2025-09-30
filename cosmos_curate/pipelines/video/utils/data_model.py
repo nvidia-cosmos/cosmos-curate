@@ -80,13 +80,15 @@ def _get_object_size(obj: object) -> int:
 def _add_children_to_queue(obj: object, q: deque[object], visited: set[int]) -> None:
     """Add child objects to the queue for processing."""
     children: Iterable[object] = iter([])
+    # Skip transient performance tracking fields that shouldn't count toward data size
+    _skip_fields = {"stage_perf"}
 
     if isinstance(obj, dict):
         children = obj.values()
     elif isinstance(obj, (list, tuple, set, frozenset)):
         children = obj
     elif attrs.has(obj.__class__):
-        children = (getattr(obj, field.name) for field in attrs.fields(obj.__class__) if field.name != "stage_perf")
+        children = (getattr(obj, field.name) for field in attrs.fields(obj.__class__) if field.name not in _skip_fields)
 
     for child in children:
         if id(child) not in visited:
@@ -133,12 +135,8 @@ class Window:
     end_frame: int
     # MP4 bytes for this window
     mp4_bytes: bytes | None = None
-    # Qwen LLM input for this window
-    qwen_llm_input: dict[str, Any] | None = None
-    # Cosmos-Reason1 LLM input for this window
-    cosmos_reason1_llm_input: dict[str, Any] | None = None
-    # Phi LLM input for this window
-    phi_llm_input: dict[str, Any] | None = None
+    # Model input for this window: model_variant -> llm_input
+    model_input: dict[str, dict[str, Any]] = attrs.Factory(dict)
     # `caption: {model_name: caption}`
     caption: dict[str, str] = attrs.Factory(dict)
     enhanced_caption: dict[str, str] = attrs.Factory(dict)

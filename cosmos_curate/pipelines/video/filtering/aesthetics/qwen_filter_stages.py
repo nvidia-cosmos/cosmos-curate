@@ -204,6 +204,7 @@ class QwenInputPreparationStageFiltering(CuratorStage):
         self._preprocess_dtype = preprocess_dtype
         self._model_does_preprocess = model_does_preprocess
         self._generate_previews = generate_previews
+        self._model_variant = model_variant
 
     @property
     def resources(self) -> CuratorStageResource:
@@ -279,7 +280,7 @@ class QwenInputPreparationStageFiltering(CuratorStage):
                                     window_frame_info.start,
                                     window_frame_info.end,
                                     mp4_bytes=window_bytes,
-                                    qwen_llm_input=llm_input,
+                                    model_input={self._model_variant: llm_input},
                                 ),
                             )
 
@@ -351,6 +352,7 @@ class QwenFilteringStage(CuratorStage):
             use_async_engine=self._use_async_engine,
             disable_mmcache=self._disable_mmcache,
         )
+        self._model_variant = model_variant
 
     @property
     def resources(self) -> CuratorStageResource:
@@ -414,13 +416,13 @@ class QwenFilteringStage(CuratorStage):
                         logger.warning(f"Clip {clip.uuid} has no windows.")
                         clip.errors["windows"] = "empty"
                     for window_idx, window in enumerate(clip.filter_windows):
-                        if window.qwen_llm_input is None:
+                        llm_input = window.model_input.get(self._model_variant)
+                        if llm_input is None:
                             logger.error(f"Clip {clip.uuid} window {window_idx} has no prepared inputs.")
                             clip.errors[f"window-{window_idx}"] = "empty"
                             continue
                         mapping[idx] = (clip_idx, window_idx)
-                        assert window.qwen_llm_input is not None
-                        inputs.append(window.qwen_llm_input)
+                        inputs.append(llm_input)
                         idx += 1
 
                 results = self._model.generate(
@@ -467,15 +469,15 @@ class QwenFilteringStage(CuratorStage):
                         logger.warning(f"Clip {clip.uuid} has no windows.")
                         clip.errors["windows"] = "empty"
                     for window_idx, window in enumerate(clip.filter_windows):
-                        if window.qwen_llm_input is None:
+                        llm_input = window.model_input.get(self._model_variant)
+                        if llm_input is None:
                             logger.error(f"Clip {clip.uuid} window {window_idx} has no prepared inputs.")
                             clip.errors[f"window-{window_idx}"] = "empty"
                             continue
                         mapping[idx] = (clip_idx, window_idx)
-                        assert window.qwen_llm_input is not None
                         vllm_task = asyncio.create_task(
                             self._model.generate_async(
-                                window.qwen_llm_input,
+                                llm_input,
                                 idx,
                                 generate_stage2_caption=False,
                             ),
@@ -599,7 +601,7 @@ class QwenFilteringStage(CuratorStage):
         video.clips = passing_clips
         for clip in video.clips:
             for window in clip.filter_windows:
-                window.qwen_llm_input = None
+                window.model_input.clear()
                 window.mp4_bytes = None
 
 
