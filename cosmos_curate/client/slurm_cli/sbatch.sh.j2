@@ -62,6 +62,10 @@ echo "This slurm script is located in folder: $SCRIPT_FOLDER"
 export {{ env_var }}="{{ value }}"
 {% endfor %}
 
+{% if env_vars %}
+{% set env_keys = env_vars.keys() | join(',') %}
+{% endif %}
+
 echo "HEAD_NODE_ADDR=${HEAD_NODE_ADDR}"
 echo "HEAD_NODE_PORT=${HEAD_NODE_PORT}"
 echo "SLURMD_NODENAME=${SLURMD_NODENAME}"
@@ -102,6 +106,6 @@ srun \
   --no-container-remap-root \
   --container-image {{container_image}} \
   --container-mounts {{container_mounts}} \
-  {{command}}
+{% if env_keys %} --container-env {{env_keys}} {% endif %} {{command}}
 
 echo "$(date) - Srun called."
