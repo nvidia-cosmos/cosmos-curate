@@ -123,7 +123,7 @@ class HttpServerHandler(SimpleHTTPRequestHandler):
         self.logger.info(abs_path)
         return str(abs_path)
 
-    def do_GET(self) -> None:  # noqa: N802
+    def do_GET(self) -> None:
         """Handle GET requests for clips, metadata, and web files."""
         try:
             if self.path == "/list_clips":

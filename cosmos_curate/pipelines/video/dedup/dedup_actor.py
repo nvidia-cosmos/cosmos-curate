@@ -23,6 +23,7 @@ cuML multi-GPU K-Means (KMeansMG) and RAFT handles to support semantic
 dedup workflows.
 """
 
+import importlib
 import io
 import pathlib
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -190,9 +191,9 @@ class SemDedupActor(RAFTActor):
             ValueError: If there are no rows to cluster or embeddings are ragged (inconsistent lengths).
 
         """
-        import cudf  # type: ignore[import-not-found]
-        import cupy as cp  # type: ignore[import-untyped]
-        from cuml.cluster.kmeans_mg import KMeansMG  # type: ignore[import-not-found]
+        cudf = importlib.import_module("cudf")
+        cp = importlib.import_module("cupy")
+        KMeansMG = importlib.import_module("cuml.cluster.kmeans_mg").KMeansMG
 
         parquet_buffers = self._download(parquet_files)
 
@@ -336,8 +337,8 @@ class SemDedupActor(RAFTActor):
             ValueError: If a cluster shard contains ragged embeddings (inconsistent lengths).
 
         """
-        import cudf
-        import cupy as cp
+        cudf = importlib.import_module("cudf")
+        cp = importlib.import_module("cupy")
 
         threshold = float(1 - self._config.eps)
         kept = 0

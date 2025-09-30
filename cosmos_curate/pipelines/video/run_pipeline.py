@@ -16,6 +16,7 @@
 """Run Pipeline CLI."""
 
 import argparse
+import importlib
 
 from cosmos_curate.core.utils.config.operation_context import check_if_running_in_pixi_env
 
@@ -26,18 +27,18 @@ def cli() -> None:
     Parses command line arguments and executes the selected pipeline command.
     """
     # Lazy-import pipeline commands after PIXI env check
-    from cosmos_curate.pipelines.video.dedup_pipeline import add_dedup_command
-    from cosmos_curate.pipelines.video.sharding_pipeline import add_shard_command
-    from cosmos_curate.pipelines.video.splitting_pipeline import add_split_command
+    dedup_module = importlib.import_module("cosmos_curate.pipelines.video.dedup_pipeline")
+    shard_module = importlib.import_module("cosmos_curate.pipelines.video.sharding_pipeline")
+    split_module = importlib.import_module("cosmos_curate.pipelines.video.splitting_pipeline")
 
     parser = argparse.ArgumentParser(
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
         description="Video curation pipelines",
     )
     subparsers = parser.add_subparsers(dest="command")
-    add_shard_command(subparsers)
-    add_split_command(subparsers)
-    add_dedup_command(subparsers)
+    shard_module.add_shard_command(subparsers)
+    split_module.add_split_command(subparsers)
+    dedup_module.add_dedup_command(subparsers)
     args = parser.parse_args()
     if args.command is None:
         parser.print_help()

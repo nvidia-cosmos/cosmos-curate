@@ -105,7 +105,7 @@ def test_make_summary_metrics_missing_keys() -> None:
     }
 
     # Act & Assert
-    with pytest.raises(ValueError, match="Missing keys in summary.json"):
+    with pytest.raises(ValueError, match=r"Missing keys in summary\.json"):
         make_summary_metrics(incomplete_summary, 1, 1, caption=True, env="test")
 
 

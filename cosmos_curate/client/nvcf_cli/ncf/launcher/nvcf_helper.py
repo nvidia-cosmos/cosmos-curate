@@ -854,8 +854,7 @@ class NvcfHelper(NvcfBase):
                     fname = f"{tempfile.gettempdir()}/{reqid}.log"
                     try:
                         with Path(fname).open("a") as fd:
-                            for line in logs:
-                                fd.write(f"{line}\n")
+                            fd.writelines(f"{line}\n" for line in logs)
                         msg = f"Wrote the collected logs to {fname}"
                         self.logger.info(msg)
                     except (
@@ -1183,8 +1182,7 @@ class NvcfHelper(NvcfBase):
                     fname = f"{tempfile.gettempdir()}/{rqid}.log"
                     try:
                         with Path(fname).open("a") as fd:
-                            for line in logs:
-                                fd.write(f"{line}\n")
+                            fd.writelines(f"{line}\n" for line in logs)
                         msg = f"Wrote the collected logs to {fname}"
                         self.logger.info(msg)
                     except RuntimeError:

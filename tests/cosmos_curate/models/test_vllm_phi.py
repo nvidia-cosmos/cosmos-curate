@@ -105,7 +105,7 @@ def test_make_llm_input_phi_no_tokenizer() -> None:
     frames = torch.rand(1, 3, 32, 32)
     prompt = "Test prompt"
 
-    with pytest.raises(ValueError, match=".*"):
+    with pytest.raises(ValueError, match=r".*"):
         VllmPhi4.make_llm_input(prompt, frames, mock_processor)
 
 

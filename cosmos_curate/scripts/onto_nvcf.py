@@ -80,7 +80,7 @@ def get_ray_worker_count() -> int:
         return -1
 
     try:
-        result: subprocess.CompletedProcess[str] = subprocess.run(  # noqa: S603
+        result: subprocess.CompletedProcess[str] = subprocess.run(
             ["ray", "status"],  # noqa: S607
             capture_output=True,
             text=True,
@@ -121,7 +121,7 @@ def display_nvidia_smi() -> None:
     logger.info("NVIDIA SMI for Pod: %s", POD_NAME)
     if check_command_exists("nvidia-smi"):
         try:
-            result: subprocess.CompletedProcess[str] = subprocess.run(  # noqa: S603
+            result: subprocess.CompletedProcess[str] = subprocess.run(
                 ["nvidia-smi"],  # noqa: S607
                 capture_output=True,
                 text=True,
@@ -187,7 +187,7 @@ def start_ray_head() -> subprocess.Popen[str] | None:
 
     logger.info("Starting Ray head node")
     try:
-        hostname_ip: str = subprocess.check_output(  # noqa: S603
+        hostname_ip: str = subprocess.check_output(
             ["hostname", "-i"],  # noqa: S607
             text=True,
             timeout=5,
@@ -249,7 +249,7 @@ def start_ray_worker(head_pod: str) -> bool:
 
     logger.info("Starting Ray worker node and connecting to head at %s", head_pod)
     try:
-        hostname_ip: str = subprocess.check_output(  # noqa: S603
+        hostname_ip: str = subprocess.check_output(
             ["hostname", "-i"],  # noqa: S607
             text=True,
             timeout=5,

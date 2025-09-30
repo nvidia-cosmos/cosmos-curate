@@ -40,14 +40,14 @@ def test_get_video_from_task_success() -> None:
 def test_get_video_from_task_fail() -> None:
     """Test get_video_from_task."""
     task = 10
-    with pytest.raises(TypeError, match=".*"):
+    with pytest.raises(TypeError, match=r".*"):
         _get_video_from_task(task)
 
 
 @pytest.mark.env("unified")
 @pytest.mark.parametrize(
     ("config_variant", "raises"),
-    [(k, nullcontext()) for k in _VLLM_MODELS] + [("_fail_model", pytest.raises(ValueError, match=".*"))],
+    [(k, nullcontext()) for k in _VLLM_MODELS] + [("_fail_model", pytest.raises(ValueError, match=r".*"))],
 )
 def test_vllm_model_interface_model_id_names(config_variant: str, raises: AbstractContextManager[Any]) -> None:
     """Validate model_id_names are strings for each configured plugin variant."""

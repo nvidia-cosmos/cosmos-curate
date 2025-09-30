@@ -64,7 +64,7 @@ def test_make_llm_input_qwen_no_tokenizer() -> None:
     frames = torch.rand(1, 3, 32, 32)
     prompt = "Test prompt"
 
-    with pytest.raises(ValueError, match=".*"):
+    with pytest.raises(ValueError, match=r".*"):
         VllmQwen.make_llm_input(prompt, frames, mock_processor)
 
 

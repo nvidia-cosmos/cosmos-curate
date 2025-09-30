@@ -10,6 +10,7 @@
 """AV data curation pipelines."""
 
 import argparse
+import importlib
 
 from cosmos_curate.core.utils.config.operation_context import check_if_running_in_pixi_env
 
@@ -17,20 +18,28 @@ from cosmos_curate.core.utils.config.operation_context import check_if_running_i
 def cli() -> None:
     """CLI for AV data curation pipelines."""
     # Lazy-import pipeline commands after PIXI env check
-    from cosmos_curate.pipelines.av.av_video_captioning_pipeline import add_caption_command
-    from cosmos_curate.pipelines.av.av_video_ingesting_pipeline import add_ingest_command
-    from cosmos_curate.pipelines.av.av_video_sharding_pipeline import add_shard_command
-    from cosmos_curate.pipelines.av.av_video_splitting_pipeline import add_split_command
+    caption_module = importlib.import_module(
+        "cosmos_curate.pipelines.av.av_video_captioning_pipeline",
+    )
+    ingest_module = importlib.import_module(
+        "cosmos_curate.pipelines.av.av_video_ingesting_pipeline",
+    )
+    shard_module = importlib.import_module(
+        "cosmos_curate.pipelines.av.av_video_sharding_pipeline",
+    )
+    split_module = importlib.import_module(
+        "cosmos_curate.pipelines.av.av_video_splitting_pipeline",
+    )
 
     parser = argparse.ArgumentParser(
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
         description="AV data curation pipelines",
     )
     subparsers = parser.add_subparsers(dest="command")
-    add_ingest_command(subparsers)
-    add_split_command(subparsers)
-    add_caption_command(subparsers)
-    add_shard_command(subparsers)
+    ingest_module.add_ingest_command(subparsers)
+    split_module.add_split_command(subparsers)
+    caption_module.add_caption_command(subparsers)
+    shard_module.add_shard_command(subparsers)
 
     args = parser.parse_args()
     args.func(args)

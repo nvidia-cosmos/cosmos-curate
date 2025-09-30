@@ -180,7 +180,7 @@ class TestSubmitCmd(unittest.TestCase):
         output = "Submitted batch job"
         with pytest.raises(
             ValueError,
-            match="Output 'Submitted batch job' does not contain 'Submitted batch job' followed by a job ID.",
+            match=r"Output 'Submitted batch job' does not contain 'Submitted batch job' followed by a job ID\.",
         ):
             _parse_job_id(output)
 
@@ -188,14 +188,16 @@ class TestSubmitCmd(unittest.TestCase):
         """Test that the parse job id function raises an error if the output is invalid."""
         output = "Invalid output"
         with pytest.raises(
-            ValueError, match="Output 'Invalid output' does not contain 'Submitted batch job' followed by a job ID."
+            ValueError, match=r"Output 'Invalid output' does not contain 'Submitted batch job' followed by a job ID\."
         ):
             _parse_job_id(output)
 
     def test_parse_job_id_empty_string(self) -> None:
         """Test that the parse job id function raises an error if the output is empty."""
         output = ""
-        with pytest.raises(ValueError, match="Output '' does not contain 'Submitted batch job' followed by a job ID."):
+        with pytest.raises(
+            ValueError, match=r"Output '' does not contain 'Submitted batch job' followed by a job ID\."
+        ):
             _parse_job_id(output)
 
     @patch("fabric.Connection")
@@ -450,7 +452,7 @@ class TestLaunch:
 
     def test_launch_invalid_mounts(self, mock_curator_submit: Mock) -> None:
         """Test that the launch function raises an error if the container mounts are invalid."""
-        with pytest.raises(ValueError, match="(?i).*must have at least 2 or colon separated parts.*"):
+        with pytest.raises(ValueError, match=r"(?i).*must have at least 2 or colon separated parts.*"):
             submit_cli(
                 command=[str(_START_RAY), "arg1", "arg2"],
                 login_node="login_node",

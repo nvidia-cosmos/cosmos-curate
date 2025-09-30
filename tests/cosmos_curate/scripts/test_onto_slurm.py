@@ -110,7 +110,7 @@ class TestSlurmEnv:
             if var in os.environ:
                 monkeypatch.delenv(var)
 
-        with pytest.raises(ValueError, match="Error: environment variable .* is not set"):
+        with pytest.raises(ValueError, match=r"Error: environment variable .* is not set"):
             SlurmEnv.from_env()
 
 

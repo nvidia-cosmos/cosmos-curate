@@ -17,8 +17,11 @@
 See RAY_PIPELINES.md for an introduction to our model packaging system.
 """
 
+import collections
 import concurrent.futures
+import gc
 import hashlib
+import importlib
 import json
 import pathlib
 import shutil
@@ -479,10 +482,7 @@ def _reduce_t5_model_weights(destination: pathlib.Path) -> None:
         destination: Path to the T5 model weights.
 
     """
-    import collections
-    import gc
-
-    import torch
+    torch = importlib.import_module("torch")
 
     dst = destination / "pytorch_model.bin.reduced"
     if dst.exists():

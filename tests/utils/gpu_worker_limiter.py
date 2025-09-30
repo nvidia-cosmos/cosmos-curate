@@ -14,6 +14,8 @@
 # limitations under the License.
 """Pytest plugin to limit workers to available GPU count."""
 
+import importlib
+
 from _pytest.config import Config, Parser
 from loguru import logger
 
@@ -21,7 +23,7 @@ from loguru import logger
 def _get_available_gpus() -> int:
     """Get the number of available GPUs using pynvml (no CUDA initialization)."""
     try:
-        import pynvml
+        pynvml = importlib.import_module("pynvml")
     except ImportError:
         logger.warning("pynvml not installed; GPU worker limiting disabled")
         return 0

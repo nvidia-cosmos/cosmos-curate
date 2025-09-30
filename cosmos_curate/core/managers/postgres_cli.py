@@ -17,6 +17,7 @@
 Be very careful with this CLI. It makes changes to the postgres databases and may cause unwanted changes.
 """
 
+import importlib
 from typing import Annotated, Any, cast
 
 import attr
@@ -339,9 +340,9 @@ def update_schemas(  # noqa: C901, PLR0912
 
     if table_set == database_types.TableSet.AV:
         try:
-            import cosmos_curate.pipelines.av.utils.postgres_schema as postgres_schema_av  # type: ignore[import-untyped]
-
-            postgres_schema = postgres_schema_av
+            postgres_schema = importlib.import_module(
+                "cosmos_curate.pipelines.av.utils.postgres_schema",
+            )
         except ModuleNotFoundError as e:
             error_msg = "AV schema not found."
             console.print(error_msg)
