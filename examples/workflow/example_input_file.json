@@ -1,0 +1,22 @@
+[
+    [
+        "s3://my-bucket/inputs/input-video-list-01.json",
+        "s3://my-bucket/outputs/output-01/"
+    ],
+    [
+        "s3://my-bucket/inputs/input-video-list-02.json",
+        "s3://my-bucket/outputs/output-02/"
+    ],
+    [
+        "s3://my-bucket/inputs/input-video-list-03.json",
+        "s3://my-bucket/outputs/output-03/"
+    ],
+    [
+        "s3://my-bucket/inputs/input-video-list-04.json",
+        "s3://my-bucket/outputs/output-04/"
+    ],
+    [
+        "s3://my-bucket/inputs/input-video-list-05.json",
+        "s3://my-bucket/outputs/output-05/"
+    ]
+]

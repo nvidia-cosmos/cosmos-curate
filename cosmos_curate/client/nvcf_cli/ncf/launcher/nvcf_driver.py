@@ -766,7 +766,7 @@ def nvcf_invoke_function(  # noqa: PLR0913
                 asset_id=asset_id,
                 s3_config=_get_s3_config_str(s3_config_file),
             )
-            nvcf_hdl.console.print(f"Request funcid: {resp['requestId']}")
+            nvcf_hdl.console.print(f"RequestId: {resp['reqid']}")
 
     except Exception as e:
         error_msg = f"Could not invoke function: {e!s}"

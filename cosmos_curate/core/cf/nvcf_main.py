@@ -67,6 +67,7 @@ from cosmos_curate.pipelines.video.sharding_pipeline import nvcf_run_shard
 from cosmos_curate.pipelines.video.splitting_pipeline import nvcf_run_split
 
 _LOG_RDWR_LOCK_FILE = pathlib.Path(tempfile.gettempdir()) / "pipeline_status.lock"
+_FORCE_TERMINATE_REQUEST_ID = "12345678-1234-1234-1234-123456789abc"
 
 _RAY_DASHBOARD = f"http://127.0.0.1:{os.getenv('RAY_DASHBOARD_PORT', '8265')}"
 _METRICS_PORT = 9002
@@ -275,10 +276,13 @@ def _terminate_last_job(request_id: str) -> tuple[bool, str]:
     tout: int = 600
     http_ok: int = 200
 
-    status = _get_request_status(request_id)
-    logger.debug(f"{request_id} : status is : {status}")
-    if status != "running":
-        _value_error(f"{request_id} status is {status}")
+    if request_id != _FORCE_TERMINATE_REQUEST_ID:
+        status = _get_request_status(request_id)
+        logger.info(f"{request_id} : status is : {status}")
+        if status != "running":
+            _value_error(f"{request_id} status is {status}")
+    else:
+        logger.info(f"got special req_id {request_id}, proceeding to terminate last job")
 
     # List all running ray jobs for the currently running
     # NVCF request
