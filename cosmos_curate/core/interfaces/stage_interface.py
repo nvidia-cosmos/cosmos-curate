@@ -15,12 +15,13 @@
 """Key interfaces for defining a stage in the curation pipeline."""
 
 import attrs
+import ray
 
 from cosmos_curate.core.interfaces.model_interface import ModelInterface
 from cosmos_curate.core.utils.pixi_runtime_envs import PixiRuntimeEnv
 from cosmos_xenna.pipelines.private.resources import Resources, WorkerMetadata
 from cosmos_xenna.pipelines.private.specs import Stage, StageSpec
-from cosmos_xenna.ray_utils.runtime_envs import RuntimeEnv
+from cosmos_xenna.ray_utils.runtime_envs import CondaEnv, RuntimeEnv
 
 
 @attrs.define
@@ -136,8 +137,13 @@ class CuratorStage(Stage[PipelineTask, PipelineTask]):
             The environment information for the stage.
 
         """
+
+        class _PixiRuntimeEnv(RuntimeEnv):
+            def to_ray_runtime_env(self) -> ray.runtime_env.RuntimeEnv:
+                return PixiRuntimeEnv(self.conda.name if self.conda else "")
+
         if self.conda_env_name is not None:
-            return PixiRuntimeEnv(self.conda_env_name)
+            return _PixiRuntimeEnv(CondaEnv(self.conda_env_name))
         return None
 
     # Should not override

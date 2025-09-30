@@ -70,7 +70,7 @@ class SemDedupConfig:
     enable_profiling: bool = False
 
 
-@ray.remote(num_gpus=1, runtime_env=PixiRuntimeEnv("cuml").to_ray_runtime_env())
+@ray.remote(num_gpus=1, runtime_env=PixiRuntimeEnv("cuml"))
 class SemDedupActor(RAFTActor):
     """A Ray actor class for performing semantic dedup."""
 

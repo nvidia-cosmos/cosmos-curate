@@ -713,7 +713,7 @@ class CosmosPredict2WriterStage(CuratorStage):
         # Additional cleanup if needed
 
 
-@ray.remote(num_gpus=1, runtime_env=PixiRuntimeEnv("unified").to_ray_runtime_env())
+@ray.remote(num_gpus=1, runtime_env=PixiRuntimeEnv("unified"))
 def generate_cosmos_predict2_prefix_cache(  # noqa: PLR0913
     output_prefix: str,
     dataset_name: str,
