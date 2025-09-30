@@ -25,7 +25,7 @@ class PixiRuntimeEnv(RuntimeEnv):
     Pixi environment name is provided.
     """
 
-    def __init__(self, env_name: str) -> None:
+    def __init__(self, env_name: str, env_vars: dict[str, str] | None = None) -> None:
         """Create a Pixi-backed Ray runtime environment.
 
         Parameters
@@ -33,6 +33,12 @@ class PixiRuntimeEnv(RuntimeEnv):
         env_name: str
             Name of the Pixi environment to activate. If empty, the default
             Python executable resolution is used.
+        env_vars: dict[str, str] | None
+            Environment variables to forward into the Ray runtime environment.
 
         """
-        super().__init__(py_executable=f"pixi run -e {env_name} python" if env_name else None)
+        copied_env_vars = None if env_vars is None else dict(env_vars)
+        super().__init__(
+            env_vars=copied_env_vars,
+            py_executable=f"pixi run -e {env_name} python" if env_name else None,
+        )

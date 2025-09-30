@@ -140,7 +140,10 @@ class CuratorStage(Stage[PipelineTask, PipelineTask]):
 
         class _PixiRuntimeEnv(RuntimeEnv):
             def to_ray_runtime_env(self) -> ray.runtime_env.RuntimeEnv:
-                return PixiRuntimeEnv(self.conda.name if self.conda else "")
+                return PixiRuntimeEnv(
+                    self.conda.name if self.conda else "",
+                    env_vars=self.extra_env_vars,
+                )
 
         if self.conda_env_name is not None:
             return _PixiRuntimeEnv(CondaEnv(self.conda_env_name))
