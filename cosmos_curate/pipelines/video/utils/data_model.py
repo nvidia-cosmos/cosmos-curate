@@ -581,7 +581,7 @@ class VllmConfig:
     """Configuration for a vLLM model.
 
     Args:
-        variant: Name of the model variant to use.
+        model_variant: Name of the model variant to use.
         prompt_variant: Type of prompt to use.
         prompt_text: Custom prompt text if provided.
         batch_size: Number of samples to process in parallel.
@@ -595,7 +595,7 @@ class VllmConfig:
 
     """
 
-    variant: str
+    model_variant: str
     prompt_variant: str = "default"
     prompt_text: str | None = None
     fp8: bool = True

@@ -135,17 +135,17 @@ class VllmModelInterface(ModelInterface):
     @property
     def model_id_names(self) -> list[str]:
         """Get the model ID names."""
-        variant = get_vllm_model_id(self._vllm_config.variant)
+        model_variant = get_vllm_model_id(self._vllm_config.model_variant)
         models = get_all_models_by_id()
-        model = models.get(variant)
+        model = models.get(model_variant)
 
         if model is None:
-            msg = f"Model not found for {self._vllm_config.variant} -> {variant}"
+            msg = f"Model not found for {self._vllm_config.model_variant} -> {model_variant}"
             raise ValueError(msg)
 
         model_id = model.get("model_id")
         if model_id is None:
-            msg = f"Model ID not found for variant {self._vllm_config.variant} -> {variant}"
+            msg = f"Model ID not found for variant {self._vllm_config.model_variant} -> {model_variant}"
             raise ValueError(msg)
 
         return [cast("str", model_id)]
@@ -193,7 +193,7 @@ class VllmPrepStage(CuratorStage):
             The secondary name of the stage.
 
         """
-        return self._vllm_config.variant
+        return self._vllm_config.model_variant
 
     @property
     def resources(self) -> CuratorStageResource:
@@ -334,7 +334,7 @@ class VllmCaptionStage(CuratorStage):
             The secondary name of the stage.
 
         """
-        return self._vllm_config.variant
+        return self._vllm_config.model_variant
 
     @property
     def conda_env_name(self) -> str:
@@ -375,7 +375,7 @@ class VllmCaptionStage(CuratorStage):
         """
         for task in tasks:
             video = _get_video_from_task(task)
-            free_vllm_inputs(video, self._vllm_config.variant)
+            free_vllm_inputs(video, self._vllm_config.model_variant)
 
             if not self._keep_mp4:
                 for clip in video.clips:

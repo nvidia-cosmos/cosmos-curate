@@ -105,7 +105,7 @@ def sample_captioning_task(sample_video_data: bytes) -> SplitPipeTask:
 def test_qwen_caption_generation(sample_captioning_task: SplitPipeTask) -> None:
     """Test the QwenCaptioning result."""
     vllm_config = VllmConfig(
-        variant="qwen",
+        model_variant="qwen",
     )
     window_config = WindowConfig(
         sampling_fps=2.0,

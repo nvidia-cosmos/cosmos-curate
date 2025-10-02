@@ -51,7 +51,7 @@ def test_get_video_from_task_fail() -> None:
 )
 def test_vllm_model_interface_model_id_names(config_variant: str, raises: AbstractContextManager[Any]) -> None:
     """Validate model_id_names are strings for each configured plugin variant."""
-    vllm_config = VllmConfig(variant=config_variant)
+    vllm_config = VllmConfig(model_variant=config_variant)
     vllm_model_interface = VllmModelInterface(vllm_config)
 
     with raises:

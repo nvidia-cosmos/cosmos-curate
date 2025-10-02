@@ -50,13 +50,13 @@ else:
 @pytest.mark.env("unified")
 def test_gather_vllm_requests() -> None:
     """Test gather_vllm_requests function."""
-    variant = VALID_VARIANTS[0]
+    model_variant = VALID_VARIANTS[0]
 
     # Create test windows
-    window1 = Window(start_frame=0, end_frame=10, model_input={variant: {"test": "data"}})
-    window2 = Window(start_frame=1, end_frame=11, model_input={variant: {"test": "data"}})
-    window3 = Window(start_frame=2, end_frame=12, model_input={variant: {"test": "data"}})
-    window4 = Window(start_frame=3, end_frame=13, model_input={variant: {"test": "data"}})
+    window1 = Window(start_frame=0, end_frame=10, model_input={model_variant: {"test": "data"}})
+    window2 = Window(start_frame=1, end_frame=11, model_input={model_variant: {"test": "data"}})
+    window3 = Window(start_frame=2, end_frame=12, model_input={model_variant: {"test": "data"}})
+    window4 = Window(start_frame=3, end_frame=13, model_input={model_variant: {"test": "data"}})
 
     # Create test clips
     clip1 = Clip(uuid=uuid4(), source_video="test1.mp4", span=(0.0, 5.0), windows=[window1, window2])
@@ -67,7 +67,7 @@ def test_gather_vllm_requests() -> None:
     video2 = Video(input_video=Path("test2.mp4"), clips=[clip2])
     videos = [video1, video2]
 
-    cfg = VllmConfig(variant=variant)
+    cfg = VllmConfig(model_variant=model_variant)
     vllm_requests = list(gather_vllm_requests(videos, cfg))
 
     assert len(vllm_requests) == 4  # noqa: PLR2004
@@ -83,7 +83,7 @@ def test_gather_vllm_requests() -> None:
 @pytest.mark.env("unified")
 def test_gather_vllm_requests_empty() -> None:
     """Test gather_vllm_requests with empty videos list."""
-    cfg = VllmConfig(variant=VALID_VARIANTS[0])
+    cfg = VllmConfig(model_variant=VALID_VARIANTS[0])
     vllm_requests = list(gather_vllm_requests([], cfg))
 
     assert len(vllm_requests) == 0
@@ -96,7 +96,7 @@ def test_gather_vllm_requests_empty_clip() -> None:
     video = Video(input_video=Path("test.mp4"), clips=[clip])
     videos = [video]
 
-    cfg = VllmConfig(variant=VALID_VARIANTS[0])
+    cfg = VllmConfig(model_variant=VALID_VARIANTS[0])
     vllm_requests = list(gather_vllm_requests(videos, cfg))
     assert len(vllm_requests) == 0
     assert clip.errors["clip_windowing"]
@@ -112,7 +112,7 @@ def test_gather_vllm_requests_empty_llm_inputs() -> None:
 
     assert not clip.errors
 
-    cfg = VllmConfig(variant=VALID_VARIANTS[0])
+    cfg = VllmConfig(model_variant=VALID_VARIANTS[0])
     vllm_requests = list(gather_vllm_requests(videos, cfg))
 
     assert vllm_requests == []
@@ -318,7 +318,7 @@ def test_prep_windows_for_vllm_and_free_vllm_inputs(
 
     mock_get_plugin.return_value = mock_plugin
 
-    config = VllmConfig(variant=model_variant)
+    config = VllmConfig(model_variant=model_variant)
     prompt = "test prompt"
 
     # Create test data
@@ -336,7 +336,7 @@ def test_prep_windows_for_vllm_and_free_vllm_inputs(
             llm_input = window.model_input.get(model_variant)
             assert isinstance(llm_input, dict)
 
-        free_vllm_inputs(video, config.variant)
+        free_vllm_inputs(video, config.model_variant)
 
         for clip in video.clips:
             for window in clip.windows:

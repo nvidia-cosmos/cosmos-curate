@@ -438,7 +438,7 @@ def split(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912, PLR0915
 
     if args.captioning_algorithm.lower() in {"phi4", "qwen", "cosmos_r1"}:
         vllm_config = VllmConfig(
-            args.captioning_algorithm,
+            model_variant=args.captioning_algorithm,
             prompt_variant=args.captioning_prompt_variant,
             prompt_text=args.captioning_prompt_text,
             max_output_tokens=args.captioning_max_output_tokens,

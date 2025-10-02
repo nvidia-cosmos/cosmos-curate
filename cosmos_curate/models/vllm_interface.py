@@ -106,7 +106,7 @@ def vllm_model(config: VllmConfig) -> LLM:
         A vLLM model instance.
 
     """
-    return _get_vllm_plugin(config.variant).model(config)
+    return _get_vllm_plugin(config.model_variant).model(config)
 
 
 def sampling_params(config: VllmConfig) -> SamplingParams:
@@ -139,7 +139,7 @@ def auto_processor(config: VllmConfig) -> AutoProcessor:
         The auto processor for the model.
 
     """
-    return _get_vllm_plugin(config.variant).processor()
+    return _get_vllm_plugin(config.model_variant).processor()
 
 
 def prep_windows_for_vllm(
@@ -165,7 +165,7 @@ def prep_windows_for_vllm(
         ValueError: If the windows and frames are not the same length.
 
     """
-    vllm_plugin = _get_vllm_plugin(config.variant)
+    vllm_plugin = _get_vllm_plugin(config.model_variant)
 
     if len(windows) != len(frames):
         msg = f"The number of windows ({len(windows)}) and frames ({len(frames)}) must be the same"
@@ -193,7 +193,7 @@ def gather_vllm_requests(
         RuntimeError: If a window has no prepared inputs.
 
     """
-    vllm_plugin = _get_vllm_plugin(vllm_config.variant)
+    vllm_plugin = _get_vllm_plugin(vllm_config.model_variant)
 
     for video_idx, video in enumerate(videos):
         for clip_idx, clip in enumerate(video.clips):
@@ -347,7 +347,7 @@ def process_vllm_output(
         A list of finished requests.
 
     """
-    vllm_plugin = _get_vllm_plugin(vllm_config.variant)
+    vllm_plugin = _get_vllm_plugin(vllm_config.model_variant)
     finished: list[VllmCaptionRequest] = []
 
     for out in engine_output:
@@ -388,7 +388,7 @@ def _caption_no_inflight_batching(  # noqa: PLR0913
         The number of captions generated.
 
     """
-    vllm_plugin = _get_vllm_plugin(model_config.variant)
+    vllm_plugin = _get_vllm_plugin(model_config.model_variant)
     requests = list(gather_vllm_requests(videos, model_config))
 
     if not requests:
@@ -418,7 +418,7 @@ def _caption_no_inflight_batching(  # noqa: PLR0913
         ]
         finished_requests = _process_requests(refined_requests)
 
-    scatter_vllm_captions(model_config.variant, videos, finished_requests, verbose=verbose)
+    scatter_vllm_captions(model_config.model_variant, videos, finished_requests, verbose=verbose)
 
     return len(finished_requests)
 
@@ -453,7 +453,7 @@ def _caption_inflight_batching(  # noqa: PLR0913
         msg = f"{max_inflight_requests=} must be >= 0"
         raise ValueError(msg)
 
-    vllm_plugin = _get_vllm_plugin(vllm_config.variant)
+    vllm_plugin = _get_vllm_plugin(vllm_config.model_variant)
     request_q: Deque[VllmCaptionRequest] = deque()  # noqa: UP006, remove noqa when python 3.10 support is dropped
     in_flight_requests: dict[str, VllmCaptionRequest] = {}
 
@@ -489,7 +489,7 @@ def _caption_inflight_batching(  # noqa: PLR0913
 
             finished_requests = _finished_requests
 
-        scatter_vllm_captions(vllm_config.variant, videos, finished_requests, verbose=verbose)
+        scatter_vllm_captions(vllm_config.model_variant, videos, finished_requests, verbose=verbose)
         finished += len(finished_requests)
 
     return finished
