@@ -173,6 +173,7 @@ def write_summary(
         args.limit,
         perf_profile=args.perf_profile,
         pipeline_run_time=pipeline_run_time,
+        write_all_caption_json=args.write_all_caption_json,
     )
 
     if args.perf_profile:
@@ -692,6 +693,13 @@ def _setup_parser(parser: argparse.ArgumentParser) -> None:  # noqa: PLR0915
         choices=["disable", "predict2"],
         default="disable",
         help="Whether and how to generate Cosmos-PredictX post-training dataset.",
+    )
+    parser.add_argument(
+        "--no-write-all-caption-json",
+        dest="write_all_caption_json",
+        action="store_false",
+        default=True,
+        help="Whether to write all captions to a single JSON file in the output path.",
     )
     parser.add_argument(
         "--splitting-algorithm",

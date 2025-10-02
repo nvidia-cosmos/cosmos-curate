@@ -399,13 +399,12 @@ def gather_and_upload_outputs(pipeline_type: str, args: argparse.Namespace) -> N
             input_client = get_storage_client(args.input_video_path)
             output_client = get_storage_client(output_path, can_overwrite=True)
             _write_all_window_captions(
-                output_path,
-                None,
-                get_files_relative(args.input_video_path, input_client),
-                0,
-                output_client,
+                output_path=output_path,
+                client_output=output_client,
+                output_s3_profile_name=None,
+                input_videos_relative=get_files_relative(args.input_video_path, input_client),
+                limit=0,
             )
-
         logger.info("Uploading zipped outputs …")
         zip_and_upload_directory(output_path, args.output_presigned_s3_url)
     except Exception as exc:  # noqa: BLE001

@@ -43,6 +43,9 @@ from cosmos_curate.pipelines.video.utils.data_model import (
     SplitPipeTask,
 )
 
+_SUMMARIZE_NUM_WORKERS = 32
+_SUMMARIZE_NUM_CHUNKS = 128
+
 
 @attrs.define
 class ProcessedVideoMetadata:
@@ -118,10 +121,13 @@ def _write_split_result_summary(  # noqa: PLR0913
     input_videos_relative: list[str],
     output_path: str,
     output_s3_profile_name: str,
+    *,
     embedding_algorithm: str,
     limit: int,
     pipeline_run_time: float = 0.0,
+    write_all_caption_json: bool = True,
 ) -> None:
+    logger.info(f"Starting to summarize data in {output_path} ...")
     client_output = storage_utils.get_storage_client(
         output_path,
         profile_name=output_s3_profile_name,
@@ -129,6 +135,7 @@ def _write_split_result_summary(  # noqa: PLR0913
     )
 
     processed_videos = get_files_relative(ClipWriterStage.get_output_path_processed_videos(output_path), client_output)
+    logger.info(f"Summarize: found {len(processed_videos)} processed videos")
     clip_stats_keys = [
         "num_clips_filtered_by_motion",
         "num_clips_filtered_by_aesthetic",
@@ -156,6 +163,7 @@ def _write_split_result_summary(  # noqa: PLR0913
         input_videos_relative,
         limit,
     )
+    logger.info(f"Summarize: read metadata for {len(all_video_data)} videos")
     for input_video, data in all_video_data.items():
         summary_data[input_video] = {
             "source_video": str(get_full_path(input_path, input_video)),
@@ -195,16 +203,16 @@ def _write_split_result_summary(  # noqa: PLR0913
             client=client_output,
             backup_and_overwrite=True,
         )
+        logger.info(f"Wrote summary to {summary_dest}")
 
     do_with_retries(func_write_summary)
 
-    _write_all_window_captions(
-        output_path,
-        output_s3_profile_name,
-        input_videos_relative,
-        limit,
-        client_output,
-    )
+    if write_all_caption_json:
+        _write_all_window_captions(
+            output_path=output_path,
+            client_output=client_output,
+            all_video_data=all_video_data,
+        )
 
 
 def write_split_summary(  # noqa: PLR0913
@@ -218,6 +226,7 @@ def write_split_summary(  # noqa: PLR0913
     *,
     perf_profile: bool = False,
     pipeline_run_time: float = 0.0,
+    write_all_caption_json: bool = True,
 ) -> None:
     """Write summary of split pipeline results including job stats and performance metrics.
 
@@ -231,6 +240,7 @@ def write_split_summary(  # noqa: PLR0913
         limit: Maximum number of videos to process.
         perf_profile: Whether to write performance statistics.
         pipeline_run_time: Total runtime of the pipeline in minutes.
+        write_all_caption_json: Whether to write all caption JSON file.
 
     """
     # dump and write job summary
@@ -239,9 +249,10 @@ def write_split_summary(  # noqa: PLR0913
         input_videos_relative,
         output_path,
         output_s3_profile_name,
-        embedding_algorithm,
-        limit,
-        pipeline_run_time,
+        embedding_algorithm=embedding_algorithm,
+        limit=limit,
+        pipeline_run_time=pipeline_run_time,
+        write_all_caption_json=write_all_caption_json,
     )
     # dump and write performance stats
     if perf_profile:
@@ -337,7 +348,7 @@ def _read_all_video_metadata_parallel(
     """Read per-video metadata using a thread pool for better IO throughput."""
     all_video_data: dict[str, ProcessedVideoMetadata] = {}
     futures = []
-    with ThreadPoolExecutor(max_workers=32) as executor:
+    with ThreadPoolExecutor(max_workers=_SUMMARIZE_NUM_WORKERS) as executor:
         futures = [
             executor.submit(
                 _worker_read_video_metadata,
@@ -346,26 +357,33 @@ def _read_all_video_metadata_parallel(
                 chunk,
                 limit,
             )
-            for chunk in grouping.split_into_n_chunks(input_videos_relative, 32)
+            for chunk in grouping.split_into_n_chunks(input_videos_relative, _SUMMARIZE_NUM_CHUNKS)
         ]
         for fut in futures:
             all_video_data.update(fut.result())
     return all_video_data
 
 
-def get_all_window_captions_data(
+def _write_all_window_captions(  # noqa: PLR0913
+    *,
     output_path: str,
-    output_s3_profile_name: str | None,
-    input_videos_relative: list[str],
-    limit: int,
-) -> dict[str, Any]:
-    """Return a nested dict of all window->caption mappings for all videos."""
-    all_video_data = _read_all_video_metadata_parallel(
-        output_path,
-        output_s3_profile_name,
-        input_videos_relative,
-        limit,
-    )
+    client_output: storage_client.StorageClient | None,
+    all_video_data: dict[str, ProcessedVideoMetadata] | None = None,
+    output_s3_profile_name: str | None = None,
+    input_videos_relative: list[str] | None = None,
+    limit: int | None = None,
+) -> None:
+    """Gather all window captions data and write it to a JSON file."""
+    if all_video_data is None:
+        # this the hacky managed service zip upload/download path
+        assert input_videos_relative is not None
+        assert limit is not None
+        all_video_data = _read_all_video_metadata_parallel(
+            output_path,
+            output_s3_profile_name,
+            input_videos_relative,
+            limit,
+        )
 
     all_window_captions_data: dict[str, Any] = {}
     for input_video, data in all_video_data.items():
@@ -377,28 +395,11 @@ def get_all_window_captions_data(
                 if clip_id not in all_window_captions_data[input_video]:
                     all_window_captions_data[input_video][clip_id] = {}
                 all_window_captions_data[input_video][clip_id].update(clip_data)
-    return all_window_captions_data
-
-
-def _write_all_window_captions(
-    output_path: str,
-    output_s3_profile_name: str | None,
-    input_videos_relative: list[str],
-    limit: int,
-    client_output: storage_client.StorageClient | None,
-) -> None:
-    """Gather all window captions data and write it to a JSON file."""
-    captions_data = get_all_window_captions_data(
-        output_path,
-        output_s3_profile_name,
-        input_videos_relative,
-        limit,
-    )
 
     def _write() -> None:
         dest = get_full_path(output_path, "v0", "all_window_captions.json")
         write_json(
-            captions_data,
+            all_window_captions_data,
             dest,
             "all window captions",
             "all videos",
@@ -406,5 +407,6 @@ def _write_all_window_captions(
             client=client_output,
             backup_and_overwrite=True,
         )
+        logger.info(f"Wrote all window captions to {dest}")
 
     do_with_retries(_write)
