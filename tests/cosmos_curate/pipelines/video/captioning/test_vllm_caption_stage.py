@@ -17,15 +17,25 @@
 from contextlib import AbstractContextManager, nullcontext
 from pathlib import Path
 from typing import Any
+from uuid import UUID
 
 import pytest
 
 from cosmos_curate.core.utils.model import conda_utils
 from cosmos_curate.models.vllm_model_ids import _VLLM_MODELS
-from cosmos_curate.pipelines.video.utils.data_model import SplitPipeTask, Video, VllmConfig
+from cosmos_curate.pipelines.video.utils.data_model import Clip, SplitPipeTask, Video, VllmConfig, Window
 
 if conda_utils.is_running_in_env("unified"):
-    from cosmos_curate.pipelines.video.captioning.vllm_caption_stage import VllmModelInterface, _get_video_from_task
+    from cosmos_curate.pipelines.video.captioning.vllm_caption_stage import (
+        VllmModelInterface,
+        _get_video_from_task,
+        _get_windows_from_tasks,
+    )
+
+# Test UUIDs for deterministic testing
+UUID_1 = UUID("00000000-0000-0000-0000-000000000001")
+UUID_2 = UUID("00000000-0000-0000-0000-000000000002")
+UUID_3 = UUID("00000000-0000-0000-0000-000000000003")
 
 
 @pytest.mark.env("unified")
@@ -41,7 +51,7 @@ def test_get_video_from_task_fail() -> None:
     """Test get_video_from_task."""
     task = 10
     with pytest.raises(TypeError, match=r".*"):
-        _get_video_from_task(task)
+        _get_video_from_task(task)  # type: ignore[type-var]
 
 
 @pytest.mark.env("unified")
@@ -58,3 +68,133 @@ def test_vllm_model_interface_model_id_names(config_variant: str, raises: Abstra
         model_id_names = vllm_model_interface.model_id_names
         for model_id_name in model_id_names:
             assert isinstance(model_id_name, str)
+
+
+@pytest.mark.env("unified")
+@pytest.mark.parametrize(
+    ("tasks", "expected_windows", "raises"),
+    [
+        # Empty tasks list
+        ([], [], nullcontext()),
+        # Single task with no clips
+        ([SplitPipeTask(video=Video(input_video=Path("test.mp4")))], [], nullcontext()),
+        # Single task with clip but no windows
+        (
+            [
+                SplitPipeTask(
+                    video=Video(
+                        input_video=Path("test.mp4"),
+                        clips=[
+                            Clip(
+                                uuid=UUID_1,
+                                source_video="test.mp4",
+                                span=(0.0, 1.0),
+                            )
+                        ],
+                    )
+                )
+            ],
+            [],
+            nullcontext(),
+        ),
+        # Single task with clip and windows
+        (
+            [
+                SplitPipeTask(
+                    video=Video(
+                        input_video=Path("test.mp4"),
+                        clips=[
+                            Clip(
+                                uuid=UUID_1,
+                                source_video="test.mp4",
+                                span=(0.0, 1.0),
+                                windows=[
+                                    Window(
+                                        start_frame=0,
+                                        end_frame=10,
+                                    ),
+                                    Window(
+                                        start_frame=10,
+                                        end_frame=20,
+                                    ),
+                                ],
+                            )
+                        ],
+                    )
+                )
+            ],
+            [
+                (Window(start_frame=0, end_frame=10), UUID_1),
+                (Window(start_frame=10, end_frame=20), UUID_1),
+            ],
+            nullcontext(),
+        ),
+        # Multiple tasks with mixed scenarios
+        (
+            [
+                SplitPipeTask(
+                    video=Video(
+                        input_video=Path("test1.mp4"),
+                        clips=[
+                            Clip(
+                                uuid=UUID_1,
+                                source_video="test1.mp4",
+                                span=(0.0, 1.0),
+                                windows=[
+                                    Window(
+                                        start_frame=0,
+                                        end_frame=10,
+                                    )
+                                ],
+                            )
+                        ],
+                    )
+                ),
+                SplitPipeTask(
+                    video=Video(
+                        input_video=Path("test2.mp4"),
+                        clips=[
+                            Clip(
+                                uuid=UUID_2,
+                                source_video="test2.mp4",
+                                span=(0.0, 1.0),
+                            ),  # No windows
+                            Clip(
+                                uuid=UUID_3,
+                                source_video="test2.mp4",
+                                span=(1.0, 2.0),
+                                windows=[
+                                    Window(
+                                        start_frame=20,
+                                        end_frame=30,
+                                    )
+                                ],
+                            ),
+                        ],
+                    )
+                ),
+            ],
+            [
+                (Window(start_frame=0, end_frame=10), UUID_1),
+                (Window(start_frame=20, end_frame=30), UUID_3),
+            ],
+            nullcontext(),
+        ),
+        # Task with invalid video type
+        ([SplitPipeTask(video="invalid")], [], pytest.raises(TypeError, match=r".*")),
+    ],
+)
+def test_get_windows_from_tasks(
+    tasks: list[Any], expected_windows: list[tuple[Window, UUID]], raises: AbstractContextManager[Any]
+) -> None:
+    """Test _gather_windows_from_tasks function."""
+    with raises:
+        windows, clip_uuids = _get_windows_from_tasks(tasks)
+        assert len(windows) == len(expected_windows)
+        assert len(clip_uuids) == len(expected_windows)
+        for (actual_window, actual_clip_uuid), (expected_window, expected_clip_uuid) in zip(
+            zip(windows, clip_uuids, strict=True), expected_windows, strict=True
+        ):
+            assert actual_clip_uuid == str(expected_clip_uuid)
+            assert actual_window.start_frame == expected_window.start_frame
+            assert actual_window.end_frame == expected_window.end_frame

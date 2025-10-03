@@ -144,6 +144,8 @@ class Window:
     t5_xxl_embedding: dict[str, npt.NDArray[np.int32]] = attrs.Factory(dict)
     # webp preview
     webp_bytes: bytes | None = None
+    # for debugging
+    errors: dict[str, str] = attrs.Factory(dict)
 
     def get_major_size(self) -> int:
         """Calculate total memory size of the window.
@@ -646,8 +648,6 @@ class VllmCaptionRequest:
 
     request_id: str
     inputs: dict[str, Any]
-    video_idx: int
-    clip_idx: int
     window_idx: int
     caption: str | None = None
     iterations: int = 0

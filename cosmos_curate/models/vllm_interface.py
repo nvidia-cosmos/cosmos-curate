@@ -49,7 +49,7 @@ from cosmos_curate.core.utils.misc import grouping
 from cosmos_curate.models.vllm_cosmos_reason1_vl import VllmCosmosReason1VL
 from cosmos_curate.models.vllm_phi import VllmPhi4
 from cosmos_curate.models.vllm_qwen import VllmQwen7B
-from cosmos_curate.pipelines.video.utils.data_model import Video, VllmCaptionRequest
+from cosmos_curate.pipelines.video.utils.data_model import VllmCaptionRequest, Window
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -177,13 +177,15 @@ def prep_windows_for_vllm(
 
 
 def gather_vllm_requests(
-    videos: list[Video],
+    windows: list[Window],
+    clip_uuids: list[str],
     vllm_config: VllmConfig,
 ) -> Generator[VllmCaptionRequest, None, None]:
     """Gather vLLM requests from the videos.
 
     Args:
-        videos: The videos to gather requests from.
+        windows: The windows to gather requests from.
+        clip_uuids: The clip uuids to gather requests from.
         vllm_config: The configuration for the VLLM model.
 
     Returns:
@@ -195,28 +197,19 @@ def gather_vllm_requests(
     """
     vllm_plugin = _get_vllm_plugin(vllm_config.model_variant)
 
-    for video_idx, video in enumerate(videos):
-        for clip_idx, clip in enumerate(video.clips):
-            if not clip.windows:
-                logger.warning(f"Clip {clip.uuid} has no windows")
-                clip.errors["clip_windowing"] = "empty"
-                continue
+    for window_idx, (window, clip_uuid) in enumerate(zip(windows, clip_uuids, strict=True)):
+        model_input = window.model_input.get(vllm_plugin.model_variant())
 
-            for window_idx, window in enumerate(clip.windows):
-                llm_input = window.model_input.get(vllm_plugin.model_variant())
+        if not model_input:
+            logger.error(f"Clip {clip_uuid} window {window_idx} has no prepared inputs.")
+            window.errors["model_input"] = "empty"
+            continue
 
-                if not llm_input:
-                    logger.error(f"Clip {clip.uuid} window {window_idx} has no prepared inputs.")
-                    clip.errors[f"window-{window_idx}"] = "empty"
-                    continue
-
-                yield VllmCaptionRequest(
-                    request_id=secrets.token_hex(8),
-                    inputs=llm_input,
-                    video_idx=video_idx,
-                    clip_idx=clip_idx,
-                    window_idx=window_idx,
-                )
+        yield VllmCaptionRequest(
+            request_id=secrets.token_hex(8),
+            inputs=model_input,
+            window_idx=window_idx,
+        )
 
 
 def vllm_generate(
@@ -256,7 +249,8 @@ def vllm_generate(
 
 def scatter_vllm_captions(
     model_variant: str,
-    videos: list[Video],
+    windows: list[Window],
+    clip_uuids: list[str],
     requests: list[VllmCaptionRequest],
     *,
     verbose: bool = False,
@@ -269,7 +263,8 @@ def scatter_vllm_captions(
 
     Args:
         model_variant: The variant of the model.
-        videos: The videos to assign captions to.
+        windows: The windows to assign captions to.
+        clip_uuids: The clip uuids to assign captions to.
         requests: The requests to scatter.
         verbose: whether to print verbose logs.
 
@@ -277,6 +272,10 @@ def scatter_vllm_captions(
         RuntimeError: If a request is not finished.
 
     """
+    if len(windows) != len(clip_uuids):
+        msg = f"The number of windows ({len(windows)}) and clip uuids ({len(clip_uuids)}) must be the same"
+        raise ValueError(msg)
+
     for request in requests:
         if not request.finished:
             # If this happens, this means there's a bug, and it should be fixed.
@@ -284,26 +283,22 @@ def scatter_vllm_captions(
             raise RuntimeError(msg)
 
         caption = request.caption if request.caption is not None else "No caption"
-        videos[request.video_idx].clips[request.clip_idx].windows[request.window_idx].caption[model_variant] = caption
+        windows[request.window_idx].caption[model_variant] = caption
+        clip_uuid = clip_uuids[request.window_idx]
         if verbose:
-            logger.info(
-                f"Caption for clip {videos[request.video_idx].clips[request.clip_idx].uuid} window "
-                f"{request.window_idx}: {caption}"
-            )
+            logger.info(f"Caption for clip {clip_uuid} window {request.window_idx}: {caption}")
 
 
-def free_vllm_inputs(video: Video, model_variant: str) -> None:
+def free_vllm_inputs(window: Window, model_variant: str) -> None:
     """Free unused memory for the model variant.
 
     Args:
-        video: The video to free unused memory for.
+        window: The window to free unused memory for.
         model_variant: The variant of the model.
 
     """
     vllm_plugin = _get_vllm_plugin(model_variant)
-    for clip in video.clips:
-        for window in clip.windows:
-            window.model_input.pop(vllm_plugin.model_variant(), None)
+    window.model_input.pop(vllm_plugin.model_variant(), None)
 
 
 def make_refined_llm_input(
@@ -366,7 +361,8 @@ def process_vllm_output(
 
 
 def _caption_no_inflight_batching(  # noqa: PLR0913
-    videos: list[Video],
+    windows: list[Window],
+    clip_uuids: list[str],
     llm: LLM,
     processor: AutoProcessor,
     sampling_params: SamplingParams,
@@ -377,7 +373,8 @@ def _caption_no_inflight_batching(  # noqa: PLR0913
     """Caption the videos without inflight batching.
 
     Args:
-        videos: The videos to caption.
+        windows: The windows to caption.
+        clip_uuids: The clip uuids to caption.
         llm: The vLLM model.
         processor: The processor to use.
         sampling_params: The sampling parameters.
@@ -389,7 +386,7 @@ def _caption_no_inflight_batching(  # noqa: PLR0913
 
     """
     vllm_plugin = _get_vllm_plugin(model_config.model_variant)
-    requests = list(gather_vllm_requests(videos, model_config))
+    requests = list(gather_vllm_requests(windows, clip_uuids, model_config))
 
     if not requests:
         logger.warning("No valid vLLM inputs found in any videos")
@@ -418,13 +415,14 @@ def _caption_no_inflight_batching(  # noqa: PLR0913
         ]
         finished_requests = _process_requests(refined_requests)
 
-    scatter_vllm_captions(model_config.model_variant, videos, finished_requests, verbose=verbose)
+    scatter_vllm_captions(model_config.model_variant, windows, clip_uuids, finished_requests, verbose=verbose)
 
     return len(finished_requests)
 
 
 def _caption_inflight_batching(  # noqa: PLR0913
-    videos: list[Video],
+    windows: list[Window],
+    clip_uuids: list[str],
     llm: LLM,
     processor: AutoProcessor,
     sampling_params: SamplingParams,
@@ -436,7 +434,8 @@ def _caption_inflight_batching(  # noqa: PLR0913
     """Caption the videos using inflight batching.
 
     Args:
-        videos: The videos to caption.
+        windows: The windows to caption.
+        clip_uuids: The clip uuids to caption.
         llm: The vLLM model.
         processor: The processor to use.
         sampling_params: The sampling parameters.
@@ -457,7 +456,7 @@ def _caption_inflight_batching(  # noqa: PLR0913
     request_q: Deque[VllmCaptionRequest] = deque()  # noqa: UP006, remove noqa when python 3.10 support is dropped
     in_flight_requests: dict[str, VllmCaptionRequest] = {}
 
-    for request in gather_vllm_requests(videos, vllm_config):
+    for request in gather_vllm_requests(windows, clip_uuids, vllm_config):
         request_q.append(request)
 
     finished = 0
@@ -489,14 +488,15 @@ def _caption_inflight_batching(  # noqa: PLR0913
 
             finished_requests = _finished_requests
 
-        scatter_vllm_captions(vllm_config.model_variant, videos, finished_requests, verbose=verbose)
+        scatter_vllm_captions(vllm_config.model_variant, windows, clip_uuids, finished_requests, verbose=verbose)
         finished += len(finished_requests)
 
     return finished
 
 
 def vllm_caption(  # noqa: PLR0913
-    videos: list[Video],
+    windows: list[Window],
+    clip_uuids: list[str],
     llm: LLM,
     processor: AutoProcessor,
     sampling_params: SamplingParams,
@@ -509,7 +509,8 @@ def vllm_caption(  # noqa: PLR0913
     """Caption the videos using the vLLM model.
 
     Args:
-        videos: The videos to caption.
+        windows: The windows to caption.
+        clip_uuids: The clip uuids to caption.
         llm: The vLLM model.
         processor: The processor to use.
         sampling_params: The sampling parameters.
@@ -525,6 +526,14 @@ def vllm_caption(  # noqa: PLR0913
     """
     if inflight_batching:
         return _caption_inflight_batching(
-            videos, llm, processor, sampling_params, vllm_config, max_inflight_requests, verbose=verbose
+            windows, clip_uuids, llm, processor, sampling_params, vllm_config, max_inflight_requests, verbose=verbose
         )
-    return _caption_no_inflight_batching(videos, llm, processor, sampling_params, vllm_config, verbose=verbose)
+    return _caption_no_inflight_batching(
+        windows,
+        clip_uuids,
+        llm,
+        processor,
+        sampling_params,
+        vllm_config,
+        verbose=verbose,
+    )

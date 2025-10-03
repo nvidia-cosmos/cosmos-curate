@@ -15,17 +15,15 @@
 """Test vllm_interface.py."""
 
 from contextlib import AbstractContextManager, nullcontext
-from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
-from uuid import uuid4
+from uuid import UUID
 
 import pytest
 
 from cosmos_curate.core.utils.model import conda_utils
 from cosmos_curate.pipelines.video.utils.data_model import (
     Clip,
-    Video,
     VllmCaptionRequest,
     VllmConfig,
     Window,
@@ -47,6 +45,11 @@ else:
     VALID_VARIANTS = []
 
 
+# Test UUIDs for deterministic testing
+UUID_1 = UUID("00000000-0000-0000-0000-000000000001")
+UUID_2 = UUID("00000000-0000-0000-0000-000000000002")
+
+
 @pytest.mark.env("unified")
 def test_gather_vllm_requests() -> None:
     """Test gather_vllm_requests function."""
@@ -59,64 +62,46 @@ def test_gather_vllm_requests() -> None:
     window4 = Window(start_frame=3, end_frame=13, model_input={model_variant: {"test": "data"}})
 
     # Create test clips
-    clip1 = Clip(uuid=uuid4(), source_video="test1.mp4", span=(0.0, 5.0), windows=[window1, window2])
-    clip2 = Clip(uuid=uuid4(), source_video="test2.mp4", span=(5.0, 10.0), windows=[window3, window4])
+    clip1 = Clip(uuid=UUID_1, source_video="test1.mp4", span=(0.0, 5.0), windows=[window1, window2])
+    clip2 = Clip(uuid=UUID_2, source_video="test2.mp4", span=(5.0, 10.0), windows=[window3, window4])
 
-    # Create test videos
-    video1 = Video(input_video=Path("test1.mp4"), clips=[clip1])
-    video2 = Video(input_video=Path("test2.mp4"), clips=[clip2])
-    videos = [video1, video2]
+    clip_uuids = []
+    for clip in [clip1, clip2]:
+        clip_uuids += [str(clip.uuid)] * len(clip.windows)
+
+    windows = [window for clip in [clip1, clip2] for window in clip.windows]
 
     cfg = VllmConfig(model_variant=model_variant)
-    vllm_requests = list(gather_vllm_requests(videos, cfg))
+    vllm_requests = list(gather_vllm_requests(windows, clip_uuids, cfg))
 
-    assert len(vllm_requests) == 4  # noqa: PLR2004
+    assert len(vllm_requests) == len(windows)
 
     # Verify results
-    expected_mappings = [(0, 0, 0), (0, 0, 1), (1, 0, 0), (1, 0, 1)]
+    expected_mappings = list(range(len(windows)))
     for req, expected_mapping in zip(vllm_requests, expected_mappings, strict=True):
-        assert req.video_idx == expected_mapping[0]
-        assert req.clip_idx == expected_mapping[1]
-        assert req.window_idx == expected_mapping[2]
+        assert isinstance(req, VllmCaptionRequest)
+        assert req.window_idx == expected_mapping
+        assert req.inputs == windows[expected_mapping].model_input[model_variant]
 
 
 @pytest.mark.env("unified")
 def test_gather_vllm_requests_empty() -> None:
     """Test gather_vllm_requests with empty videos list."""
     cfg = VllmConfig(model_variant=VALID_VARIANTS[0])
-    vllm_requests = list(gather_vllm_requests([], cfg))
+    vllm_requests = list(gather_vllm_requests([], [], cfg))
 
     assert len(vllm_requests) == 0
 
 
 @pytest.mark.env("unified")
-def test_gather_vllm_requests_empty_clip() -> None:
-    """Test gather_vllm_requests with empty clip."""
-    clip = Clip(uuid=uuid4(), source_video="test.mp4", span=(0.0, 5.0), windows=[])
-    video = Video(input_video=Path("test.mp4"), clips=[clip])
-    videos = [video]
+def test_gather_vllm_requests_empty_model_input() -> None:
+    """Test gather_vllm_requests with empty model_input."""
+    window = Window(start_frame=0, end_frame=10, model_input={})
 
     cfg = VllmConfig(model_variant=VALID_VARIANTS[0])
-    vllm_requests = list(gather_vllm_requests(videos, cfg))
+    vllm_requests = list(gather_vllm_requests([window], [str(UUID_1)], cfg))
     assert len(vllm_requests) == 0
-    assert clip.errors["clip_windowing"]
-
-
-@pytest.mark.env("unified")
-def test_gather_vllm_requests_empty_llm_inputs() -> None:
-    """Test gather_vllm_requests with empty llm_inputs in window."""
-    window = Window(start_frame=0, end_frame=10)
-    clip = Clip(uuid=uuid4(), source_video="test.mp4", span=(0.0, 5.0), windows=[window])
-    video = Video(input_video=Path("test.mp4"), clips=[clip])
-    videos = [video]
-
-    assert not clip.errors
-
-    cfg = VllmConfig(model_variant=VALID_VARIANTS[0])
-    vllm_requests = list(gather_vllm_requests(videos, cfg))
-
-    assert vllm_requests == []
-    assert clip.errors
+    assert window.errors["model_input"]
 
 
 @pytest.mark.env("unified")
@@ -128,13 +113,14 @@ def test_scatter_vllm_captions() -> None:
     window3 = Window(start_frame=0, end_frame=15)
 
     # Create test clips
-    clip1 = Clip(uuid=uuid4(), source_video="test1.mp4", span=(0.0, 5.0), windows=[window1, window2])
-    clip2 = Clip(uuid=uuid4(), source_video="test2.mp4", span=(5.0, 10.0), windows=[window3])
+    clip1 = Clip(uuid=UUID_1, source_video="test1.mp4", span=(0.0, 5.0), windows=[window1, window2])
+    clip2 = Clip(uuid=UUID_2, source_video="test2.mp4", span=(5.0, 10.0), windows=[window3])
 
-    # Create test videos
-    video1 = Video(input_video=Path("test1.mp4"), clips=[clip1])
-    video2 = Video(input_video=Path("test2.mp4"), clips=[clip2])
-    videos = [video1, video2]
+    clip_uuids = []
+    for clip in [clip1, clip2]:
+        clip_uuids += [str(clip.uuid)] * len(clip.windows)
+
+    windows = [window for clip in [clip1, clip2] for window in clip.windows]
 
     # Build requests corresponding to mapping
     model_variant = "test_model"
@@ -142,8 +128,6 @@ def test_scatter_vllm_captions() -> None:
         VllmCaptionRequest(
             request_id="r1",
             inputs={},
-            video_idx=0,
-            clip_idx=0,
             window_idx=0,
             caption="First caption",
             finished=True,
@@ -151,8 +135,6 @@ def test_scatter_vllm_captions() -> None:
         VllmCaptionRequest(
             request_id="r2",
             inputs={},
-            video_idx=0,
-            clip_idx=0,
             window_idx=1,
             caption="Second caption",
             finished=True,
@@ -160,21 +142,19 @@ def test_scatter_vllm_captions() -> None:
         VllmCaptionRequest(
             request_id="r3",
             inputs={},
-            video_idx=1,
-            clip_idx=0,
-            window_idx=0,
+            window_idx=2,
             caption="Third caption",
             finished=True,
         ),
     ]
 
     # Call the function
-    scatter_vllm_captions(model_variant, videos, requests)
+    scatter_vllm_captions(model_variant, windows, clip_uuids, requests)
 
     # Verify captions were assigned correctly
-    assert videos[0].clips[0].windows[0].caption[model_variant] == "First caption"
-    assert videos[0].clips[0].windows[1].caption[model_variant] == "Second caption"
-    assert videos[1].clips[0].windows[0].caption[model_variant] == "Third caption"
+    assert windows[0].caption[model_variant] == "First caption"
+    assert windows[1].caption[model_variant] == "Second caption"
+    assert windows[2].caption[model_variant] == "Third caption"
 
 
 @pytest.mark.env("unified")
@@ -182,19 +162,16 @@ def test_scatter_vllm_captions_empty() -> None:
     """Test assign_captions with empty mapping and captions."""
     # Create a simple video structure
     window = Window(start_frame=0, end_frame=10)
-    clip = Clip(uuid=uuid4(), source_video="test.mp4", span=(0.0, 5.0), windows=[window])
-    video = Video(input_video=Path("test.mp4"), clips=[clip])
-    videos = [video]
 
     # Empty requests
     model_variant = "test_model"
     requests: list[VllmCaptionRequest] = []
 
     # Call the function - should not raise any errors
-    scatter_vllm_captions(model_variant, videos, requests)
+    scatter_vllm_captions(model_variant, [window], [str(UUID_1)], requests)
 
     # Verify no captions were added
-    assert model_variant not in videos[0].clips[0].windows[0].caption
+    assert model_variant not in window.caption
 
 
 @pytest.mark.env("unified")
@@ -202,20 +179,18 @@ def test_scatter_vllm_captions_multiple_models() -> None:
     """Test assign_captions with multiple model variants."""
     # Create test structure
     window = Window(start_frame=0, end_frame=10)
-    clip = Clip(uuid=uuid4(), source_video="test.mp4", span=(0.0, 5.0), windows=[window])
-    video = Video(input_video=Path("test.mp4"), clips=[clip])
-    videos = [video]
+    windows = [window]
+    clip_uuids = [str(UUID_1)]
 
     # Assign captions from different models
     scatter_vllm_captions(
         "model1",
-        videos,
+        windows,
+        clip_uuids,
         [
             VllmCaptionRequest(
                 request_id="r1",
                 inputs={},
-                video_idx=0,
-                clip_idx=0,
                 window_idx=0,
                 caption="Caption from model 1",
                 finished=True,
@@ -224,13 +199,12 @@ def test_scatter_vllm_captions_multiple_models() -> None:
     )
     scatter_vllm_captions(
         "model2",
-        videos,
+        windows,
+        clip_uuids,
         [
             VllmCaptionRequest(
                 request_id="r2",
                 inputs={},
-                video_idx=0,
-                clip_idx=0,
                 window_idx=0,
                 caption="Caption from model 2",
                 finished=True,
@@ -239,8 +213,8 @@ def test_scatter_vllm_captions_multiple_models() -> None:
     )
 
     # Verify both captions exist
-    assert videos[0].clips[0].windows[0].caption["model1"] == "Caption from model 1"
-    assert videos[0].clips[0].windows[0].caption["model2"] == "Caption from model 2"
+    assert window.caption["model1"] == "Caption from model 1"
+    assert window.caption["model2"] == "Caption from model 2"
 
 
 @pytest.mark.env("unified")
@@ -248,47 +222,44 @@ def test_scatter_vllm_captions_overwrite() -> None:
     """Test assign_captions overwrites existing captions for same model."""
     # Create test structure
     window = Window(start_frame=0, end_frame=10)
-    clip = Clip(uuid=uuid4(), source_video="test.mp4", span=(0.0, 5.0), windows=[window])
-    video = Video(input_video=Path("test.mp4"), clips=[clip])
-    videos = [video]
+    windows = [window]
+    clip_uuids = [str(UUID_1)]
 
     model_variant = "test_model"
 
     # Assign initial caption
     scatter_vllm_captions(
         model_variant,
-        videos,
+        windows,
+        clip_uuids,
         [
             VllmCaptionRequest(
                 request_id="r1",
                 inputs={},
-                video_idx=0,
-                clip_idx=0,
                 window_idx=0,
                 caption="Initial caption",
                 finished=True,
             )
         ],
     )
-    assert videos[0].clips[0].windows[0].caption[model_variant] == "Initial caption"
+    assert window.caption[model_variant] == "Initial caption"
 
     # Assign new caption - should overwrite
     scatter_vllm_captions(
         model_variant,
-        videos,
+        windows,
+        clip_uuids,
         [
             VllmCaptionRequest(
                 request_id="r2",
                 inputs={},
-                video_idx=0,
-                clip_idx=0,
                 window_idx=0,
                 caption="Updated caption",
                 finished=True,
             )
         ],
     )
-    assert videos[0].clips[0].windows[0].caption[model_variant] == "Updated caption"
+    assert window.caption[model_variant] == "Updated caption"
 
 
 @pytest.mark.env("unified")
@@ -324,10 +295,6 @@ def test_prep_windows_for_vllm_and_free_vllm_inputs(
     # Create test data
     windows = [Window(start_frame=0, end_frame=frames_count) for _ in range(windows_count)]
     frames = [torch.randn(frames_count, 3, 224, 224) for _ in range(frames_count)]
-    video = Video(
-        input_video=Path("test.mp4"),
-        clips=[Clip(uuid=uuid4(), source_video="test.mp4", span=(0.0, 5.0), windows=windows)],
-    )
 
     with raises:
         prep_windows_for_vllm(windows, frames, config, processor, prompt)
@@ -336,8 +303,5 @@ def test_prep_windows_for_vllm_and_free_vllm_inputs(
             llm_input = window.model_input.get(model_variant)
             assert isinstance(llm_input, dict)
 
-        free_vllm_inputs(video, config.model_variant)
-
-        for clip in video.clips:
-            for window in clip.windows:
-                assert model_variant not in window.model_input
+            free_vllm_inputs(window, config.model_variant)
+            assert model_variant not in window.model_input

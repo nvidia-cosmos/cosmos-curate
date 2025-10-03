@@ -219,8 +219,6 @@ class VllmCosmosReason1VL(VllmPlugin):
         return VllmCaptionRequest(
             request_id=secrets.token_hex(8),
             inputs=inputs,
-            video_idx=request.video_idx,
-            clip_idx=request.clip_idx,
             window_idx=request.window_idx,
             iterations=request.iterations,
         )

@@ -49,6 +49,7 @@ from cosmos_curate.pipelines.video.utils import windowing_utils
 from cosmos_curate.pipelines.video.utils.data_model import (
     Video,
     VllmConfig,
+    Window,
     WindowConfig,
 )
 
@@ -118,6 +119,34 @@ def _get_video_from_task(task: T) -> Video:
         msg = f"task.video type={type(video)}, expected `Video`"
         raise TypeError(msg)
     return video
+
+
+def _get_windows_from_tasks(tasks: list[T]) -> tuple[list[Window], list[str]]:
+    """Get the windows from a list of tasks.
+
+    Args:
+        tasks: The tasks with video -> clips -> windows.
+
+    Returns:
+        The windows and clip uuids from the task.
+
+    Raises:
+        TypeError: If the task does not have a video attribute.
+
+    """
+    windows: list[Window] = []
+    clip_uuids: list[str] = []
+    for task in tasks:
+        video = _get_video_from_task(task)
+        for clip in video.clips:
+            if not clip.windows:
+                logger.warning(f"Clip {clip.uuid} has no windows")
+                clip.errors["clip_windowing"] = "empty"
+                continue
+            windows += clip.windows
+            clip_uuids += [str(clip.uuid)] * len(clip.windows)
+
+    return windows, clip_uuids
 
 
 class VllmModelInterface(ModelInterface):
@@ -366,21 +395,18 @@ class VllmCaptionStage(CuratorStage):
         """
         return self._model
 
-    def free_unused(self, tasks: Iterable[T]) -> None:
+    def free_unused(self, windows: Iterable[Window]) -> None:
         """Free unused memory, if enabled.
 
         Args:
-            tasks: The tasks to process.
+            windows: The windows to process.
 
         """
-        for task in tasks:
-            video = _get_video_from_task(task)
-            free_vllm_inputs(video, self._vllm_config.model_variant)
+        for window in windows:
+            free_vllm_inputs(window, self._vllm_config.model_variant)
 
             if not self._keep_mp4:
-                for clip in video.clips:
-                    for window in clip.windows:
-                        window.mp4_bytes = None
+                window.mp4_bytes = None
 
     @nvtx.annotate("VllmCaptionStage")  # type: ignore[misc]
     def process_data(self, tasks: list[T]) -> list[T]:
@@ -408,11 +434,12 @@ class VllmCaptionStage(CuratorStage):
         major_size = _get_major_size_tasks(tasks)
         self._timer.reinit(self, major_size)
 
-        videos = [_get_video_from_task(task) for task in tasks]
+        windows, clip_uuids = _get_windows_from_tasks(tasks)
 
         with self._timer.time_process():
             num_captions = vllm_caption(
-                videos,
+                windows,
+                clip_uuids,
                 self._llm,
                 self._processor,
                 self._sampling_params,
@@ -431,5 +458,5 @@ class VllmCaptionStage(CuratorStage):
             if stage_perf is not None:
                 stage_perf[stage_name] = stage_perf_stats
 
-        self.free_unused(tasks)
+        self.free_unused(windows)
         return tasks
