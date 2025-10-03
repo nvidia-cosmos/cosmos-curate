@@ -44,6 +44,11 @@ Comprehensive documentation is available under [docs/](docs/README.md) directory
 - [Pipeline Design Guide](docs/curator/PIPELINE_DESIGN_GUIDE.md) - detailed walk-through of the hello-world pipeline and performance optimization points
 - [Observability Guide](docs/curator/OBSERVABILITY_GUIDE.md) - instructions to setup and understand monitoring dashboard
 
+### AI Agent Context Files
+- [AGENTS.md](AGENTS.md) - Context file for Codex
+- [CLAUDE.md](CLAUDE.md) - Context file for Claude Code
+- [GEMINI.md](GEMINI.md) - Context file for Gemini
+
 ## Directory Structure
 
 ```bash
