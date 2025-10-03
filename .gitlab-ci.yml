@@ -36,20 +36,31 @@ variables:
   # GitLab container registry
   CURATOR_IMAGE: ${CI_REGISTRY_IMAGE}/curator
 
-  #Pytest configuration
+  # Pytest configuration
   PYTEST_XDIST_WORKERS: 4
 
-  # NVCF configuration
-  NVCF_ORG_ID: "$NVCF_ORG_ID"
+  # NVCF configuration - use perf org for now
+  NGC_NVCF_ORG: "$PERF_NGC_NVCF_ORG_ID"  # instead of $NVCF_ORG_ID
+  NGC_NVCF_API_KEY: "$PERF_NGC_NVCF_API_KEY"  # instead of $NVCF_KEY
+
+  # GPU type/instance/cluster info - use perf org for now
+  NVCF_GPU_TYPE:
+    description: "GPU type for NVCF testing (e.g., L40S, H100)"
+    value: "H100"
+  NVCF_INSTANCE_TYPE:
+    description: "Instance type for NVCF testing (e.g., OCI.GPU.L40S_1x, OCI.GPU.H100_1x)"
+    value: "GCP.GPU.H100_2x"
+  NVCF_CUSTOM_BACKEND:
+    description: "Custom NVCF backend for testing (overrides default GitLab CI/CD variable)"
+    value: "$PERF_NVCF_BACKEND"  # instead of $NVCF_BACKEND
+
+  # Image names
   NVCF_DEV_BASE_IMAGE: "dev-cosmos-curator"  # Base name for NVCF dev images
-  NVCF_DEV_IMAGE: "nvcr.io/${NVCF_ORG_ID}/${NVCF_DEV_BASE_IMAGE}"  # Complete NVCF dev image path
+  NVCF_DEV_IMAGE: "nvcr.io/${NGC_NVCF_ORG}/${NVCF_DEV_BASE_IMAGE}"  # Complete NVCF dev image path
   NVCF_STAGING_BASE_IMAGE: "staging-cosmos-curator"  # Base name for NVCF staging images
-  NVCF_STAGING_IMAGE: "nvcr.io/${NVCF_ORG_ID}/${NVCF_STAGING_BASE_IMAGE}"  # Complete NVCF staging image path
+  NVCF_STAGING_IMAGE: "nvcr.io/${NGC_NVCF_ORG}/${NVCF_STAGING_BASE_IMAGE}"  # Complete NVCF staging image path
   NVCF_PROD_BASE_IMAGE: "prod-cosmos-curator"  # Base name for NVCF prod images
-  NVCF_PROD_IMAGE: "nvcr.io/${NVCF_ORG_ID}/${NVCF_PROD_BASE_IMAGE}"  # Complete NVCF prod image path
-  NGC_NVCF_ORG: $NVCF_ORG_ID  # Needed for helm deploy json template
-  NVCF_MAX_CONCURRENCY: 2
-  NVCF_INSTANCE_COUNT: 1
+  NVCF_PROD_IMAGE: "nvcr.io/${NGC_NVCF_ORG}/${NVCF_PROD_BASE_IMAGE}"  # Complete NVCF prod image path
 
   # AWS configuration
   AWS_ACCESS_KEY_ID: "$AWS_ACCESS_KEY_ID"
@@ -62,6 +73,8 @@ variables:
   S3_OUTPUT_DATASET_PATH: "${S3_OUTPUT_PATH}/cosmos-curator-nvcf-helm/datasets"
 
   # HELM configuration
+  NVCF_MAX_CONCURRENCY: 2
+  NVCF_INSTANCE_COUNT: 1
   HELM_THANOS_RECEIVER_URL: "$HELM_THANOS_RECEIVER_URL"
   HELM_BYO_METRICS_RECEIVER_CLIENT_CRT: $HELM_BYO_METRICS_RECEIVER_CLIENT_CRT
   HELM_BYO_METRICS_RECEIVER_CLIENT_KEY: $HELM_BYO_METRICS_RECEIVER_CLIENT_KEY
@@ -87,17 +100,6 @@ variables:
   CICD_HELM_CHART_VERSION:
     description: "Helm chart version for the CICD pipeline"
     value: "2.1.1"
-
-  # Manual NVCF testing parameters
-  NVCF_GPU_TYPE:
-    description: "GPU type for NVCF testing (e.g., L40S, H100)"
-    value: "L40S"
-  NVCF_INSTANCE_TYPE:
-    description: "Instance type for NVCF testing (e.g., OCI.GPU.L40S_1x, OCI.GPU.H100_1x)"
-    value: "OCI.GPU.L40S_2x"
-  NVCF_CUSTOM_BACKEND:
-    description: "Custom NVCF backend for testing (overrides default GitLab CI/CD variable)"
-    value: ""
 
   # Vault integration
   VAULT_ADDR: "$VAULT_ADDR"
@@ -188,7 +190,7 @@ stages:
     export DOCKER_CONFIG="${CI_PROJECT_DIR}/.docker"
     mkdir -p "${DOCKER_CONFIG}"
     docker login -u gitlab-ci-token -p ${CI_JOB_TOKEN} "${CI_REGISTRY}"
-    echo "$NVCF_KEY" | docker login nvcr.io --username '$oauthtoken' --password-stdin
+    echo "$NGC_NVCF_API_KEY" | docker login nvcr.io --username '$oauthtoken' --password-stdin
 
   # Configure Docker authentication for GitLab/NVCF registries / performance organization
   docker_login_perf: &docker_login_perf |
@@ -229,6 +231,10 @@ stages:
   # Install curator CLI requirements
   setup_curator_cli: &setup_curator_cli |
     poetry install --no-interaction
+
+  # Configure cosmos-curate nvcf CLI
+  configure_nvcf_cli: &configure_nvcf_cli |
+    cosmos-curate nvcf config set --org $NGC_NVCF_ORG --key $NGC_NVCF_API_KEY
 
 ruff:
   stage: lint
@@ -473,7 +479,7 @@ nvcf-helm:
     - export HELM_BYO_METRICS_RECEIVER_CLIENT_CRT=$(echo $HELM_BYO_METRICS_RECEIVER_CLIENT_CRT_BASE64 | base64 -d | awk '{printf "%s\\n", $0}')
     - export HELM_BYO_METRICS_RECEIVER_CLIENT_KEY=$(echo $HELM_BYO_METRICS_RECEIVER_CLIENT_KEY_BASE64 | base64 -d | awk '{printf "%s\\n", $0}')
   script:
-      - cosmos-curate nvcf config set --org $NVCF_ORG_ID --key $NVCF_KEY
+      - *configure_nvcf_cli
       - export NVCF_BACKEND="${NVCF_CUSTOM_BACKEND:-$NVCF_BACKEND}"
       - |
         if [[ "$TEST_END_TO_END" == "True" ]]; then
@@ -513,7 +519,7 @@ nvcf-helm:
         echo "HELM_CHART_VERSION: $CICD_HELM_CHART_VERSION"
         echo "*************************************"
       # Create NVCF function
-      - cosmos-curate nvcf function create-function --name "${HELM_FUNCTION_NAME}" --health-ep /api/local_raylet_healthz --health-port 52365 --helm-chart https://helm.ngc.nvidia.com/${NVCF_ORG_ID}/charts/${CICD_HELM_CHART_NAME}-${CICD_HELM_CHART_VERSION}.tgz --data-file create_helm_file.json
+      - cosmos-curate nvcf function create-function --name "${HELM_FUNCTION_NAME}" --health-ep /api/local_raylet_healthz --health-port 52365 --helm-chart https://helm.ngc.nvidia.com/${NGC_NVCF_ORG}/charts/${CICD_HELM_CHART_NAME}-${CICD_HELM_CHART_VERSION}.tgz --data-file create_helm_file.json
       # Copy funcid.json from ~/.config to working directory
       - cp ~/.config/cosmos_curate/funcid.json funcid_working.json
       # Deploy NVCF function
@@ -536,13 +542,8 @@ nvcf-helm:
       # Create S3 credentials file
       - echo -n $AWS_CONFIG_FILE_CONTENTS | base64 -d > aws_credentials
       - sed -i '/^endpoint/d' aws_credentials
-      # Determine whether to raise on pynvc error based on GPU type
-      - |
-        if [[ "$NVCF_GPU_TYPE" =~ (L40|GB) ]]; then
-          export DECODE_RAISE_ON_ERROR=true
-        else
-          export DECODE_RAISE_ON_ERROR=false
-        fi
+      # Determine whether to raise on pynvc error
+      - export DECODE_RAISE_ON_ERROR=true
       # Split-annotate pipeline
       # default config to process 1 video
       - |
@@ -570,7 +571,7 @@ nvcf-helm:
       - cosmos-curate nvcf function invoke-function --data-file invoke_shard.json --s3-config-file aws_credentials
   after_script:
     - *activate_micromamba
-    - cosmos-curate nvcf config set --org $NVCF_ORG_ID --key $NVCF_KEY
+    - *configure_nvcf_cli
     - |
       if [[ "$HELM_DEBUG_KEEP_FAILED_DEPLOYMENTS" =~ "False" ]]; then
         if [ ! -f ~/.config/cosmos_curate/funcid.json ]; then
@@ -741,7 +742,7 @@ promote_to_prod:
     - *docker_login
     - *setup_micromamba
     - *setup_curator_cli
-    - cosmos-curate nvcf config set --org $NVCF_ORG_ID --key $NVCF_KEY
+    - *configure_nvcf_cli
     # Determine staging tag by inspecting annotation on the latest staging image
     - STAGING_TAG=$(cosmos-curate nvcf image list-image-detail --iname $NVCF_STAGING_BASE_IMAGE |grep latestTag |sed "s/['│,]//g" |awk '{print $2}')
     - echo "Extracted staging tag ${STAGING_TAG}"

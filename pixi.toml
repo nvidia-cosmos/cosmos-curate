@@ -10,6 +10,7 @@ extra-index-urls = ["https://pypi.nvidia.com"]
 [dependencies]
 python = "3.10.*"
 pip = "*"
+click = { version = "!=8.3.0" } # click 8.3.0 is broken
 
 [pypi-dependencies]
 cosmos-xenna = "==0.1.6"
