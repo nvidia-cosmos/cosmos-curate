@@ -94,12 +94,7 @@ def make_prompt(message: QwenMessage, frames: torch.Tensor, processor: AutoProce
         A prompt for the Qwen model.
 
     """
-    tokenizer = getattr(processor, "tokenizer", None)
-    if tokenizer is None:
-        msg = "Tokenizer is not set"
-        raise ValueError(msg)
-
-    prompt_ids = tokenizer.apply_chat_template(
+    prompt_ids = processor.apply_chat_template(  # type: ignore[attr-defined]
         [message],
         add_generation_prompt=True,
         tokenize=True,

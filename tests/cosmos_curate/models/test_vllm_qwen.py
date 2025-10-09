@@ -30,14 +30,11 @@ if conda_utils.is_running_in_env("unified"):
 @pytest.mark.env("unified")
 def test_make_llm_input_qwen() -> None:
     """Test make_llm_input_qwen function."""
-    # Create mock processor with tokenizer
-    mock_tokenizer = MagicMock()
     # Mock the tokenizer to return a tensor that can be indexed and converted to list
     mock_tensor = torch.tensor([[1, 2, 3, 4, 5]])  # Shape: (1, 5)
-    mock_tokenizer.apply_chat_template.return_value = mock_tensor
 
     mock_processor = MagicMock()
-    mock_processor.tokenizer = mock_tokenizer
+    mock_processor.apply_chat_template.return_value = mock_tensor
 
     # Create test frames tensor
     frames = torch.rand(2, 3, 32, 32)  # 2 frames, 3 channels, 32x32
@@ -51,20 +48,6 @@ def test_make_llm_input_qwen() -> None:
     assert "video" in result["multi_modal_data"]
     assert result["prompt_token_ids"] == [1, 2, 3, 4, 5]  # Should be the token IDs as list
     assert result["multi_modal_data"]["video"].shape == (2, 3, 32, 32)
-
-
-# Hmmm, might not be needed for qwen
-@pytest.mark.env("unified")
-def test_make_llm_input_qwen_no_tokenizer() -> None:
-    """Test make_llm_input_qwen with processor without tokenizer."""
-    mock_processor = MagicMock()
-    mock_processor.tokenizer = None
-
-    frames = torch.rand(1, 3, 32, 32)
-    prompt = "Test prompt"
-
-    with pytest.raises(ValueError, match=r".*"):
-        VllmQwen.make_llm_input(prompt, frames, mock_processor)
 
 
 @pytest.mark.env("unified")
@@ -83,14 +66,11 @@ def test_make_message() -> None:
 @pytest.mark.env("unified")
 def test_make_prompt() -> None:
     """Test make_prompt function."""
-    # Create mock processor with tokenizer
-    mock_tokenizer = MagicMock()
     # Mock the tokenizer to return a tensor that can be indexed and converted to list
     mock_tensor = torch.tensor([[10, 20, 30, 40]])  # Shape: (1, 4)
-    mock_tokenizer.apply_chat_template.return_value = mock_tensor
 
     mock_processor = MagicMock()
-    mock_processor.tokenizer = mock_tokenizer
+    mock_processor.apply_chat_template.return_value = mock_tensor
 
     prompt = "Test prompt"
     frames = torch.rand(2, 3, 32, 32)
