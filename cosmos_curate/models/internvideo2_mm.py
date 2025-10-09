@@ -14,9 +14,11 @@
 # limitations under the License.
 """Model Internvideo2."""
 
+from __future__ import annotations
+
 import json
 import pathlib
-from typing import Final
+from typing import Any, Final
 
 import cv2
 import numpy as np
@@ -25,7 +27,6 @@ import torch
 from easydict import EasyDict  # type: ignore[import-untyped]
 from loguru import logger
 from torch import nn
-from transformers import BatchEncoding, PreTrainedTokenizer  # type: ignore[attr-defined]
 
 from cosmos_curate.core.interfaces.model_interface import ModelInterface
 from cosmos_curate.core.utils.environment import CONTAINER_PATHS_CODE_DIR
@@ -34,7 +35,9 @@ from cosmos_curate.core.utils.model import conda_utils, model_utils
 
 # pyright: reportMissingImports=false
 # pyright: reportUnboundVariable=false
-if conda_utils.is_running_in_env("unified"):
+if conda_utils.is_running_in_env("legacy-transformers"):
+    from transformers import BatchEncoding, PreTrainedTokenizer  # type: ignore[attr-defined]  # noqa: F401
+
     from .internvideo2_multi_modality.bert.builder import build_bert
     from .internvideo2_multi_modality.bert.tokenization_bert import BertTokenizer
     from .internvideo2_multi_modality.internvideo2 import (
@@ -58,7 +61,7 @@ _BERT_MODEL_ID: Final = "google-bert/bert-large-uncased"
 class _InternVideo2Stage2(nn.Module):
     """Wrapper class for InternVideo2 model."""
 
-    def __init__(self, config: EasyDict, tokenizer: PreTrainedTokenizer, *, is_pretrain: bool = True) -> None:
+    def __init__(self, config: EasyDict, tokenizer: Any, *, is_pretrain: bool = True) -> None:  # noqa: ANN401
         super().__init__()
 
         self.config = config
@@ -111,7 +114,7 @@ class _InternVideo2Stage2(nn.Module):
         vision_embeds, pooled_vision_embeds, _, _ = self.vision_encoder(image, None, use_image)
         return vision_embeds, pooled_vision_embeds
 
-    def encode_text(self, text: BatchEncoding) -> tuple[torch.Tensor, torch.Tensor]:
+    def encode_text(self, text: Any) -> tuple[torch.Tensor, torch.Tensor]:  # noqa: ANN401
         """Encode text.
 
         Args:
@@ -349,7 +352,7 @@ class InternVideo2MultiModality(ModelInterface):
             The conda environment name.
 
         """
-        return "unified"
+        return "legacy-transformers"
 
     @property
     def model_id_names(self) -> list[str]:

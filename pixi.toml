@@ -36,12 +36,13 @@ nvidia-ml-py = "*"
 nvtx = "*"
 pandas = "*"
 psycopg2-binary = "*"
+pyarrow = "*"
 pyproj = "*"
 pytest = "*"
 pytest-asyncio = "*"
 pytest-cov = "*"
 pytest-xdist = "*"
-pytorch-gpu = ">=2.7.1"
+pytorch-gpu = "==2.7.1" # pinned to 2.7.1 to match flash-attn constraint and avoid multiple pytorch versions in Docker image
 scipy = "*"
 sqlalchemy = "*"
 tabulate = "*"
@@ -49,7 +50,6 @@ tblib = "*"
 tenacity = "*"
 timezonefinder = "*"
 tqdm = "*"
-transformers = "==4.55.4" # pin to avoid issues with `Cosmos-Embed1-336p/modeling_qformer.py`
 typer = "*"
 uvicorn = "*"
 webdataset = "*"
@@ -60,6 +60,7 @@ ngcsdk = "*" # not available on conda-forge
 opencv-python-headless = "*" # not available on conda-forge
 pillow = "*"  # required by phi-4 model, part of task, needs to be serialized
 pulp = "*" # conda-forge package is too old
+timm = "*" # conda-forge package pulls in torchvision, which is behind
 
 [feature.cuml.system-requirements]
 cuda = "12.9.1" # match the version of the nvidia/cuda docker base image
@@ -104,7 +105,7 @@ nvidia-ml-py = "*"
 nvtx = "*"
 numpy = "*"
 pandas = "*"
-pytorch-gpu = ">=2.7.1"
+pytorch-gpu = "==2.7.1" # pinned to 2.7.1 to match flash-attn constraint and avoid multiple pytorch versions in Docker image
 scipy = "*"
 tabulate = "*"
 
@@ -118,26 +119,31 @@ peft = "==0.13.2"
 pillow = "*"
 pulp = "*" # conda-forge package is too old
 setuptools = "*"
-timm = "*" # conda-forge package pulls in torchvision, which is behind
-transformers = "==4.51.3"
+transformers = "==4.57.0"
 
 [feature.unified.dependencies]
 cuda-libraries-dev = "*"
-flash-attn = "*"
-flash-attn-fused-dense = "*"
-flash-attn-layer-norm = "*"
 pycuda = "*"
 
 [feature.unified.pypi-dependencies]
 cvcuda-cu12 = "*" # not available on conda-forge
 flashinfer-python = ">=0.4.0rc3" # not available on conda-forge; pre-release to avoid pynvml dependency
 PyNvVideoCodec = "*" # not available on conda-forge
-timm = "*" # conda-forge package pulls in torchvision, which is behind
+transformers = "==4.57.0"
 vllm = ">=0.10.0" # not available on conda-forge
+
+[feature.legacy-transformers.dependencies]
+flash-attn = "*"
+flash-attn-fused-dense = "*"
+flash-attn-layer-norm = "*"
+
+[feature.legacy-transformers.pypi-dependencies]
+transformers = "==4.55.4" # legacy models (cosmos-embed1, internvideo2) require older transformers
 
 [environments]
 cuml = ["cuml"]
 default = ["core"]
+legacy-transformers = ["core", "legacy-transformers"]
 model-download = ["model-download"]
 phi = ["phi"]
 paddle-ocr = ["core"]

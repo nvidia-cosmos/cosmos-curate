@@ -69,7 +69,7 @@ def sample_embedding_task(sample_video_data: bytes) -> SplitPipeTask:
     )
 
 
-@pytest.mark.env("unified")
+@pytest.mark.env("legacy-transformers")
 def test_generate_embedding(sample_embedding_task: SplitPipeTask) -> None:
     """Test the InternVideo2Embedding result."""
     stages = [

@@ -15,18 +15,20 @@
 
 """Model Clips."""
 
+from __future__ import annotations
+
 from typing import Final
 
 import numpy as np
 import numpy.typing as npt
 import torch
-from transformers import CLIPModel
 
 from cosmos_curate.core.interfaces.model_interface import ModelInterface
 from cosmos_curate.core.utils.model import conda_utils, model_utils
 
 if conda_utils.is_running_in_env("unified"):
     from torchvision import transforms  # type: ignore[import-untyped]
+    from transformers import CLIPModel
 else:
     transforms = None
 

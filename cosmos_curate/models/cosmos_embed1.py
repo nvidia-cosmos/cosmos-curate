@@ -35,7 +35,7 @@ _COSMOS_EMBED1_VARIANTS_INFO: Final = {
 
 # pyright: reportMissingImports=false
 # pyright: reportUnboundVariable=false
-if conda_utils.is_running_in_env("unified"):
+if conda_utils.is_running_in_env("legacy-transformers"):
     from transformers import AutoModel, AutoProcessor
 
 
@@ -65,7 +65,7 @@ class CosmosEmbed1(ModelInterface):
             The conda environment name.
 
         """
-        return "unified"
+        return "legacy-transformers"
 
     @property
     def model_id_names(self) -> list[str]:
