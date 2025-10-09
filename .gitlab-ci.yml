@@ -208,7 +208,7 @@ stages:
     export MAMBA_ROOT_PREFIX="$(pwd)/micromamba"
     eval "$(micromamba shell hook -s posix)"
     # Create Python environment for curator
-    micromamba create -n curator python=${PYTHON_VERSION} virtualenv=20.34.0 poetry -y
+    micromamba create -n curator python=${PYTHON_VERSION} poetry -y
     micromamba activate curator
 
   # Activate an existing micromamba environment
