@@ -23,11 +23,12 @@ maintains consistency across code changes.
 
 import pytest
 
+from cosmos_curate.core.interfaces.pipeline_interface import run_pipeline
+from cosmos_curate.core.interfaces.runner_interface import RunnerInterface
 from cosmos_curate.pipelines.video.filtering.aesthetics.aesthetic_filter_stages import (
     AestheticFilterStage,
 )
 from cosmos_curate.pipelines.video.utils.data_model import SplitPipeTask
-from tests.utils.sequential_runner import run_pipeline
 
 EXPECTED_AESTHETIC_SCORE_MEAN: float = 4.544
 EXPECTED_AESTHETIC_SCORE_MIN: float = 4.0103
@@ -53,11 +54,14 @@ def test_aesthetic_filter_setup() -> None:
 
 
 @pytest.mark.env("unified")
-def test_aesthetic_score_calculation_mean(sample_filtering_task: SplitPipeTask) -> None:
+def test_aesthetic_score_calculation_mean(
+    sample_filtering_task: SplitPipeTask, sequential_runner: RunnerInterface
+) -> None:
     """Test that aesthetic scores are calculated correctly with mean reduction.
 
     Args:
         sample_filtering_task: Sample task with video data
+        sequential_runner: Runner for sequential test execution
 
     """
     stage = AestheticFilterStage(
@@ -65,7 +69,7 @@ def test_aesthetic_score_calculation_mean(sample_filtering_task: SplitPipeTask) 
         reduction="mean",
         log_stats=True,
     )
-    result_tasks: list[SplitPipeTask] = run_pipeline([sample_filtering_task], [stage])
+    result_tasks: list[SplitPipeTask] = run_pipeline([sample_filtering_task], [stage], runner=sequential_runner)
 
     # Verify there's one task returned
     assert len(result_tasks) == 1
@@ -87,11 +91,14 @@ def test_aesthetic_score_calculation_mean(sample_filtering_task: SplitPipeTask) 
 
 
 @pytest.mark.env("unified")
-def test_aesthetic_score_calculation_min(sample_filtering_task: SplitPipeTask) -> None:
+def test_aesthetic_score_calculation_min(
+    sample_filtering_task: SplitPipeTask, sequential_runner: RunnerInterface
+) -> None:
     """Test that aesthetic scores are calculated correctly with min reduction.
 
     Args:
         sample_filtering_task: Sample task with video data
+        sequential_runner: Runner for sequential test execution
 
     """
     stage = AestheticFilterStage(
@@ -99,7 +106,7 @@ def test_aesthetic_score_calculation_min(sample_filtering_task: SplitPipeTask) -
         reduction="min",
         log_stats=True,
     )
-    result_tasks: list[SplitPipeTask] = run_pipeline([sample_filtering_task], [stage])
+    result_tasks: list[SplitPipeTask] = run_pipeline([sample_filtering_task], [stage], runner=sequential_runner)
 
     # Verify there's one task returned
     assert len(result_tasks) == 1
@@ -131,7 +138,11 @@ def test_aesthetic_score_calculation_min(sample_filtering_task: SplitPipeTask) -
     ],
 )
 def test_end_to_end_aesthetic_processing(
-    sample_filtering_task: SplitPipeTask, score_threshold: float, *, should_be_filtered: bool
+    sample_filtering_task: SplitPipeTask,
+    sequential_runner: RunnerInterface,
+    score_threshold: float,
+    *,
+    should_be_filtered: bool,
 ) -> None:
     """Test the complete aesthetic processing pipeline end-to-end with different thresholds.
 
@@ -141,6 +152,7 @@ def test_end_to_end_aesthetic_processing(
 
     Args:
         sample_filtering_task: The sample task fixture
+        sequential_runner: Runner for sequential test execution
         score_threshold: The aesthetic score threshold to test
         should_be_filtered: Whether the clip should be filtered given the threshold
 
@@ -152,7 +164,7 @@ def test_end_to_end_aesthetic_processing(
         verbose=True,
         log_stats=True,
     )
-    result_tasks: list[SplitPipeTask] = run_pipeline([sample_filtering_task], [stage])
+    result_tasks: list[SplitPipeTask] = run_pipeline([sample_filtering_task], [stage], runner=sequential_runner)
 
     # Verify the result
     video = result_tasks[0].video

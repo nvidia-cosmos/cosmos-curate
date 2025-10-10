@@ -20,6 +20,8 @@ import uuid
 
 import pytest
 
+from cosmos_curate.core.interfaces.pipeline_interface import run_pipeline
+from cosmos_curate.core.interfaces.runner_interface import RunnerInterface
 from cosmos_curate.pipelines.video.captioning.captioning_stages import (  # type: ignore[import-untyped]
     EnhanceCaptionStage,
 )
@@ -29,12 +31,11 @@ from cosmos_curate.pipelines.video.utils.data_model import (  # type: ignore[imp
     Video,
     Window,
 )
-from tests.utils.sequential_runner import run_pipeline
 
 
 @pytest.mark.env("unified")
 @pytest.mark.parametrize("model_variant", ["qwen_lm", "gpt_oss_20b"])
-def test_enhance_caption_lm_variants(model_variant: str) -> None:
+def test_enhance_caption_lm_variants(model_variant: str, sequential_runner: RunnerInterface) -> None:
     """EnhanceCaptionStage with real LM and pre-filled captions (no prior stages)."""
     base_captions = [
         "A red pickup truck is parked on a cobblestone street.",
@@ -61,7 +62,7 @@ def test_enhance_caption_lm_variants(model_variant: str) -> None:
     task = SplitPipeTask(video=video)
 
     stages = [EnhanceCaptionStage(model_variant=model_variant)]
-    result_tasks = run_pipeline([task], stages)
+    result_tasks = run_pipeline([task], stages, runner=sequential_runner)
 
     assert result_tasks is not None
     assert len(result_tasks) == 1

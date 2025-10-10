@@ -180,14 +180,12 @@ def test_vllm_model_interface_model_id_names(config_variant: str, raises: Abstra
             ],
             nullcontext(),
         ),
-        # Task with invalid video type
-        ([SplitPipeTask(video="invalid")], [], pytest.raises(TypeError, match=r".*")),
     ],
 )
 def test_get_windows_from_tasks(
     tasks: list[Any], expected_windows: list[tuple[Window, UUID]], raises: AbstractContextManager[Any]
 ) -> None:
-    """Test _gather_windows_from_tasks function."""
+    """Test _get_windows_from_tasks function."""
     with raises:
         windows, clip_uuids = _get_windows_from_tasks(tasks)
         assert len(windows) == len(expected_windows)

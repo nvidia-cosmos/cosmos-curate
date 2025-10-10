@@ -21,6 +21,8 @@ import uuid
 import pytest
 from loguru import logger
 
+from cosmos_curate.core.interfaces.pipeline_interface import run_pipeline
+from cosmos_curate.core.interfaces.runner_interface import RunnerInterface
 from cosmos_curate.pipelines.video.clipping.clip_extraction_stages import ClipTranscodingStage
 from cosmos_curate.pipelines.video.clipping.clip_frame_extraction_stages import ClipFrameExtractionStage
 from cosmos_curate.pipelines.video.embedding.internvideo2_stages import (
@@ -29,7 +31,6 @@ from cosmos_curate.pipelines.video.embedding.internvideo2_stages import (
 )
 from cosmos_curate.pipelines.video.utils.data_model import Clip, SplitPipeTask, Video
 from cosmos_curate.pipelines.video.utils.decoder_utils import FrameExtractionPolicy
-from tests.utils.sequential_runner import run_pipeline
 
 _MATCH_CONFIDENCE_SCORE = 0.9
 
@@ -70,7 +71,7 @@ def sample_embedding_task(sample_video_data: bytes) -> SplitPipeTask:
 
 
 @pytest.mark.env("legacy-transformers")
-def test_generate_embedding(sample_embedding_task: SplitPipeTask) -> None:
+def test_generate_embedding(sample_embedding_task: SplitPipeTask, sequential_runner: RunnerInterface) -> None:
     """Test the InternVideo2Embedding result."""
     stages = [
         ClipTranscodingStage(encoder="libopenh264"),
@@ -78,7 +79,7 @@ def test_generate_embedding(sample_embedding_task: SplitPipeTask) -> None:
         InternVideo2FrameCreationStage(target_fps=2.0),
         InternVideo2EmbeddingStage(num_gpus_per_worker=1.0, texts_to_verify=_get_texts()),
     ]
-    tasks = run_pipeline([sample_embedding_task], stages)
+    tasks = run_pipeline([sample_embedding_task], stages, runner=sequential_runner)
     result_task = tasks[0]
 
     assert len(result_task.video.clips) == len(sample_embedding_task.video.clips), (

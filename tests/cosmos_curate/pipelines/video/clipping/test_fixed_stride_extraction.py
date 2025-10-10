@@ -26,11 +26,12 @@ import pathlib
 
 import pytest
 
+from cosmos_curate.core.interfaces.pipeline_interface import PipelineExecutionError, run_pipeline
+from cosmos_curate.core.interfaces.runner_interface import RunnerInterface
 from cosmos_curate.pipelines.video.clipping.clip_extraction_stages import (
     FixedStrideExtractorStage,
 )
 from cosmos_curate.pipelines.video.utils.data_model import SplitPipeTask, Video
-from tests.utils.sequential_runner import run_pipeline
 
 
 def test_fixed_stride_extractor_setup() -> None:
@@ -85,11 +86,14 @@ def test_fixed_stride_extractor_custom_parameters() -> None:
 
 
 @pytest.mark.env("cosmos-curate")
-def test_fixed_stride_extraction_default_parameters(sample_splitting_task: SplitPipeTask) -> None:
+def test_fixed_stride_extraction_default_parameters(
+    sample_splitting_task: SplitPipeTask, sequential_runner: RunnerInterface
+) -> None:
     """Test fixed stride extraction with default parameters.
 
     Args:
         sample_splitting_task: Sample task with video data
+        sequential_runner: Runner for sequential test execution
 
     """
     # Expected clip extraction results for regression testing
@@ -103,7 +107,7 @@ def test_fixed_stride_extraction_default_parameters(sample_splitting_task: Split
     stage = FixedStrideExtractorStage(log_stats=True)
 
     # Process the task
-    result_tasks: list[SplitPipeTask] = run_pipeline([sample_splitting_task], [stage])
+    result_tasks: list[SplitPipeTask] = run_pipeline([sample_splitting_task], [stage], runner=sequential_runner)
 
     # Verify there's one task returned
     assert len(result_tasks) == 1
@@ -128,11 +132,14 @@ def test_fixed_stride_extraction_default_parameters(sample_splitting_task: Split
 
 
 @pytest.mark.env("cosmos-curate")
-def test_fixed_stride_extraction_5s_stride(sample_splitting_task: SplitPipeTask) -> None:
+def test_fixed_stride_extraction_5s_stride(
+    sample_splitting_task: SplitPipeTask, sequential_runner: RunnerInterface
+) -> None:
     """Test fixed stride extraction with 5-second clips and stride.
 
     Args:
         sample_splitting_task: Sample task with video data
+        sequential_runner: Runner for sequential test execution
 
     """
     # With 5s clips and 5s stride, we expect clips every 5 seconds: 0-5s, 5-10s, ..., 40-45s
@@ -158,7 +165,7 @@ def test_fixed_stride_extraction_5s_stride(sample_splitting_task: SplitPipeTask)
     )
 
     # Process the task
-    result_tasks = run_pipeline([sample_splitting_task], [stage])
+    result_tasks = run_pipeline([sample_splitting_task], [stage], runner=sequential_runner)
     video = result_tasks[0].video
 
     # Verify clips were extracted
@@ -173,11 +180,14 @@ def test_fixed_stride_extraction_5s_stride(sample_splitting_task: SplitPipeTask)
 
 
 @pytest.mark.env("cosmos-curate")
-def test_fixed_stride_extraction_overlapping_clips(sample_splitting_task: SplitPipeTask) -> None:
+def test_fixed_stride_extraction_overlapping_clips(
+    sample_splitting_task: SplitPipeTask, sequential_runner: RunnerInterface
+) -> None:
     """Test fixed stride extraction with overlapping clips (stride < clip_len).
 
     Args:
         sample_splitting_task: Sample task with video data
+        sequential_runner: Runner for sequential test execution
 
     """
     # With 3s clips and 2s stride, we expect many overlapping clips
@@ -216,7 +226,7 @@ def test_fixed_stride_extraction_overlapping_clips(sample_splitting_task: SplitP
     )
 
     # Process the task
-    result_tasks = run_pipeline([sample_splitting_task], [stage])
+    result_tasks = run_pipeline([sample_splitting_task], [stage], runner=sequential_runner)
     result_task = result_tasks[0]
     video = result_task.video
 
@@ -232,11 +242,14 @@ def test_fixed_stride_extraction_overlapping_clips(sample_splitting_task: SplitP
 
 
 @pytest.mark.env("cosmos-curate")
-def test_fixed_stride_extraction_with_limit(sample_splitting_task: SplitPipeTask) -> None:
+def test_fixed_stride_extraction_with_limit(
+    sample_splitting_task: SplitPipeTask, sequential_runner: RunnerInterface
+) -> None:
     """Test fixed stride extraction with clip limit.
 
     Args:
         sample_splitting_task: Sample task with video data
+        sequential_runner: Runner for sequential test execution
 
     """
     # With 3s clips and 2s stride, we expect many overlapping clips, only list the first 2
@@ -255,7 +268,7 @@ def test_fixed_stride_extraction_with_limit(sample_splitting_task: SplitPipeTask
     )
 
     # Process the task
-    result_tasks = run_pipeline([sample_splitting_task], [stage])
+    result_tasks = run_pipeline([sample_splitting_task], [stage], runner=sequential_runner)
     result_task = result_tasks[0]
     video = result_task.video
 
@@ -271,11 +284,14 @@ def test_fixed_stride_extraction_with_limit(sample_splitting_task: SplitPipeTask
 
 
 @pytest.mark.env("cosmos-curate")
-def test_fixed_stride_extraction_min_clip_length(sample_splitting_task: SplitPipeTask) -> None:
+def test_fixed_stride_extraction_min_clip_length(
+    sample_splitting_task: SplitPipeTask, sequential_runner: RunnerInterface
+) -> None:
     """Test fixed stride extraction with minimum clip length filtering.
 
     Args:
         sample_splitting_task: Sample task with video data
+        sequential_runner: Runner for sequential test execution
 
     """
     # Should extract clips: 0-2s, 10-12s, 20-22s, 30-32s, 40-42s (5 clips total for 47s video)
@@ -289,7 +305,7 @@ def test_fixed_stride_extraction_min_clip_length(sample_splitting_task: SplitPip
     )
 
     # Process the task
-    result_tasks = run_pipeline([sample_splitting_task], [stage])
+    result_tasks = run_pipeline([sample_splitting_task], [stage], runner=sequential_runner)
     result_task = result_tasks[0]
     video = result_task.video
 
@@ -302,7 +318,7 @@ def test_fixed_stride_extraction_min_clip_length(sample_splitting_task: SplitPip
         assert clip_duration >= stage.min_clip_length_s - 0.01  # Small tolerance
 
 
-def test_fixed_stride_extraction_no_clips_short_video() -> None:
+def test_fixed_stride_extraction_no_clips_short_video(sequential_runner: RunnerInterface) -> None:
     """Test fixed stride extraction with a video shorter than minimum clip length."""
     # Create a task with a very short video duration
     video = Video(
@@ -337,14 +353,14 @@ def test_fixed_stride_extraction_no_clips_short_video() -> None:
     )
 
     # Process the task
-    result_tasks = run_pipeline([task], [stage])
+    result_tasks = run_pipeline([task], [stage], runner=sequential_runner)
     video = result_tasks[0].video
 
     # Should extract no clips since video is too short
     assert len(video.clips) == 0
 
 
-def test_error_handling_no_encoded_data() -> None:
+def test_error_handling_no_encoded_data(sequential_runner: RunnerInterface) -> None:
     """Test error handling when video has no source bytes."""
     video = Video(
         input_video=pathlib.Path("no_bytes_video.mp4"),
@@ -354,12 +370,12 @@ def test_error_handling_no_encoded_data() -> None:
 
     stage = FixedStrideExtractorStage(log_stats=True)
 
-    # Should raise ValueError for missing encoded_data
-    with pytest.raises(ValueError, match="Please load video bytes!"):
-        run_pipeline([task], [stage])
+    # Should raise PipelineExecutionError (wrapping ValueError) for missing encoded_data
+    with pytest.raises(PipelineExecutionError, match="Please load video bytes!"):
+        run_pipeline([task], [stage], runner=sequential_runner)
 
 
-def test_error_handling_incomplete_metadata() -> None:
+def test_error_handling_incomplete_metadata(sequential_runner: RunnerInterface) -> None:
     """Test error handling when video has incomplete metadata."""
     video = Video(
         input_video=pathlib.Path("incomplete_metadata_video.mp4"),
@@ -372,7 +388,7 @@ def test_error_handling_incomplete_metadata() -> None:
     stage = FixedStrideExtractorStage(log_stats=True)
 
     # Process the task
-    result_tasks = run_pipeline([task], [stage])
+    result_tasks = run_pipeline([task], [stage], runner=sequential_runner)
     result_task = result_tasks[0]
     video = result_task.video
 
@@ -383,11 +399,12 @@ def test_error_handling_incomplete_metadata() -> None:
 
 
 @pytest.mark.env("cosmos-curate")
-def test_clip_uuid_generation(sample_splitting_task: SplitPipeTask) -> None:
+def test_clip_uuid_generation(sample_splitting_task: SplitPipeTask, sequential_runner: RunnerInterface) -> None:
     """Test that clip UUIDs are generated consistently and uniquely.
 
     Args:
         sample_splitting_task: Sample task with video data
+        sequential_runner: Runner for sequential test execution
 
     """
     stage = FixedStrideExtractorStage(
@@ -400,8 +417,8 @@ def test_clip_uuid_generation(sample_splitting_task: SplitPipeTask) -> None:
     task_copy_1 = copy.deepcopy(sample_splitting_task)
     task_copy_2 = copy.deepcopy(sample_splitting_task)
 
-    result_tasks_1 = run_pipeline([task_copy_1], [stage])
-    result_tasks_2 = run_pipeline([task_copy_2], [stage])
+    result_tasks_1 = run_pipeline([task_copy_1], [stage], runner=sequential_runner)
+    result_tasks_2 = run_pipeline([task_copy_2], [stage], runner=sequential_runner)
 
     video_1 = result_tasks_1[0].video
     video_2 = result_tasks_2[0].video
@@ -417,11 +434,12 @@ def test_clip_uuid_generation(sample_splitting_task: SplitPipeTask) -> None:
 
 
 @pytest.mark.env("cosmos-curate")
-def test_clip_properties(sample_splitting_task: SplitPipeTask) -> None:
+def test_clip_properties(sample_splitting_task: SplitPipeTask, sequential_runner: RunnerInterface) -> None:
     """Test that extracted clips have correct properties.
 
     Args:
         sample_splitting_task: Sample task with video data
+        sequential_runner: Runner for sequential test execution
 
     """
     # Span tuple contains start and end times
@@ -434,7 +452,7 @@ def test_clip_properties(sample_splitting_task: SplitPipeTask) -> None:
     )
 
     # Process the task
-    result_tasks = run_pipeline([sample_splitting_task], [stage])
+    result_tasks = run_pipeline([sample_splitting_task], [stage], runner=sequential_runner)
     video = result_tasks[0].video
 
     # Verify clip properties
@@ -458,11 +476,14 @@ def test_clip_properties(sample_splitting_task: SplitPipeTask) -> None:
 
 
 @pytest.mark.env("cosmos-curate")
-def test_verbose_logging(sample_splitting_task: SplitPipeTask, caplog: pytest.LogCaptureFixture) -> None:
+def test_verbose_logging(
+    sample_splitting_task: SplitPipeTask, sequential_runner: RunnerInterface, caplog: pytest.LogCaptureFixture
+) -> None:
     """Test that verbose logging works correctly.
 
     Args:
         sample_splitting_task: Sample task with video data
+        sequential_runner: Runner for sequential test execution
         caplog: Pytest fixture for capturing log output
 
     """
@@ -475,7 +496,7 @@ def test_verbose_logging(sample_splitting_task: SplitPipeTask, caplog: pytest.Lo
 
     # Process the task
     with caplog.at_level("INFO"):
-        result_tasks = run_pipeline([sample_splitting_task], [stage])
+        result_tasks = run_pipeline([sample_splitting_task], [stage], runner=sequential_runner)
 
     # Verify that some logging occurred (exact messages may vary)
     # The stage itself doesn't have explicit verbose logging, but this tests the parameter

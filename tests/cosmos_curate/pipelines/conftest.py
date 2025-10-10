@@ -23,6 +23,9 @@ import os
 import pytest
 import torch
 
+from cosmos_curate.core.interfaces.runner_interface import RunnerInterface
+from tests.utils.sequential_runner import SequentialRunner
+
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
     """When the user runs `pytest -m env`, filter tests by environment.
@@ -115,3 +118,18 @@ def pytest_configure(config) -> None:  # noqa: ANN001
 
         if cuda_device is not None and cuda_device != "":
             os.environ["CUDA_VISIBLE_DEVICES"] = cuda_device
+
+
+@pytest.fixture(scope="session")
+def sequential_runner() -> RunnerInterface:
+    """Provide a SequentialRunner instance for testing without Ray overhead.
+
+    This fixture is available for tests that want to avoid Ray initialization.
+    Both unit tests and integration tests (marked with @pytest.mark.env) should
+    use SequentialRunner to avoid starting Ray clusters during testing.
+
+    Returns:
+        RunnerInterface: A runner that executes stages sequentially for testing.
+
+    """
+    return SequentialRunner()

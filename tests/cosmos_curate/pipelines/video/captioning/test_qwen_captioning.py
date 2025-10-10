@@ -22,6 +22,8 @@ from collections import Counter
 import pytest
 from scipy.spatial.distance import cosine
 
+from cosmos_curate.core.interfaces.pipeline_interface import run_pipeline
+from cosmos_curate.core.interfaces.runner_interface import RunnerInterface
 from cosmos_curate.pipelines.video.captioning.vllm_caption_stage import (
     VllmCaptionStage,
     VllmPrepStage,
@@ -36,7 +38,6 @@ from cosmos_curate.pipelines.video.utils.data_model import (
     VllmConfig,
     WindowConfig,
 )  # type: ignore[import-untyped]
-from tests.utils.sequential_runner import run_pipeline
 
 _THRESHOLD = 0.8
 _NUM_CLIPS = 2
@@ -102,7 +103,7 @@ def sample_captioning_task(sample_video_data: bytes) -> SplitPipeTask:
 
 
 @pytest.mark.env("unified")
-def test_qwen_caption_generation(sample_captioning_task: SplitPipeTask) -> None:
+def test_qwen_caption_generation(sample_captioning_task: SplitPipeTask, sequential_runner: RunnerInterface) -> None:
     """Test the QwenCaptioning result."""
     vllm_config = VllmConfig(
         model_variant="qwen",
@@ -115,7 +116,7 @@ def test_qwen_caption_generation(sample_captioning_task: SplitPipeTask) -> None:
         VllmPrepStage(vllm_config=vllm_config, window_config=window_config),
         VllmCaptionStage(vllm_config=vllm_config),
     ]
-    tasks = run_pipeline([sample_captioning_task], stages)
+    tasks = run_pipeline([sample_captioning_task], stages, runner=sequential_runner)
 
     # Validate that captions were generated
     assert tasks is not None

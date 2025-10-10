@@ -15,22 +15,53 @@
 
 """Utility to run a sequence of pipeline stages in tests."""
 
+from collections.abc import Sequence
 from typing import TypeVar
 
-from cosmos_curate.core.interfaces.stage_interface import CuratorStage, PipelineTask
+from cosmos_curate.core.interfaces.runner_interface import RunnerInterface
+from cosmos_curate.core.interfaces.stage_interface import CuratorStage, CuratorStageSpec, PipelineTask
 
 T = TypeVar("T", bound=PipelineTask)
 
 
-def run_pipeline(
-    tasks: list[T],
-    stages: list[CuratorStage],
-) -> list[T]:
-    """Run a sequence of stages sequentially on the provided tasks and return the final tasks."""
-    for stage in stages:
-        stage.stage_setup()
+class SequentialRunner(RunnerInterface):
+    """Runner that executes stages sequentially without Ray or distributed computing.
 
-    for stage in stages:
-        tasks = stage.process_data(tasks)
-        stage.destroy()
-    return tasks
+    This runner is primarily used for testing, where we want to run stages
+    in a simple sequential manner without the overhead of Ray clusters.
+    """
+
+    def run(
+        self,
+        input_tasks: list[T],
+        stage_specs: Sequence[CuratorStageSpec],
+        _model_weights_prefix: str,
+    ) -> list[T] | None:
+        """Execute stages sequentially.
+
+        Args:
+            input_tasks: A list of pipeline tasks to process.
+            stage_specs: A list of stage specifications.
+            _model_weights_prefix: Model weights prefix (unused in sequential execution).
+
+        Returns:
+            A list of output pipeline tasks.
+
+        """
+        # Extract the actual stages from the stage specs
+        stages: list[CuratorStage] = [spec.stage for spec in stage_specs]  # type: ignore[misc]
+
+        # Setup all stages
+        for stage in stages:
+            stage.stage_setup()
+
+        # Process tasks through each stage sequentially
+        tasks: list[PipelineTask] = input_tasks  # type: ignore[assignment]
+        for stage in stages:
+            result = stage.process_data(tasks)
+            if result is None:
+                return None
+            tasks = result
+            stage.destroy()
+
+        return tasks  # type: ignore[return-value]

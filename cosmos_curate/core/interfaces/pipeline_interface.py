@@ -14,25 +14,22 @@
 # limitations under the License.
 """Entry function to run a pipeline."""
 
+from collections.abc import Sequence
 from concurrent.futures import ProcessPoolExecutor
 from typing import TypeVar
 
 import ray
 from loguru import logger
 
+from cosmos_curate.core.interfaces.runner_interface import RunnerInterface, XennaRunner
 from cosmos_curate.core.interfaces.stage_interface import CuratorStage, CuratorStageSpec, PipelineTask
-from cosmos_curate.core.utils.config.operation_context import get_tmp_dir, is_running_on_slurm, is_running_on_the_cloud
+from cosmos_curate.core.utils.config.operation_context import get_tmp_dir
 from cosmos_curate.core.utils.environment import MODEL_WEIGHTS_PREFIX
 from cosmos_curate.core.utils.infra import hardware_info, ray_cluster_utils
 from cosmos_curate.core.utils.model.model_utils import download_model_weights_on_all_nodes
-from cosmos_xenna.pipelines.private.pipelines import run_pipeline as xenna_run_pipeline
 from cosmos_xenna.pipelines.private.specs import (
     ExecutionMode,
-    PipelineConfig,
-    PipelineSpec,
-    StreamingSpecificSpec,
 )
-from cosmos_xenna.utils.verbosity import VerbosityLevel
 
 
 class PipelineExecutionError(Exception):
@@ -150,7 +147,7 @@ def _prepare_to_run_pipeline(
     return ExecutionMode["STREAMING"] if num_gpus_requested <= num_gpus_available else ExecutionMode["BATCH"]
 
 
-def _build_pipeline_stage_specs(stages: list[CuratorStage | CuratorStageSpec]) -> list[CuratorStageSpec]:
+def _build_pipeline_stage_specs(stages: Sequence[CuratorStage | CuratorStageSpec]) -> list[CuratorStageSpec]:
     """Build a list of pipeline stage specs from the given stages."""
     # Unify the stage spec and stage
     stage_specs: list[CuratorStageSpec] = []
@@ -191,16 +188,17 @@ T = TypeVar("T", bound=PipelineTask)
 
 def run_pipeline(
     input_tasks: list[T],
-    stages: list[CuratorStage | CuratorStageSpec],
+    stages: Sequence[CuratorStage | CuratorStageSpec],
     model_weights_prefix: str = MODEL_WEIGHTS_PREFIX,
+    runner: RunnerInterface | None = None,
 ) -> list[T]:
     """Run the pipeline with the given pipeline spec.
 
     Args:
         input_tasks: A list of pipeline tasks to process.
         stages: A list of stages.
-        execution_mode: "STREAMING" or "BATCH".
         model_weights_prefix: Prefix for model weights in local or cloud storage.
+        runner: Runner implementation for executing the pipeline. Defaults to XennaRunner.
 
     Returns:
         A list of pipeline payloads.
@@ -209,42 +207,15 @@ def run_pipeline(
         PipelineExecutionError: If pipeline execution fails.
 
     """
-    err_msg: str = ""
+    if runner is None:
+        runner = XennaRunner()
 
     # Build a list of StageSpecs and fill in default config values.
     stage_specs = _build_pipeline_stage_specs(stages)
 
-    # Run a few steps to prepare the pipeline for execution.
-    try:
-        execution_mode = _prepare_to_run_pipeline(stage_specs, model_weights_prefix)
-    except Exception as e:
-        err_msg = "Failed in run_pipeline preparation step"
-        raise PipelineExecutionError(err_msg, original_error=e) from e
-
-    # Construct the pipeline configuration
-    pipeline_config = PipelineConfig(
-        execution_mode=execution_mode,
-        enable_work_stealing=False,
-        return_last_stage_outputs=True,
-        actor_pool_verbosity_level=VerbosityLevel.NONE,
-        monitoring_verbosity_level=VerbosityLevel.NONE
-        if is_running_on_the_cloud() and not is_running_on_slurm()
-        else VerbosityLevel.INFO,
-        mode_specific=StreamingSpecificSpec(
-            autoscale_interval_s=60 * 3.0,
-            autoscale_speed_estimation_window_duration_s=60 * 3.0,
-            max_queued_multiplier=1.5,
-            max_queued_lower_bound=16,
-            autoscaler_verbosity_level=VerbosityLevel.NONE,
-            executor_verbosity_level=VerbosityLevel.NONE,
-        ),
-    )
-
     # Run the pipeline!
     try:
-        logger.info(f"Running pipeline in {execution_mode.name} mode with {len(input_tasks)} input tasks")
-        pipeline_spec = PipelineSpec(input_data=input_tasks, stages=stage_specs, config=pipeline_config)
-        output_tasks = xenna_run_pipeline(pipeline_spec)
+        output_tasks = runner.run(input_tasks, stage_specs, model_weights_prefix)
     except Exception as e:
         err_msg = f"Pipeline execution failed: {e!s}"
         logger.error("Pipeline execution failed: ")
@@ -254,7 +225,3 @@ def run_pipeline(
             logger.warning("Pipeline execution returned None")
             return []
         return output_tasks
-    finally:
-        ray_shutdown_delay = 5
-        logger.info(f"Disconnecting from Ray cluster in {ray_shutdown_delay} seconds")
-        ray_cluster_utils.shutdown_cluster(flush_seconds=ray_shutdown_delay)

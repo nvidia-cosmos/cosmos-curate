@@ -23,12 +23,13 @@ maintains consistency across code changes.
 
 import pytest
 
+from cosmos_curate.core.interfaces.pipeline_interface import run_pipeline
+from cosmos_curate.core.interfaces.runner_interface import RunnerInterface
 from cosmos_curate.pipelines.video.filtering.motion.motion_filter_stages import (
     MotionFilterStage,
     MotionVectorDecodeStage,
 )
 from cosmos_curate.pipelines.video.utils.data_model import SplitPipeTask
-from tests.utils.sequential_runner import run_pipeline
 
 # Golden values for motion scores
 EXPECTED_MOTION_GLOBAL_MEAN: float = 0.001881
@@ -65,16 +66,21 @@ def motion_filter_stage() -> MotionFilterStage:
 
 @pytest.mark.env("cosmos-curate")
 def test_motion_vector_decode(
-    motion_decode_stage: MotionVectorDecodeStage, sample_filtering_task: SplitPipeTask
+    motion_decode_stage: MotionVectorDecodeStage,
+    sample_filtering_task: SplitPipeTask,
+    sequential_runner: RunnerInterface,
 ) -> None:
     """Test that motion vectors can be decoded from the sample video.
 
     Args:
         motion_decode_stage: The decode stage to test
         sample_filtering_task: Sample task with video data
+        sequential_runner: Sequential runner fixture
 
     """
-    result_tasks: list[SplitPipeTask] = run_pipeline([sample_filtering_task], [motion_decode_stage])
+    result_tasks: list[SplitPipeTask] = run_pipeline(
+        [sample_filtering_task], [motion_decode_stage], runner=sequential_runner
+    )
 
     # Verify there's one task returned
     assert len(result_tasks) == 1
@@ -99,6 +105,7 @@ def test_motion_filter_calculation(
     motion_decode_stage: MotionVectorDecodeStage,
     motion_filter_stage: MotionFilterStage,
     sample_filtering_task: SplitPipeTask,
+    sequential_runner: RunnerInterface,
 ) -> None:
     """Test that motion scores are calculated correctly and filtering works as expected.
 
@@ -106,10 +113,11 @@ def test_motion_filter_calculation(
         motion_decode_stage: The decode stage to use
         motion_filter_stage: The filter stage to test
         sample_filtering_task: Sample task with video data
+        sequential_runner: Sequential runner fixture
 
     """
     stages = [motion_decode_stage, motion_filter_stage]
-    tasks_after_filter: list[SplitPipeTask] = run_pipeline([sample_filtering_task], stages)
+    tasks_after_filter: list[SplitPipeTask] = run_pipeline([sample_filtering_task], stages, runner=sequential_runner)
 
     # Verify there's one task returned
     assert len(tasks_after_filter) == 1
@@ -150,9 +158,10 @@ def test_motion_filter_calculation(
         (0.001, 0.0001, False),
     ],
 )
-def test_end_to_end_motion_processing(
+def test_end_to_end_motion_processing(  # noqa: PLR0913 - parametrized test with multiple fixtures
     motion_decode_stage: MotionVectorDecodeStage,
     sample_filtering_task: SplitPipeTask,
+    sequential_runner: RunnerInterface,
     global_threshold: float,
     patch_threshold: float,
     *,
@@ -167,6 +176,7 @@ def test_end_to_end_motion_processing(
     Args:
         motion_decode_stage: The decode stage fixture
         sample_filtering_task: The sample task fixture
+        sequential_runner: Sequential runner fixture
         global_threshold: The global mean threshold to test
         patch_threshold: The per-patch min 256 threshold to test
         should_be_filtered: Whether the clip should be filtered given the thresholds
@@ -183,8 +193,8 @@ def test_end_to_end_motion_processing(
         ),
     ]
 
-    # Run through decode and filter stages sequentially
-    tasks: list[SplitPipeTask] = run_pipeline([sample_filtering_task], stages)
+    # Run through decode and filter stages
+    tasks: list[SplitPipeTask] = run_pipeline([sample_filtering_task], stages, runner=sequential_runner)
 
     # Verify the result
     result_task = tasks[0]

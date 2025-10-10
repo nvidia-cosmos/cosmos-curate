@@ -20,6 +20,8 @@ import uuid
 
 import pytest
 
+from cosmos_curate.core.interfaces.pipeline_interface import run_pipeline
+from cosmos_curate.core.interfaces.runner_interface import RunnerInterface
 from cosmos_curate.pipelines.video.clipping.clip_extraction_stages import (  # type: ignore[import-untyped]
     ClipTranscodingStage,
 )
@@ -28,7 +30,6 @@ from cosmos_curate.pipelines.video.filtering.aesthetics.qwen_filter_stages impor
     QwenInputPreparationStageFiltering,
 )
 from cosmos_curate.pipelines.video.utils.data_model import Clip, SplitPipeTask, Video  # type: ignore[import-untyped]
-from tests.utils.sequential_runner import run_pipeline
 
 
 @pytest.fixture
@@ -54,7 +55,7 @@ def sample_filtering_task(sample_video_data: bytes) -> SplitPipeTask:
 
 
 @pytest.mark.env("unified")
-def test_generate_embedding(sample_filtering_task: SplitPipeTask) -> None:
+def test_generate_embedding(sample_filtering_task: SplitPipeTask, sequential_runner: RunnerInterface) -> None:
     """Test the QwenCaptioning result."""
     filtering_prompt = "blue car"
     stages = [
@@ -62,7 +63,7 @@ def test_generate_embedding(sample_filtering_task: SplitPipeTask) -> None:
         QwenInputPreparationStageFiltering(sampling_fps=2.0, filter_categories=filtering_prompt),
         QwenFilteringStage(verbose=True, user_prompt=filtering_prompt),
     ]
-    tasks = run_pipeline([sample_filtering_task], stages)
+    tasks = run_pipeline([sample_filtering_task], stages, runner=sequential_runner)
 
     assert tasks is not None
     assert len(tasks) > 0

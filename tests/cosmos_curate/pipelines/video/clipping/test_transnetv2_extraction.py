@@ -16,29 +16,34 @@
 
 import pytest
 
+from cosmos_curate.core.interfaces.pipeline_interface import run_pipeline
+from cosmos_curate.core.interfaces.runner_interface import RunnerInterface
 from cosmos_curate.pipelines.video.clipping.frame_extraction_stages import VideoFrameExtractionStage
 from cosmos_curate.pipelines.video.clipping.transnetv2_extraction_stages import TransNetV2ClipExtractionStage
 from cosmos_curate.pipelines.video.utils.data_model import SplitPipeTask
-from tests.utils.sequential_runner import run_pipeline
 
 
 @pytest.mark.env("cosmos-curate")
-def test_transnetv2_requires_frame_extraction(sample_splitting_task: SplitPipeTask) -> None:
+def test_transnetv2_requires_frame_extraction(
+    sample_splitting_task: SplitPipeTask, sequential_runner: RunnerInterface
+) -> None:
     """Test that TransNetV2 stage skips processing (yields zero clips) if frames were not extracted."""
     # Run TransNetV2 without prior frame extraction: it should skip processing
-    result_tasks = run_pipeline([sample_splitting_task], [TransNetV2ClipExtractionStage()])
+    result_tasks = run_pipeline([sample_splitting_task], [TransNetV2ClipExtractionStage()], runner=sequential_runner)
     assert len(result_tasks) == 1
     assert len(result_tasks[0].video.clips) == 0
 
 
 @pytest.mark.env("cosmos-curate")
-def test_transnetv2_default_extraction(sample_splitting_task: SplitPipeTask) -> None:
+def test_transnetv2_default_extraction(
+    sample_splitting_task: SplitPipeTask, sequential_runner: RunnerInterface
+) -> None:
     """Test default extraction pipeline produces clips."""
     stages = [
         VideoFrameExtractionStage(log_stats=True),
         TransNetV2ClipExtractionStage(log_stats=True),
     ]
-    result_tasks = run_pipeline([sample_splitting_task], stages)
+    result_tasks = run_pipeline([sample_splitting_task], stages, runner=sequential_runner)
     # Verify task returned
     assert result_tasks is not None
     assert len(result_tasks) == 1
@@ -59,25 +64,29 @@ def test_transnetv2_default_extraction(sample_splitting_task: SplitPipeTask) -> 
 
 
 @pytest.mark.env("cosmos-curate")
-def test_transnetv2_no_transitions_entire_scene_false(sample_splitting_task: SplitPipeTask) -> None:
+def test_transnetv2_no_transitions_entire_scene_false(
+    sample_splitting_task: SplitPipeTask, sequential_runner: RunnerInterface
+) -> None:
     """Test that no clips are extracted when no transitions and entire_scene_as_clip=False."""
     stages = [
         VideoFrameExtractionStage(),
         TransNetV2ClipExtractionStage(threshold=1.0, entire_scene_as_clip=False),
     ]
-    result_tasks = run_pipeline([sample_splitting_task], stages)
+    result_tasks = run_pipeline([sample_splitting_task], stages, runner=sequential_runner)
     video = result_tasks[0].video
     assert len(video.clips) == 0
 
 
 @pytest.mark.env("cosmos-curate")
-def test_transnetv2_entire_scene_when_no_transitions(sample_splitting_task: SplitPipeTask) -> None:
+def test_transnetv2_entire_scene_when_no_transitions(
+    sample_splitting_task: SplitPipeTask, sequential_runner: RunnerInterface
+) -> None:
     """Test that entire scene is returned as one clip when no transitions and entire_scene_as_clip=True."""
     stages = [
         VideoFrameExtractionStage(),
         TransNetV2ClipExtractionStage(threshold=1.0, entire_scene_as_clip=True, crop_s=0.0),
     ]
-    result_tasks = run_pipeline([sample_splitting_task], stages)
+    result_tasks = run_pipeline([sample_splitting_task], stages, runner=sequential_runner)
     video = result_tasks[0].video
     assert len(video.clips) == 1
     start, end = video.clips[0].span
@@ -87,12 +96,12 @@ def test_transnetv2_entire_scene_when_no_transitions(sample_splitting_task: Spli
 
 
 @pytest.mark.env("cosmos-curate")
-def test_transnetv2_limit_clips(sample_splitting_task: SplitPipeTask) -> None:
+def test_transnetv2_limit_clips(sample_splitting_task: SplitPipeTask, sequential_runner: RunnerInterface) -> None:
     """Test that limit_clips parameter limits the number of extracted clips."""
     stages = [
         VideoFrameExtractionStage(),
         TransNetV2ClipExtractionStage(limit_clips=1),
     ]
-    result_tasks = run_pipeline([sample_splitting_task], stages)
+    result_tasks = run_pipeline([sample_splitting_task], stages, runner=sequential_runner)
     video = result_tasks[0].video
     assert len(video.clips) == 1
