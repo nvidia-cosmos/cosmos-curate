@@ -36,7 +36,7 @@ _PHI_VARIANTS_INFO = {
 }
 
 # pyright: reportMissingImports=false
-if conda_utils.is_running_in_env("phi"):
+if conda_utils.is_running_in_env("unified"):
     import torch
     from torchvision import transforms  # type: ignore[import-untyped]
     from transformers.generation.configuration_utils import GenerationConfig

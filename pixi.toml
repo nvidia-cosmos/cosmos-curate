@@ -91,36 +91,6 @@ tabulate = "*"
 ngcsdk = "*" # not available on conda-forge
 opencv-python-headless = "*" # not available on conda-forge
 
-[feature.phi.system-requirements]
-cuda = "12.9.1" # match the version of the nvidia/cuda docker base image
-
-[feature.phi.dependencies]
-attrs = "*"
-azure-identity = "*"
-azure-storage-blob = "*"
-cattrs = "*"
-flash-attn = "*"
-loguru = "*"
-nvidia-ml-py = "*"
-nvtx = "*"
-numpy = "*"
-pandas = "*"
-pytorch-gpu = "==2.7.1" # pinned to 2.7.1 to match flash-attn constraint and avoid multiple pytorch versions in Docker image
-scipy = "*"
-tabulate = "*"
-
-[feature.phi.pypi-dependencies]
-av = "*" # conda-forge package pulls in ffmpeg
-accelerate = "*"
-backoff = "*"
-ngcsdk = "*" # not available on conda-forge
-opencv-python-headless = "*" # not available on conda-forge
-peft = "==0.13.2"
-pillow = "*"
-pulp = "*" # conda-forge package is too old
-setuptools = "*"
-transformers = "==4.57.0"
-
 [feature.unified.dependencies]
 cuda-libraries-dev = "*"
 pycuda = "*"
@@ -145,7 +115,6 @@ cuml = ["cuml"]
 default = ["core"]
 legacy-transformers = ["core", "legacy-transformers"]
 model-download = ["model-download"]
-phi = ["phi"]
 paddle-ocr = ["core"]
 transformers = ["core"]
 unified = ["core", "unified"]

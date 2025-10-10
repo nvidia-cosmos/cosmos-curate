@@ -31,7 +31,7 @@ from cosmos_curate.pipelines.video.utils.data_model import (
 )
 from cosmos_curate.pipelines.video.utils.decoder_utils import DEFAULT_TRANSCODE_BITRATE_M, get_frame_count
 
-if conda_utils.is_running_in_env("unified") or conda_utils.is_running_in_env("phi"):
+if conda_utils.is_running_in_env("unified"):
     from cosmos_curate.pipelines.video.utils.vision_process import fetch_video
 
 
