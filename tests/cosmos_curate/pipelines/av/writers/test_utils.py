@@ -137,7 +137,7 @@ def run_writer_stage_test(
     assert hasattr(stage, "_log_stats"), "Stage must have a _log_stats attribute"
 
     # Determine if we're testing S3 or local path based on output_prefix
-    output_prefix = stage._output_prefix  # noqa: SLF001
+    output_prefix = stage._output_prefix
     is_s3 = is_s3path(output_prefix)
 
     # Create mocks for the writer function and S3 client
@@ -166,6 +166,6 @@ def run_writer_stage_test(
         assert len(mock_writer.mock_calls) == len(tasks)
         assert result == tasks
 
-        if stage._log_stats:  # noqa: SLF001
+        if stage._log_stats:
             for task in tasks:
                 assert stage.__class__.__name__ in task.stage_perf

@@ -50,9 +50,9 @@ def test_fixed_stride_extractor_setup() -> None:
     assert stage.clip_len_s == default_clip_length
     assert stage.clip_stride_s == default_clip_stride
     assert stage.min_clip_length_s == default_min_clip_length
-    assert stage._limit_clips == default_limit_clips  # noqa: SLF001
-    assert stage._verbose is False  # noqa: SLF001
-    assert stage._log_stats is False  # noqa: SLF001
+    assert stage._limit_clips == default_limit_clips
+    assert stage._verbose is False
+    assert stage._log_stats is False
 
     # Verify resource requirements (CPU-only stage)
     assert stage.resources.gpus == default_gpu_count
@@ -80,9 +80,9 @@ def test_fixed_stride_extractor_custom_parameters() -> None:
     assert stage.clip_len_s == custom_clip_length
     assert stage.clip_stride_s == custom_clip_stride
     assert stage.min_clip_length_s == custom_min_clip_length
-    assert stage._limit_clips == custom_limit_clips  # noqa: SLF001
-    assert stage._verbose is True  # noqa: SLF001
-    assert stage._log_stats is True  # noqa: SLF001
+    assert stage._limit_clips == custom_limit_clips
+    assert stage._verbose is True
+    assert stage._log_stats is True
 
 
 @pytest.mark.env("cosmos-curate")

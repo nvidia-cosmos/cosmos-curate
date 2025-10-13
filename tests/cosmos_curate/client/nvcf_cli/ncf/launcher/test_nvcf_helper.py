@@ -1493,7 +1493,7 @@ def test_nvcf_helper_get_request_status_new_failures(
     nvcf_helper.nvcf_api_hdl = mock_nvcf_client
 
     with pytest.raises(exception):
-        nvcf_helper._nvcf_helper_get_request_status_new(  # noqa: SLF001
+        nvcf_helper._nvcf_helper_get_request_status_new(
             reqid="test-reqid", funcid="test-funcid", version="test-version"
         )
 
@@ -1523,7 +1523,7 @@ def test_nvcf_helper_get_request_status_new_success(monkeypatch: MonkeyPatch, tm
     nvcf_helper = NvcfHelper(url="", nvcf_url="", key="", org="", team="", timeout=15)
     nvcf_helper.nvcf_api_hdl = mock_nvcf_client
 
-    result = nvcf_helper._nvcf_helper_get_request_status_new(  # noqa: SLF001
+    result = nvcf_helper._nvcf_helper_get_request_status_new(
         reqid="test-reqid", funcid="test-funcid", version="test-version"
     )
     assert result is not None

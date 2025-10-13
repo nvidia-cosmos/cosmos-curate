@@ -141,12 +141,12 @@ def test_client_error() -> None:
     mock_response.text = json.dumps({"status": _UNAUTHORIZED})
 
     client.ses.get = MagicMock(return_value=mock_response)
-    client._handle_client_error = MagicMock(return_value=NVCFResponse({"status": _UNAUTHORIZED}))  # noqa: SLF001
+    client._handle_client_error = MagicMock(return_value=NVCFResponse({"status": _UNAUTHORIZED}))
 
     response = client.get("/test")
     assert response is not None
     assert response.status == _UNAUTHORIZED
-    client._handle_client_error.assert_called()  # noqa: SLF001
+    client._handle_client_error.assert_called()
 
 
 def test_server_error() -> None:
@@ -270,7 +270,7 @@ def test_nvcf_client_is_binary_content() -> None:
     for content_type in binary_content_types:
         mock_response = MagicMock()
         mock_response.headers = {"content-type": content_type}
-        assert client._is_binary_content(mock_response) is True  # noqa: SLF001
+        assert client._is_binary_content(mock_response) is True
 
     # Test non-binary content types
     non_binary_content_types = [
@@ -290,7 +290,7 @@ def test_nvcf_client_is_binary_content() -> None:
             mock_response.headers = {}
         else:
             mock_response.headers = {"content-type": content_type}
-        assert client._is_binary_content(mock_response) is False  # noqa: SLF001
+        assert client._is_binary_content(mock_response) is False
 
 
 def test_nvcf_client_handle_binary_response() -> None:
@@ -304,7 +304,7 @@ def test_nvcf_client_handle_binary_response() -> None:
     mock_response.content = test_content
 
     retval = {}
-    client._handle_binary_response(mock_response, retval)  # noqa: SLF001
+    client._handle_binary_response(mock_response, retval)
 
     # Verify the response was processed correctly
     assert retval["status"] == _OK
@@ -314,7 +314,7 @@ def test_nvcf_client_handle_binary_response() -> None:
 
     # Test with existing status and headers
     retval = {"status": _OK, "headers": {"existing": "header"}}
-    client._handle_binary_response(mock_response, retval)  # noqa: SLF001
+    client._handle_binary_response(mock_response, retval)
 
     # Verify existing values are preserved
     assert retval["status"] == _OK  # Should not be overwritten
@@ -340,7 +340,7 @@ def test_nvcf_client_handle_binary_response_error() -> None:
     retval = {}
 
     with pytest.raises(ValueError, match="Failed to process binary response"):
-        client._handle_binary_response(mock_response, retval)  # noqa: SLF001
+        client._handle_binary_response(mock_response, retval)
 
 
 def test_nvcf_client_handle_binary_response_empty_content() -> None:
@@ -352,7 +352,7 @@ def test_nvcf_client_handle_binary_response_empty_content() -> None:
     mock_response.content = b""
 
     retval = {}
-    client._handle_binary_response(mock_response, retval)  # noqa: SLF001
+    client._handle_binary_response(mock_response, retval)
 
     assert retval["status"] == _OK
     assert "headers" in retval
@@ -370,7 +370,7 @@ def test_nvcf_client_handle_binary_response_large_content() -> None:
     mock_response.content = large_content
 
     retval = {}
-    client._handle_binary_response(mock_response, retval)  # noqa: SLF001
+    client._handle_binary_response(mock_response, retval)
 
     assert retval["status"] == _OK
     assert "headers" in retval
@@ -390,7 +390,7 @@ def test_nvcf_client_parse_json_response_success() -> None:
     mock_response.json.return_value = test_data
 
     retval = {}
-    result = client._parse_json_response(mock_response, retval, ignore_if_not_json=False)  # noqa: SLF001
+    result = client._parse_json_response(mock_response, retval, ignore_if_not_json=False)
 
     # Verify the response was processed correctly
     assert retval["status"] == _OK
@@ -411,7 +411,7 @@ def test_nvcf_client_handle_client_error() -> None:
     mock_response.reason = "Unauthorized"
 
     # Test with None data
-    result = client._handle_client_error(mock_response, data=None)  # noqa: SLF001
+    result = client._handle_client_error(mock_response, data=None)
     assert result["status"] == _UNAUTHORIZED
     assert result["issue"]["status"] == _UNAUTHORIZED
     assert result["issue"]["detail"] == "Unauthorized"
@@ -430,7 +430,7 @@ def test_nvcf_client_handle_server_error() -> None:
     mock_response.text = "Server error\\nMore details\\nFinal line"
 
     with pytest.raises(RuntimeError):
-        client._handle_server_error(mock_response)  # noqa: SLF001
+        client._handle_server_error(mock_response)
 
 
 def test_nvcf_client_add_response_headers() -> None:
@@ -449,7 +449,7 @@ def test_nvcf_client_add_response_headers() -> None:
     }
 
     retval = {}
-    client._add_response_headers(mock_response, retval)  # noqa: SLF001
+    client._add_response_headers(mock_response, retval)
 
     assert retval["status"] == _OK
     assert retval["headers"]["reqid"] == "test"

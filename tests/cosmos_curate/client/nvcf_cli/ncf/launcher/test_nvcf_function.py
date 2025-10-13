@@ -117,7 +117,7 @@ def test_nvcf_function_deploy_private(mock_deploy: MagicMock, nvcf_function: Nvc
     num_nodes = 2
     max_concurrency = 4
 
-    nvcf_function._deploy(backend, gpu, instance_type, deploy_config, num_nodes, max_concurrency)  # noqa: SLF001
+    nvcf_function._deploy(backend, gpu, instance_type, deploy_config, num_nodes, max_concurrency)
 
     mock_deploy.assert_called_once_with(
         funcid="test-funcid",
@@ -138,7 +138,7 @@ def test_nvcf_function_undeploy_private(mock_undeploy: MagicMock, nvcf_function:
     """Test the private _undeploy method."""
     mock_undeploy.return_value = ("test-function", "INACTIVE")
 
-    nvcf_function._undeploy()  # noqa: SLF001
+    nvcf_function._undeploy()
 
     mock_undeploy.assert_called_once_with(
         funcid="test-funcid",

@@ -188,10 +188,10 @@ class TestCosmosPredict2WriterStage:
 
             if is_s3path(output_prefix):
                 # For S3 paths, S3Client should be created and stored
-                assert stage._s3_client is not None  # noqa: SLF001
+                assert stage._s3_client is not None
             else:
                 # For local paths, S3 client should be None
-                assert stage._s3_client is None  # noqa: SLF001
+                assert stage._s3_client is None
 
     def test_process_data(self, tmp_path: pathlib.Path) -> None:
         """Test basic process_data functionality."""
@@ -236,13 +236,13 @@ class TestCosmosPredict2WriterStage:
         )
 
         # Set S3 client to None for local path (realistic for local filesystem)
-        stage._s3_client = None  # noqa: SLF001
+        stage._s3_client = None
 
         # Create test task
         task = create_test_annotation_task()
 
         # Process the task
-        result = stage._process_data(task)  # noqa: SLF001
+        result = stage._process_data(task)
 
         # Should return the same task
         assert result == task

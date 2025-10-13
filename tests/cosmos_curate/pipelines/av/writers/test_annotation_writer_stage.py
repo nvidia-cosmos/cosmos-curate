@@ -12,16 +12,12 @@
 try:
     import pathlib
     import uuid
-    from collections.abc import Generator
     from unittest.mock import MagicMock, patch
     from uuid import UUID
 
     import pytest
 
-    from cosmos_curate.core.utils.storage.s3_client import S3Client, S3Prefix
-    from cosmos_curate.pipelines.av.utils.av_data_model import (
-        AvClipAnnotationTask,
-    )
+    from cosmos_curate.core.utils.storage.s3_client import S3Prefix
     from cosmos_curate.pipelines.av.writers.annotation_writer_stage import (
         AnnotationJsonWriterStage,
         _annotation_json_writer,
@@ -117,20 +113,6 @@ def test_annotation_json_writer_stage(output_prefix: str) -> None:
     """
     # Define test parameters
     tasks = [create_test_annotation_task()]
-
-    # Define expected writer arguments
-    def _get_writer_args(
-        stage: AnnotationJsonWriterStage,
-        tasks: list[AvClipAnnotationTask],
-    ) -> Generator[tuple[S3Client | None, AvClipAnnotationTask, str, bool, bool], None, None]:
-        for task in tasks:
-            yield (
-                stage._s3_client,  # noqa: SLF001
-                task,
-                stage._output_prefix,  # noqa: SLF001
-                stage._verbose,  # noqa: SLF001
-                stage._overwrite,  # noqa: SLF001
-            )
 
     stage = AnnotationJsonWriterStage(
         output_prefix=output_prefix,

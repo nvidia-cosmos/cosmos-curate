@@ -68,10 +68,12 @@ poetry install --extras=local
 Run before committing:
 
 ```bash
-ruff format --check   # Check formatting
-ruff check           # Lint code
+ruff format          # Format code
+ruff check --fix     # Lint and auto-fix code
 mypy                 # Type checking
 ```
+
+Review the resulting diff after running the auto-fix commands to ensure the adjustments look correct before committing.
 
 Configuration in `pyproject.toml`:
 - Target: Python 3.10

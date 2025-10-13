@@ -33,6 +33,9 @@ from cosmos_curate.pipelines.av.utils.av_data_model import (
     ClipForAnnotation,
 )
 
+DEFAULT_BATCH_SIZE = 128
+CUSTOM_BATCH_SIZE = 64
+
 
 def clip0(prompt_type: str) -> ClipForAnnotation:
     """ClipForAnnotation fixture 0."""
@@ -92,12 +95,12 @@ def sample_task() -> AvClipAnnotationTask:
 def test_enhance_caption_stage_init(mock_qwen_lm: MagicMock) -> None:
     """Test initialization of EnhanceCaptionStage with default parameters."""
     stage = EnhanceCaptionStage()
-    assert stage._batch_size == 128  # noqa: SLF001, PLR2004
-    assert stage._verbose is False  # noqa: SLF001
-    assert stage._log_stats is False  # noqa: SLF001
-    assert stage._prompt_variants == ["default"]  # noqa: SLF001
-    assert stage._prompt_text is None  # noqa: SLF001
-    assert stage._raw_model == mock_qwen_lm  # noqa: SLF001
+    assert stage._batch_size == DEFAULT_BATCH_SIZE
+    assert stage._verbose is False
+    assert stage._log_stats is False
+    assert stage._prompt_variants == ["default"]
+    assert stage._prompt_text is None
+    assert stage._raw_model == mock_qwen_lm
 
 
 def test_enhance_caption_stage_init_custom_params(mock_qwen_lm: MagicMock) -> None:
@@ -105,18 +108,18 @@ def test_enhance_caption_stage_init_custom_params(mock_qwen_lm: MagicMock) -> No
     stage = EnhanceCaptionStage(
         prompt_variants=["visibility"],
         prompt_text="Custom prompt",
-        batch_size=64,
+        batch_size=CUSTOM_BATCH_SIZE,
         fp8_enable=True,
         max_output_tokens=1024,
         verbose=True,
         log_stats=True,
     )
-    assert stage._batch_size == 64  # noqa: SLF001, PLR2004
-    assert stage._verbose is True  # noqa: SLF001
-    assert stage._log_stats is True  # noqa: SLF001
-    assert stage._prompt_variants == ["visibility"]  # noqa: SLF001
-    assert stage._prompt_text == "Custom prompt"  # noqa: SLF001
-    assert stage._raw_model == mock_qwen_lm  # noqa: SLF001
+    assert stage._batch_size == CUSTOM_BATCH_SIZE
+    assert stage._verbose is True
+    assert stage._log_stats is True
+    assert stage._prompt_variants == ["visibility"]
+    assert stage._prompt_text == "Custom prompt"
+    assert stage._raw_model == mock_qwen_lm
 
 
 @pytest.mark.parametrize(
