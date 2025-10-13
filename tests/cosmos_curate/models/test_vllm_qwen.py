@@ -60,7 +60,7 @@ def test_make_message() -> None:
     assert "content" in message
     assert isinstance(message["content"], list)
     content = message["content"]
-    assert len(content) == 2  # noqa: PLR2004
+    assert len(content) == 2
 
 
 @pytest.mark.env("unified")

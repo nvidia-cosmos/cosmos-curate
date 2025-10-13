@@ -185,14 +185,14 @@ class TestRayConfig:
         monkeypatch.setenv("XENNA_RAY_METRICS_PORT", "6789")
         config = RayConfig.from_env()
 
-        assert config.gcs_server_port == 1234  # noqa: PLR2004
+        assert config.gcs_server_port == 1234
         assert config.dashboard_host == "localhost"
-        assert config.dashboard_port == 5678  # noqa: PLR2004
-        assert config.object_manager_port == 9012  # noqa: PLR2004
-        assert config.node_manager_port == 3456  # noqa: PLR2004
-        assert config.dashboard_agent_grpc_port == 7890  # noqa: PLR2004
-        assert config.runtime_env_agent_port == 1245  # noqa: PLR2004
-        assert config.metrics_export_port == 6789  # noqa: PLR2004
+        assert config.dashboard_port == 5678
+        assert config.object_manager_port == 9012
+        assert config.node_manager_port == 3456
+        assert config.dashboard_agent_grpc_port == 7890
+        assert config.runtime_env_agent_port == 1245
+        assert config.metrics_export_port == 6789
 
 
 class TestGetRayCommand:

@@ -272,8 +272,8 @@ def test_nvcf_function_deploy_context_manager_success(  # noqa: PLR0913
 
     mock_deploy.assert_called_once_with(backend, gpu, instance_type, deploy_config, num_nodes, max_concurrency)
     mock_undeploy.assert_called_once()
-    assert mock_get_status.call_count == 5  # noqa: PLR2004
-    assert mock_sleep.call_count == 2  # noqa: PLR2004
+    assert mock_get_status.call_count == 5
+    assert mock_sleep.call_count == 2
 
 
 @patch.object(NvcfFunction, "get_status")
@@ -371,5 +371,5 @@ def test_nvcf_function_deploy_context_manager_deployment_timeout(  # noqa: PLR09
     with nvcf_function.deploy(backend, gpu, instance_type, deploy_config, num_nodes, max_concurrency):
         pass
 
-    assert mock_get_status.call_count == 5  # noqa: PLR2004
-    assert mock_sleep.call_count == 2  # noqa: PLR2004
+    assert mock_get_status.call_count == 5
+    assert mock_sleep.call_count == 2
