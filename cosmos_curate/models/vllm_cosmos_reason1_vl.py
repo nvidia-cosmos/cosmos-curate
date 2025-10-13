@@ -36,7 +36,6 @@ if TYPE_CHECKING:
 # Constants tuned similarly to existing plugins
 GPU_MEMORY_UTILIZATION = 0.85
 MAX_NUM_BATCHED_TOKENS = 32768
-MAX_SEQ_LEN_TO_CAPTURE = 32768
 MAX_MODEL_LEN = 32768
 TRUST_REMOTE_CODE = False
 LIMIT_MM_PER_PROMPT = {"video": 1}
@@ -144,7 +143,6 @@ class VllmCosmosReason1VL(VllmPlugin):
             model=str(cls.model_path()),
             limit_mm_per_prompt=LIMIT_MM_PER_PROMPT,
             quantization=quantization,
-            max_seq_len_to_capture=MAX_SEQ_LEN_TO_CAPTURE,
             max_model_len=MAX_MODEL_LEN,
             gpu_memory_utilization=GPU_MEMORY_UTILIZATION,
             mm_processor_kwargs=mm_processor_kwargs,
