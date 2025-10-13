@@ -42,7 +42,7 @@ pytest = "*"
 pytest-asyncio = "*"
 pytest-cov = "*"
 pytest-xdist = "*"
-pytorch-gpu = "==2.7.1" # pinned to 2.7.1 to match flash-attn constraint and avoid multiple pytorch versions in Docker image
+pytorch-gpu = ">=2.7.1" # 2.7.1 for transformers-legacy, 2.8.0 for unified
 scipy = "*"
 sqlalchemy = "*"
 tabulate = "*"
@@ -94,13 +94,14 @@ opencv-python-headless = "*" # not available on conda-forge
 [feature.unified.dependencies]
 cuda-libraries-dev = "*"
 pycuda = "*"
+pytorch-gpu = "==2.8.0"
 
 [feature.unified.pypi-dependencies]
 cvcuda-cu12 = "*" # not available on conda-forge
 flashinfer-python = ">=0.4.0rc3" # not available on conda-forge; pre-release to avoid pynvml dependency
 PyNvVideoCodec = "*" # not available on conda-forge
 transformers = "==4.57.0"
-vllm = ">=0.10.0" # not available on conda-forge
+vllm = ">=0.11.0" # not available on conda-forge
 
 [feature.legacy-transformers.dependencies]
 flash-attn = "*"
