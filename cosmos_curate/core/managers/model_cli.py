@@ -78,13 +78,15 @@ def setup_parsers() -> argparse.ArgumentParser:
     return parser
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
     """Run the model CLI.
 
-    This function sets up the parsers and parses the arguments.
+    Args:
+        argv: Optional list of arguments to parse. If None, uses sys.argv.
+
     """
     parser = setup_parsers()
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     if args.command is None:
         parser.print_help()
         return
@@ -107,7 +109,7 @@ def _unpack_model_info(model: str) -> tuple[str, str | None, list[str] | None]:
 
 
 def _download(args: argparse.Namespace) -> None:
-    models = args.models.split(",")
+    models = [model.strip() for model in args.models.split(",")]
     for model in models:
         model_id, version, filelist = _unpack_model_info(model)
         download_model_weights_from_huggingface_to_workspace(
@@ -118,7 +120,7 @@ def _download(args: argparse.Namespace) -> None:
 
 
 def _upload(args: argparse.Namespace) -> None:
-    models = args.models.split(",")
+    models = [model.strip() for model in args.models.split(",")]
     for model in models:
         model_id, version, filelist = _unpack_model_info(model)
         push_huggingface_model_to_cloud_storage(
