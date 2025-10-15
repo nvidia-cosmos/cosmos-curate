@@ -39,7 +39,7 @@ class Debug:
     The output of the pipeline is stored in the "fidelity" field. The corresponds to the output of step 3.
     """
 
-    gemmma_prompt: str
+    gemma_prompt: str
     llava_num_tokens_in: int
     llava_num_tokens_out: int
 
