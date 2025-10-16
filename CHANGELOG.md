@@ -1,7 +1,27 @@
 # Changelog
 
-
 ## Latest
+
+## [1.1.6]
+
+### Released
+- 2025-10-16
+
+### Added
+- An example workflow script to operate X nvcf function to run M jobs
+- Upgrade vllm to 0.11.0
+- Upgrade transformers to 4.57.0
+- Agent context files for Codex, Claude, and Gemini
+- Runner abstraction for pipeline execution
+- Increase test coverage
+
+### Fixed
+- Allow extra environment variables to be passed to the pixi runtime env
+- Let slurm env setting override defaults inside container
+- Remove dependency on pynvml
+- Remove `max_seq_len_to_capture` from vLLM engine creation
+- Improve the speed for final summary generation
+- Downgrade click dep version to fix ray and revive e2e nvcf test
 
 ## [1.1.5]
 
