@@ -61,7 +61,8 @@ PEP 8 (4-space indent, `snake_case`/`CamelCase`), type hints, ruff formatting. C
 **Commits**: Conventional Commits with sign-off: `git commit -s -m "fix: description"`
 
 **Merge Requests**:
-- Create using `glab mr create` targeting branch `nvidia/main`
+- Create using `glab mr create` targeting branch `nvidia/main`, assign to author, enable "Delete source branch"
+- Set MR title and description properly
 - Summarize intent, list validation commands, note doc/submodule updates, link issues
 - Do NOT include "Generated with Claude Code" in descriptions
 - Use GitLab MCP server (if available) to retrieve CodeRabbit and Greptile review comments
