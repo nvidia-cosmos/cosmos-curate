@@ -45,11 +45,16 @@ import uuid
 import zipfile
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+    from typing import BinaryIO
 
 import ray
 import requests
 from loguru import logger
+from requests_toolbelt.streaming_iterator import StreamingIterator  # type: ignore[import-untyped]
 
 from cosmos_curate.core.utils.infra import ray_cluster_utils
 from cosmos_curate.core.utils.storage.storage_utils import (
@@ -66,6 +71,7 @@ __all__ = [
     "gather_outputs_from_all_nodes",
     "handle_presigned_urls",
     "zip_and_upload_directory",
+    "zip_and_upload_directory_multipart",
 ]
 
 
@@ -169,39 +175,248 @@ def zip_and_upload_directory(directory: str, presigned_url: str) -> None:
         OSError: If the temporary zip archive cannot be created or read.
 
     """
+    # Create the zip archive
+    archive_path = _create_zip_archive(directory)
+
+    try:
+        logger.info(f"Uploading zipped output ({archive_path}) to presigned URL …")
+
+        with archive_path.open("rb") as fp:
+            response = requests.put(presigned_url, data=fp, timeout=60)
+
+        response.raise_for_status()
+        logger.info("Upload completed successfully.")
+
+    except Exception as exc:
+        logger.error(f"Failed to upload archive: {exc}\n{response.text}")
+        raise
+    finally:
+        # Always attempt to clean-up the temporary archive
+        with contextlib.suppress(OSError):
+            archive_path.unlink(missing_ok=True)
+
+
+def _validate_archive_size(archive_size: int, part_urls: list[str], chunk_size_bytes: int) -> None:
+    """Validate that archive size fits within the provided parts."""
+    expected_max_size = len(part_urls) * chunk_size_bytes
+    if archive_size > expected_max_size:
+        msg = (
+            f"Archive size ({archive_size:,} bytes) exceeds maximum expected size "
+            f"({expected_max_size:,} bytes) for {len(part_urls)} parts"
+        )
+        raise ValueError(msg)
+
+
+def _create_zip_archive(directory: str) -> Path:
+    """Create a zip archive from directory and return the archive path.
+
+    Args:
+        directory: Local directory whose contents should be archived.
+
+    Returns:
+        Path to the created zip archive.
+
+    Raises:
+        ValueError: If directory does not exist or is not a directory.
+        OSError: If the zip archive cannot be created.
+
+    """
     src_dir = Path(directory).expanduser().resolve()
     if not src_dir.is_dir():
         msg = f"Directory to zip does not exist: {src_dir}"
         raise ValueError(msg)
 
-    # Create the zip archive in the same filesystem to avoid potential cross-
-    # device issues when later moving/removing the file.
+    # Create the zip archive in the same filesystem to avoid cross-device issues
     fd, tmp_path = tempfile.mkstemp(prefix="output_archive_", suffix=".zip")
     os.close(fd)
     tmp_path_path = Path(tmp_path)
 
-    # ``shutil.make_archive`` expects the *base_name* **without** the extension.
+    # shutil.make_archive expects the base_name without the extension
     base_name = tmp_path_path.with_suffix("")
     shutil.make_archive(str(base_name), "zip", root_dir=str(src_dir))
     archive_path = base_name.with_suffix(".zip")
 
-    logger.info(f"Uploading zipped output ({archive_path}) to presigned URL …")
+    # Validate ZIP integrity immediately after creation
+    corrupt_file = None
+    try:
+        with zipfile.ZipFile(archive_path, "r") as zf:
+            # Test the ZIP file by reading its central directory
+            file_count = len(zf.namelist())
+            logger.info(f"ZIP validation: {file_count} files in archive")
 
-    with archive_path.open("rb") as fp:
-        response = requests.put(presigned_url, data=fp, timeout=60)
+            # Test ZIP integrity by verifying all file data
+            corrupt_file = zf.testzip()
+
+    except zipfile.BadZipFile as e:
+        logger.error(f"ZIP validation failed: {e}")
+        archive_path.unlink(missing_ok=True)
+        msg = f"Created ZIP file is corrupt: {e}"
+        raise OSError(msg) from e
+    except Exception as e:
+        logger.error(f"ZIP validation error: {e}")
+        archive_path.unlink(missing_ok=True)
+        raise
+
+    # Check for corruption outside the try block
+    if corrupt_file:
+        logger.error(f"ZIP validation failed: corrupt file detected: {corrupt_file}")
+        archive_path.unlink(missing_ok=True)
+        msg = f"Created ZIP file is corrupt: file '{corrupt_file}' failed CRC check"
+        raise OSError(msg)
+
+    return archive_path
+
+
+def _validate_upload_completion(bytes_uploaded: int, archive_size: int) -> None:
+    """Validate that the entire archive was uploaded."""
+    if bytes_uploaded != archive_size:
+        missing_bytes = archive_size - bytes_uploaded
+        msg = (
+            f"Upload size mismatch: uploaded {bytes_uploaded:,} bytes, expected {archive_size:,} bytes. "
+            f"Difference: {missing_bytes:,} bytes ({missing_bytes / 1024 / 1024:.1f} MB)."
+        )
+        logger.error(msg)
+        raise ValueError(msg)
+
+
+def _upload_part_streaming(fp: BinaryIO, part_url: str, chunk_size_bytes: int) -> int:
+    # Get current position and calculate remaining bytes without seeking
+    start_pos = fp.tell()
+
+    # Seek to end to get file size, then immediately return to start position
+    fp.seek(0, os.SEEK_END)
+    file_size = fp.tell()
+    fp.seek(start_pos, os.SEEK_SET)
+
+    remaining = file_size - start_pos
+    part_size = min(chunk_size_bytes, remaining)
+
+    if part_size == 0:
+        return 0
+
+    # Upload with retry on connection issues
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            # Reset file position for retry
+            fp.seek(start_pos, os.SEEK_SET)
+
+            # Use StreamingIterator with a generator for proper streaming
+            def chunk_generator() -> Iterator[bytes]:
+                """Yield file data in chunks."""
+                bytes_read = 0
+                chunk_size = 8192  # 8KB chunks for streaming
+                while bytes_read < part_size:
+                    remaining = part_size - bytes_read
+                    read_size = min(chunk_size, remaining)
+                    chunk = fp.read(read_size)
+                    if not chunk:
+                        break
+                    bytes_read += len(chunk)
+                    yield chunk
+
+            streaming_iterator = StreamingIterator(part_size, chunk_generator())
+            response = requests.put(part_url, data=streaming_iterator, timeout=3600)
+            response.raise_for_status()
+            break  # Success, exit retry loop
+
+        except (requests.exceptions.SSLError, requests.exceptions.ConnectionError) as e:
+            if attempt < max_retries - 1:
+                logger.warning(f"Connection error on attempt {attempt + 1}, retrying...")
+            else:
+                logger.error(f"Failed to upload part after {max_retries} attempts: {e}")
+                raise
+
+    # Verify StreamingIterator consumed all expected bytes
+    final_pos = fp.tell()
+    expected_pos = start_pos + part_size
+    if final_pos != expected_pos:
+        actual_read = final_pos - start_pos
+        logger.error(f"StreamingIterator read mismatch: expected {part_size:,}, actually read {actual_read:,}")
+        msg = f"StreamingIterator read mismatch: expected {part_size:,}, actually read {actual_read:,}"
+        raise ValueError(msg)
+
+    return part_size
+
+
+def zip_and_upload_directory_multipart(
+    directory: str,
+    multipart_config: dict[str, Any],
+    chunk_size_bytes: int = 4_500_000_000,  # 4.5GB chunks
+) -> None:
+    """Create a zip archive from *directory* and upload it via S3 multipart upload.
+
+    Args:
+        directory: Local directory whose contents should be archived.
+        multipart_config: Dictionary containing:
+            - uploadId: The S3 multipart upload ID
+            - key: The S3 object key
+            - parts: List of presigned URLs for each part
+        chunk_size_bytes: Size of each chunk in bytes (default: 4.5GB)
+
+    Returns:
+        None
+
+    Raises:
+        ValueError: If *directory* does not exist or is not a directory, or if archive size
+            doesn't match expected size based on number of parts.
+        requests.RequestException: If any part upload fails or S3 returns a non-2xx response.
+        OSError: If the temporary zip archive cannot be created or read.
+
+    Note:
+        This function assumes multipart upload dicts will always have multiple urls.
+        This behavior is enforced by the managed service.
+
+        This function only uploads the parts using presigned URLs. The caller must complete
+        the multipart upload using S3 API credentials and list_parts to get ETags, we cannot
+        with only the pre-signed URLs.
+
+    """
+    key = multipart_config["key"]
+    part_urls = multipart_config["parts"]
+
+    logger.info(f"Starting multipart upload for {key} with {len(part_urls)} parts")
+
+    archive_path = _create_zip_archive(directory)
 
     try:
-        response.raise_for_status()
+        # Get the total size of the zip file
+        archive_size = archive_path.stat().st_size
+        logger.info(f"Created ZIP archive: {archive_size:,} bytes ({archive_size / 1024 / 1024:.1f} MB)")
+
+        # Validate that we don't exceed the maximum possible size for the given parts
+        _validate_archive_size(archive_size, part_urls, chunk_size_bytes)
+
+        # Multipart upload
+        logger.info(f"Uploading {len(part_urls)} parts with chunk size {chunk_size_bytes:,} bytes")
+
+        bytes_uploaded = 0
+
+        with archive_path.open("rb") as fp:
+            for part_num, part_url in enumerate(part_urls, 1):
+                logger.info(f"Uploading part {part_num}/{len(part_urls)}")
+                try:
+                    part_bytes = _upload_part_streaming(fp, part_url, chunk_size_bytes)
+                    if part_bytes == 0:
+                        break
+
+                    bytes_uploaded += part_bytes
+                except Exception as exc:
+                    logger.error(f"Failed to upload part {part_num}: {exc}")
+                    raise
+
+            # Validate that we uploaded the entire archive
+            _validate_upload_completion(bytes_uploaded, archive_size)
+
+        logger.info(f"Multipart upload completed successfully ({bytes_uploaded:,} bytes total)")
+
     except Exception as exc:
-        logger.error(f"Failed to upload archive: {exc}\n{response.text}")
+        logger.error(f"Failed to upload multipart archive: {exc}")
         raise
     finally:
-        # Always attempt to clean-up the temporary archive—do not let clean-up
-        # failures mask the underlying exception.
+        # Always attempt to clean-up the temporary archive
         with contextlib.suppress(OSError):
             archive_path.unlink(missing_ok=True)
-
-    logger.info("Upload completed successfully.")
 
 
 # Reserve CPU resources for Ray actors
@@ -288,7 +503,11 @@ def handle_presigned_urls(pipeline_type: str, pipeline_args: argparse.Namespace)
         else:
             logger.warning(f"Unsupported pipeline type '{pipeline_type}' for presigned input URL.")
 
-    if getattr(pipeline_args, "output_presigned_s3_url", None):
+    # Handle both single presigned URL and multipart upload
+    has_single_output = getattr(pipeline_args, "output_presigned_s3_url", None)
+    has_multipart_output = getattr(pipeline_args, "output_presigned_multipart", None)
+
+    if has_single_output or has_multipart_output:
         if pipeline_type == "split":
             if not getattr(pipeline_args, "output_clip_path", None):
                 pipeline_args.output_clip_path = tempfile.mkdtemp(prefix="output_split_")
@@ -303,6 +522,7 @@ def handle_presigned_urls(pipeline_type: str, pipeline_args: argparse.Namespace)
                 )
         else:
             logger.warning(f"Unsupported pipeline type '{pipeline_type}' for presigned output URL.")
+
     return pipeline_args
 
 
@@ -370,24 +590,47 @@ def gather_outputs_from_all_nodes(output_directory: str) -> None:
             logger.warning(f"Gather outputs failed: {exc}")
 
 
-def gather_and_upload_outputs(pipeline_type: str, args: argparse.Namespace) -> None:
-    """Gather outputs, write metadata, zip, and upload via presigned URL."""
-    if getattr(args, "output_presigned_s3_url", None) is None:
-        return
-
-    output_path: str | None = None
+def _get_output_path(pipeline_type: str, args: argparse.Namespace) -> str | None:
+    """Get the output path for the given pipeline type and args."""
     if pipeline_type == "split":
         if getattr(args, "output_clip_path", None) is None:
             logger.warning("output_clip_path for split pipeline is not set?")
-            return
-        output_path = str(args.output_clip_path)
-    elif pipeline_type == "semantic-dedup":
+            return None
+        return str(args.output_clip_path)
+    if pipeline_type == "semantic-dedup":
         if getattr(args, "output_path", None) is None:
             logger.warning("output_path for semantic-dedup pipeline is not set?")
-            return
-        output_path = str(args.output_path)
-    else:
-        logger.warning(f"Unsupported pipeline type '{pipeline_type}' for presigned output URL.")
+            return None
+        return str(args.output_path)
+    logger.warning(f"Unsupported pipeline type '{pipeline_type}' for presigned output URL.")
+    return None
+
+
+def _write_split_metadata(args: argparse.Namespace, output_path: str) -> None:
+    """Write consolidated window-captions metadata for split pipeline."""
+    logger.info("Re-writing consolidated window-captions metadata …")
+    input_client = get_storage_client(args.input_video_path)
+    output_client = get_storage_client(output_path, can_overwrite=True)
+    _write_all_window_captions(
+        output_path=output_path,
+        client_output=output_client,
+        output_s3_profile_name=None,
+        input_videos_relative=get_files_relative(args.input_video_path, input_client),
+        limit=0,
+    )
+
+
+def gather_and_upload_outputs(pipeline_type: str, args: argparse.Namespace) -> None:
+    """Gather outputs, write metadata, zip, and upload via presigned URL."""
+    # Check for either single URL or multipart config
+    single_url = getattr(args, "output_presigned_s3_url", None)
+    multipart_config = getattr(args, "output_presigned_multipart", None)
+
+    if single_url is None and multipart_config is None:
+        return
+
+    output_path = _get_output_path(pipeline_type, args)
+    if output_path is None:
         return
 
     try:
@@ -395,18 +638,16 @@ def gather_and_upload_outputs(pipeline_type: str, args: argparse.Namespace) -> N
         gather_outputs_from_all_nodes(output_path)
 
         if pipeline_type == "split":
-            logger.info("Re-writing consolidated window-captions metadata …")
-            input_client = get_storage_client(args.input_video_path)
-            output_client = get_storage_client(output_path, can_overwrite=True)
-            _write_all_window_captions(
-                output_path=output_path,
-                client_output=output_client,
-                output_s3_profile_name=None,
-                input_videos_relative=get_files_relative(args.input_video_path, input_client),
-                limit=0,
-            )
-        logger.info("Uploading zipped outputs …")
-        zip_and_upload_directory(output_path, args.output_presigned_s3_url)
+            _write_split_metadata(args, output_path)
+
+        # Choose upload method based on available configuration
+        if multipart_config is not None:
+            logger.info("Uploading zipped outputs via multipart upload …")
+            zip_and_upload_directory_multipart(output_path, multipart_config)
+        elif single_url is not None:
+            logger.info("Uploading zipped outputs via single URL …")
+            zip_and_upload_directory(output_path, single_url)
+
     except Exception as exc:  # noqa: BLE001
         logger.exception(f"Failed to gather/upload outputs: {exc}")
     finally:
