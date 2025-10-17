@@ -106,7 +106,7 @@ def test_make_refined_llm_request() -> None:
 def test_stage2_refine_prompt_equivalence_with_real_processor() -> None:
     """Integration test: verify refine prompt equivalence using the real processor.
 
-    Skips if model weights are unavailable or processor lacks apply_chat_template.
+    Fails if model weights are unavailable or processor lacks apply_chat_template.
 
     This test is used as part of the migration from cosmos_reason1_vl to vllm_cosmos_reason1_vl.
 
@@ -118,11 +118,11 @@ def test_stage2_refine_prompt_equivalence_with_real_processor() -> None:
     """
     model_path = Path(str(VllmCosmosReason1VL.model_path()))
     if not model_path.exists():
-        pytest.skip("Cosmos-Reason1 weights not available locally; skipping integration test.")
+        pytest.fail("Cosmos-Reason1 weights not available locally; this integration test requires them.")
 
     processor = VllmCosmosReason1VL.processor()
     if not hasattr(processor, "apply_chat_template"):
-        pytest.skip("Processor lacks apply_chat_template; skipping integration test.")
+        pytest.fail("Processor lacks apply_chat_template; this integration test requires it.")
 
     frames = torch.rand(1, 3, 8, 8)
 
