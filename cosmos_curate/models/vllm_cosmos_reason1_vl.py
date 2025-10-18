@@ -217,7 +217,6 @@ class VllmCosmosReason1VL(VllmPlugin):
         return VllmCaptionRequest(
             request_id=secrets.token_hex(8),
             inputs=inputs,
-            window_idx=request.window_idx,
             iterations=request.iterations,
         )
 

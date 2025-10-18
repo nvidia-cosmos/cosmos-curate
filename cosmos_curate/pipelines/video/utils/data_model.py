@@ -648,7 +648,6 @@ class VllmCaptionRequest:
 
     request_id: str
     inputs: dict[str, Any]
-    window_idx: int
     caption: str | None = None
     iterations: int = 0
     finished: bool = False

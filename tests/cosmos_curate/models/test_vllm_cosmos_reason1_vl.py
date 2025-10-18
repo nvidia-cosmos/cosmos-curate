@@ -91,7 +91,6 @@ def test_make_refined_llm_request() -> None:
     base_req = VllmCaptionRequest(
         request_id="r1",
         inputs=base_inputs,
-        window_idx=0,
         caption="stage1 caption",
         iterations=0,
     )
@@ -99,7 +98,6 @@ def test_make_refined_llm_request() -> None:
     refined = VllmCosmosReason1VL.make_refined_llm_request(base_req, mock_processor, refine_prompt=None)
     assert refined.inputs["prompt"] == "refined-prompt"
     assert refined.inputs["multi_modal_data"]["video"][0].shape == (1, 3, 8, 8)
-    assert refined.window_idx == base_req.window_idx
 
 
 @pytest.mark.env("unified")
@@ -142,7 +140,6 @@ def test_stage2_refine_prompt_equivalence_with_real_processor() -> None:
     base_req = VllmCaptionRequest(
         request_id="r1",
         inputs=initial_inputs,
-        window_idx=0,
         caption=caption,
         iterations=0,
     )

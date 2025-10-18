@@ -28,7 +28,6 @@ the tasks must have these attributes/methods:
 """
 
 import logging
-from collections.abc import Iterable
 from typing import TYPE_CHECKING, TypeVar, cast
 
 import nvtx  # type: ignore[import-untyped]
@@ -63,8 +62,7 @@ if conda_utils.is_running_in_env("unified"):
 
     from cosmos_curate.models.vllm_interface import (
         auto_processor,
-        free_vllm_inputs,
-        prep_windows_for_vllm,
+        make_model_inputs,
         sampling_params,
         vllm_caption,
         vllm_model,
@@ -147,6 +145,21 @@ def _get_windows_from_tasks(tasks: list[T]) -> tuple[list[Window], list[str]]:
             clip_uuids += [str(clip.uuid)] * len(clip.windows)
 
     return windows, clip_uuids
+
+
+def _free_vllm_inputs(windows: list[Window], model_variant: str, *, keep_mp4: bool = False) -> None:
+    """Free unused memory for the model variant.
+
+    Args:
+        windows: The windows to free unused memory for.
+        model_variant: The variant of the model.
+        keep_mp4: Whether to keep the mp4 bytes.
+
+    """
+    for window in windows:
+        window.model_input.pop(model_variant, None)
+        if not keep_mp4:
+            window.mp4_bytes = None
 
 
 class VllmModelInterface(ModelInterface):
@@ -248,6 +261,37 @@ class VllmPrepStage(CuratorStage):
         """Set up the model for processing."""
         self._processor = auto_processor(self._vllm_config)
 
+    def _prep_windows(self, video: Video, prompt: str) -> None:
+        """Prep the windows for the vLLM model.
+
+        The videos are modified in-place by creating the windows
+        for each clip in the videos and adding windows to each clip.
+
+        Model inputs are added to each window.
+
+        Args:
+            video: The video to prep the windows for.
+            prompt: The prompt to use for the vLLM model.
+
+        """
+        if self._processor is None:
+            msg = "self._processor not initialized, call stage_setup() first"
+            raise RuntimeError(msg)
+
+        num_video_decode_threads = max(1, int(self.resources.cpus) + 1)
+
+        windows, frames = windowing_utils.make_windows_for_video(
+            video,
+            self._window_config,
+            num_video_decode_threads,
+            keep_mp4=self._keep_mp4,
+        )
+
+        llm_inputs = make_model_inputs(frames, self._vllm_config, self._processor, prompt)
+
+        for window, llm_input in zip(windows, llm_inputs, strict=True):
+            window.model_input[self._vllm_config.model_variant] = llm_input
+
     @nvtx.annotate("VllmPrepStage")  # type: ignore[misc]
     def process_data(self, tasks: list[T]) -> list[T]:
         """Prepare the data for the vLLM caption stage.
@@ -274,23 +318,9 @@ class VllmPrepStage(CuratorStage):
             self._timer.reinit(self, major_size)
 
             video = _get_video_from_task(task)
-            num_video_decode_threads = max(1, int(self.resources.cpus) + 1)
 
             with self._timer.time_process():
-                windows, frames = windowing_utils.make_windows_for_video(
-                    video,
-                    self._window_config,
-                    num_video_decode_threads,
-                    keep_mp4=self._keep_mp4,
-                )
-
-                prep_windows_for_vllm(
-                    windows,
-                    frames,
-                    self._vllm_config,
-                    self._processor,
-                    prompt,
-                )
+                self._prep_windows(video, prompt)
 
             stage_perf = getattr(task, "stage_perf", None)
             if self._log_stats and stage_perf is not None:
@@ -395,19 +425,6 @@ class VllmCaptionStage(CuratorStage):
         """
         return self._model
 
-    def free_unused(self, windows: Iterable[Window]) -> None:
-        """Free unused memory, if enabled.
-
-        Args:
-            windows: The windows to process.
-
-        """
-        for window in windows:
-            free_vllm_inputs(window, self._vllm_config.model_variant)
-
-            if not self._keep_mp4:
-                window.mp4_bytes = None
-
     @nvtx.annotate("VllmCaptionStage")  # type: ignore[misc]
     def process_data(self, tasks: list[T]) -> list[T]:
         """Process the data for the vLLM caption stage.
@@ -434,22 +451,29 @@ class VllmCaptionStage(CuratorStage):
         major_size = _get_major_size_tasks(tasks)
         self._timer.reinit(self, major_size)
 
-        windows, clip_uuids = _get_windows_from_tasks(tasks)
-
         with self._timer.time_process():
-            num_captions = vllm_caption(
-                windows,
-                clip_uuids,
+            # Gather model inputs and clip uuids
+            windows, clip_uuids = _get_windows_from_tasks(tasks)
+            model_inputs = [window.model_input[self._vllm_config.model_variant] for window in windows]
+
+            # Generate captions
+            captions = vllm_caption(
+                model_inputs,
                 self._llm,
                 self._processor,
                 self._sampling_params,
                 self._vllm_config,
                 inflight_batching=self._inflight_batching,
                 max_inflight_requests=self._max_inflight_requests,
-                verbose=self._verbose,
             )
 
-        logger.info(f"Generated {num_captions} captions for {len(tasks)} tasks")
+            # Scatter captions back to windows
+            for window, caption, clip_uuid in zip(windows, captions, clip_uuids, strict=True):
+                window.caption[self._vllm_config.model_variant] = caption
+                if self._verbose:
+                    logger.info(f"Caption for clip {clip_uuid}: {caption}")
+
+            logger.info(f"Generated {len(captions)} captions for {len(tasks)} tasks")
 
         if self._log_stats:
             # Because there's a single call to caption all tasks, just log the first task's stage_perf.
@@ -458,5 +482,5 @@ class VllmCaptionStage(CuratorStage):
             if stage_perf is not None:
                 stage_perf[stage_name] = stage_perf_stats
 
-        self.free_unused(windows)
+        _free_vllm_inputs(windows, self._vllm_config.model_variant, keep_mp4=self._keep_mp4)
         return tasks

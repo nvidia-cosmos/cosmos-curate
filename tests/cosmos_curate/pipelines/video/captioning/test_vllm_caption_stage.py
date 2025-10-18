@@ -17,20 +17,38 @@
 from contextlib import AbstractContextManager, nullcontext
 from pathlib import Path
 from typing import Any
+from unittest.mock import MagicMock, patch
 from uuid import UUID
 
 import pytest
 
 from cosmos_curate.core.utils.model import conda_utils
 from cosmos_curate.models.vllm_model_ids import _VLLM_MODELS
-from cosmos_curate.pipelines.video.utils.data_model import Clip, SplitPipeTask, Video, VllmConfig, Window
+from cosmos_curate.pipelines.video.utils.data_model import (
+    Clip,
+    SplitPipeTask,
+    Video,
+    VllmConfig,
+    Window,
+    WindowConfig,
+)
 
 if conda_utils.is_running_in_env("unified"):
+    import torch
+
+    from cosmos_curate.models.vllm_interface import _VLLM_PLUGINS
     from cosmos_curate.pipelines.video.captioning.vllm_caption_stage import (
         VllmModelInterface,
+        VllmPrepStage,
+        _free_vllm_inputs,
         _get_video_from_task,
         _get_windows_from_tasks,
     )
+
+    VALID_VARIANTS = list(_VLLM_PLUGINS.keys())
+else:
+    VALID_VARIANTS = []
+
 
 # Test UUIDs for deterministic testing
 UUID_1 = UUID("00000000-0000-0000-0000-000000000001")
@@ -196,3 +214,98 @@ def test_get_windows_from_tasks(
             assert actual_clip_uuid == str(expected_clip_uuid)
             assert actual_window.start_frame == expected_window.start_frame
             assert actual_window.end_frame == expected_window.end_frame
+
+
+@pytest.mark.env("unified")
+@pytest.mark.parametrize("keep_mp4", [False, True])
+def test_free_vllm_inputs_clears_inputs_and_optionally_mp4(*, keep_mp4: bool) -> None:
+    """Validate model inputs are removed and mp4_bytes handled per flag."""
+    model_variant = "test_variant"
+    other_variant = "other_variant"
+    w1 = Window(
+        start_frame=0,
+        end_frame=10,
+        mp4_bytes=b"a",
+        model_input={model_variant: {"x": 1}, other_variant: {"z": 3}},
+    )
+    w2 = Window(
+        start_frame=10,
+        end_frame=20,
+        mp4_bytes=b"b",
+        model_input={model_variant: {"y": 2}, other_variant: {"k": 4}},
+    )
+
+    original_bytes = [w1.mp4_bytes, w2.mp4_bytes]
+    _free_vllm_inputs([w1, w2], model_variant, keep_mp4=keep_mp4)
+
+    for idx, w in enumerate([w1, w2]):
+        assert model_variant not in w.model_input
+        # Ensure other variant remains untouched
+        assert other_variant in w.model_input
+        assert set(w.model_input.keys()) == {other_variant}
+        if keep_mp4:
+            assert w.mp4_bytes == original_bytes[idx]
+        else:
+            assert w.mp4_bytes is None
+
+
+@pytest.mark.env("unified")
+@pytest.mark.parametrize(
+    ("windows_count", "frames_count", "raises"),
+    [
+        (2, 2, nullcontext()),
+        (1, 2, pytest.raises(ValueError, match=r".*")),
+        (3, 1, pytest.raises(ValueError, match=r".*")),
+    ],
+)
+@pytest.mark.parametrize("model_variant", VALID_VARIANTS)
+@patch("cosmos_curate.pipelines.video.captioning.vllm_caption_stage.windowing_utils.make_windows_for_video")
+@patch("cosmos_curate.models.vllm_interface.make_model_inputs")
+def test_prep_windows_model_input_assignment(  # noqa: PLR0913
+    mock_make_model_inputs: MagicMock,
+    mock_make_windows: MagicMock,
+    model_variant: str,
+    windows_count: int,
+    frames_count: int,
+    raises: AbstractContextManager[Any],
+) -> None:
+    """Validate VllmPrepStage._prep_windows assigns inputs and enforces strict zipping."""
+    config = VllmConfig(model_variant=model_variant)
+    window_config = WindowConfig()
+    stage = VllmPrepStage(config, window_config, keep_mp4=False)
+    # Inject a fake processor since stage_setup isn't called here
+    stage._processor = MagicMock()  # type: ignore[attr-defined]
+
+    prompt = "test prompt"
+    video = Video(input_video=Path("test.mp4"))
+
+    # Create test data returned by windowing util
+    windows = [Window(start_frame=0, end_frame=frames_count) for _ in range(windows_count)]
+    frames = [torch.randn(frames_count, 3, 224, 224) for _ in range(frames_count)]
+    mock_make_windows.return_value = (windows, frames)
+    mock_make_model_inputs.return_value = [{"test": "data"} for _ in range(frames_count)]
+
+    with raises:
+        stage._prep_windows(video, prompt)
+
+        for window in windows:
+            llm_input = window.model_input.get(model_variant)
+            assert isinstance(llm_input, dict)
+
+
+@pytest.mark.env("unified")
+@pytest.mark.parametrize("model_variant", VALID_VARIANTS)
+@patch("cosmos_curate.pipelines.video.captioning.vllm_caption_stage.windowing_utils.make_windows_for_video")
+def test_prep_windows_raises_without_processor(mock_make_windows: MagicMock, model_variant: str) -> None:
+    """_prep_windows should raise RuntimeError if self._processor is not set."""
+    config = VllmConfig(model_variant=model_variant)
+    stage = VllmPrepStage(config, WindowConfig(), keep_mp4=False)
+    # Do NOT set stage._processor here
+
+    video = Video(input_video=Path("test.mp4"))
+    windows = [Window(start_frame=0, end_frame=10)]
+    frames: list[object] = [object()]
+    mock_make_windows.return_value = (windows, frames)
+
+    with pytest.raises(RuntimeError, match=r".*processor.*"):
+        stage._prep_windows(video, "prompt")
