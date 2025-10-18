@@ -3,6 +3,7 @@ branch = True
 omit =
     */__init__.py
     */examples/*
+    cosmos_curate/models/internvideo2_multi_modality/*
 parallel = True
 relative_files = True
 source = cosmos_curate
