@@ -24,7 +24,7 @@ default:
 
 variables:
   # Versions
-  PYTHON_VERSION: "3.10.18"
+  PYTHON_VERSION: "3.10.19"
   RUFF_VERSION: "0.13.2"
 
   # Git config

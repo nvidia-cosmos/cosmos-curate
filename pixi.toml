@@ -8,7 +8,7 @@ version = "1.0.0"
 extra-index-urls = ["https://pypi.nvidia.com"]
 
 [dependencies]
-python = "3.10.*"
+python = ">=3.10.19"
 pip = "*"
 click = { version = "!=8.3.0" } # click 8.3.0 is broken
 
