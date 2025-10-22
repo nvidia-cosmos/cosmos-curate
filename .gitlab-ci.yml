@@ -628,6 +628,11 @@ nvcf-helm-validate:
   script:
     - |
       set +e  # Disable exit on error
+      # Test s3 access first to ensure credentials are valid
+      out=$(aws s3 ls "${S3_INPUT_VIDEO_PATH}" 2>&1); rc=$?
+      if [ $rc -ne 0 ]; then
+        echo "Error: Failed to access S3: $out"
+      fi
       i=0
       max=10
       file_found=false
@@ -754,7 +759,11 @@ promote_to_prod:
 build-packages:
   stage: post-merge
   rules: *schedule_rules
+  id_tokens:
+    VAULT_JWT_TOKEN:
+      aud: ${VAULT_ADDR}
   before_script:
+    - source ./vault-ci/vault-auth.sh
     - *setup_micromamba
     - TIMESTAMP=$(date -d ${CI_COMMIT_TIMESTAMP} +%s)
     - VERSION=$(grep -m 1 'version = ' pyproject.toml | cut -d'"' -f2)
