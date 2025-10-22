@@ -43,6 +43,7 @@ echo "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX "
 head_node=$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n 1)
 
 export COSMOS_S3_PROFILE_PATH="/creds/s3_creds"
+export COSMOS_AZURE_PROFILE_PATH="/creds/azure_creds"
 export COSMOS_CURATOR_RAY_SLURM_JOB=True
 export HEAD_NODE_PORT=$(expr 10000 + $(echo -n $SLURM_JOBID | tail -c 4))
 export WORLD_SIZE=$(($SLURM_NNODES * $SLURM_NTASKS_PER_NODE))

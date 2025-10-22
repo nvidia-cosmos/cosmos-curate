@@ -116,6 +116,8 @@ def test_render_sbatch_script(exclude_nodes: list[str] | None) -> None:
         assert "--exclude=" not in sbatch_script
     assert f"--output={job_spec.log_dir!s}" in sbatch_script
     assert f'--comment="{job_spec.comment}"' in sbatch_script
+    assert "COSMOS_S3_PROFILE_PATH" in sbatch_script
+    assert "COSMOS_AZURE_PROFILE_PATH" in sbatch_script
 
 
 class TestSubmitCmd(unittest.TestCase):

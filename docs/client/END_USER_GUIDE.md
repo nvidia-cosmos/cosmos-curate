@@ -321,7 +321,11 @@ Then set other dependent environment variables.
 source examples/slurm/source_me_env_vars.sh
 ```
 
-### Copy Config File, Cloud Storage Credential, and Model Files to Cluster
+These helper scripts detect the presence of AWS and Azure credential files and only mount the ones that exist, so clusters that rely on a single object store do not need to stage the other provider's configuration.
+
+### Copy Config File, Cloud Storage Credentials, and Model Files to Cluster
+
+**Note**: Cloud storage credentials are only required if your input videos or output paths use S3/Azure URIs. If all data resides on the cluster's local or shared storage, you can skip the credential sync steps below.
 
 If you have defined `my-slurm-login-01.my-cluster.com` in your `/.ssh/config` like mentioned above, you can simply run
 
@@ -336,9 +340,13 @@ Otherwise you can replace `my-slurm-login-01.my-cluster.com` with your real logi
 ssh my-slurm-login-01.my-cluster.com mkdir -p ${SLURM_COSMOS_CURATE_CONFIG_DIR}
 rsync -avh ~/.config/cosmos_curate/config.yaml my-slurm-login-01.my-cluster.com:${SLURM_COSMOS_CURATE_CONFIG_DIR}/config.yaml
 
-# Copy ~/.aws/credentials
+# (Optional) Copy ~/.aws/credentials if using S3-compatible storage
 ssh my-slurm-login-01.my-cluster.com mkdir -p ${SLURM_AWS_CREDS_DIR}
 rsync -avh ~/.aws/credentials my-slurm-login-01.my-cluster.com:${SLURM_AWS_CREDS_DIR}/credentials
+
+# (Optional) Copy ~/.azure/credentials if using Azure Blob Storage
+ssh my-slurm-login-01.my-cluster.com mkdir -p ${SLURM_AZURE_CREDS_DIR}
+rsync -avh ~/.azure/credentials my-slurm-login-01.my-cluster.com:${SLURM_AZURE_CREDS_DIR}/credentials
 
 # Copy models
 ssh my-slurm-login-01.my-cluster.com mkdir -p ${SLURM_WORKSPACE}/models
@@ -494,4 +502,3 @@ For additional support or to report issues, please contact the development team 
 
 ## Responsible Use of AI Models
 [Responsible Use](./RESPONSIBLE_USE.md)
-
