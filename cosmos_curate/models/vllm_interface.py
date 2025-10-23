@@ -52,8 +52,6 @@ _VLLM_PLUGINS = {
 
 T = TypeVar("T")
 
-_CAPTION_STAGE2_MAX_ITERATIONS = 2
-
 
 def _get_vllm_plugin(variant: str) -> VllmPlugin:
     """Get the vLLM plugin for the model variant.
@@ -229,47 +227,53 @@ def process_vllm_output(
         if out.finished:
             request = in_flight_requests[out.request_id]
             request.caption = vllm_plugin.decode(out)
-            request.iterations += 1
-            request.finished = True
             finished.append(request)
 
     return finished
 
 
-def _caption_no_inflight_batching(
+def _caption_no_inflight_batching(  # noqa: PLR0913
     model_inputs: list[dict[str, Any]],
     llm: LLM,
     processor: AutoProcessor,
     sampling_params: SamplingParams,
-    model_config: VllmConfig,
+    vllm_config: VllmConfig,
+    stage2_prompts: list[str | None],
 ) -> list[str]:
     """Caption the videos without inflight batching.
+
+    Assumption:
+       len(model_inputs) == len(stage2_prompts)
 
     Args:
         model_inputs: The model inputs for each video.
         llm: The vLLM model.
         processor: The processor to use.
         sampling_params: The sampling parameters.
-        model_config: The configuration for the vLLM model.
+        vllm_config: The configuration for the vLLM model.
+        stage2_prompts: A list of second-stage prompts to use for the
+           captioning. If None, no second-stage captioning will be performed.
+           Assumed to be the same length as model_inputs.
 
     Returns:
         Captions for each video.
 
     """
-    vllm_plugin = _get_vllm_plugin(model_config.model_variant)
+    vllm_plugin = _get_vllm_plugin(vllm_config.model_variant)
 
     requests = [
         VllmCaptionRequest(
             request_id=secrets.token_hex(8),
             inputs=model_input,
+            stage2_prompt=stage2_prompt,
         )
-        for model_input in model_inputs
+        for model_input, stage2_prompt in zip(model_inputs, stage2_prompts, strict=True)
     ]
 
     def _process_requests(requests: list[VllmCaptionRequest]) -> list[VllmCaptionRequest]:
         in_flight_requests: dict[str, VllmCaptionRequest] = {r.request_id: r for r in requests}
-        outputs = vllm_generate(llm, sampling_params, requests, model_config.batch_size)
-        finished_requests = process_vllm_output(outputs, in_flight_requests, model_config)  # type: ignore[arg-type]
+        outputs = vllm_generate(llm, sampling_params, requests, vllm_config.batch_size)
+        finished_requests = process_vllm_output(outputs, in_flight_requests, vllm_config)  # type: ignore[arg-type]
 
         # Sanity check
         if len(finished_requests) != len(requests):
@@ -279,17 +283,21 @@ def _caption_no_inflight_batching(
         return finished_requests
 
     # stage 1 captioning
-    finished_requests = _process_requests(requests)
+    finished_s1 = _process_requests(requests)
+    finished = [r for r in finished_s1 if r.stage2_prompt is None]
+    needs_stage2 = [r for r in finished_s1 if r.stage2_prompt is not None]
 
-    if model_config.stage2_caption:
-        # stage 2 captioning
-        refined_requests = [
-            vllm_plugin.make_refined_llm_request(r, processor, model_config.stage2_prompt_text)
-            for r in finished_requests
-        ]
-        finished_requests = _process_requests(refined_requests)
+    # stage 2 captioning
+    refine_requests = [vllm_plugin.make_refined_llm_request(r, processor, r.stage2_prompt) for r in needs_stage2]
 
-    return [request.caption or "Unknown caption" for request in finished_requests]
+    finished += _process_requests(refine_requests)
+
+    # Sanity check
+    if len(finished) != len(model_inputs):
+        msg = f"Expected {len(model_inputs)} finished requests, got {len(finished)}, this is a bug"
+        raise RuntimeError(msg)
+
+    return [request.caption or "Unknown caption" for request in finished]
 
 
 def _caption_inflight_batching(  # noqa: PLR0913
@@ -299,8 +307,12 @@ def _caption_inflight_batching(  # noqa: PLR0913
     sampling_params: SamplingParams,
     vllm_config: VllmConfig,
     max_inflight_requests: int,
+    stage2_prompts: list[str | None],
 ) -> list[str]:
     """Caption the videos using inflight batching.
+
+    Assumption:
+       len(model_inputs) == len(stage2_prompts)
 
     Args:
         model_inputs: The model inputs for each video.
@@ -310,25 +322,25 @@ def _caption_inflight_batching(  # noqa: PLR0913
         vllm_config: The configuration for the VLLM model.
         max_inflight_requests: Maximum number of inflight requests to vLLM
            engine. Set to 0 for unlimited inflight requests.
+        stage2_prompts: A list of second-stage prompts to use for the
+           captioning. If None, no second-stage captioning will be performed.
+           Assumed to be the same length as model_inputs.
 
     Returns:
         Captions for each video.
 
     """
-    if max_inflight_requests < 0:
-        msg = f"{max_inflight_requests=} must be >= 0"
-        raise ValueError(msg)
-
     vllm_plugin = _get_vllm_plugin(vllm_config.model_variant)
     request_q: Deque[VllmCaptionRequest] = deque()  # noqa: UP006, remove noqa when python 3.10 support is dropped
     in_flight_requests: dict[str, VllmCaptionRequest] = {}
     captions: list[str] = []
 
-    for model_input in model_inputs:
+    for model_input, stage2_prompt in zip(model_inputs, stage2_prompts, strict=True):
         request_q.append(
             VllmCaptionRequest(
                 request_id=secrets.token_hex(8),
                 inputs=model_input,
+                stage2_prompt=stage2_prompt,
             )
         )
 
@@ -343,24 +355,24 @@ def _caption_inflight_batching(  # noqa: PLR0913
             in_flight_requests[request.request_id] = request
 
         engine_output = engine.step()
-        finished_requests = process_vllm_output(engine_output, in_flight_requests, vllm_config)
+        # Finished requests are requests that have been completed by the vLLM engine and have a caption.
+        # These requests may still need stage2 refinement.
+        finished = process_vllm_output(engine_output, in_flight_requests, vllm_config)
 
-        for request in finished_requests:
+        for request in finished:
             del in_flight_requests[request.request_id]
 
-        if vllm_config.stage2_caption:
-            _finished_requests = [r for r in finished_requests if r.iterations >= _CAPTION_STAGE2_MAX_ITERATIONS]
-            outstanding_requests = [r for r in finished_requests if r.iterations < _CAPTION_STAGE2_MAX_ITERATIONS]
+        captions += [r.caption or "Unknown caption" for r in finished if r.stage2_prompt is None]
+        needs_stage2 = [r for r in finished if r.stage2_prompt is not None]
 
-            for request in outstanding_requests:
-                refined_request = vllm_plugin.make_refined_llm_request(
-                    request, processor, vllm_config.stage2_prompt_text
-                )
-                request_q.append(refined_request)
+        for request in needs_stage2:
+            refined_request = vllm_plugin.make_refined_llm_request(request, processor, request.stage2_prompt)
+            request_q.append(refined_request)
 
-            finished_requests = _finished_requests
-
-        captions += [request.caption or "Unknown caption" for request in finished_requests]
+    # Sanity check
+    if len(captions) != len(model_inputs):
+        msg = f"Expected {len(model_inputs)} captions, got {len(captions)}, this is a bug"
+        raise RuntimeError(msg)
 
     return captions
 
@@ -374,6 +386,7 @@ def vllm_caption(  # noqa: PLR0913
     max_inflight_requests: int,
     *,
     inflight_batching: bool,
+    stage2_prompts: list[str | None] | None = None,
 ) -> list[str]:
     """Caption the videos using the vLLM model.
 
@@ -386,19 +399,39 @@ def vllm_caption(  # noqa: PLR0913
         max_inflight_requests: Maximum number of inflight requests to vLLM
            engine. Set to 0 for unlimited inflight requests.
         inflight_batching: Whether to use inflight batching.
+        stage2_prompts: A list of second-stage prompts to use for the
+           captioning. If None, no second-stage captioning will be performed.
+           Must be the same length as model_inputs.
 
     Returns:
         Captions for each video.
 
+    Raises:
+        ValueError: If max_inflight_requests is negative.
+        ValueError: If stage2_prompts is not None and not the same length as model_inputs.
+
     """
+    if max_inflight_requests < 0:
+        msg = f"{max_inflight_requests=} must be >= 0"
+        raise ValueError(msg)
+
+    if stage2_prompts is None:
+        stage2_prompts = [None] * len(model_inputs)
+
+    if len(stage2_prompts) != len(model_inputs):
+        msg = f"{len(stage2_prompts)=} != {len(model_inputs)=}, must be same length"
+        raise ValueError(msg)
+
     if inflight_batching:
         return _caption_inflight_batching(
-            model_inputs, llm, processor, sampling_params, vllm_config, max_inflight_requests
+            model_inputs, llm, processor, sampling_params, vllm_config, max_inflight_requests, stage2_prompts
         )
+
     return _caption_no_inflight_batching(
         model_inputs,
         llm,
         processor,
         sampling_params,
         vllm_config,
+        stage2_prompts,
     )

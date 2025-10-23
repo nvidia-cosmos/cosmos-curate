@@ -92,7 +92,6 @@ def test_make_refined_llm_request() -> None:
         request_id="r1",
         inputs=base_inputs,
         caption="stage1 caption",
-        iterations=0,
     )
 
     refined = VllmCosmosReason1VL.make_refined_llm_request(base_req, mock_processor, refine_prompt=None)
@@ -141,7 +140,6 @@ def test_stage2_refine_prompt_equivalence_with_real_processor() -> None:
         request_id="r1",
         inputs=initial_inputs,
         caption=caption,
-        iterations=0,
     )
     refined = VllmCosmosReason1VL.make_refined_llm_request(base_req, processor, refine_prompt=refine_prompt)
 

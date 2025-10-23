@@ -42,7 +42,7 @@ from cosmos_curate.core.utils.infra.gpu_start_helper import (
 from cosmos_curate.core.utils.infra.performance_utils import StageTimer
 from cosmos_curate.core.utils.model import conda_utils
 from cosmos_curate.models.all_models import get_all_models_by_id
-from cosmos_curate.models.prompts import get_prompt
+from cosmos_curate.models.prompts import get_prompt, get_stage2_prompt
 from cosmos_curate.models.vllm_model_ids import get_vllm_model_id
 from cosmos_curate.pipelines.video.utils import windowing_utils
 from cosmos_curate.pipelines.video.utils.data_model import (
@@ -145,6 +145,41 @@ def _get_windows_from_tasks(tasks: list[T]) -> tuple[list[Window], list[str]]:
             clip_uuids += [str(clip.uuid)] * len(clip.windows)
 
     return windows, clip_uuids
+
+
+def _get_stage2_prompts(vllm_config: VllmConfig, num_windows: int) -> list[str | None]:
+    """Get the stage 2 prompts for the vLLM model.
+
+    Args:
+        vllm_config: The configuration for the vLLM model.
+        num_windows: The number of windows to get the stage 2 prompts for.
+
+    Returns:
+        The stage 2 prompts for the vLLM model.
+
+    """
+    if vllm_config.stage2_caption:
+        return [get_stage2_prompt(vllm_config.stage2_prompt_text)] * num_windows
+    return [None] * num_windows
+
+
+def _scatter_captions(
+    windows: list[Window], captions: list[str], clip_uuids: list[str], model_variant: str, *, verbose: bool
+) -> None:
+    """Scatter the captions back to the windows.
+
+    Args:
+        windows: The windows to scatter the captions to.
+        captions: The captions to scatter.
+        clip_uuids: The clip uuids to scatter the captions to.
+        model_variant: The variant of the model.
+        verbose: Whether to print verbose logs.
+
+    """
+    for window, caption, clip_uuid in zip(windows, captions, clip_uuids, strict=True):
+        window.caption[model_variant] = caption
+        if verbose:
+            logger.info(f"Caption for clip {clip_uuid}: {caption}")
 
 
 def _free_vllm_inputs(windows: list[Window], model_variant: str, *, keep_mp4: bool = False) -> None:
@@ -456,6 +491,9 @@ class VllmCaptionStage(CuratorStage):
             windows, clip_uuids = _get_windows_from_tasks(tasks)
             model_inputs = [window.model_input[self._vllm_config.model_variant] for window in windows]
 
+            # Set up stage 2 prompts if enabled
+            stage2_prompts = _get_stage2_prompts(self._vllm_config, len(windows))
+
             # Generate captions
             captions = vllm_caption(
                 model_inputs,
@@ -465,13 +503,11 @@ class VllmCaptionStage(CuratorStage):
                 self._vllm_config,
                 inflight_batching=self._inflight_batching,
                 max_inflight_requests=self._max_inflight_requests,
+                stage2_prompts=stage2_prompts,
             )
 
             # Scatter captions back to windows
-            for window, caption, clip_uuid in zip(windows, captions, clip_uuids, strict=True):
-                window.caption[self._vllm_config.model_variant] = caption
-                if self._verbose:
-                    logger.info(f"Caption for clip {clip_uuid}: {caption}")
+            _scatter_captions(windows, captions, clip_uuids, self._vllm_config.model_variant, verbose=self._verbose)
 
             logger.info(f"Generated {len(captions)} captions for {len(tasks)} tasks")
 

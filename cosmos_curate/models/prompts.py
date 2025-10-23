@@ -52,6 +52,12 @@ _ENHANCE_PROMPTS = {
 }
 
 
+_DEFAULT_STAGE2_PROMPT = """
+Improve and refine following video description. Focus on highlighting the key visual and sensory elements.
+Ensure the description is clear, precise, and paints a compelling picture of the scene.
+"""
+
+
 def get_prompt(
     prompt_variant: str,
     prompt_text: str | None,
@@ -109,3 +115,19 @@ def get_enhance_prompt(prompt_variant: str, prompt_text: str | None, *, verbose:
     if verbose:
         logger.debug(f"Enhance Captioning prompt: {prompt}")
     return prompt
+
+
+def get_stage2_prompt(prompt: str | None) -> str:
+    """Get the stage 2 prompt.
+
+    Args:
+        prompt: The text of the stage 2 prompt. If None, the default stage 2
+            prompt will be used.
+
+    Returns:
+        The stage 2 prompt.
+
+    """
+    if prompt is not None:
+        return prompt
+    return _DEFAULT_STAGE2_PROMPT.strip() + "\n"

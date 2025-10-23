@@ -19,7 +19,14 @@ from typing import Any
 
 import pytest
 
-from cosmos_curate.models.prompts import _ENHANCE_PROMPTS, _PROMPTS, get_enhance_prompt, get_prompt
+from cosmos_curate.models.prompts import (
+    _DEFAULT_STAGE2_PROMPT,
+    _ENHANCE_PROMPTS,
+    _PROMPTS,
+    get_enhance_prompt,
+    get_prompt,
+    get_stage2_prompt,
+)
 
 
 class TestGetPrompt:
@@ -69,3 +76,17 @@ class TestGetEnhancePrompt:
         custom_text = "This is a custom prompt for testing."
         result = get_enhance_prompt("any_variant", custom_text, verbose=verbose)
         assert result == custom_text
+
+
+class TestGetStage2Prompt:
+    """Test cases for get_stage2_prompt function."""
+
+    @pytest.mark.parametrize("prompt", [None, "This is a custom stage 2 prompt for testing."])
+    def test_get_stage2_prompt(self, prompt: str | None) -> None:
+        """Test getting default stage 2 prompt."""
+        result = get_stage2_prompt(prompt)
+
+        if prompt is None:
+            assert _DEFAULT_STAGE2_PROMPT.strip() in result
+        else:
+            assert result is prompt

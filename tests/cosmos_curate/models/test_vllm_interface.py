@@ -24,7 +24,6 @@ from cosmos_curate.pipelines.video.utils.data_model import VllmCaptionRequest, V
 if conda_utils.is_running_in_env("unified"):
     from cosmos_curate.models.vllm_interface import (
         _VLLM_PLUGINS,
-        _caption_inflight_batching,
         _caption_no_inflight_batching,
         auto_processor,
         make_model_inputs,
@@ -157,34 +156,53 @@ def test_caption_no_inflight_batching_flow(
     def _finish(reqs: list[VllmCaptionRequest]) -> list[VllmCaptionRequest]:
         for i, r in enumerate(reqs):
             r.caption = ("cap" if not stage2 else "cap1") + str(i)
-            r.finished = True
+            r.stage2_prompt = "ref" if stage2 else None
         return list(reqs)
 
     mock_process.side_effect = lambda engine_out, inflight, cfg: _finish(inflight.values())  # noqa: ARG005
     mock_generate.return_value = []
 
-    cfg = VllmConfig(model_variant="any", stage2_caption=stage2, stage2_prompt_text="ref")
+    cfg = VllmConfig(model_variant="qwen", stage2_caption=stage2, stage2_prompt_text="ref")
     outputs = _caption_no_inflight_batching(
         model_inputs=[{"a": 1}, {"b": 2}],
         llm=MagicMock(),
         processor=MagicMock(),
         sampling_params=MagicMock(),
-        model_config=cfg,
+        vllm_config=cfg,
+        stage2_prompts=[None, None],
     )
     assert outputs == [("cap" if not stage2 else "cap1") + "0", ("cap" if not stage2 else "cap1") + "1"]
 
 
 @pytest.mark.env("unified")
-def test_caption_inflight_batching_negative_inflight_raises() -> None:
-    """_caption_inflight_batching should validate non-negative inflight param."""
+def test_vllm_caption_negative_inflight_raises() -> None:
+    """vllm_caption should validate non-negative inflight param."""
     with pytest.raises(ValueError, match=r"must be >= 0"):
-        _caption_inflight_batching(
+        vllm_caption(
             model_inputs=[{}],
             llm=MagicMock(),
             processor=MagicMock(),
             sampling_params=MagicMock(),
-            vllm_config=VllmConfig(model_variant="any"),
+            vllm_config=VllmConfig(model_variant="qwen"),
             max_inflight_requests=-1,
+            inflight_batching=True,
+            stage2_prompts=[None],
+        )
+
+
+@pytest.mark.env("unified")
+def test_vllm_caption_stage2_prompts_mismatch_raises() -> None:
+    """vllm_caption should validate stage2_prompts length matches model_inputs length."""
+    with pytest.raises(ValueError, match=r"must be same length"):
+        vllm_caption(
+            model_inputs=[{}],
+            llm=MagicMock(),
+            processor=MagicMock(),
+            sampling_params=MagicMock(),
+            vllm_config=VllmConfig(model_variant="qwen"),
+            max_inflight_requests=0,
+            inflight_batching=True,
+            stage2_prompts=[None, None],
         )
 
 
@@ -193,7 +211,12 @@ def test_caption_inflight_batching_negative_inflight_raises() -> None:
 @patch("cosmos_curate.models.vllm_interface._caption_inflight_batching")
 @patch("cosmos_curate.models.vllm_interface._caption_no_inflight_batching")
 def test_vllm_caption_dispatch(mock_no_ifb: MagicMock, mock_ifb: MagicMock, *, inflight: bool) -> None:
-    """vllm_caption dispatches to correct helper based on inflight flag."""
+    """vllm_caption dispatches to correct helper based on inflight flag.
+
+    This is a happy path test that verifies that vllm_caption:
+    1. runs without errors
+    2. dispatches to the correct helper based on the inflight flag
+    """
     mock_no_ifb.return_value = ["no_ifb"]
     mock_ifb.return_value = ["ifb"]
     out = vllm_caption(

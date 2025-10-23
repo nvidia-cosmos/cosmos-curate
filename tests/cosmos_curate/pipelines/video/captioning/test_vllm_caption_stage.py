@@ -41,8 +41,10 @@ if conda_utils.is_running_in_env("unified"):
         VllmModelInterface,
         VllmPrepStage,
         _free_vllm_inputs,
+        _get_stage2_prompts,
         _get_video_from_task,
         _get_windows_from_tasks,
+        _scatter_captions,
     )
 
     VALID_VARIANTS = list(_VLLM_PLUGINS.keys())
@@ -309,3 +311,46 @@ def test_prep_windows_raises_without_processor(mock_make_windows: MagicMock, mod
 
     with pytest.raises(RuntimeError, match=r".*processor.*"):
         stage._prep_windows(video, "prompt")
+
+
+@pytest.mark.env("unified")
+@pytest.mark.parametrize(
+    ("stage2_prompt_text", "stage2_caption"),
+    [
+        ("test prompt", True),
+        (None, False),
+        (None, True),
+    ],
+)
+def test_get_stage2_prompts(stage2_prompt_text: str | None, *, stage2_caption: bool) -> None:
+    """Test _get_stage2_prompts."""
+    vllm_config = VllmConfig(
+        model_variant="test_variant", stage2_caption=stage2_caption, stage2_prompt_text=stage2_prompt_text
+    )
+    num_windows = 10
+    stage2_prompts = _get_stage2_prompts(vllm_config, num_windows=num_windows)
+
+    assert len(stage2_prompts) == num_windows
+
+    if stage2_caption:
+        for prompt in stage2_prompts:
+            if stage2_prompt_text is None:
+                assert isinstance(prompt, str)
+            else:
+                assert prompt == stage2_prompt_text
+    else:
+        for prompt in stage2_prompts:
+            assert prompt is None
+
+
+@pytest.mark.env("unified")
+@pytest.mark.parametrize("verbose", [True, False])
+def test_scatter_captions(*, verbose: bool) -> None:
+    """Test _scatter_captions."""
+    windows = [Window(start_frame=0, end_frame=10), Window(start_frame=10, end_frame=20)]
+    captions = ["caption 1", "caption 2"]
+    clip_uuids = ["clip_uuid_1", "clip_uuid_2"]
+    model_variant = "test_variant"
+    _scatter_captions(windows, captions, clip_uuids, model_variant, verbose=verbose)
+    for window, caption, _ in zip(windows, captions, clip_uuids, strict=True):
+        assert window.caption[model_variant] == caption

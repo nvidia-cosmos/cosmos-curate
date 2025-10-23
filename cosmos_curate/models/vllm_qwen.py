@@ -32,7 +32,6 @@ if TYPE_CHECKING:
 
     from cosmos_curate.pipelines.video.utils.data_model import VllmConfig
 
-
 MAX_MODEL_LEN = 32768
 GPU_MEMORY_UTILIZATION = 0.85
 MAX_NUM_BATCHED_TOKENS = 32768
@@ -210,7 +209,6 @@ class VllmQwen(VllmPlugin):
         return VllmCaptionRequest(
             request_id=secrets.token_hex(8),
             inputs=inputs,
-            iterations=request.iterations,
         )
 
     @staticmethod

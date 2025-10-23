@@ -221,7 +221,6 @@ class VllmPhi4(VllmPlugin):
         return VllmCaptionRequest(
             request_id=secrets.token_hex(8),
             inputs=inputs,
-            iterations=request.iterations,
         )
 
     @staticmethod
