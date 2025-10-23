@@ -784,6 +784,11 @@ nvcf_split_benchmark:
   rules:
     - if: $CI_PIPELINE_SOURCE == "schedule" && $SCHEDULE_TYPE == "weekly"
     - when: never   # fallback: never run otherwise
+  id_tokens:
+    VAULT_JWT_TOKEN:
+      aud: ${VAULT_ADDR}
+  before_script:
+    - source ./vault-ci/vault-auth.sh
   script:
     - echo "Running nvcf split benchmark"
     - *docker_login_perf
