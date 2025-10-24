@@ -167,35 +167,12 @@ def vllm_generate(
         outputs = llm.generate(batch_data, sampling_params=sampling_params, use_tqdm=False)  # type: ignore[arg-type]
         all_outputs.extend(outputs)
 
-    # Change request ids from integer strings to the vllm_interface unique request ids
-    # zip is safe because the requests and outputs are in the same order
+    # Change request ids from integer strings to the vllm_interface unique request ids.
+    # Zip is safe because the requests and outputs are in the same order
     for out, req in zip(all_outputs, requests, strict=True):
         out.request_id = req.request_id
 
     return all_outputs
-
-
-def make_refined_llm_input(
-    caption: str,
-    prev_input: dict[str, Any],
-    processor: AutoProcessor,
-    model_variant: str,
-    refine_prompt: str | None = None,
-) -> dict[str, Any]:
-    """Make a refined LLM input.
-
-    Args:
-        caption: The caption to refine.
-        prev_input: The previous input.
-        processor: The processor to use.
-        model_variant: The variant of the model.
-        refine_prompt: The prompt to use to refine the caption.
-
-    Returns:
-        A refined LLM input.
-
-    """
-    return _get_vllm_plugin(model_variant).make_refined_llm_input(caption, prev_input, processor, refine_prompt)
 
 
 def process_vllm_output(
@@ -277,7 +254,7 @@ def _caption_no_inflight_batching(  # noqa: PLR0913
 
         # Sanity check
         if len(finished_requests) != len(requests):
-            msg = f"Expected {len(requests)} finished requests, got {len(finished_requests)}"
+            msg = f"Expected {len(requests)} finished requests, got {len(finished_requests)}, this is a bug"
             raise RuntimeError(msg)
 
         return finished_requests
@@ -291,11 +268,6 @@ def _caption_no_inflight_batching(  # noqa: PLR0913
     refine_requests = [vllm_plugin.make_refined_llm_request(r, processor, r.stage2_prompt) for r in needs_stage2]
 
     finished += _process_requests(refine_requests)
-
-    # Sanity check
-    if len(finished) != len(model_inputs):
-        msg = f"Expected {len(model_inputs)} finished requests, got {len(finished)}, this is a bug"
-        raise RuntimeError(msg)
 
     return [request.caption or "Unknown caption" for request in finished]
 
@@ -355,6 +327,7 @@ def _caption_inflight_batching(  # noqa: PLR0913
             in_flight_requests[request.request_id] = request
 
         engine_output = engine.step()
+
         # Finished requests are requests that have been completed by the vLLM engine and have a caption.
         # These requests may still need stage2 refinement.
         finished = process_vllm_output(engine_output, in_flight_requests, vllm_config)
@@ -368,11 +341,6 @@ def _caption_inflight_batching(  # noqa: PLR0913
         for request in needs_stage2:
             refined_request = vllm_plugin.make_refined_llm_request(request, processor, request.stage2_prompt)
             request_q.append(refined_request)
-
-    # Sanity check
-    if len(captions) != len(model_inputs):
-        msg = f"Expected {len(model_inputs)} captions, got {len(captions)}, this is a bug"
-        raise RuntimeError(msg)
 
     return captions
 

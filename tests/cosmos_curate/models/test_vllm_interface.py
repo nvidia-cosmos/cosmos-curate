@@ -22,9 +22,14 @@ from cosmos_curate.core.utils.model import conda_utils
 from cosmos_curate.pipelines.video.utils.data_model import VllmCaptionRequest, VllmConfig
 
 if conda_utils.is_running_in_env("unified"):
+    import torch
+    from vllm import SamplingParams
+
     from cosmos_curate.models.vllm_interface import (
         _VLLM_PLUGINS,
+        _caption_inflight_batching,
         _caption_no_inflight_batching,
+        _get_vllm_plugin,
         auto_processor,
         make_model_inputs,
         process_vllm_output,
@@ -33,145 +38,211 @@ if conda_utils.is_running_in_env("unified"):
         vllm_generate,
         vllm_model,
     )
+    from tests.utils.vllm_mock import MockLLM, MockVllmPlugin, make_request_output
 
     VALID_VARIANTS = list(_VLLM_PLUGINS.keys())
 else:
     VALID_VARIANTS = []
 
 
+@pytest.fixture(autouse=True)
+def patch_vllm_plugins(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Patch _VLLM_PLUGINS dict with {"mock": MockVllmPlugin} for every test in this module."""
+    if conda_utils.is_running_in_env("unified"):
+        monkeypatch.setitem(
+            _VLLM_PLUGINS,
+            "mock",
+            MockVllmPlugin,
+        )
+        # Optionally, remove all other keys so *only* "mock" is present:
+        for k in list(_VLLM_PLUGINS.keys()):
+            if k != "mock":
+                del _VLLM_PLUGINS[k]
+
+
 @pytest.mark.env("unified")
-@pytest.mark.parametrize("model_variant", VALID_VARIANTS)
-def test_sampling_params_maps_config(model_variant: str) -> None:
-    """sampling_params should mirror fields from VllmConfig."""
-    cfg = VllmConfig(
-        model_variant=model_variant, temperature=0.7, top_p=0.9, repetition_penalty=1.1, max_output_tokens=42
+def test_get_vllm_plugin_raises() -> None:
+    """Test _get_vllm_plugin raises ValueError for invalid variant."""
+    with pytest.raises(ValueError, match=r".*"):
+        _get_vllm_plugin("invalid")
+
+
+@pytest.mark.env("unified")
+def test_vllm_model() -> None:
+    """vllm_model should return "llm"."""
+    cfg = VllmConfig(model_variant="mock")
+    assert isinstance(vllm_model(cfg), MockLLM)
+
+
+@pytest.mark.env("unified")
+def test_sampling_params() -> None:
+    """Test sampling_params."""
+    temperature = 0.1
+    top_p = 0.2
+    repetition_penalty = 1.3
+    max_output_tokens = 1024
+    vllm_config = VllmConfig(
+        model_variant="mock",
+        temperature=temperature,
+        top_p=top_p,
+        repetition_penalty=repetition_penalty,
+        max_output_tokens=max_output_tokens,
     )
-    sp = sampling_params(cfg)
-    assert sp.temperature == cfg.temperature
-    assert sp.top_p == cfg.top_p
-    assert sp.repetition_penalty == cfg.repetition_penalty
-    assert sp.max_tokens == cfg.max_output_tokens
+    sp = sampling_params(vllm_config)
+    assert isinstance(sp, SamplingParams)
+    assert sp.temperature == temperature
+    assert sp.top_p == top_p
+    assert sp.repetition_penalty == repetition_penalty
+    assert sp.max_tokens == max_output_tokens
 
 
 @pytest.mark.env("unified")
-@pytest.mark.parametrize("model_variant", VALID_VARIANTS)
-@patch("cosmos_curate.models.vllm_interface._get_vllm_plugin")
-def test_auto_processor_and_vllm_model_use_plugin(mock_get_plugin: MagicMock, model_variant: str) -> None:
-    """auto_processor and vllm_model delegate to plugin."""
-    mock_plugin = MagicMock()
-    mock_plugin.processor.return_value = "processor"
-    mock_plugin.model.return_value = "llm"
-    mock_get_plugin.return_value = mock_plugin
+def test_auto_processor() -> None:
+    """Test auto_processor.
 
-    cfg = VllmConfig(model_variant=model_variant)
-    assert auto_processor(cfg) == "processor"
-    assert vllm_model(cfg) == "llm"
+    This ensures that the plugin's auto_processor is called.
+    """
+    vllm_config = VllmConfig(model_variant="mock")
+    assert auto_processor(vllm_config) is not None
 
 
 @pytest.mark.env("unified")
-@pytest.mark.parametrize("num_videos", [0, 1, 3])
-@patch("cosmos_curate.models.vllm_interface._get_vllm_plugin")
-def test_make_model_inputs_invokes_plugin(mock_get_plugin: MagicMock, num_videos: int) -> None:
-    """make_model_inputs calls plugin for each video."""
-    mock_plugin = MagicMock()
-    mock_plugin.make_llm_input.side_effect = lambda _prompt, frames, _proc: {"ok": True, "frames": frames}
-    mock_get_plugin.return_value = mock_plugin
-
-    cfg = VllmConfig(model_variant="any")
-    videos = [object() for _ in range(num_videos)]
-    out = make_model_inputs(videos, cfg, processor=MagicMock(), prompt="p")
-    assert len(out) == num_videos
-    for i, frames in enumerate(videos):
-        assert out[i]["frames"] is frames
+def test_make_model_inputs() -> None:
+    """Test make_model_inputs."""
+    videos = [torch.zeros((2, 3, 32, 32)) for _ in range(5)]
+    config = VllmConfig(model_variant="mock")
+    processor = MagicMock()
+    prompt = "p"
+    output = make_model_inputs(videos, config, processor, prompt)
+    assert len(output) == len(videos)
+    assert output[0]["prompt"] == prompt
+    assert output[0]["multi_modal_data"]["video"].shape == (2, 3, 32, 32)
 
 
 @pytest.mark.env("unified")
-def test_vllm_generate_batches_and_rewrites_ids() -> None:
-    """vllm_generate should batch by size and rewrite request_ids to match."""
-
-    class DummyOut:
-        def __init__(self, request_id: str) -> None:
-            self.request_id = request_id
-
-    class DummyLLM:
-        def __init__(self) -> None:
-            self.calls: list[int] = []
-
-        def generate(self, batch: list[object], **kwargs: object) -> list[DummyOut]:  # noqa: ARG002
-            self.calls.append(len(batch))
-            return [DummyOut(str(i)) for i in range(len(batch))]
-
-    llm = DummyLLM()
-    reqs = [VllmCaptionRequest(request_id=f"id{i}", inputs={"i": i}) for i in range(5)]
-    outs = vllm_generate(llm, sampling_params=MagicMock(), requests=reqs, batch_size=2)  # type: ignore[arg-type]
-    assert [o.request_id for o in outs] == [r.request_id for r in reqs]
-    assert llm.calls == [2, 2, 1]
+def test_vllm_generate() -> None:
+    """Test vllm_generate."""
+    llm = MockLLM()
+    sampling_params = SamplingParams(max_tokens=100)
+    requests = [VllmCaptionRequest(request_id=f"id{i}", inputs={"i": i}) for i in range(5)]
+    captions = vllm_generate(llm, sampling_params, requests, batch_size=2)  # type: ignore[arg-type]
+    assert len(captions) == len(requests)
+    assert [c.request_id for c in captions] == [r.request_id for r in requests]
+    captions_text = [c.outputs[0].text for c in captions]
+    expected_captions = [f"mock-caption-{i}" for i in range(len(requests))]
+    assert captions_text == expected_captions
 
 
 @pytest.mark.env("unified")
-@pytest.mark.parametrize("model_variant", VALID_VARIANTS)
-def test_process_vllm_output_filters_and_decodes(model_variant: str, monkeypatch: pytest.MonkeyPatch) -> None:
-    """process_vllm_output decodes finished outputs and ignores unfinished."""
+def test_process_vllm_output() -> None:
+    """Test process_vllm_output."""
+    vllm_plugin = _get_vllm_plugin("mock")
+    requests = [VllmCaptionRequest(request_id=f"id{i}", inputs={"i": i}) for i in range(5)]
+    engine_output = [make_request_output(f"id{i}", f"mock-caption-{i}") for i in range(5)]
+    inflight_requests = {r.request_id: r for r in requests}
+    vllm_config = VllmConfig(model_variant="mock")
+    finished = process_vllm_output(engine_output, inflight_requests, vllm_config)  # type: ignore[arg-type]
+    assert len(finished) == len(engine_output)
+    assert [r.request_id for r in finished] == [r.request_id for r in engine_output]
+    assert [r.caption for r in finished] == [vllm_plugin.decode(r) for r in engine_output]
 
-    class DummyRO:
-        def __init__(self, request_id: str, *, finished: bool) -> None:
-            self.request_id = request_id
-            self.finished = finished
 
-    # Swap the RequestOutput type used for isinstance checks
-    import cosmos_curate.models.vllm_interface as vi  # noqa: PLC0415
+@pytest.mark.env("unified")
+def test_process_vllm_output_raises() -> None:
+    """Test process_vllm_output raises TypeError for non-RequestOutput output."""
+    request_output = [object()]
+    with pytest.raises(TypeError, match=r".*"):
+        process_vllm_output(request_output, {}, VllmConfig(model_variant="mock"))  # type: ignore[arg-type]
 
-    monkeypatch.setattr(vi, "RequestOutput", DummyRO, raising=False)
 
-    # Patch plugin to provide decode
-    mock_plugin = MagicMock()
-    mock_plugin.decode.side_effect = lambda out: f"dec-{out.request_id}"
-    monkeypatch.setattr(vi, "_get_vllm_plugin", lambda _variant: mock_plugin, raising=False)
-
-    cfg = VllmConfig(model_variant=model_variant)
-    inflight = {f"r{i}": VllmCaptionRequest(request_id=f"r{i}", inputs={}) for i in range(3)}
-    engine_out = [DummyRO("r0", finished=True), DummyRO("r1", finished=False), DummyRO("r2", finished=True)]
-
-    finished = process_vllm_output(engine_out, inflight, cfg)  # type: ignore[arg-type]
-    assert [r.request_id for r in finished] == ["r0", "r2"]
-    assert [r.caption for r in finished] == ["dec-r0", "dec-r2"]
+@pytest.mark.env("unified")
+def test_process_vllm_output_not_finished() -> None:
+    """Test that no output is returned when no requests are finished."""
+    requests = [VllmCaptionRequest(request_id=f"id{i}", inputs={"i": i}) for i in range(5)]
+    engine_output = [make_request_output(f"id{i}", f"mock-caption-{i}", finished=False) for i in range(5)]
+    inflight_requests = {r.request_id: r for r in requests}
+    vllm_config = VllmConfig(model_variant="mock")
+    finished = process_vllm_output(engine_output, inflight_requests, vllm_config)  # type: ignore[arg-type]
+    assert len(finished) == 0
 
 
 @pytest.mark.env("unified")
 @pytest.mark.parametrize("stage2", [False, True])
-@patch("cosmos_curate.models.vllm_interface.vllm_generate")
+def test_caption_no_inflight_batching(*, stage2: bool) -> None:
+    """Test _caption_no_inflight_batching."""
+    vllm_config = VllmConfig(model_variant="mock")
+    model = vllm_model(vllm_config)
+    processor = auto_processor(vllm_config)
+    sp = sampling_params(vllm_config)
+
+    model_inputs = [{"a": 1}, {"b": 2}]
+    stage2_prompts: list[str | None] = [None, None] if not stage2 else ["ref", "ref"]
+
+    captions = _caption_no_inflight_batching(
+        model_inputs=model_inputs,
+        llm=model,
+        processor=processor,
+        sampling_params=sp,
+        vllm_config=vllm_config,
+        stage2_prompts=stage2_prompts,
+    )
+
+    if stage2:
+        off = len(model_inputs)
+        expected_captions = [f"mock-caption-{i + off}" for i in range(len(model_inputs))]
+    else:
+        expected_captions = [f"mock-caption-{i}" for i in range(len(model_inputs))]
+
+    assert captions == expected_captions
+
+
+@pytest.mark.env("unified")
 @patch("cosmos_curate.models.vllm_interface.process_vllm_output")
-@patch("cosmos_curate.models.vllm_interface._get_vllm_plugin")
-def test_caption_no_inflight_batching_flow(
-    mock_get_plugin: MagicMock, mock_process: MagicMock, mock_generate: MagicMock, *, stage2: bool
-) -> None:
-    """_caption_no_inflight_batching should return decoded captions; optionally stage2."""
-    mock_plugin = MagicMock()
-    mock_plugin.decode.side_effect = lambda r: r.caption
-    mock_plugin.make_refined_llm_request.side_effect = lambda r, _proc, _prmpt: VllmCaptionRequest(
-        request_id=r.request_id, inputs=r.inputs
+def test_caption_no_inflight_batching_raises(mock_process_vllm_output: MagicMock) -> None:
+    """Test _caption_no_inflight_batching raises RuntimeError on length mismatch."""
+    mock_process_vllm_output.return_value = []
+    vllm_config = VllmConfig(model_variant="mock")
+    llm = vllm_model(vllm_config)
+    with pytest.raises(RuntimeError, match=r".*"):
+        _caption_no_inflight_batching(
+            model_inputs=[{"a": 1}],
+            llm=llm,
+            processor=MagicMock(),
+            sampling_params=MagicMock(),
+            vllm_config=vllm_config,
+            stage2_prompts=[None],
+        )
+
+
+@pytest.mark.env("unified")
+@pytest.mark.parametrize("stage2", [False, True])
+def test_caption_inflight_batching(*, stage2: bool) -> None:
+    """Test _caption_inflight_batching."""
+    vllm_config = VllmConfig(model_variant="mock")
+    model = vllm_model(vllm_config)
+    processor = auto_processor(vllm_config)
+    sp = sampling_params(vllm_config)
+
+    model_inputs = [{"a": 1}, {"b": 2}]
+    stage2_prompts: list[str | None] = [None, None] if not stage2 else ["ref", "ref"]
+
+    captions = _caption_inflight_batching(
+        model_inputs=model_inputs,
+        llm=model,
+        processor=processor,
+        sampling_params=sp,
+        vllm_config=vllm_config,
+        stage2_prompts=stage2_prompts,
+        max_inflight_requests=0,
     )
-    mock_get_plugin.return_value = mock_plugin
 
-    def _finish(reqs: list[VllmCaptionRequest]) -> list[VllmCaptionRequest]:
-        for i, r in enumerate(reqs):
-            r.caption = ("cap" if not stage2 else "cap1") + str(i)
-            r.stage2_prompt = "ref" if stage2 else None
-        return list(reqs)
+    if stage2:
+        off = len(model_inputs)
+        expected_captions = [f"mock-caption-{i + off}" for i in range(len(model_inputs))]
+    else:
+        expected_captions = [f"mock-caption-{i}" for i in range(len(model_inputs))]
 
-    mock_process.side_effect = lambda engine_out, inflight, cfg: _finish(inflight.values())  # noqa: ARG005
-    mock_generate.return_value = []
-
-    cfg = VllmConfig(model_variant="qwen", stage2_caption=stage2, stage2_prompt_text="ref")
-    outputs = _caption_no_inflight_batching(
-        model_inputs=[{"a": 1}, {"b": 2}],
-        llm=MagicMock(),
-        processor=MagicMock(),
-        sampling_params=MagicMock(),
-        vllm_config=cfg,
-        stage2_prompts=[None, None],
-    )
-    assert outputs == [("cap" if not stage2 else "cap1") + "0", ("cap" if not stage2 else "cap1") + "1"]
+    assert captions == expected_captions
 
 
 @pytest.mark.env("unified")
