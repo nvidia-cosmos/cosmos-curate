@@ -41,7 +41,8 @@ variables:
 
   # NVCF configuration - use perf org for now
   NGC_NVCF_ORG: "$PERF_NGC_NVCF_ORG_ID"  # instead of $NVCF_ORG_ID
-  NGC_NVCF_API_KEY: "$PERF_NGC_NVCF_API_KEY"  # instead of $NVCF_KEY
+  # This happens later in the login script, after the value secrets are sourced
+  # NGC_NVCF_API_KEY: "$PERF_NGC_NVCF_API_KEY"  # instead of $NVCF_KEY
 
   # GPU type/instance/cluster info - use perf org for now
   NVCF_GPU_TYPE:
@@ -190,14 +191,8 @@ stages:
     export DOCKER_CONFIG="${CI_PROJECT_DIR}/.docker"
     mkdir -p "${DOCKER_CONFIG}"
     docker login -u gitlab-ci-token -p ${CI_JOB_TOKEN} "${CI_REGISTRY}"
-    echo "$NGC_NVCF_API_KEY" | docker login nvcr.io --username '$oauthtoken' --password-stdin
-
-  # Configure Docker authentication for GitLab/NVCF registries / performance organization
-  docker_login_perf: &docker_login_perf |
-    export DOCKER_CONFIG="${CI_PROJECT_DIR}/.docker"
-    mkdir -p "${DOCKER_CONFIG}"
-    docker login -u gitlab-ci-token -p ${CI_JOB_TOKEN} "${CI_REGISTRY}"
-    echo "$PERF_NGC_NVCF_API_KEY" | docker login nvcr.io --username '$oauthtoken' --password-stdin
+    echo "$NGC_REGISTRY_KEY" | docker login nvcr.io/${NVCF_ORG_ID} --username '$oauthtoken' --password-stdin
+    echo "$PERF_REGISTRY_KEY" | docker login nvcr.io/${PERF_NGC_NVCF_ORG_ID} --username '$oauthtoken' --password-stdin
 
   # Set up micromamba environment for Python dependencies
   setup_micromamba: &setup_micromamba |
@@ -234,7 +229,7 @@ stages:
 
   # Configure cosmos-curate nvcf CLI
   configure_nvcf_cli: &configure_nvcf_cli |
-    cosmos-curate nvcf config set --org $NGC_NVCF_ORG --key $NGC_NVCF_API_KEY
+    cosmos-curate nvcf config set --org $NGC_NVCF_ORG --key $PERF_NGC_NVCF_API_KEY
 
 ruff:
   stage: lint
@@ -297,6 +292,11 @@ unit_tests:
 build_deploy_curator:
   stage: build
   rules: *pre_post_merge_and_web_rules
+  id_tokens:
+    VAULT_JWT_TOKEN:
+      aud: ${VAULT_ADDR}
+  before_script:
+    - source ./vault-ci/vault-auth.sh
   script:
     # For web triggers, this is a no-op since we use existing images
     - |
@@ -628,10 +628,13 @@ nvcf-helm-validate:
   script:
     - |
       set +e  # Disable exit on error
+      # Confirm we're only using the credentials from file
+      unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY
       # Test s3 access first to ensure credentials are valid
       out=$(aws s3 ls "${S3_INPUT_VIDEO_PATH}" 2>&1); rc=$?
       if [ $rc -ne 0 ]; then
         echo "Error: Failed to access S3: $out"
+        sha256sum aws_credentials
       fi
       i=0
       max=10
@@ -730,6 +733,11 @@ promote_to_staging:
   variables:
     GIT_STRATEGY: none
   rules: *post_merge_rules
+  id_tokens:
+    VAULT_JWT_TOKEN:
+      aud: ${VAULT_ADDR}
+  before_script:
+    - source ./vault-ci/vault-auth.sh
   script:
     - IMAGE_TAG="${CI_COMMIT_TIMESTAMP%%T*}_${CI_COMMIT_SHORT_SHA}"
     - echo "Promoting to staging from $IMAGE_TAG"
@@ -742,6 +750,11 @@ promote_to_staging:
 promote_to_prod:
   stage: post-merge
   rules: *schedule_rules
+  id_tokens:
+    VAULT_JWT_TOKEN:
+      aud: ${VAULT_ADDR}
+  before_script:
+    - source ./vault-ci/vault-auth.sh
   script:
     - echo "Promoting latest staging image to prod"
     - *docker_login
@@ -791,7 +804,7 @@ nvcf_split_benchmark:
     - source ./vault-ci/vault-auth.sh
   script:
     - echo "Running nvcf split benchmark"
-    - *docker_login_perf
+    - *docker_login
     - *setup_micromamba
     - *setup_curator
     # Build curator image
