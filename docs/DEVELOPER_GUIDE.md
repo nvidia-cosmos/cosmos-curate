@@ -184,9 +184,9 @@ tests/cosmos_curate/pipelines/video/utils/test_decoder_utils.py ................
 Launch the docker container locally and simply run `pytest` command:
 
 ```bash
-for conda_env in default unified; do
+for conda_env in default legacy-transformers transformers unified; do
    cosmos-curate local launch --image-name cosmos-curate --image-tag 1.0.0 --curator-path . \
-   -- pixi run -e $conda_env pytest -m env tests/cosmos_curate/pipelines/;
+   -- pixi run -e $conda_env pytest -m env tests/cosmos_curate/{pipelines,models}/;
 done
 
 ================ test session starts ================

@@ -361,7 +361,7 @@ gpu_tests:
       set -e
 
       # Run tests for each environment with unique report files and coverage
-      for env in default legacy-transformers unified; do
+      for env in default legacy-transformers transformers unified; do
         echo "Running tests for $env environment"
         pixi run -e $env pytest -m env -n ${PYTEST_XDIST_WORKERS} \
           --junitxml="/config/project/$env-report.xml" \
