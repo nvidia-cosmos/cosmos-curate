@@ -29,6 +29,7 @@ fi
 # Download vault agent if not available
 
 echo "Downloading Vault agent..."
+rm -f vault_agent.zip vault
 curl https://urm.nvidia.com/artifactory/sw-kaizen-data-generic-local/com/nvidia/vault/vault-agent/2.4.4/nvault_agent_v2.4.4_linux_amd64.zip -L -o vault_agent.zip
 unzip vault_agent.zip
 chmod +x vault
