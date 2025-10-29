@@ -42,7 +42,6 @@ pytest = "*"
 pytest-asyncio = "*"
 pytest-cov = "*"
 pytest-xdist = "*"
-pytorch-gpu = ">=2.7.1" # 2.7.1 for transformers-legacy, 2.8.0 for unified
 scipy = "*"
 sqlalchemy = "*"
 tabulate = "*"
@@ -52,7 +51,6 @@ timezonefinder = "*"
 tqdm = "*"
 typer = "*"
 uvicorn = "*"
-webdataset = "*"
 
 [feature.core.pypi-dependencies]
 av = "*" # conda-forge package pulls in ffmpeg
@@ -61,6 +59,7 @@ opencv-python-headless = "*" # not available on conda-forge
 pillow = "*"  # required by phi-4 model, part of task, needs to be serialized
 pulp = "*" # conda-forge package is too old
 timm = "*" # conda-forge package pulls in torchvision, which is behind
+webdataset = "*" # conda-forge package pulls in pytorch
 
 [feature.cuml.system-requirements]
 cuda = "12.9.1" # match the version of the nvidia/cuda docker base image
@@ -97,7 +96,6 @@ transformers = ">=4.57.1"
 [feature.unified.dependencies]
 cuda-libraries-dev = "*"
 pycuda = "*"
-pytorch-gpu = "==2.8.0"
 
 [feature.unified.pypi-dependencies]
 cvcuda-cu12 = "*" # not available on conda-forge
