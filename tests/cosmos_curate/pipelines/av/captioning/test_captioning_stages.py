@@ -81,7 +81,9 @@ def mock_qwen_lm() -> Generator[MagicMock, None, None]:
     with patch("cosmos_curate.pipelines.av.captioning.captioning_stages.ChatLM") as mock:
         mock_instance = MagicMock()
         # Return number of captions based on input length
-        mock_instance.generate.side_effect = lambda inputs: [f"Enhanced caption {i + 1}" for i in range(len(inputs))]
+        mock_instance.generate.side_effect = lambda inputs, *_args, **_kwargs: [
+            f"Enhanced caption {i + 1}" for i in range(len(inputs))
+        ]
         mock.return_value = mock_instance
         yield mock_instance
 
@@ -294,7 +296,7 @@ def test_enhance_captions(  # noqa: PLR0913
             assert prompt[1]["content"].endswith(clips[i].caption_windows[0].captions[prompt_variant_key][0])
     else:
         # For empty clips list, verify generate was called with empty list
-        mock_qwen_lm.generate.assert_called_once_with([])
+        mock_qwen_lm.generate.assert_called_once_with([], batch_size=None)
 
     # Verify the enhanced captions were appended correctly
     for i, clip in enumerate(test_clips):

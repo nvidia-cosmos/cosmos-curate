@@ -14,6 +14,8 @@
 # limitations under the License.
 """Captioning stage."""
 
+from typing import cast
+
 import nvtx  # type: ignore[import-untyped]
 from loguru import logger
 
@@ -24,10 +26,7 @@ from cosmos_curate.core.utils.infra.performance_utils import StageTimer
 from cosmos_curate.models import t5_encoder
 from cosmos_curate.models.chat_lm import ChatLM
 from cosmos_curate.models.prompts import get_enhance_prompt
-from cosmos_curate.pipelines.video.utils.data_model import (
-    ShardPipeTask,
-    SplitPipeTask,
-)
+from cosmos_curate.pipelines.video.utils.data_model import ShardPipeTask, SplitPipeTask
 
 
 class _T5Stage(CuratorStage):
@@ -193,6 +192,7 @@ class EnhanceCaptionStage(CuratorStage):
         prompt_variant: str = "default",
         prompt_text: str | None = None,
         batch_size: int = 32,
+        azure_deployment: str = "gpt-5-chat-20250807",
         *,
         fp8_enable: bool = False,
         max_output_tokens: int = 2048,
@@ -203,11 +203,13 @@ class EnhanceCaptionStage(CuratorStage):
 
         Args:
             model_variant: Language model to use for enhancement. One of
-                "qwen_lm" or "gpt_oss_20b".
+                "qwen_lm", "gpt_oss_20b", or "azure_openai".
             prompt_variant: Type of prompt to use.
             prompt_text: Custom prompt text if provided.
             batch_size: Number of samples to process in parallel.
-            fp8_enable: Whether to enable FP8 precision.
+            azure_deployment: Azure OpenAI deployment name (only used when model_variant is "azure_openai").
+                Defaults to "gpt-5-chat-20250807".
+            fp8_enable: Whether to enable FP8 precision (only for local models).
             max_output_tokens: Maximum number of tokens to generate.
             verbose: Whether to print verbose logs.
             log_stats: Whether to log performance statistics.
@@ -218,10 +220,14 @@ class EnhanceCaptionStage(CuratorStage):
         self._verbose = verbose
         self._log_stats = log_stats
         self._enhanced_key = model_variant
+
+        quantization = "fp8" if fp8_enable and model_variant == "qwen_lm" else None
         self._raw_model = ChatLM(
             model_variant,
             max_output_tokens=max_output_tokens,
-            quantization=("fp8" if fp8_enable and model_variant == "qwen_lm" else None),
+            quantization=quantization,
+            azure_deployment=azure_deployment,
+            verbose=verbose,
         )
         self._prompt_variant = prompt_variant
         self._prompt_text = prompt_text
@@ -239,7 +245,7 @@ class EnhanceCaptionStage(CuratorStage):
             The model.
 
         """
-        return self._raw_model
+        return cast("ModelInterface", self._raw_model)
 
     @property
     def resources(self) -> CuratorStageResource:
@@ -249,7 +255,8 @@ class EnhanceCaptionStage(CuratorStage):
             The resource requirements for this stage.
 
         """
-        return CuratorStageResource(gpus=1.0)
+        gpus = 1.0 if self._raw_model.requires_gpu else 0.0
+        return CuratorStageResource(cpus=1.0, gpus=gpus)
 
     @nvtx.annotate("EnhanceCaptionStage")  # type: ignore[misc]
     def process_data(self, tasks: list[SplitPipeTask]) -> list[SplitPipeTask] | None:  # noqa: C901
@@ -274,8 +281,8 @@ class EnhanceCaptionStage(CuratorStage):
                         logger.warning(f"Clip {clip.uuid} has no windows.")
                         clip.errors["windows"] = "empty"
                     for window_idx, window in enumerate(clip.windows):
-                        if window.caption is None:
-                            logger.error(f"Clip {clip.uuid} window {window_idx} has no captions generated.")  # type: ignore[unreachable]
+                        if not window.caption:
+                            logger.error(f"Clip {clip.uuid} window {window_idx} has no captions generated.")
                             clip.errors[f"window-{window_idx}"] = "empty"
                             continue
                         mapping[idx] = (clip_idx, window_idx)

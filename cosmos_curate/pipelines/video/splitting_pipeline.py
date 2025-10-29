@@ -523,8 +523,9 @@ def split(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912, PLR0915
                 EnhanceCaptionStage(
                     model_variant=args.enhance_captions_lm_variant,
                     batch_size=args.enhance_captions_batch_size,
+                    azure_deployment=args.enhance_captions_azure_openai_deployment,
                     fp8_enable=args.qwen_lm_use_fp8_weights,
-                    max_output_tokens=args.captioning_max_output_tokens,
+                    max_output_tokens=args.enhance_captions_max_output_tokens,
                     prompt_variant=args.enhance_captions_prompt_variant,
                     prompt_text=args.enhance_captions_prompt_text,
                     verbose=args.verbose,
@@ -1157,8 +1158,14 @@ def _setup_parser(parser: argparse.ArgumentParser) -> None:  # noqa: PLR0915
         "--enhance-captions-lm-variant",
         type=str,
         default="qwen_lm",
-        choices=["qwen_lm", "gpt_oss_20b"],
+        choices=["qwen_lm", "gpt_oss_20b", "azure_openai"],
         help="Select language model for enhance captions stage.",
+    )
+    parser.add_argument(
+        "--enhance-captions-azure-openai-deployment",
+        type=str,
+        default="gpt-5-chat-20250807",
+        help="Azure OpenAI deployment name (only used when --enhance-captions-lm-variant is 'azure_openai').",
     )
     parser.add_argument(
         "--enhance-captions-prompt-variant",
@@ -1176,6 +1183,12 @@ def _setup_parser(parser: argparse.ArgumentParser) -> None:  # noqa: PLR0915
         type=str,
         default=None,
         help="Prompt text for further enhancing captions using EnhanceCaptionStage.",
+    )
+    parser.add_argument(
+        "--enhance-captions-max-output-tokens",
+        type=int,
+        default=2048,
+        help="Max number of output tokens requested from the enhance captions model.",
     )
     parser.add_argument(
         "--enhance-captions-batch-size",

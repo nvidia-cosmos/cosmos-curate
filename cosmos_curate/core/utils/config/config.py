@@ -37,6 +37,19 @@ class OpenAI:
 
 
 @attrs.define
+class AzureOpenAI:
+    """A class to represent and interact with Azure OpenAI configuration details.
+
+    Note: api_version should typically be "2025-04-01-preview" for Azure OpenAI.
+    The deployment name (model selection) is passed as a runtime parameter, not stored in config.
+    """
+
+    api_version: str = attrs.field(repr=True)
+    azure_endpoint: str = attrs.field(repr=True)
+    api_key: str = attrs.field(repr=False)
+
+
+@attrs.define
 class Huggingface:
     """A class to represent and interact with Huggingface configuration details."""
 
@@ -68,6 +81,10 @@ class ConfigFileData:
     The config file is stored at ~/.config/cosmos_curate/config.yaml. An example config file is:
 
     ``` yaml
+    azure_openai:
+        api_version: "2025-04-01-preview"
+        azure_endpoint: "https://..."
+        api_key: "xyz"
     huggingface:
         user: "abc"
         api_key: "xyz"
@@ -81,6 +98,7 @@ class ConfigFileData:
     """
 
     open_ai: OpenAI | None = None
+    azure_openai: AzureOpenAI | None = None
     huggingface: Huggingface | None = None
     postgres: Postgres | None = None
 

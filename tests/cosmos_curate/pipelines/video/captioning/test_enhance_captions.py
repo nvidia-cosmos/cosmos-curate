@@ -22,6 +22,7 @@ import pytest
 
 from cosmos_curate.core.interfaces.pipeline_interface import run_pipeline
 from cosmos_curate.core.interfaces.runner_interface import RunnerInterface
+from cosmos_curate.core.utils.config.config import ConfigFileData
 from cosmos_curate.pipelines.video.captioning.captioning_stages import (  # type: ignore[import-untyped]
     EnhanceCaptionStage,
 )
@@ -34,8 +35,12 @@ from cosmos_curate.pipelines.video.utils.data_model import (  # type: ignore[imp
 
 
 @pytest.mark.env("unified")
-@pytest.mark.parametrize("model_variant", ["qwen_lm", "gpt_oss_20b"])
-def test_enhance_caption_lm_variants(model_variant: str, sequential_runner: RunnerInterface) -> None:
+@pytest.mark.parametrize("model_variant", ["qwen_lm", "gpt_oss_20b", "azure_openai"])
+def test_enhance_caption_lm_variants(
+    model_variant: str,
+    sequential_runner: RunnerInterface,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """EnhanceCaptionStage with real LM and pre-filled captions (no prior stages)."""
     base_captions = [
         "A red pickup truck is parked on a cobblestone street.",
@@ -61,6 +66,31 @@ def test_enhance_caption_lm_variants(model_variant: str, sequential_runner: Runn
     video = Video(input_video=pathlib.Path("sample_video.mp4"), clips=clips)
     task = SplitPipeTask(video=video)
 
+    if model_variant == "azure_openai":
+        monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+
+        monkeypatch.setattr(
+            "cosmos_curate.models.chat_lm.ChatLM._resolve_azure_openai_settings",
+            staticmethod(lambda: ("2025-04-01-preview", "https://fake.endpoint", "fake-key")),
+        )
+
+        def _fake_generate_remote(
+            self: object,
+            prompts: list[list[dict[str, str]]],
+            batch_size: int | None,
+        ) -> list[str]:
+            del self
+            del batch_size
+            return [
+                f"This is a remote enhanced caption with additional description {idx}"
+                for idx, _prompt in enumerate(prompts, start=1)
+            ]
+
+        monkeypatch.setattr(
+            "cosmos_curate.models.chat_lm.ChatLM._generate_remote",
+            _fake_generate_remote,
+        )
+
     stages = [EnhanceCaptionStage(model_variant=model_variant)]
     result_tasks = run_pipeline([task], stages, runner=sequential_runner)
 
@@ -73,3 +103,14 @@ def test_enhance_caption_lm_variants(model_variant: str, sequential_runner: Runn
         enhanced = c.windows[0].enhanced_caption[model_variant]
         assert isinstance(enhanced, str)
         assert len(enhanced) > len(base_captions[i])
+
+
+def test_azure_openai_variant_requires_config(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Remote enhance caption variant should fail fast without credentials."""
+    monkeypatch.setattr("cosmos_curate.models.chat_lm.load_config", lambda: ConfigFileData(azure_openai=None))
+
+    with pytest.raises(
+        RuntimeError,
+        match="Azure OpenAI configuration not found",
+    ):
+        EnhanceCaptionStage(model_variant="azure_openai")

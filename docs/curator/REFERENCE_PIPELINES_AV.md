@@ -142,6 +142,7 @@ This text file can be passed in with
 
 - `--caption-chunk-size`: Number of clips to caption in one chunk. Default is 32.
 - `--captioning-max-output-tokens`: Only applies when --prompt-type is one of `vri`, `visibility`, `road_conditions`, or `illumination`. Max number of output tokens requested from enhanced captioning model. Default is 512.
+- `--enhance-captions-lm-variant`: Choose `qwen_lm`, `gpt_oss_20b`, or `azure_openai` (Azure OpenAI API).
 - `--encoder`: Encoder backend to use for encoding the split clips. Valid values are `libopenh264` and `h264_nvenc`, default is `libopenh264`, which uses the cpu for encoding.
 - `--encoder-threads`: number of cpu threads to use when encoding the split videos; default is 32. Used when encoding with `--encoder libopenh264`.
 - `--encode-batch-size`: number of clips to encode in parallel; default is 16.
@@ -158,4 +159,4 @@ This text file can be passed in with
 
 * If the default prompt type is not requested in `--prompt-types`, T5 embeddings will not be generated
 * There is no way to skip the embedding stage if `default` is in `--prompt-types`
-* Enhanced captioning only runs when prompt_types are: TODO
+* Enhanced captioning only runs when prompt_types are: `visibility`, `road_conditions`, or `illumination`

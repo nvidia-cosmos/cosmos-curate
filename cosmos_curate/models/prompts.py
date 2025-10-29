@@ -43,6 +43,7 @@ _ENHANCE_PROMPTS = {
     "default": """
         You are a chatbot that enhances video caption inputs, adding more color and details to the text.
         The output should be longer than the provided input caption.
+        Respond only with the enhanced caption; do not ask follow-up questions or offer additional assistance.
     """,
     "av-surveillance": """
         You are a chatbot that enhances video captions from vehicle dashboard cameras or surveillance cameras.

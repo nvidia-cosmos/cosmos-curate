@@ -11,6 +11,7 @@
 
 import re
 from collections.abc import Collection
+from typing import cast
 
 from loguru import logger
 from nvtx import nvtx  # type: ignore[import-untyped]
@@ -694,6 +695,7 @@ def enhance_captions(  # noqa: PLR0913
     prompt_variant_key: str,
     prompt_variants: dict[str, str],
     prompt_text: str | None,
+    batch_size: int | None = None,
 ) -> None:
     """Enhance captions for a list of clips using a chat language model.
 
@@ -715,6 +717,7 @@ def enhance_captions(  # noqa: PLR0913
         prompt_variants: Dictionary of prompts to send to the model.
             prompt_variant_key is used to choose the prompt
         prompt_text: Text of the prompt to send to the model
+        batch_size: Optional batch size hint passed to the model backend.
 
     Returns:
         None. The enhanced captions are appended directly to the clips'
@@ -734,7 +737,7 @@ def enhance_captions(  # noqa: PLR0913
         prompt_variants=prompt_variants,
         prompt_text=prompt_text,
     )
-    enhanced_captions = model.generate(next_prompts)
+    enhanced_captions = model.generate(next_prompts, batch_size=batch_size)
     append_captions_to_clips(clips, prompt_variant_key, enhanced_captions, mappings)
     logger.info(f"Enhanced {len(enhanced_captions)} {prompt_variant_key} captions.")
 
@@ -753,9 +756,11 @@ class EnhanceCaptionStage(CuratorStage):
 
     def __init__(  # noqa: PLR0913
         self,
+        model_variant: str = "qwen_lm",
         prompt_variants: list[str] | None = None,
         prompt_text: str | None = None,
         batch_size: int = 128,
+        azure_deployment: str = "gpt-5-chat-20250807",
         fp8_enable: bool = False,  # noqa: FBT001, FBT002
         max_output_tokens: int = 2048,
         verbose: bool = False,  # noqa: FBT001, FBT002
@@ -764,10 +769,13 @@ class EnhanceCaptionStage(CuratorStage):
         """Initialize the EnhanceCaptionStage.
 
         Args:
+            model_variant: Which language model backend to use.
             prompt_variants: The prompt variants.
             prompt_text: The prompt text.
             batch_size: The batch size.
-            fp8_enable: Whether to use FP8.
+            azure_deployment: Azure OpenAI deployment name (only used when model_variant is "azure_openai").
+                Defaults to "gpt-5-chat-20250807".
+            fp8_enable: Whether to use FP8 (only for local models).
             max_output_tokens: The maximum output tokens.
             verbose: If True, log verbose information.
             log_stats: If True, log statistics.
@@ -777,10 +785,14 @@ class EnhanceCaptionStage(CuratorStage):
         self._batch_size = batch_size
         self._verbose = verbose
         self._log_stats = log_stats
+
+        quantization = "fp8" if fp8_enable else None
         self._raw_model = ChatLM(
-            "qwen_lm",
+            model_variant,
             max_output_tokens=max_output_tokens,
-            quantization="fp8" if fp8_enable else None,
+            quantization=quantization,
+            azure_deployment=azure_deployment,
+            verbose=verbose,
         )
         self._prompt_variants = ["default"] if prompt_variants is None else prompt_variants
         self._prompt_text = prompt_text
@@ -793,7 +805,18 @@ class EnhanceCaptionStage(CuratorStage):
             The model.
 
         """
-        return self._raw_model
+        return cast("ModelInterface", self._raw_model)
+
+    @property
+    def resources(self) -> CuratorStageResource:
+        """Get the resource requirements for this stage.
+
+        Returns:
+            The resource requirements for this stage.
+
+        """
+        gpus = 1.0 if self._raw_model.requires_gpu else 0.0
+        return CuratorStageResource(cpus=1.0, gpus=gpus)
 
     @nvtx.annotate("EnhanceCaptionStage")  # type: ignore[misc]
     def process_data(self, tasks: list[AvClipAnnotationTask]) -> list[AvClipAnnotationTask]:
@@ -821,6 +844,7 @@ class EnhanceCaptionStage(CuratorStage):
                     prompt_variant_key=prompt_variant,
                     prompt_variants=_ENHANCE_PROMPTS,
                     prompt_text=self._prompt_text,
+                    batch_size=self._batch_size,
                 )
         if self._log_stats:
             stage_name, stage_perf_stats = self._timer.log_stats()

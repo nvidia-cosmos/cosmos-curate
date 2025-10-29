@@ -1460,6 +1460,7 @@ class EnhanceCaptionStage(CuratorStage):
             model_variant,
             max_output_tokens=max_output_tokens,
             quantization=("fp8" if fp8_enable and model_variant == "qwen_lm" else None),
+            verbose=verbose,
         )
         self._prompt_variant = prompt_variant
         self._prompt_text = prompt_text
