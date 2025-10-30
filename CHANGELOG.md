@@ -2,6 +2,24 @@
 
 ## Latest
 
+## [1.1.7]
+
+### Released
+- 2025-10-30
+
+### Added
+- Azure OpenAI API as an option to enhance captions
+- Increased test coverage for vllm_interface to 100%
+- Azure Blob Storage support for Slurm deployments
+- Support multipart result zips
+- Update python version to 3.10.19
+- Retry vllm captioning on engine failure
+
+### Fixed
+- Switch torch package to pypi in unified
+- Resolve hello_world pipeline execution with transformers 
+- vLLM stage 2 captioning bug
+
 ## [1.1.6]
 
 ### Released
