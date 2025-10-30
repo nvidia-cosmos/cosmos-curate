@@ -54,10 +54,9 @@ def patch_vllm_plugins(monkeypatch: pytest.MonkeyPatch) -> None:
             "mock",
             MockVllmPlugin,
         )
-        # Optionally, remove all other keys so *only* "mock" is present:
         for k in list(_VLLM_PLUGINS.keys()):
             if k != "mock":
-                del _VLLM_PLUGINS[k]
+                monkeypatch.delitem(_VLLM_PLUGINS, k)
 
 
 @pytest.mark.env("unified")
