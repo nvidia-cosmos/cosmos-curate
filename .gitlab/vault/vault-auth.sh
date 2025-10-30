@@ -39,7 +39,7 @@ chmod +x vault
 
 # Run vault agent to authenticate and render secrets
 echo "Authenticating with Vault and retrieving secrets..."
-./vault agent -config=./vault-ci/vault-agent.config -exit-after-auth
+./vault agent -config=.gitlab/vault/vault-agent.config -exit-after-auth
 
 # Verify secrets file was created
 if [ ! -f "./ci_secrets.env" ]; then

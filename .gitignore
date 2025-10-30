@@ -17,7 +17,7 @@ trace.log
 **/charts/*.tgz
 
 ci_secrets.env
-vault-ci/ci-secrets-runtime.tmpl
+.gitlab/vault/ci-secrets-runtime.tmpl
 # pixi environments
 .pixi
 

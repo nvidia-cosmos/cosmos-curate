@@ -296,7 +296,7 @@ build_deploy_curator:
     VAULT_JWT_TOKEN:
       aud: ${VAULT_ADDR}
   before_script:
-    - source ./vault-ci/vault-auth.sh
+    - source .gitlab/vault/vault-auth.sh
   script:
     # For web triggers, this is a no-op since we use existing images
     - |
@@ -335,7 +335,6 @@ gpu_tests:
   tags:
     - ${SLURM_RUNNER_TAG}
   variables:
-    GIT_STRATEGY: none
     CI_BUILDS_DIR: ${NEMO_CI_PATH}/.config/${CI_JOB_ID}
     ENROOT_CONFIG_PATH: "${CI_BUILDS_DIR}/.enroot"
   script:
@@ -354,30 +353,6 @@ gpu_tests:
     - MOUNTS="${DATA_DIR}:/config/data,${MODEL_DIR}:/config/models,${AWS_CREDS_PATH}:/dev/shm/s3_creds_file,${CI_PROJECT_DIR}:/config/project"
     - NODES=1
     - export LOCAL_DOCKER_ENV_VAR_NAME=1
-    # Create bash script for running environment tests
-    - |
-      cat > run_env_tests.sh << 'EOL'
-      #!/bin/bash
-      set -e
-
-      # Run tests for each environment with unique report files and coverage
-      for env in default legacy-transformers transformers unified; do
-        echo "Running tests for $env environment"
-        pixi run -e $env pytest -m env -n ${PYTEST_XDIST_WORKERS} \
-          --junitxml="/config/project/$env-report.xml" \
-          --cov=cosmos_curate \
-          --cov-report=term \
-          --cov-report=xml:/config/project/$env-coverage.xml \
-          --cov-report=html:/config/project/$env-htmlcov \
-          tests/cosmos_curate/pipelines tests/cosmos_curate/models
-
-        # Save the coverage data file for each environment
-        if [ -f .coverage ]; then
-          cp .coverage /config/project/.coverage.gpu_$env
-        fi
-      done
-      EOL
-    - chmod +x run_env_tests.sh
     # Run pytest for each environment; sleep 15 min before retry
     - >
       srun -A ${SLURM_ACCOUNT} \
@@ -387,7 +362,7 @@ gpu_tests:
            --container-mounts ${MOUNTS} \
            -J ${SLURM_ACCOUNT}-cosmos_curator_test.${CI_JOB_ID} \
            -t "02:00:00" \
-           /config/project/run_env_tests.sh \
+           /config/project/.gitlab/scripts/run_env_tests.sh \
       || (sleep 900 && false)
   retry:
     max: 2
@@ -469,7 +444,7 @@ nvcf-helm:
     VAULT_JWT_TOKEN:
       aud: ${VAULT_ADDR}
   before_script:
-    - source ./vault-ci/vault-auth.sh
+    - source .gitlab/vault/vault-auth.sh
     - *setup_micromamba
     - *setup_curator_cli
     - |
@@ -479,110 +454,12 @@ nvcf-helm:
     - export HELM_BYO_METRICS_RECEIVER_CLIENT_CRT=$(echo $HELM_BYO_METRICS_RECEIVER_CLIENT_CRT_BASE64 | base64 -d | awk '{printf "%s\\n", $0}')
     - export HELM_BYO_METRICS_RECEIVER_CLIENT_KEY=$(echo $HELM_BYO_METRICS_RECEIVER_CLIENT_KEY_BASE64 | base64 -d | awk '{printf "%s\\n", $0}')
   script:
-      - *configure_nvcf_cli
-      - export NVCF_BACKEND="${NVCF_CUSTOM_BACKEND:-$NVCF_BACKEND}"
-      - |
-        if [[ "$TEST_END_TO_END" == "True" ]]; then
-          # this can be overridden by passing the HELM_IMAGE_TAG var in cicd variables
-          export HELM_IMAGE_TAG=${HELM_IMAGE_TAG:-$(cosmos-curate nvcf image list-image-detail --iname $NVCF_DEV_BASE_IMAGE |grep latestTag |sed "s/['│,]//g" |awk '{print $2}')}
-        elif [[ "$CI_PIPELINE_SOURCE" == "web" ]]; then
-          # Web triggers use staging images unless e2e is specified, then tests latest dev image
-          export HELM_IMAGE_TAG=${HELM_IMAGE_TAG:-$(cosmos-curate nvcf image list-image-detail --iname $NVCF_STAGING_BASE_IMAGE |grep latestTag |sed "s/['│,]//g" |awk '{print $2}')}
-        else
-          export HELM_IMAGE_TAG="${CI_COMMIT_TIMESTAMP%%T*}_${CI_COMMIT_SHORT_SHA}"
-        fi
-      - |
-        if [[ "$CI_PIPELINE_SOURCE" == "web" && "$TEST_END_TO_END" != "True" ]]; then
-          NVCF_IMAGE=${NVCF_STAGING_IMAGE}:$HELM_IMAGE_TAG
-        else
-          NVCF_IMAGE=${NVCF_DEV_IMAGE}:$HELM_IMAGE_TAG
-        fi
-      # NOTE: create_helm_file.json will now contain keys/certificates so do not print its contents
-      - cat examples/nvcf/ci/ci_create_helm_default.json.template | envsubst > create_helm_file.json
-      - cat examples/nvcf/ci/ci_deploy_helm_default.json.template | envsubst > deploy_helm_file.json
-      - |
-        if [[ "$CI_PIPELINE_SOURCE" == "web" && "$TEST_END_TO_END" != "True" ]]; then
-          cat deploy_helm_file.json | jq --arg image_repository "$NVCF_STAGING_IMAGE" '.configuration.image.repository = $image_repository' > deploy_helm_file.json.new
-        else
-          cat deploy_helm_file.json | jq --arg image_repository "$NVCF_DEV_IMAGE" '.configuration.image.repository = $image_repository' > deploy_helm_file.json.new
-        fi
-      - mv deploy_helm_file.json.new deploy_helm_file.json
-      - |
-        echo "NVCF DEPLOYMENT"
-        echo "*************************************"
-        echo "NVCF_IMAGE:         $NVCF_IMAGE"
-        echo "NVCF_BACKEND:       $NVCF_BACKEND"
-        echo "NVCF_GPU_TYPE:      $NVCF_GPU_TYPE"
-        echo "NVCF_INSTANCE_TYPE: $NVCF_INSTANCE_TYPE"
-        echo "AWS_DEFAULT_REGION: $AWS_DEFAULT_REGION"
-        echo "HELM_CHART_NAME:    $CICD_HELM_CHART_NAME"
-        echo "HELM_CHART_VERSION: $CICD_HELM_CHART_VERSION"
-        echo "*************************************"
-      # Create NVCF function
-      - cosmos-curate nvcf function create-function --name "${HELM_FUNCTION_NAME}" --health-ep /api/local_raylet_healthz --health-port 52365 --helm-chart https://helm.ngc.nvidia.com/${NGC_NVCF_ORG}/charts/${CICD_HELM_CHART_NAME}-${CICD_HELM_CHART_VERSION}.tgz --data-file create_helm_file.json
-      # Copy funcid.json from ~/.config to working directory
-      - cp ~/.config/cosmos_curate/funcid.json funcid_working.json
-      # Deploy NVCF function
-      - cosmos-curate nvcf function deploy-function --data-file deploy_helm_file.json --max-concurrency $NVCF_MAX_CONCURRENCY --instance-count $NVCF_INSTANCE_COUNT
-      - |
-        while true; do
-          status=$(cosmos-curate nvcf function get-deployment-detail | grep "Status")
-          if [[ $status =~ "DEPLOYING" ]]; then
-            echo "Waiting for deployment to be active... (retrying in 10 seconds)"
-            sleep 10
-          elif [[ $status =~ "ACTIVE" ]]; then
-            echo "Deployment is active"
-            break
-          else
-            echo "Error: Deployment status '$status' is not recognized."
-            exit 1
-          fi
-        done
-      # Invoke NVCF function
-      # Create S3 credentials file
-      - echo -n $AWS_CONFIG_FILE_CONTENTS | base64 -d > aws_credentials
-      - sed -i '/^endpoint/d' aws_credentials
-      # Determine whether to raise on pynvc error
-      - export DECODE_RAISE_ON_ERROR=true
-      # Split-annotate pipeline
-      # default config to process 1 video
-      - |
-        cat examples/nvcf/function/invoke_video_split_full.json | \
-        jq --arg output_clip_path "$S3_OUTPUT_CLIP_PATH" --arg input_video_path "$S3_INPUT_VIDEO_PATH" --argjson limit 1 \
-        '.args.output_clip_path = $output_clip_path | .args.input_video_path = $input_video_path | .args.limit = $limit' > invoke_split1.json
-      - cosmos-curate nvcf function invoke-function --data-file invoke_split1.json --s3-config-file aws_credentials
-      # use GPU decoding & FP8/TP2 for Qwen to process 1 more video
-      - |
-        if [ "$HELM_GPU_REQUESTS" -ge 2 ]; then
-          export _QWEN_TP_SIZE="2"
-        else
-          export _QWEN_TP_SIZE="1"
-        fi
-      - |
-        cat examples/nvcf/function/invoke_video_split_full.json | \
-        jq --arg output_clip_path "$S3_OUTPUT_CLIP_PATH" --arg input_video_path "$S3_INPUT_VIDEO_PATH" --argjson limit 1 --arg transnetv2_frame_decoder_mode pynvc --argjson transnetv2_frame_decode_raise_on_pynvc_error "$DECODE_RAISE_ON_ERROR" --argjson transcode_use_hwaccel true --argjson qwen_use_fp8_weights true --argjson qwen_num_gpus_per_worker $_QWEN_TP_SIZE \
-        '.args.output_clip_path = $output_clip_path | .args.input_video_path = $input_video_path | .args.limit = $limit | .args.transnetv2_frame_decoder_mode = $transnetv2_frame_decoder_mode | .args.transnetv2_frame_decode_raise_on_pynvc_error = $transnetv2_frame_decode_raise_on_pynvc_error | .args.transcode_use_hwaccel = $transcode_use_hwaccel | .args.qwen_use_fp8_weights = $qwen_use_fp8_weights | .args.qwen_num_gpus_per_worker = $qwen_num_gpus_per_worker ' > invoke_split2.json
-      - cosmos-curate nvcf function invoke-function --data-file invoke_split2.json --s3-config-file aws_credentials
-      # Dedup pipeline
-      - cat examples/nvcf/function/invoke_video_dedup.json | jq --arg output_path "$S3_OUTPUT_DEDUP_PATH" --arg input_embeddings_path "$S3_OUTPUT_CLIP_PATH" '.args.output_path = $output_path | .args.input_embeddings_path = $input_embeddings_path' > invoke_dedup.json
-      - cosmos-curate nvcf function invoke-function --data-file invoke_dedup.json --s3-config-file aws_credentials
-      # Shard-dataset pipeline
-      - cat examples/nvcf/function/invoke_video_shard.json | jq --arg output_dataset_path "$S3_OUTPUT_DATASET_PATH" --arg input_clip_path "$S3_OUTPUT_CLIP_PATH" --arg input_semantic_dedup_path "$S3_OUTPUT_DEDUP_PATH" '.args.output_dataset_path = $output_dataset_path | .args.input_clip_path = $input_clip_path | .args.input_semantic_dedup_path = $input_semantic_dedup_path' > invoke_shard.json
-      - cosmos-curate nvcf function invoke-function --data-file invoke_shard.json --s3-config-file aws_credentials
+    - *configure_nvcf_cli
+    - .gitlab/scripts/nvcf_helm_deploy.sh
   after_script:
     - *activate_micromamba
     - *configure_nvcf_cli
-    - |
-      if [[ "$HELM_DEBUG_KEEP_FAILED_DEPLOYMENTS" =~ "False" ]]; then
-        if [ ! -f ~/.config/cosmos_curate/funcid.json ]; then
-          echo "~/.config/cosmos_curate/funcid.json not found, using working directory copy"
-          mkdir -p ~/.config/cosmos_curate/
-          cp funcid_working.json ~/.config/cosmos_curate/funcid.json
-        fi
-        cosmos-curate nvcf function delete-function
-      else
-        echo "Intentionally leaving deployment behind for debugging. This must be manually cleaned up later."
-      fi
+    - .gitlab/scripts/nvcf_helm_cleanup.sh
   retry:
     max: 2
     when: always
@@ -614,10 +491,10 @@ nvcf-helm-validate:
   before_script:
     - *setup_micromamba
     - pip3 install awscli --upgrade --user
-    - source ./vault-ci/vault-auth.sh
+    - source .gitlab/vault/vault-auth.sh
     - export PATH="$HOME/.local/bin:$PATH"
     - hash -r
-    - echo -n $AWS_CONFIG_FILE_CONTENTS | base64 -d > aws_credentials
+    - echo -n "$AWS_CONFIG_FILE_CONTENTS" | base64 -d > aws_credentials
     - sed -i '/^endpoint/d' aws_credentials
     - aws --version
     - export AWS_SHARED_CREDENTIALS_FILE="$(pwd)/aws_credentials"
@@ -626,107 +503,7 @@ nvcf-helm-validate:
         micromamba install -y -c conda-forge jq
       fi
   script:
-    - |
-      set +e  # Disable exit on error
-      # Confirm we're only using the credentials from file
-      unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY
-      # Test s3 access first to ensure credentials are valid
-      out=$(aws s3 ls "${S3_INPUT_VIDEO_PATH}" 2>&1); rc=$?
-      if [ $rc -ne 0 ]; then
-        echo "Error: Failed to access S3: $out"
-        sha256sum aws_credentials
-      fi
-      i=0
-      max=10
-      file_found=false
-      while [ $i -lt $max ]; do
-          if aws s3 ls "${S3_FILE_SPLIT_SUMMARY}" &> /dev/null; then
-              echo "Found S3 split-annotate summary file: ${S3_FILE_SPLIT_SUMMARY}"
-              file_found=true
-              break
-          else
-              echo "Waiting for S3 data in ${S3_FILE_SPLIT_SUMMARY} ... ($i of $max, retrying in 5 seconds)"
-              sleep 5
-              ((i++))
-          fi
-      done
-      set -e
-      if [ "$file_found" = false ]; then
-          echo "S3 command failed, retry limit exceeded."
-          exit 1
-      fi
-    - |
-      echo "Validating $S3_FILE_SPLIT_SUMMARY ..."
-      JSON_CONTENT=$(aws s3 cp "$S3_FILE_SPLIT_SUMMARY" - 2>/dev/null)
-      if [ $? -ne 0 ]; then
-          echo "Error reading from S3: $S3_FILE_SPLIT_SUMMARY"
-          exit 1
-      fi
-      if ! jq empty <<< "$JSON_CONTENT" 2>/dev/null; then
-          echo "Error: Invalid JSON structure"
-          exit 1
-      fi
-      num_videos=$(jq -r ".num_processed_videos" <<< "$JSON_CONTENT")
-      if [ "$num_videos" -ne 2 ]; then
-          echo "Error: There should be 2 videos processed, but found $num_videos"
-          exit 1
-      fi
-      num_clips=$(jq -r ".num_clips_transcoded" <<< "$JSON_CONTENT")
-      num_clips_with_caption=$(jq -r ".num_clips_with_caption" <<< "$JSON_CONTENT")
-      if [ "$num_clips" -lt 2 ]; then
-          echo "Error: There should be at least 2 clips transcoded, but found $num_clips"
-          exit 1
-      fi
-      if [ "$num_clips_with_caption" -ne "$num_clips" ]; then
-          echo "Error: All clips should have captions, but found $num_clips_with_caption out of $num_clips"
-          exit 1
-      fi
-      echo "Split-annotate pipeline finished with $num_videos processed and $num_clips_with_caption captioned"
-      echo "Split-annotate pipeline validation successful"
-    - |
-      set +e  # Disable exit on error
-      i=0
-      max=10
-      file_found=false
-      while [ $i -lt $max ]; do
-          if aws s3 ls "${S3_FILE_DEDUP_SUMMARY}" &> /dev/null; then
-              echo "Found S3 dedup summary file: ${S3_FILE_DEDUP_SUMMARY}"
-              file_found=true
-              break
-          else
-              echo "Waiting for S3 data in ${S3_FILE_DEDUP_SUMMARY} ... ($i of $max, retrying in 5 seconds)"
-              sleep 5
-              ((i++))
-          fi
-      done
-      set -e
-      if [ "$file_found" = false ]; then
-          echo "S3 command failed, retry limit exceeded."
-          exit 1
-      fi
-      echo "Dedup pipeline validation successful"
-    - |
-      set +e  # Disable exit on error
-      i=0
-      max=10
-      file_found=false
-      while [ $i -lt $max ]; do
-          if aws s3 ls "${S3_FILE_SHARD_SUMMARY}" &> /dev/null; then
-              echo "Found S3 dedup summary file: ${S3_FILE_SHARD_SUMMARY}"
-              file_found=true
-              break
-          else
-              echo "Waiting for S3 data in ${S3_FILE_SHARD_SUMMARY} ... ($i of $max, retrying in 5 seconds)"
-              sleep 5
-              ((i++))
-          fi
-      done
-      set -e
-      if [ "$file_found" = false ]; then
-          echo "S3 command failed, retry limit exceeded."
-          exit 1
-      fi
-      echo "Shard-dataset pipeline validation successful"
+    - .gitlab/scripts/nvcf_helm_validate.sh
 
 promote_to_staging:
   stage: post-merge
@@ -737,7 +514,7 @@ promote_to_staging:
     VAULT_JWT_TOKEN:
       aud: ${VAULT_ADDR}
   before_script:
-    - source ./vault-ci/vault-auth.sh
+    - source .gitlab/vault/vault-auth.sh
   script:
     - IMAGE_TAG="${CI_COMMIT_TIMESTAMP%%T*}_${CI_COMMIT_SHORT_SHA}"
     - echo "Promoting to staging from $IMAGE_TAG"
@@ -754,7 +531,7 @@ promote_to_prod:
     VAULT_JWT_TOKEN:
       aud: ${VAULT_ADDR}
   before_script:
-    - source ./vault-ci/vault-auth.sh
+    - source .gitlab/vault/vault-auth.sh
   script:
     - echo "Promoting latest staging image to prod"
     - *docker_login
@@ -776,7 +553,7 @@ build-packages:
     VAULT_JWT_TOKEN:
       aud: ${VAULT_ADDR}
   before_script:
-    - source ./vault-ci/vault-auth.sh
+    - source .gitlab/vault/vault-auth.sh
     - *setup_micromamba
     - TIMESTAMP=$(date -d ${CI_COMMIT_TIMESTAMP} +%s)
     - VERSION=$(grep -m 1 'version = ' pyproject.toml | cut -d'"' -f2)
@@ -801,54 +578,10 @@ nvcf_split_benchmark:
     VAULT_JWT_TOKEN:
       aud: ${VAULT_ADDR}
   before_script:
-    - source ./vault-ci/vault-auth.sh
+    - source .gitlab/vault/vault-auth.sh
   script:
-    - echo "Running nvcf split benchmark"
     - *docker_login
     - *setup_micromamba
     - *setup_curator
-    # Build curator image
-    - PERF_IMAGE_TAG="${CI_COMMIT_TIMESTAMP%%T*}_${CI_COMMIT_SHORT_SHA}"
-    - |
-      cosmos-curate image build \
-      --curator-path . \
-      --image-name ${CURATOR_IMAGE} \
-      --image-tag ${PERF_IMAGE_TAG}
-    - PERF_FULL_IMAGE=${CURATOR_IMAGE}:${PERF_IMAGE_TAG}
-    - echo "Built image ${PERF_FULL_IMAGE} from curator commit [${CI_COMMIT_SHA}]"
-    - docker push ${PERF_FULL_IMAGE}
-    - echo "Pushed image ${PERF_FULL_IMAGE} to GitLab registry"
-    - PERF_NVCF_IMAGE=${PERF_NVCF_IMAGE_REPOSITORY}:${PERF_IMAGE_TAG}
-    - docker buildx imagetools create -t ${PERF_NVCF_IMAGE} ${PERF_FULL_IMAGE}
-    - echo "Copied to image ${PERF_NVCF_IMAGE} from curator commit [${CI_COMMIT_SHA}]"
-    - date_str=$(date +%Y%m%d%H%M%S)
-    - LIMIT_VIDEOS=5000
-    - export RUST_BACKTRACE=1
-    # Run benchmark
-    - |
-      for caption in 1 0 ; do
-        for num_nodes in 4 2 1; do
-          PERF_S3_OUTPUT_DIR="${PERF_S3_ROOT_DIR}/${date_str}_nodes_${num_nodes}_caption_${caption}";
-          echo "PERF_S3_OUTPUT_DIR: ${PERF_S3_OUTPUT_DIR}"
-          micromamba run -n curator python benchmarks/split_pipeline/nvcf_split_benchmark.py \
-            --num-nodes ${num_nodes} \
-            --caption ${caption} \
-            --funcid "${PERF_NVCF_FUNC_ID}" \
-            --version "${PERF_NVCF_FUNC_VERSION}" \
-            --image-repository "${PERF_NVCF_IMAGE_REPOSITORY}" \
-            --image-tag "${PERF_IMAGE_TAG}" \
-            --metrics-endpoint "${PERF_NVCF_METRICS_ENDPOINT}" \
-            --backend "${PERF_NVCF_BACKEND}" \
-            --gpu "${PERF_NVCF_GPU}" \
-            --instance-type "${PERF_NVCF_INSTANCE_TYPE}" \
-            --s3-input-prefix "${PERF_S3_INPUT_DIR}" \
-            --s3-output-prefix "${PERF_S3_OUTPUT_DIR}" \
-            --gpus-per-node 8 \
-            --max-concurrency 2 \
-            --kratos-metrics-endpoint "${PERF_KRATOS_METRICS_ENDPOINT}" \
-            --kratos-bearer-url "${PERF_KRATOS_BEARER_URL}" \
-            --limit ${LIMIT_VIDEOS}
-        done
-      done
-    # Cleanup
+    - .gitlab/scripts/nvcf_split_benchmark.sh
     - *teardown_micromamba
