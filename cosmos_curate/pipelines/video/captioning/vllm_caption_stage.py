@@ -28,9 +28,10 @@ the tasks must have these attributes/methods:
 """
 
 import logging
-from typing import TYPE_CHECKING, TypeVar, cast
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 import nvtx  # type: ignore[import-untyped]
+import tenacity
 from loguru import logger
 
 from cosmos_curate.core.interfaces.model_interface import ModelInterface
@@ -377,6 +378,7 @@ class VllmCaptionStage(CuratorStage):
         max_inflight_requests: int = 0,
         *,
         inflight_batching: bool = False,
+        max_caption_retries: int = 3,
         keep_mp4: bool = False,
         verbose: bool = False,
         log_stats: bool = False,
@@ -389,6 +391,7 @@ class VllmCaptionStage(CuratorStage):
                engine. Set to 0 for unlimited inflight requests. Ignored if
                inflight_batching is False.
             inflight_batching: set to True to enable inflight batching.
+            max_caption_retries: Maximum number of retries to generate captions.
             keep_mp4: Whether to keep the mp4 bytes.
             verbose: Whether to print verbose logs.
             log_stats: Whether to log performance statistics.
@@ -408,6 +411,7 @@ class VllmCaptionStage(CuratorStage):
         self._model = VllmModelInterface(self._vllm_config)
         self._max_inflight_requests = max_inflight_requests
         self._inflight_batching = inflight_batching
+        self._max_caption_retries = max_caption_retries
 
     def stage_setup(self) -> None:
         """Set up the model for processing."""
@@ -486,6 +490,32 @@ class VllmCaptionStage(CuratorStage):
         major_size = _get_major_size_tasks(tasks)
         self._timer.reinit(self, major_size)
 
+        @tenacity.retry(stop=tenacity.stop_after_attempt(self._max_caption_retries), reraise=True)
+        def _vllm_caption(model_inputs: list[dict[str, Any]], stage2_prompts: list[str | None]) -> list[str]:
+            try:
+                return vllm_caption(
+                    model_inputs,
+                    self._llm,  # type: ignore[arg-type]
+                    self._processor,  # type: ignore[arg-type]
+                    self._sampling_params,  # type: ignore[arg-type]
+                    self._vllm_config,
+                    inflight_batching=self._inflight_batching,
+                    max_inflight_requests=self._max_inflight_requests,
+                    stage2_prompts=stage2_prompts,
+                )
+            except Exception:
+                input_videos = [str(_get_video_from_task(t).input_video) for t in tasks]
+                input_videos_str = ", ".join(input_videos)
+                logger.exception(f"Error generating captions for video {input_videos_str}, trying again")
+
+                # On retry: tear down and restart vllm
+                del self._llm
+                del self._sampling_params
+                del self._processor
+                self.destroy()
+                self.stage_setup()
+                raise
+
         with self._timer.time_process():
             # Gather model inputs and clip uuids
             windows, clip_uuids = _get_windows_from_tasks(tasks)
@@ -495,16 +525,7 @@ class VllmCaptionStage(CuratorStage):
             stage2_prompts = _get_stage2_prompts(self._vllm_config, len(windows))
 
             # Generate captions
-            captions = vllm_caption(
-                model_inputs,
-                self._llm,
-                self._processor,
-                self._sampling_params,
-                self._vllm_config,
-                inflight_batching=self._inflight_batching,
-                max_inflight_requests=self._max_inflight_requests,
-                stage2_prompts=stage2_prompts,
-            )
+            captions = _vllm_caption(model_inputs, stage2_prompts)
 
             # Scatter captions back to windows
             _scatter_captions(windows, captions, clip_uuids, self._vllm_config.model_variant, verbose=self._verbose)
