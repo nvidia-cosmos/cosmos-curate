@@ -13,8 +13,8 @@ pip = "*"
 click = { version = "!=8.3.0" } # click 8.3.0 is broken
 
 [pypi-dependencies]
-cosmos-xenna = "==0.1.6"
-ray = { version = "==2.48.0", extras = ["default"] } # conda-forge package pulls in an old version of protobuf
+cosmos-xenna = "==0.1.7"
+ray = { version = "==2.50.0", extras = ["default"] } # conda-forge package pulls in an old version of protobuf
 
 [feature.core.system-requirements]
 cuda = "12.9.1" # match the version of the nvidia/cuda docker base image

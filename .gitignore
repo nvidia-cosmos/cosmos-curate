@@ -24,4 +24,5 @@ ci_secrets.env
 /cosmos-curate-*.tgz
 /run-all.sh
 /run-benchmark.sh
+/cosmos-cookbook/
 
