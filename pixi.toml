@@ -56,7 +56,7 @@ uvicorn = "*"
 av = "*" # conda-forge package pulls in ffmpeg
 ngcsdk = "*" # not available on conda-forge
 opencv-python-headless = "*" # not available on conda-forge
-pillow = "*"  # required by phi-4 model, part of task, needs to be serialized
+pillow = "==11.3.0"  # required by phi-4 and nemotron models, 12.0 breaks nemotron
 pulp = "*" # conda-forge package is too old
 timm = "*" # conda-forge package pulls in torchvision, which is behind
 webdataset = "*" # conda-forge package pulls in pytorch
