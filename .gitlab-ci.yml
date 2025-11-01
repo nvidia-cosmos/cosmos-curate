@@ -379,6 +379,36 @@ gpu_tests:
       - ".coverage.gpu_*"
     expire_in: 1 week
 
+# Run end-to-end pipelines on SLURM cluster
+slurm_end_to_end:
+  stage: end-to-end
+  needs: [ "build_deploy_curator" ]
+  rules: *merge_result_and_web_rules
+  tags:
+    - ${SLURM_RUNNER_TAG}
+  variables:
+    CI_BUILDS_DIR: ${NEMO_CI_PATH}/.config/${CI_JOB_ID}
+    ENROOT_CONFIG_PATH: "${CI_BUILDS_DIR}/.enroot"
+    SLURM_E2E_S3_PROFILE_NAME: "default"
+  before_script:
+    # Install tools directly without micromamba (SLURM runner doesn't have it)
+    - python3 -m venv venv
+    - source venv/bin/activate
+    - pip install --upgrade pip
+    - pip install poetry awscli
+    - poetry install --no-interaction  # Install cosmos-curate CLI
+  script:
+    - source venv/bin/activate
+    - .gitlab/scripts/slurm_end_to_end.sh
+  after_script:
+    - rm -rf venv || true
+  artifacts:
+    when: always
+    paths:
+      - slurm_logs/
+      - slurm_remote_files/
+      - slurm_submit.log
+
 # Combine coverage from unit tests and GPU tests
 # This job runs after both unit_tests and gpu_tests complete, combining coverage data from:
 # - unit_tests: .coverage.unit_tests

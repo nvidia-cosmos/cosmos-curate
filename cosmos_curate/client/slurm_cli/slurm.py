@@ -20,10 +20,12 @@ import logging
 import os
 import pwd
 import re
+import shutil
+import socket
 import tempfile
 from datetime import datetime
 from pathlib import Path
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated, Any, Protocol
 
 import attrs
 import fabric  # type: ignore[import-untyped]
@@ -32,6 +34,12 @@ import jinja2
 import typer
 from attrs import field, validators
 from typer import Argument, Option
+
+if TYPE_CHECKING:
+    from invoke.runners import Result
+
+from invoke.context import Context
+from invoke.runners import Result as InvokeResult
 
 from cosmos_curate.core.utils import environment
 
@@ -42,6 +50,65 @@ _PROM_SVC_DISC_SCRIPT_PATH = Path("prometheus_service_discovery.py")
 _START_RAY = environment.CONTAINER_PATHS_CODE_DIR / "cosmos_curate" / "scripts" / "onto_slurm.py"
 _MAX_FILE_MODE = 0o7777
 _HOME_DIR = Path(os.getenv("REMOTE_HOME_DIR", Path.home()))
+
+
+class ConnectionProtocol(Protocol):
+    """Protocol capturing the subset of fabric.Connection used by this module."""
+
+    host: str
+
+    def run(self, command: str, **kwargs: Any) -> Result:  # noqa: ANN401
+        """Run a command on the target host."""
+        ...
+
+    def put(self, local: str, remote: str) -> None:
+        """Upload a local file to the target host."""
+        ...
+
+    def close(self) -> None:
+        """Close the connection."""
+        ...
+
+
+class LocalConnection:
+    """Connection implementation that executes commands locally without SSH."""
+
+    def __init__(self, host: str, user: str) -> None:
+        """Create a LocalConnection."""
+        self.host = host
+        self.user = user
+        self._context = Context()
+
+    def run(self, command: str, **kwargs: Any) -> Result:  # noqa: ANN401
+        """Execute a shell command locally."""
+        result = self._context.run(command, **kwargs)
+        if not isinstance(result, InvokeResult):
+            error_message = f"Unexpected result type from invoke: {type(result)!r}"
+            raise TypeError(error_message)
+        return result
+
+    def put(self, local: str, remote: str) -> None:
+        """Copy a local file path to the destination on the same host."""
+        local_path = Path(local).expanduser()
+        if not local_path.exists():
+            error_message = f"Source file does not exist: {local_path}"
+            raise FileNotFoundError(error_message)
+
+        remote_path = Path(remote).expanduser()
+        try:
+            remote_path.parent.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            error_message = f"Failed to create parent directory for {remote_path}: {exc}"
+            raise OSError(error_message) from exc
+
+        try:
+            shutil.copy2(local_path, remote_path)
+        except OSError as exc:
+            error_message = f"Failed to copy {local_path} to {remote_path}: {exc}"
+            raise OSError(error_message) from exc
+
+    def close(self) -> None:
+        """Close the connection."""
 
 
 def _get_username() -> str:
@@ -204,11 +271,17 @@ def _render_sbatch_script(spec: SlurmJobSpec) -> str:
 
     env_vars: dict[str, str] = {}
     if spec.container.environment is not None:
-        env_vars = {
-            env_var: os.environ.get(env_var, "")
-            for env_var in spec.container.environment
-            if os.environ.get(env_var) is not None
-        }
+        for env_entry in spec.container.environment:
+            key: str
+            value: str | None
+            if "=" in env_entry:
+                key, value = env_entry.split("=", 1)
+            else:
+                key = env_entry
+                value = os.environ.get(key)
+            if value is None:
+                continue
+            env_vars[key] = value
 
     return jinja2.Template(sbatch_template.read_text()).render(
         job_name=spec.job_name,
@@ -257,7 +330,32 @@ def _parse_job_id(output: str) -> str:
     raise ValueError(error_message)
 
 
-def connect(remote_host: str, user: str) -> fabric.Connection:
+def _is_local_host(remote_host: str) -> bool:
+    """Determine whether the provided host refers to the current machine."""
+    normalized = remote_host.lower()
+    if normalized in {"localhost", "127.0.0.1"}:
+        return True
+
+    local_hostnames = {
+        socket.gethostname().lower(),
+        socket.getfqdn().lower(),
+        os.uname().nodename.lower(),
+    }
+    if normalized in local_hostnames:
+        return True
+
+    try:
+        remote_ip = socket.gethostbyname(remote_host)
+        local_ip = socket.gethostbyname(socket.gethostname())
+        if remote_ip == local_ip:
+            return True
+    except OSError:
+        pass
+
+    return False
+
+
+def connect(remote_host: str, user: str) -> ConnectionProtocol:
     """Connect to a SLURM cluster host.
 
     Args:
@@ -272,12 +370,19 @@ def connect(remote_host: str, user: str) -> fabric.Connection:
 
     """
     logger.info("Connecting to %s as %s...", remote_host, user)
+
+    if _is_local_host(remote_host):
+        logger.info("Detected local SLURM login host; executing commands without SSH")
+        conn = LocalConnection(remote_host, user)
+        conn.run("ls", hide=True)
+        return conn
+
     conn = fabric.Connection(remote_host, user=user)
     conn.run("ls", hide=True)
     return conn
 
 
-def upload_text(connection: fabric.Connection, files: list[tuple[str, Path, int]]) -> None:
+def upload_text(connection: ConnectionProtocol, files: list[tuple[str, Path, int]]) -> None:
     """Upload multiple text strings the provided connection.
 
     Args:
@@ -311,11 +416,11 @@ def upload_text(connection: fabric.Connection, files: list[tuple[str, Path, int]
             connection.run(f"chmod {file_mode:o} {remote_path}")
 
 
-def remote_path_exists(connection: fabric.Connection, path: Path) -> bool:
+def remote_path_exists(connection: ConnectionProtocol, path: Path) -> bool:
     """Check if a path exists on the remote host.
 
     Args:
-        connection (fabric.Connection): An ssh connection to the login node
+        connection: Connection to the login node
         path (Path): The path to check
 
     Returns:
@@ -333,11 +438,11 @@ def remote_path_exists(connection: fabric.Connection, path: Path) -> bool:
     return dir_exists
 
 
-def create_remote_path(connection: fabric.Connection, path: Path, mode: int = 0o700) -> None:
+def create_remote_path(connection: ConnectionProtocol, path: Path, mode: int = 0o700) -> None:
     """Create a remote path on the cluster.
 
     Args:
-        connection (fabric.Connection): An ssh connection to the login node
+        connection: Connection to the login node
         path (Path): The path to create
         mode (int): The mode to set for the path
 
@@ -346,11 +451,11 @@ def create_remote_path(connection: fabric.Connection, path: Path, mode: int = 0o
     connection.run(f"chmod {mode:o} {path}")
 
 
-def create_remote_job_path(connection: fabric.Connection, job_spec: SlurmJobSpec) -> None:
+def create_remote_job_path(connection: ConnectionProtocol, job_spec: SlurmJobSpec) -> None:
     """Create a remote job files path for the particular job on the cluster.
 
     Args:
-        connection (fabric.Connection): An ssh connection to the login node
+        connection: Connection to the login node
         job_spec (SlurmJobSpec): The job specification, including job name,
             account, partition, and command.
 
@@ -405,7 +510,7 @@ def curator_submit(slurm_job_spec: SlurmJobSpec) -> str:
     return _parse_job_id(out.stdout)
 
 
-def remote_find_job_log_file(connection: fabric.Connection, log_dir: Path, job_id: str) -> Path:
+def remote_find_job_log_file(connection: ConnectionProtocol, log_dir: Path, job_id: str) -> Path:
     """Find a log file for a given job ID in the log directory.
 
     Args:
@@ -432,7 +537,7 @@ def remote_find_job_log_file(connection: fabric.Connection, log_dir: Path, job_i
     return Path(find_result.stdout.strip())
 
 
-def remote_tail(connection: fabric.Connection, file_path: Path) -> None:
+def remote_tail(connection: ConnectionProtocol, file_path: Path) -> None:
     """Tail a file on a remote host using the provided connection.
 
     Args:
@@ -639,6 +744,7 @@ def submit_cli(  # noqa: PLR0913
 
     job_id = curator_submit(slurm_job_spec)
     logger.info("Job submitted with ID: %s", job_id)
+    typer.echo(f"Job submitted with ID: {job_id}")
 
 
 slurm_cli = typer.Typer(
