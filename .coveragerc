@@ -4,6 +4,7 @@ omit =
     */__init__.py
     */examples/*
     cosmos_curate/models/internvideo2_multi_modality/*
+    cosmos_curate/scripts/onto_nvcf.py
 parallel = True
 relative_files = True
 source = cosmos_curate
