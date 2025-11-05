@@ -12,7 +12,21 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""vLLM plugin definition."""
+"""vLLM plugin definition.
+
+This interface defines the contract for adding new vLLM models to cosmos-curate.
+
+To add a new model:
+1. Create a class inheriting from VllmPlugin
+2. Implement all abstract methods below
+3. Register in cosmos_curate/models/vllm_interface.py:_VLLM_PLUGINS
+4. Add model ID mapping in cosmos_curate/models/vllm_model_ids.py
+
+References:
+[VLLM_INTERFACE_PLUGIN.md](../../docs/curator/VLLM_INTERFACE_PLUGIN.md)
+[Complete Example](vllm_qwen.py)
+
+"""
 
 from abc import ABC, abstractmethod
 from pathlib import Path

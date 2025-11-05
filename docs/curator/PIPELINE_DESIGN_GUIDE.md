@@ -109,7 +109,7 @@ class _GPT2Stage(CuratorStage):
 ### Model Class
 
 Each model should be wrapped in a class, which inherits `ModelInterface` base class defined in
-[cosmos_curate/core/interfaces/model_interface.py](../../cosmos_curate/core/interfaces/model_interface.py).
+[cosmos_curate/core/interfaces/model_interface.py](../../cosmos_curate/core/interfaces/model_interface.py). If you're adding support for a vLLM-based model, follow this guide: [VLLM_INTERFACE_PLUGIN_GUIDE](VLLM_INTERFACE_PLUGIN_GUIDE.md)
 
 The hello-world pipeline uses `GPT2` model defined in [cosmos_curate/models/gpt2.py](../../cosmos_curate/models/gpt2.py).
 

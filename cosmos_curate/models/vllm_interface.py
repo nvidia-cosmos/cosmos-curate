@@ -12,7 +12,72 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Cosmos-Curate vLLM interface."""
+"""Cosmos-Curate vLLM interface.
+
+═══════════════════════════════════════════════════════════════════════════════
+READING THIS CODE? START HERE - Flow Trace Guide
+═══════════════════════════════════════════════════════════════════════════════
+
+Problem this solves:
+- Without this interface, every CuratorStage that uses vLLM would need to reimplement:
+  * Model loading with correct quantization/tensor parallelism settings
+  * Two-stage captioning workflow (initial caption → refinement request → final caption)
+  * Batching logic with proper request tracking
+  * Model-specific input formatting (Qwen token IDs vs Phi-4 prompts vs ...)
+
+This was leading to code duplication across the input preparation and captioning stages
+for each model.
+
+Design decision: Plugin architecture rather than if/elif chain because:
+- Models have fundamentally different input formats
+- Makes adding new models contained to a single file
+- Allows model-specific refinement logic
+- Supporting 5+ models, expanding to image/audio captioning
+- Plugins can be removed from the code base, e.g. if the user of the code
+  cannot have a specific model or related code in their code base
+
+FLOW TRACE - How a video gets captioned (follow this to understand the code):
+
+1. Entry: Pipeline calls vllm_caption() with model_inputs
+   └─> Dispatches to _caption_inflight_batching() (typical) or _caption_no_inflight_batching() (fallback)
+
+2. Request Creation: Wraps each input in VllmCaptionRequest
+   └─> Includes unique request_id, inputs dict, and optional stage2_prompt
+
+3. Continuous Processing: engine.step() processes requests as they arrive
+   └─> Submits requests when capacity available
+   └─> Allows interleaved stage 1 and stage 2 processing for better throughput
+
+4. Output Decoding: process_vllm_output() extracts caption text
+   └─> Calls plugin.decode() - e.g., cosmos_curate/models/vllm_qwen.py
+
+5. Stage 2 (if needed): Creates refinement request, adds back to queue
+   └─> Uses plugin.make_refined_llm_request()
+   └─> Example: cosmos_curate/models/vllm_qwen.py
+
+6. Return: List of caption strings
+
+Note: No-inflight batching path (_caption_no_inflight_batching, line ~277) is a
+fallback for simpler debugging and testing. Production code uses inflight batching.
+
+Plugin Implementations (model-specific code):
+- VllmQwen7B:           cosmos_curate/models/vllm_qwen.py
+- VllmPhi4:             cosmos_curate/models/vllm_phi.py
+- VllmCosmosReason1VL:  cosmos_curate/models/vllm_cosmos_reason1_vl.py
+- Plugin Interface:     cosmos_curate/models/vllm_plugin.py (7 abstract methods)
+- Registry:             _VLLM_PLUGINS dict
+
+Public API (what pipeline stages call):
+- vllm_model()       - Create model instance
+- auto_processor()   - Get model processor
+- sampling_params()  - Create sampling config
+- make_model_inputs() - Convert frames to model-specific format
+- vllm_caption()     - Main captioning function (entry point)
+- vllm_generate()    - Lower-level batch generation (no inflight batching)
+
+DEBUG TIP: Set breakpoint in vllm_caption() and step through for complete flow
+═══════════════════════════════════════════════════════════════════════════════
+"""
 
 from __future__ import annotations
 
@@ -357,6 +422,15 @@ def vllm_caption(  # noqa: PLR0913
     stage2_prompts: list[str | None] | None = None,
 ) -> list[str]:
     """Caption the videos using the vLLM model.
+
+    This is the main entry point for video captioning. It handles:
+    1. Creating VllmCaptionRequest objects (each with unique ID)
+    2. Batching and generating captions via vLLM
+    3. Two-stage captioning if stage2_prompts provided
+    4. Returning final caption strings
+
+    Flow: This function → _caption_[no_]inflight_batching() → vllm_generate()
+          → process_vllm_output() → plugin.decode() → captions
 
     Args:
         model_inputs: The model inputs for each video.
