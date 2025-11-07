@@ -2,6 +2,7 @@
 
 import copy
 import pathlib
+from collections.abc import Callable
 from unittest.mock import Mock
 from uuid import uuid4
 
@@ -68,18 +69,10 @@ def fake_storage_client(monkeypatch: pytest.MonkeyPatch) -> object:
     return fake_client
 
 
-def _make_task(session_url: str) -> AvSessionVideoSplitTask:
-    return AvSessionVideoSplitTask(
-        source_video_session_name="session",
-        source_video_version="v1",
-        session_uuid=uuid4(),
-        session_url=session_url,
-    )
-
-
 def test_process_data_collects_expected_videos_and_timestamps(
     fake_storage_client: object,
     monkeypatch: pytest.MonkeyPatch,
+    split_task_factory: Callable[..., AvSessionVideoSplitTask],
 ) -> None:
     """Download all cameras and attach parsed timestamp arrays."""
     downloader = VideoDownloader(
@@ -89,7 +82,7 @@ def test_process_data_collects_expected_videos_and_timestamps(
     )
     downloader.stage_setup()
 
-    task = _make_task("s3://test-bucket/session")
+    task = split_task_factory(clip_counts=(), session_url="s3://test-bucket/session")
 
     files_in_session = [
         "clip-2-main.mp4",
@@ -136,6 +129,7 @@ def test_process_data_collects_expected_videos_and_timestamps(
 def test_process_data_continues_after_video_download_error(
     fake_storage_client: object,
     monkeypatch: pytest.MonkeyPatch,
+    split_task_factory: Callable[..., AvSessionVideoSplitTask],
 ) -> None:
     """Skip individual video failures but continue processing other cameras."""
     downloader = VideoDownloader(
@@ -145,7 +139,7 @@ def test_process_data_continues_after_video_download_error(
     )
     downloader.stage_setup()
 
-    task = _make_task("s3://test-bucket/session")
+    task = split_task_factory(clip_counts=(), session_url="s3://test-bucket/session")
 
     files = ["clip-2-main.mp4", "clip-4-main.mp4", "timestamp_l1.csv"]
     monkeypatch.setattr(
@@ -177,6 +171,7 @@ def test_process_data_continues_after_video_download_error(
 def test_process_data_converts_h264_and_keeps_only_vri_camera(
     fake_storage_client: object,
     monkeypatch: pytest.MonkeyPatch,
+    split_task_factory: Callable[..., AvSessionVideoSplitTask],
 ) -> None:
     """Convert h264 sources and retain the VRI camera only."""
     downloader = VideoDownloader(
@@ -186,7 +181,7 @@ def test_process_data_converts_h264_and_keeps_only_vri_camera(
     )
     downloader.stage_setup()
 
-    task = _make_task("s3://test-bucket/session")
+    task = split_task_factory(clip_counts=(), session_url="s3://test-bucket/session")
 
     monkeypatch.setattr(
         download_stages,
@@ -231,6 +226,7 @@ def test_process_data_converts_h264_and_keeps_only_vri_camera(
 def test_process_data_drops_session_when_camera_missing(
     fake_storage_client: object,
     monkeypatch: pytest.MonkeyPatch,
+    split_task_factory: Callable[..., AvSessionVideoSplitTask],
 ) -> None:
     """Drop the session when expected camera data is incomplete."""
     downloader = VideoDownloader(
@@ -240,7 +236,7 @@ def test_process_data_drops_session_when_camera_missing(
     )
     downloader.stage_setup()
 
-    task = _make_task("s3://test-bucket/session")
+    task = split_task_factory(clip_counts=(), session_url="s3://test-bucket/session")
 
     present_cameras = [2, 4, 5, 6, 7]  # camera 8 is missing
     files = [f"clip-{camera}-main.mp4" for camera in present_cameras] + ["timestamp_l1.csv"]
@@ -265,6 +261,7 @@ def test_process_data_drops_session_when_camera_missing(
 def test_process_data_drops_session_when_no_timestamps(
     fake_storage_client: object,
     monkeypatch: pytest.MonkeyPatch,
+    split_task_factory: Callable[..., AvSessionVideoSplitTask],
 ) -> None:
     """Drop the session when timestamps remain empty."""
     downloader = VideoDownloader(
@@ -274,7 +271,7 @@ def test_process_data_drops_session_when_no_timestamps(
     )
     downloader.stage_setup()
 
-    task = _make_task("s3://test-bucket/session")
+    task = split_task_factory(clip_counts=(), session_url="s3://test-bucket/session")
 
     files = [
         "clip-2-main.mp4",
@@ -306,6 +303,7 @@ def test_process_data_drops_session_when_no_timestamps(
 def test_process_data_skips_timestamp_read_when_extracting_from_video(
     fake_storage_client: object,
     monkeypatch: pytest.MonkeyPatch,
+    split_task_factory: Callable[..., AvSessionVideoSplitTask],
 ) -> None:
     """Ensure timestamp files are ignored when extraction happens from video payloads."""
     downloader = VideoDownloader(
@@ -319,7 +317,7 @@ def test_process_data_skips_timestamp_read_when_extracting_from_video(
     downloader._camera_mapping_entry = mapping_copy
     downloader._extract_timestamp_from_video = True
 
-    task = _make_task("s3://test-bucket/session")
+    task = split_task_factory(clip_counts=(), session_url="s3://test-bucket/session")
 
     monkeypatch.setattr(
         download_stages,
