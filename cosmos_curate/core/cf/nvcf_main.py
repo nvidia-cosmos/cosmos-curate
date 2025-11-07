@@ -67,6 +67,8 @@ from cosmos_curate.pipelines.video.sharding_pipeline import nvcf_run_shard
 from cosmos_curate.pipelines.video.splitting_pipeline import nvcf_run_split
 
 _LOG_RDWR_LOCK_FILE = pathlib.Path(tempfile.gettempdir()) / "pipeline_status.lock"
+_PIPELINE_LOCK_FILE = pathlib.Path(tempfile.gettempdir()) / "pipeline.lock"
+_PIPELINE_STATUS_FILE = pathlib.Path(tempfile.gettempdir()) / "pipeline_status"
 _FORCE_TERMINATE_REQUEST_ID = "12345678-1234-1234-1234-123456789abc"
 
 _RAY_DASHBOARD = f"http://127.0.0.1:{os.getenv('RAY_DASHBOARD_PORT', '8265')}"
@@ -75,6 +77,22 @@ _METRICS_PORT = 9002
 # This is evaluated at startup and used to decide if the logs/progress can be sent
 # using get-request-status
 using_nvcf_status: dict[str, bool] = {"get_req_sts": False}
+
+
+def _cleanup_pipeline_lock_files() -> None:
+    """Clean up stale pipeline lock files."""
+    lock_files = [
+        _PIPELINE_STATUS_FILE,
+        _PIPELINE_LOCK_FILE,
+        _LOG_RDWR_LOCK_FILE,
+    ]
+    for lock_file in lock_files:
+        try:
+            if lock_file.exists():
+                lock_file.unlink()
+                logger.debug(f"Cleaned up {lock_file.name}")
+        except Exception as e:  # noqa: BLE001 PERF203
+            logger.warning(f"Failed to clean up {lock_file.name}: {e}")
 
 
 def _value_error(msg: str) -> None:
@@ -364,9 +382,9 @@ class PipelineLockMiddleware(BaseHTTPMiddleware):
         """
         super().__init__(app)
         # Create a file lock in temp directory that's shared between workers
-        self._lock_file: str = str(pathlib.Path(tempfile.gettempdir()) / "pipeline.lock")
+        self._lock_file: str = str(_PIPELINE_LOCK_FILE)
         self._file_lock = filelock.FileLock(self._lock_file)
-        self._status_file: pathlib.Path = pathlib.Path(tempfile.gettempdir()) / "pipeline_status"
+        self._status_file: pathlib.Path = _PIPELINE_STATUS_FILE
 
     def _is_pipeline_busy(self) -> bool:
         try:
@@ -391,7 +409,7 @@ class PipelineLockMiddleware(BaseHTTPMiddleware):
         buffer.seek(0)
         return buffer
 
-    async def dispatch(  # noqa: C901, PLR0911, PLR0912, PLR0915
+    async def dispatch(  # noqa: PLR0911
         self,
         request: Request,
         call_next: RequestResponseEndpoint,
@@ -493,12 +511,8 @@ class PipelineLockMiddleware(BaseHTTPMiddleware):
                         logger.info("Pipeline started - acquired lock")
                         return await call_next(request)
                     finally:
-                        # Clean up status file
-                        try:
-                            if self._status_file.exists():
-                                self._status_file.unlink()
-                        except Exception as e:  # noqa: BLE001
-                            logger.error(f"Error cleaning up status file: {e}")
+                        # Clean up lock files
+                        _cleanup_pipeline_lock_files()
                         logger.info("Pipeline completed - released lock")
             except filelock.Timeout:
                 logger.warning("Could not acquire lock, pipeline appears to be busy")
@@ -523,6 +537,10 @@ def setup_pipeline_middleware(app: FastAPI) -> None:
         using_nvcf_status["get_req_sts"] = is_single_node and is_nvcf_status
 
     logger.info(f"Starting up using_nvcf_status = {using_nvcf_status['get_req_sts']}")
+
+    # Clean up stale lock files from previous crashed instances
+    logger.info("Cleaning up stale pipeline lock files on startup")
+    _cleanup_pipeline_lock_files()
 
     app.add_middleware(PipelineLockMiddleware)
 

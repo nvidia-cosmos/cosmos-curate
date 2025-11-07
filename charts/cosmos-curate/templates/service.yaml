@@ -35,6 +35,7 @@ metadata:
   name: '{{ .Values.helmChartServiceName }}'
   labels:
     {{- include "curate-ray.labels" . | nindent 4 }}
+    servicemonitor-target: "true"
 spec:
   type: {{ .Values.service.type | default "ClusterIP" }}
   selector:
@@ -59,3 +60,6 @@ spec:
     - name: ray-node-manager
       port: {{ .Values.rayPorts.nodeManagerPort }}
       targetPort: {{ .Values.rayPorts.nodeManagerPort }}
+    - name: metrics
+      port: {{ .Values.metrics.port }}
+      targetPort: {{ .Values.metrics.port }}

@@ -3118,7 +3118,7 @@
               "refId": "A"
             }
           ],
-          "title": "Ray Spilled",
+          "title": "Ray Spill rate (bytes/s)",
           "transformations": [
             {
               "id": "renameByRegex",

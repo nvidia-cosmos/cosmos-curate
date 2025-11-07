@@ -13,6 +13,12 @@ data:
   AWS_CONFIG_FILE: {{ .Values.s3.credsPath }}
   NVCF_AWS_PROFILE_PATH: {{ .Values.s3.credsPath  }}
   REQUESTS_CA_BUNDLE: "/etc/ssl/certs/ca-certificates.crt"
+  {{- if .Values.modelCacheDir }}
+  NVCF_MODEL_CACHE_DIR: {{ .Values.modelCacheDir | quote }}
+  {{- end }}
+  {{- if .Values.triton.home }}
+  TRITON_HOME: {{ .Values.triton.home | quote }}
+  {{- end }}
 {{- with .Values.customEnvVars }}
 {{- toYaml . | nindent 2 }}
 {{- end }}

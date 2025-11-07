@@ -3,7 +3,7 @@
 {{- $svc := .Values.helmChartServiceName }}
 {{- $targets := list }}
 {{- range $i, $e := until $replicas }}
-  {{- $targets = append $targets (printf "%s-%d.%s-headless:9002" $svc $i $svc) }}
+  {{- $targets = append $targets (printf "%s-%d.%s-headless:%d" $svc $i $svc ($.Values.metrics.port | int)) }}
 {{- end }} 
 apiVersion: v1
 kind: ConfigMap
@@ -15,12 +15,14 @@ data:
       prometheus:
         config:
           scrape_configs:
-            {{- toYaml .Values.metrics.prometheus.scrapeConfigs | nindent 12 }}
-              static_configs:
-              - targets: 
-{{- range $t := $targets }}
-                - {{ $t | quote }}
-{{- end }}
+            {{- $jobs := deepCopy (default (list) .Values.metrics.prometheus.scrapeConfigs) }}
+            {{- if gt (len $jobs) 0 }}
+            {{- $first := index $jobs 0 }}
+            {{- if not (hasKey $first "static_configs") }}
+            {{- $_ := set $first "static_configs" (list (dict "targets" $targets)) }}
+            {{- end }}
+            {{- end }}
+            {{- toYaml $jobs | nindent 12 }}
 
     exporters:
       prometheusremotewrite:
@@ -64,4 +66,3 @@ data:
         logs:
           level: "info"
 {{- end }}
-

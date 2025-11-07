@@ -24,3 +24,4 @@
 notes.txt
 *.md
 /*.tgz
+/*.dev

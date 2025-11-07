@@ -68,18 +68,23 @@ def get_secrets_from_nvcf_secret_store() -> dict[str, str]:
 def get_nvcf_download_manager() -> NvcfModelManager:
     """Return a NvcfModelManager instance."""
     data = get_secrets_from_nvcf_secret_store()
-
-    if "NGC_NVCF_API_KEY" not in data:
-        error_msg = "NGC_NVCF_API_KEY not found in NVCF secrets"
-        raise ValueError(error_msg)
-    if "NGC_NVCF_ORG" not in data:
-        error_msg = "NGC_NVCF_ORG not found in NVCF secrets"
+    api_key = data.get("NGC_NVCF_API_KEY", os.getenv("NGC_NVCF_API_KEY", ""))
+    if not api_key:
+        error_msg = "NGC_NVCF_API_KEY not found in NVCF secrets or environment variable"
         raise ValueError(error_msg)
 
+    org = data.get("NGC_NVCF_ORG", os.getenv("NGC_NVCF_ORG", ""))
+    if not org:
+        error_msg = "NGC_NVCF_ORG not found in NVCF secrets or environment variable"
+        raise ValueError(error_msg)
+
+    team = data.get("NGC_NVCF_TEAM", os.getenv("NGC_NVCF_TEAM", "no-team"))
+    cache_dir = os.getenv("NVCF_MODEL_CACHE_DIR")
     return NvcfModelManager(
-        api_key=data["NGC_NVCF_API_KEY"],
-        org=data["NGC_NVCF_ORG"],
-        team=data.get("NGC_NVCF_TEAM", "no-team"),
+        api_key=api_key,
+        org=org,
+        team=team,
+        cache_dir=cache_dir,
     )
 
 

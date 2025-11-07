@@ -12,6 +12,14 @@ service:
 helmChartServiceName: "cosmos-curate"
 ngcImagePullSecretName: "inference-container-pull-secret"
 
+imagePullSecret:
+  create: false
+  dockerConfigJson:
+    registry: "nvcr.io"
+    username: "$oauthtoken"
+    password: ""
+    email: ""
+
 # Maps to NODES_PER_INSTANCE environment variable in the container
 replicas: 1
 
@@ -23,12 +31,48 @@ image:
 
 podAnnotations: {}
 
-podSecurityContext: {}
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+  fsGroup: 1000
+  seccompProfile:
+    type: RuntimeDefault
 
-securityContext: {}
+securityContext:
+  allowPrivilegeEscalation: false
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+  readOnlyRootFilesystem: false  # Set to true if your app doesn't need to write to the root filesystem
+  capabilities:
+    drop:
+      - ALL
+  seccompProfile:
+    type: RuntimeDefault
 
 # Optional scratch directory for temporary files
 scratchDir: ""
+
+# Persistent storage for /config directory
+# When enabled, uses a volumeClaimTemplate instead of hostPath/emptyDir
+persistence:
+  enabled: false
+  # Storage class to use for the PVC (leave empty for default)
+  storageClass: ""
+  # Size of the persistent volume
+  size: 10Gi
+  # Access mode for the PVC
+  accessMode: ReadWriteOnce
+  # Additional labels for the PVC
+  labels: {}
+  # Additional annotations for the PVC
+  annotations: {}
+  # whenDeleted: Delete = auto-delete PVCs when StatefulSet is deleted - keep from accumulating copies. Can be set to retain and cache model downloads
+  # whenScaled: Retain = keep PVCs when scaling down
+  retentionPolicy:
+    whenDeleted: Delete
+    whenScaled: Retain
 
 # Optional custom environment variables
 customEnvVars: {}
@@ -73,8 +117,22 @@ s3:
     enabled: false
     name: "s3-config"
     data: ""
+
+# Catalog credentials for retrieving models from NGC Catalog
+ngcCatalog:
+  secret:
+    enabled: false
+    name: "ngc-secret"
+    key: ""  # Set your NGC API key here
+    org: ""  # Set your NGC organization here
+    team: ""  # Optional: Set your NGC team here
+
 metrics:
-  enabled: true
+  enabled: true  # Controls OTEL collector (subchart + ConfigMap).
+  # Port where Ray exposes Prometheus metrics (always exposed)
+  port: 9002
+  # Path where metrics are exposed
+  path: /metrics
   # Whether to use the init container to extract NVCF secrets
   extractNVCFSecrets: true
   # Static external labels that will be added to all metrics
@@ -82,6 +140,7 @@ metrics:
     service: "cosmos-curate"
   # Additional external labels that can be added without overriding the static ones
   extraExternalLabels: {}
+
   prometheus:
     scrapeConfigs:
       - job_name: "ray-service-metrics"
@@ -122,6 +181,23 @@ metrics:
     endpoint: "https://FILL_IN/api/v1/receive"
     certPath: "/etc/curate-remote-write/certs/tls.crt"
     keyPath: "/etc/curate-remote-write/certs/tls.key"
+  
+  # ServiceMonitor for Prometheus Operator (independent of metrics.enabled)
+  # Requires prometheus-operator CRDs installed
+  serviceMonitor:
+    enabled: false  # Set true to enable Prometheus Operator scraping
+    # Namespace where ServiceMonitor will be created (defaults to release namespace)
+    namespace: ""
+    # Additional labels for ServiceMonitor (e.g., for Prometheus selector)
+    labels: {}
+    # Scrape interval
+    interval: 30s
+    # Scrape timeout
+    scrapeTimeout: 10s
+    # Relabeling configs applied before scraping
+    relabelings: []
+    # Additional metric relabel configs (merged with common metricRelabelConfigs above)
+    additionalMetricRelabelings: []
 
 opentelemetry-collector:
   mode: deployment
@@ -183,3 +259,7 @@ opentelemetry-collector:
     create: false
   serviceAccount:
     create: false
+
+modelCacheDir: "/config/models"
+triton:
+  home: "/tmp/.triton"
