@@ -28,9 +28,10 @@ This allows for a location for variant -> model id mapping.
 """
 
 _VLLM_MODELS = {
-    "qwen": "Qwen/Qwen2.5-VL-7B-Instruct",
-    "phi4": "microsoft/Phi-4-multimodal-instruct",
     "cosmos_r1": "nvidia/Cosmos-Reason1-7B",
+    "phi4": "microsoft/Phi-4-multimodal-instruct",
+    "qwen": "Qwen/Qwen2.5-VL-7B-Instruct",
+    "nemotron": "nvidia/NVIDIA-Nemotron-Nano-12B-v2-VL-FP8",
 }
 
 

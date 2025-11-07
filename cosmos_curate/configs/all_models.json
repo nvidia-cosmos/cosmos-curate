@@ -95,6 +95,13 @@
         "precision": "BF16",
         "nvcf_model_id": "internvideo2_stage2_1b_224p_f4"
     },
+    "nemotron": {
+        "model_id": "nvidia/NVIDIA-Nemotron-Nano-12B-v2-VL-FP8",
+        "version": "32944903e881153643d7ebce6a65a89c2589ab8f",
+        "filelist": null,
+        "precision": "FP8",
+        "nvcf_model_id": "nemotron_nano_12b_v2_vl_fp8"
+    },
     "phi_4": {
         "model_id": "microsoft/Phi-4-multimodal-instruct",
         "version": "33e62acdd07cd7d6635badd529aa0a3467bb9c6a",

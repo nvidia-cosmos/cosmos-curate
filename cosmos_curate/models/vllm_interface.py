@@ -96,6 +96,7 @@ from vllm.sampling_params import RequestOutputKind
 
 from cosmos_curate.core.utils.misc import grouping
 from cosmos_curate.models.vllm_cosmos_reason1_vl import VllmCosmosReason1VL
+from cosmos_curate.models.vllm_nemotron import VllmNemotronNano12Bv2VL
 from cosmos_curate.models.vllm_phi import VllmPhi4
 from cosmos_curate.models.vllm_qwen import VllmQwen7B
 from cosmos_curate.pipelines.video.utils.data_model import VllmCaptionRequest
@@ -113,6 +114,7 @@ _VLLM_PLUGINS = {
     VllmPhi4.model_variant(): VllmPhi4,
     VllmQwen7B.model_variant(): VllmQwen7B,
     VllmCosmosReason1VL.model_variant(): VllmCosmosReason1VL,
+    VllmNemotronNano12Bv2VL.model_variant(): VllmNemotronNano12Bv2VL,
 }
 
 T = TypeVar("T")

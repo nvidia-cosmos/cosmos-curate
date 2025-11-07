@@ -440,7 +440,7 @@ def split(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912, PLR0915
     keep_mp4 = args.generate_previews or (args.generate_cosmos_predict_dataset != "disable") or caption_algo == "gemini"
 
     if args.generate_captions:
-        if caption_algo not in {"phi4", "qwen", "cosmos_r1", "gemini"}:
+        if caption_algo not in {"cosmos_r1", "nemotron", "phi4", "qwen", "gemini"}:
             msg = f"Unsupported captioning algorithm: {caption_algo}"
             raise RuntimeError(msg)
 
@@ -484,8 +484,10 @@ def split(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912, PLR0915
         elif caption_algo == "gemini":
             # Gemini still reuses VllmPrepStage for window extraction, so only window behaviour differs.
             window_config.model_does_preprocess = args.qwen_model_does_preprocess
+        elif args.captioning_algorithm.lower() == "nemotron":
+            vllm_config.stage2_caption = args.nemotron_stage2_caption
 
-        prepare_model_inputs = caption_algo in {"phi4", "qwen", "cosmos_r1"}
+        prepare_model_inputs = caption_algo in {"cosmos_r1", "nemotron", "phi4", "qwen"}
         stages += [
             VllmPrepStage(
                 vllm_config=vllm_config,
@@ -509,7 +511,7 @@ def split(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912, PLR0915
             ]
 
         # captioning
-        if caption_algo in {"phi4", "qwen", "cosmos_r1"}:
+        if caption_algo in {"cosmos_r1", "nemotron", "phi4", "qwen"}:
             stages += [
                 VllmCaptionStage(
                     vllm_config=vllm_config,
@@ -1034,7 +1036,7 @@ def _setup_parser(parser: argparse.ArgumentParser) -> None:  # noqa: PLR0915
         "--captioning-algorithm",
         type=str,
         default="qwen",
-        choices=["qwen", "phi4", "cosmos_r1", "gemini"],
+        choices=["cosmos_r1", "gemini", "nemotron", "phi4", "qwen"],
         help="Captioning algorithm to use in annotation pipeline.",
     )
     parser.add_argument(
@@ -1286,7 +1288,12 @@ def _setup_parser(parser: argparse.ArgumentParser) -> None:  # noqa: PLR0915
         default=None,
         help="Presigned S3 URL where the zipped output clips will be uploaded.",
     )
-
+    parser.add_argument(
+        "--nemotron-stage2-caption",
+        action="store_true",
+        default=False,
+        help="If set, generated captions are used as input prompts again into Nemotron to refine them",
+    )
     # add common args applicable to all pipelines
     add_common_args(parser)
 
