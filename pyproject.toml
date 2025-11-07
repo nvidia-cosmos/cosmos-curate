@@ -82,6 +82,7 @@ local = [
     "easydict",
     "fastapi",
     "gpustat",
+    "google-genai>=1.48.0",
     "huggingface_hub",
     "jinja2",
     "kubernetes>=28.0",

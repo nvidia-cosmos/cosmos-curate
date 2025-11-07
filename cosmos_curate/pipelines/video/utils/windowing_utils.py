@@ -15,7 +15,6 @@
 """Utilities which are used in multiple places in the pipeline and/or are unit-tested."""
 
 import subprocess
-from itertools import zip_longest
 
 import attrs
 import torch
@@ -186,13 +185,14 @@ def split_video_into_windows(  # noqa: PLR0913
         return mp4_bytes_list, video_frames, windows
 
 
-def _make_windows_for_clip(
+def _make_windows_for_clip(  # noqa: PLR0913
     clip: Clip,
     config: WindowConfig,
     target_bit_rate: str,
     num_decode_threads: int,
     *,
     keep_mp4: bool = False,
+    return_frames: bool = True,
 ) -> tuple[list[Window], list[torch.Tensor]]:
     """Make windows for a clip.
 
@@ -202,6 +202,7 @@ def _make_windows_for_clip(
         target_bit_rate: The target bit rate.
         num_decode_threads: The number of threads to use.
         keep_mp4: Whether to keep the MP4.
+        return_frames: Whether to decode and return frame tensors.
 
     Returns:
         A tuple of lists of windows and frames.
@@ -215,20 +216,24 @@ def _make_windows_for_clip(
         clip.errors["clip_windowing"] = "clip.encoded_data is None"
         return windows, frames
 
-    for window_bytes, window_frames, window_frame_info in zip_longest(
-        *split_video_into_windows(
-            clip.encoded_data,
-            window_size=config.window_size,
-            remainder_threshold=config.remainder_threshold,
-            sampling_fps=config.sampling_fps,
-            model_does_preprocess=config.model_does_preprocess,
-            preprocess_dtype=config.preprocess_dtype,
-            return_bytes=keep_mp4,
-            target_bit_rate=target_bit_rate,
-            num_threads=num_decode_threads,
-        ),
-    ):
-        if window_frames is None:
+    window_mp4_bytes, window_frames, window_infos = split_video_into_windows(
+        clip.encoded_data,
+        window_size=config.window_size,
+        remainder_threshold=config.remainder_threshold,
+        sampling_fps=config.sampling_fps,
+        model_does_preprocess=config.model_does_preprocess,
+        preprocess_dtype=config.preprocess_dtype,
+        return_bytes=keep_mp4,
+        target_bit_rate=target_bit_rate,
+        return_video_frames=return_frames,
+        num_threads=num_decode_threads,
+    )
+
+    for idx, window_frame_info in enumerate(window_infos):
+        window_frames_tensor = window_frames[idx] if idx < len(window_frames) else None
+        window_bytes = window_mp4_bytes[idx] if keep_mp4 and idx < len(window_mp4_bytes) else None
+
+        if return_frames and window_frames_tensor is None:
             logger.error(f"Window frames are None for window {window_frame_info.start} to {window_frame_info.end}")
             continue
         try:
@@ -239,7 +244,8 @@ def _make_windows_for_clip(
             )
             clip.windows.append(window)
             windows.append(window)
-            frames.append(window_frames)
+            if return_frames and window_frames_tensor is not None:
+                frames.append(window_frames_tensor)
         except Exception as e:  # noqa: BLE001
             logger.exception("Error when splitting a video into windows")
             clip.errors["clip_windowing"] = str(e)
@@ -253,6 +259,7 @@ def make_windows_for_video(
     num_decode_threads: int,
     *,
     keep_mp4: bool = False,
+    return_frames: bool = True,
 ) -> tuple[list[Window], list[torch.Tensor]]:
     """Add windows to each clip in a video.
 
@@ -261,6 +268,7 @@ def make_windows_for_video(
         config: The configuration for the windowing.
         num_decode_threads: The number of threads to use when decoding the video.
         keep_mp4: Whether to keep the MP4.
+        return_frames: Whether to decode and return frame tensors.
 
     Returns:
         A tuple of lists of windows and frames.
@@ -285,6 +293,7 @@ def make_windows_for_video(
             target_bit_rate,
             num_decode_threads,
             keep_mp4=keep_mp4,
+            return_frames=return_frames,
         )
 
         windows.extend(_windows)

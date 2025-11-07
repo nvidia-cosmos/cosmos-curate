@@ -11,6 +11,8 @@
     - [Setup Environment and Install Dependencies](#setup-environment-and-install-dependencies)
     - [Run the Hello-World Example Pipeline](#run-the-hello-world-example-pipeline)
     - [Run the Reference Video Pipeline](#run-the-reference-video-pipeline)
+    - [Use Gemini for Captioning](#use-gemini-for-captioning)
+    - [Enhance Captions with Azure OpenAI](#enhance-captions-with-azure-openai)
     - [Generate Dataset for Cosmos-Predict2 Post-Training](#generate-dataset-for-cosmos-predict2-post-training)
     - [Useful Options for Local Run](#useful-options-for-local-run)
   - [Launch Pipelines on Slurm](#launch-pipelines-on-slurm)
@@ -63,12 +65,18 @@ Note that the docker daemon needs to be restarted after the installation of NVID
 
 ## Initial Setup
 
-1. Create a configuration file at `~/.config/cosmos_curate/config.yaml` and put your Hugging Face credentials:
+1. Create a configuration file at `~/.config/cosmos_curate/config.yaml` and put your credentials. The Hugging Face section is required for model downloads; the Gemini and Azure OpenAI sections are optional but needed for their respective captioning features:
 
 ```yaml
 huggingface:
     user: "<your-username>"
     api_key: "<your-huggingface-token>"
+gemini:
+    api_key: "<your-gemini-api-key>"
+azure_openai:
+    api_version: "2025-04-01-preview"
+    azure_endpoint: "https://<your-resource-name>.openai.azure.com/"
+    api_key: "<your-azure-openai-api-key>"
 ```
 
 2. To use `InternVideo2` embedding model:
@@ -215,6 +223,51 @@ At a high level, this pipeline
 - stores the mp4 clips and metadatas to the specified `output_clip_path`
 
 For more details, please refer to [Split-Annotate Pipeline](../curator/REFERENCE_PIPELINES_VIDEO.md#split-annotate-pipeline) section in [Reference Pipelines Guide](../curator/REFERENCE_PIPELINES_VIDEO.md).
+
+### Use Gemini for Captioning
+
+Cosmos-Curate can call the Google Gemini API instead of local captioning models. To enable it:
+
+1. Add your Gemini API key to `~/.config/cosmos_curate/config.yaml` under the `gemini` section as shown in [Initial Setup](#initial-setup). The key must also be accessible inside the container (the config file is mounted automatically when you use `--curator-path .`).
+2. Select the Gemini captioning algorithm when launching the pipeline. The example below also increases `--captioning-max-output-tokens` to `4096`, which avoids Gemini truncation and has worked well in practice:
+
+```bash
+cosmos-curate local launch \
+    --image-name cosmos-curate --image-tag 1.0.0 --curator-path . \
+    -- pixi run python -m cosmos_curate.pipelines.video.run_pipeline split \
+    --input-video-path <input path> \
+    --output-clip-path <output path> \
+    --captioning-algorithm gemini \
+    --captioning-max-output-tokens 4096 \
+    --gemini-model-name models/gemini-2.5-pro
+```
+
+You can further tune the behaviour with:
+- `--gemini-caption-retries` / `--gemini-retry-delay-seconds` to adjust retry policy.
+- `--gemini-max-inline-mb` to cap the inline MP4 size sent to Gemini (default `20.0` MB).
+
+If Gemini returns block reasons or empty responses, the stage will surface those details in the clip errors.
+
+### Enhance Captions with Azure OpenAI
+
+For a second-pass refinement of captions you can call Azure OpenAI deployments.
+
+1. Populate the `azure_openai` section in `~/.config/cosmos_curate/config.yaml` with your Azure endpoint, API version, and key (see [Initial Setup](#initial-setup)).
+2. Launch the pipeline with the enhance caption stage enabled and point it to your deployment:
+
+```bash
+cosmos-curate local launch \
+    --image-name cosmos-curate --image-tag 1.0.0 --curator-path . \
+    -- pixi run python -m cosmos_curate.pipelines.video.run_pipeline split \
+    --input-video-path <input path> \
+    --output-clip-path <output path> \
+    --enhance-captions \
+    --enhance-captions-lm-variant azure_openai \
+    --enhance-captions-azure-openai-deployment <your-deployment-name> \
+    --enhance-captions-max-output-tokens 2048
+```
+
+The deployment name selects the model that Azure serves (for example, `gpt-4o-mini`). You can increase `--enhance-captions-max-output-tokens` if you need longer rewrites; the default `2048` works for most scenarios.
 
 4. **Optionally, Run the Split-Annotate Pipeline via API Endpoint**
 

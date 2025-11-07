@@ -41,6 +41,7 @@ from cosmos_curate.models.all_models import get_all_models_by_id
 from cosmos_curate.pipelines.pipeline_args import (
     add_common_args,
 )
+from cosmos_curate.pipelines.video.captioning.api_caption_stage import ApiCaptionStage
 from cosmos_curate.pipelines.video.captioning.captioning_stages import (
     EnhanceCaptionStage,
     T5StageForSplit,
@@ -433,11 +434,16 @@ def split(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912, PLR0915
         embedding_model_version = get_all_models_by_id().get(embedding_model_id, {}).get("version", "unspecified")  # type: ignore[assignment]
         logger.debug(f"Embedding model id={embedding_model_id} version={embedding_model_version}")
 
+    caption_algo = args.captioning_algorithm.lower()
     vllm_config: VllmConfig | None = None
     window_config: WindowConfig | None = None
-    keep_mp4 = args.generate_previews or (args.generate_cosmos_predict_dataset != "disable")
+    keep_mp4 = args.generate_previews or (args.generate_cosmos_predict_dataset != "disable") or caption_algo == "gemini"
 
-    if args.captioning_algorithm.lower() in {"phi4", "qwen", "cosmos_r1"}:
+    if args.generate_captions:
+        if caption_algo not in {"phi4", "qwen", "cosmos_r1", "gemini"}:
+            msg = f"Unsupported captioning algorithm: {caption_algo}"
+            raise RuntimeError(msg)
+
         vllm_config = VllmConfig(
             model_variant=args.captioning_algorithm,
             prompt_variant=args.captioning_prompt_variant,
@@ -454,7 +460,7 @@ def split(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912, PLR0915
             use_input_bit_rate=args.transcode_use_input_video_bit_rate,
         )
 
-        if args.captioning_algorithm.lower() in {"qwen"}:
+        if caption_algo == "qwen":
             vllm_config.batch_size = args.qwen_batch_size
             vllm_config.fp8 = args.qwen_use_fp8_weights
             vllm_config.disable_mmcache = not args.qwen_use_vllm_mmcache
@@ -463,10 +469,10 @@ def split(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912, PLR0915
             vllm_config.stage2_prompt_text = args.qwen_stage2_prompt_text
             window_config.preprocess_dtype = args.qwen_preprocess_dtype
             window_config.model_does_preprocess = args.qwen_model_does_preprocess
-        elif args.captioning_algorithm.lower() == "phi4":
+        elif caption_algo == "phi4":
             vllm_config.stage2_caption = args.phi4_stage2_caption
             vllm_config.stage2_prompt_text = args.phi4_stage2_prompt_text
-        elif args.captioning_algorithm.lower() == "cosmos_r1":
+        elif caption_algo == "cosmos_r1":
             vllm_config.batch_size = args.qwen_batch_size
             vllm_config.fp8 = args.qwen_use_fp8_weights
             vllm_config.disable_mmcache = not args.qwen_use_vllm_mmcache
@@ -475,20 +481,16 @@ def split(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912, PLR0915
             vllm_config.stage2_prompt_text = args.qwen_stage2_prompt_text
             window_config.preprocess_dtype = "float16"
             window_config.model_does_preprocess = False
+        elif caption_algo == "gemini":
+            # Gemini still reuses VllmPrepStage for window extraction, so only window behaviour differs.
+            window_config.model_does_preprocess = args.qwen_model_does_preprocess
 
-    if args.generate_captions:
-        if vllm_config is None:
-            msg = "--generate-captions is set, but vllm_config not set, this is a bug"
-            raise RuntimeError(msg)
-
-        if window_config is None:
-            msg = "Window config is not set, this is a bug"
-            raise RuntimeError(msg)
-
+        prepare_model_inputs = caption_algo in {"phi4", "qwen", "cosmos_r1"}
         stages += [
             VllmPrepStage(
                 vllm_config=vllm_config,
                 window_config=window_config,
+                prepare_model_inputs=prepare_model_inputs,
                 keep_mp4=keep_mp4,
                 verbose=args.verbose,
                 log_stats=args.perf_profile,
@@ -507,15 +509,31 @@ def split(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912, PLR0915
             ]
 
         # captioning
-        stages += [
-            VllmCaptionStage(
-                vllm_config=vllm_config,
-                verbose=args.verbose,
-                keep_mp4=keep_mp4,
-                log_stats=args.perf_profile,
-                inflight_batching=args.vllm_use_inflight_batching,
-            )
-        ]
+        if caption_algo in {"phi4", "qwen", "cosmos_r1"}:
+            stages += [
+                VllmCaptionStage(
+                    vllm_config=vllm_config,
+                    verbose=args.verbose,
+                    keep_mp4=keep_mp4,
+                    log_stats=args.perf_profile,
+                    inflight_batching=args.vllm_use_inflight_batching,
+                )
+            ]
+        elif caption_algo == "gemini":
+            stages += [
+                ApiCaptionStage(
+                    model_variant=args.captioning_algorithm,
+                    model_name=args.gemini_model_name,
+                    prompt_variant=args.captioning_prompt_variant,
+                    prompt_text=args.captioning_prompt_text,
+                    max_output_tokens=args.captioning_max_output_tokens,
+                    max_caption_retries=args.gemini_caption_retries,
+                    retry_delay_seconds=args.gemini_retry_delay_seconds,
+                    max_video_size_bytes=int(args.gemini_max_inline_mb * 1024 * 1024),
+                    verbose=args.verbose,
+                    log_stats=args.perf_profile,
+                )
+            ]
 
         # enhance caption
         if args.enhance_captions:
@@ -1016,7 +1034,7 @@ def _setup_parser(parser: argparse.ArgumentParser) -> None:  # noqa: PLR0915
         "--captioning-algorithm",
         type=str,
         default="qwen",
-        choices=["qwen", "phi4", "cosmos_r1"],
+        choices=["qwen", "phi4", "cosmos_r1", "gemini"],
         help="Captioning algorithm to use in annotation pipeline.",
     )
     parser.add_argument(
@@ -1059,6 +1077,30 @@ def _setup_parser(parser: argparse.ArgumentParser) -> None:  # noqa: PLR0915
         type=int,
         default=512,
         help="Max number of output tokens requested from captioning model",
+    )
+    parser.add_argument(
+        "--gemini-model-name",
+        type=str,
+        default="models/gemini-2.5-pro",
+        help="Gemini model name used when --captioning-algorithm is 'gemini'.",
+    )
+    parser.add_argument(
+        "--gemini-caption-retries",
+        type=int,
+        default=3,
+        help="Max number of retries for Gemini caption requests.",
+    )
+    parser.add_argument(
+        "--gemini-retry-delay-seconds",
+        type=float,
+        default=1.0,
+        help="Delay between retries for Gemini caption requests.",
+    )
+    parser.add_argument(
+        "--gemini-max-inline-mb",
+        type=float,
+        default=20.0,
+        help="Maximum inline video size accepted by Gemini when captioning (in megabytes).",
     )
     parser.add_argument(
         "--qwen-preprocess-dtype",

@@ -54,6 +54,7 @@ uvicorn = "*"
 
 [feature.core.pypi-dependencies]
 av = "*" # conda-forge package pulls in ffmpeg
+google-genai = "*" # conda-forge package is too old
 ngcsdk = "*" # not available on conda-forge
 opencv-python-headless = "*" # not available on conda-forge
 pillow = "==11.3.0"  # required by phi-4 and nemotron models, 12.0 breaks nemotron

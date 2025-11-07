@@ -314,6 +314,28 @@ def test_prep_windows_raises_without_processor(mock_make_windows: MagicMock, mod
 
 
 @pytest.mark.env("unified")
+@patch("cosmos_curate.pipelines.video.captioning.vllm_caption_stage.windowing_utils.make_windows_for_video")
+@patch("cosmos_curate.models.vllm_interface.make_model_inputs")
+def test_prep_windows_skips_frame_decoding_when_inputs_disabled(
+    mock_make_model_inputs: MagicMock,
+    mock_make_windows: MagicMock,
+) -> None:
+    """Ensure VllmPrepStage avoids frame decoding when model inputs are disabled."""
+    config = VllmConfig(model_variant="gemini")
+    stage = VllmPrepStage(config, WindowConfig(), prepare_model_inputs=False, keep_mp4=True)
+
+    video = Video(input_video=Path("test.mp4"))
+    windows = [Window(start_frame=0, end_frame=10)]
+    mock_make_windows.return_value = (windows, [])
+
+    stage._prep_windows(video, "prompt")
+
+    assert mock_make_model_inputs.call_count == 0
+    _, kwargs = mock_make_windows.call_args
+    assert kwargs.get("return_frames") is False
+
+
+@pytest.mark.env("unified")
 @pytest.mark.parametrize(
     ("stage2_prompt_text", "stage2_caption"),
     [

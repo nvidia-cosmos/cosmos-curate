@@ -235,11 +235,12 @@ class VllmModelInterface(ModelInterface):
 class VllmPrepStage(CuratorStage):
     """Stage that prepares cosmos-curate video data for vLLM multimodal model processing."""
 
-    def __init__(
+    def __init__(  # noqa: PLR0913
         self,
         vllm_config: VllmConfig,
         window_config: WindowConfig,
         *,
+        prepare_model_inputs: bool = True,
         keep_mp4: bool = False,
         verbose: bool = False,
         log_stats: bool = False,
@@ -249,6 +250,7 @@ class VllmPrepStage(CuratorStage):
         Args:
             vllm_config: Configuration for the vLLM model.
             window_config: Configuration for the windowing.
+            prepare_model_inputs: Whether to build model-specific inputs for vLLM.
             keep_mp4: Keep mp4 bytes for the clips in memory.
             verbose: Whether to print verbose logs.
             log_stats: Whether to log performance statistics.
@@ -263,6 +265,7 @@ class VllmPrepStage(CuratorStage):
         self._log_stats = log_stats
         self._processor: AutoProcessor | None = None
         self._keep_mp4 = keep_mp4
+        self._prepare_model_inputs = prepare_model_inputs
 
     def secondary_name(self) -> str:
         """Get the secondary name of the stage.
@@ -295,6 +298,8 @@ class VllmPrepStage(CuratorStage):
 
     def stage_setup(self) -> None:
         """Set up the model for processing."""
+        if not self._prepare_model_inputs:
+            return
         self._processor = auto_processor(self._vllm_config)
 
     def _prep_windows(self, video: Video, prompt: str) -> None:
@@ -310,7 +315,7 @@ class VllmPrepStage(CuratorStage):
             prompt: The prompt to use for the vLLM model.
 
         """
-        if self._processor is None:
+        if self._prepare_model_inputs and self._processor is None:
             msg = "self._processor not initialized, call stage_setup() first"
             raise RuntimeError(msg)
 
@@ -321,12 +326,15 @@ class VllmPrepStage(CuratorStage):
             self._window_config,
             num_video_decode_threads,
             keep_mp4=self._keep_mp4,
+            return_frames=self._prepare_model_inputs,
         )
 
-        llm_inputs = make_model_inputs(frames, self._vllm_config, self._processor, prompt)
+        if self._prepare_model_inputs:
+            assert self._processor is not None
+            llm_inputs = make_model_inputs(frames, self._vllm_config, self._processor, prompt)
 
-        for window, llm_input in zip(windows, llm_inputs, strict=True):
-            window.model_input[self._vllm_config.model_variant] = llm_input
+            for window, llm_input in zip(windows, llm_inputs, strict=True):
+                window.model_input[self._vllm_config.model_variant] = llm_input
 
     @nvtx.annotate("VllmPrepStage")  # type: ignore[misc]
     def process_data(self, tasks: list[T]) -> list[T]:
@@ -339,7 +347,7 @@ class VllmPrepStage(CuratorStage):
             The processed tasks.
 
         """
-        if self._processor is None:
+        if self._prepare_model_inputs and self._processor is None:
             msg = "self._processor not initialized, call stage_setup() first"
             raise RuntimeError(msg)
 

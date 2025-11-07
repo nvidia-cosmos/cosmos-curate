@@ -50,6 +50,13 @@ class AzureOpenAI:
 
 
 @attrs.define
+class Gemini:
+    """A class to represent Gemini configuration details."""
+
+    api_key: str = attrs.field(repr=False)
+
+
+@attrs.define
 class Huggingface:
     """A class to represent and interact with Huggingface configuration details."""
 
@@ -85,6 +92,8 @@ class ConfigFileData:
         api_version: "2025-04-01-preview"
         azure_endpoint: "https://..."
         api_key: "xyz"
+    gemini:
+        api_key: "xyz"
     huggingface:
         user: "abc"
         api_key: "xyz"
@@ -99,6 +108,7 @@ class ConfigFileData:
 
     open_ai: OpenAI | None = None
     azure_openai: AzureOpenAI | None = None
+    gemini: Gemini | None = None
     huggingface: Huggingface | None = None
     postgres: Postgres | None = None
 
