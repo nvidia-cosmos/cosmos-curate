@@ -33,9 +33,8 @@ from cosmos_curate.client.nvcf_cli.ncf.common import (
     NVCFResponse,
     base_callback,
     register_instance,
-    validate_positive_integer,
-    validate_uuid,
 )
+from cosmos_curate.client.utils.validations import validate_positive_integer, validate_uuid
 
 _EXCEPTION_MESSAGE = "unexpected empty reponse"
 

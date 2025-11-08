@@ -13,10 +13,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Provide view utilities for NVCF operations."""
+"""Clip Viewer App."""
 
-from cosmos_curate.client.nvcf_cli.ncf.view.clip_viewer import nvcf_view_clip
+import typer
 
-__all__ = [
-    "nvcf_view_clip",
-]
+from cosmos_curate.client.view_cli.clip_viewer import clip_viewer
+
+viewer_app = typer.Typer(
+    context_settings={
+        "max_content_width": 120,
+    },
+    pretty_exceptions_enable=False,
+    no_args_is_help=True,
+)
+
+viewer_app.command("clip-viewer", no_args_is_help=True)(clip_viewer)
+
+if __name__ == "__main__":
+    viewer_app()

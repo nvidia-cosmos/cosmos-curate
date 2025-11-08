@@ -35,5 +35,4 @@ __all__ = [
     "nvcf_s3cred_function",
     "nvcf_terminate_request",
     "nvcf_undeploy_function",
-    "nvcf_view_clip",
 ]

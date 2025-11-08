@@ -28,8 +28,8 @@ from cosmos_curate.client.nvcf_cli.ncf.common import (
     NvcfBase,
     base_callback,
     register_instance,
-    validate_positive_integer,
 )
+from cosmos_curate.client.utils.validations import validate_positive_integer
 
 
 class ConfigManager(NvcfBase):

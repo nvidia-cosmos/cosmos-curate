@@ -21,7 +21,7 @@ import uuid
 import pytest
 from click import BadParameter
 
-from cosmos_curate.client.nvcf_cli.ncf.common.validations import (  # type: ignore[import-untyped]
+from cosmos_curate.client.utils.validations import (  # type: ignore[import-untyped]
     validate_address,
     validate_in,
     validate_positive_integer,

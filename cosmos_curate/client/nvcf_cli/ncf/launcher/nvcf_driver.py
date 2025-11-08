@@ -28,10 +28,8 @@ from cosmos_curate.client.nvcf_cli.ncf.common import (
     NotFoundError,
     base_callback,
     register_instance,
-    validate_in,
-    validate_positive_integer,
-    validate_uuid,
 )
+from cosmos_curate.client.utils.validations import validate_in, validate_positive_integer, validate_uuid
 
 from .nvcf_helper import NvcfHelper
 

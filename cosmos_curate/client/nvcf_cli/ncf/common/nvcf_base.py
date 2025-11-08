@@ -32,7 +32,7 @@ from rich.console import Console
 from rich.logging import RichHandler
 from typer import Context, Option
 
-from .validations import validate_positive_integer
+from cosmos_curate.client.utils.validations import validate_positive_integer
 
 
 class NvcfBase(ABC):  # noqa: B024

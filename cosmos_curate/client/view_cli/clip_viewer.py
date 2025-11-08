@@ -13,11 +13,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""View and display NVCF clip data."""
+"""View and display clip data."""
 
 import contextlib
 import json
-import logging
 import shutil
 import tempfile
 import zipfile
@@ -25,17 +24,11 @@ from http.server import HTTPServer, SimpleHTTPRequestHandler
 from pathlib import Path
 from typing import Annotated, ClassVar
 
-import typer
-from typer import Context, Option
+from loguru import logger
+from typer import Option
 from typing_extensions import override
 
-from cosmos_curate.client.nvcf_cli.ncf.common import (
-    NvcfBase,
-    base_callback,
-    register_instance,
-    validate_address,
-    validate_in,
-)
+from cosmos_curate.client.utils.validations import validate_address, validate_in
 
 
 class HttpServerHandler(SimpleHTTPRequestHandler):
@@ -48,16 +41,14 @@ class HttpServerHandler(SimpleHTTPRequestHandler):
 
     web_dir: ClassVar[str] = ""
     base_dir: ClassVar[str] = ""
-    logger: ClassVar[logging.Logger] = logging.getLogger(__name__)
 
     @classmethod
-    def initialize(cls, web_dir: str, base_dir: str, logger: logging.Logger) -> type["HttpServerHandler"]:
+    def initialize(cls, web_dir: str, base_dir: str) -> type["HttpServerHandler"]:
         """Initialize the class variables for the handler.
 
         Args:
             web_dir: Directory containing web files (index.html, etc.)
             base_dir: Directory containing clips and metas
-            logger: Logger instance
 
         Returns:
             The initialized handler class
@@ -65,7 +56,6 @@ class HttpServerHandler(SimpleHTTPRequestHandler):
         """
         cls.web_dir = web_dir
         cls.base_dir = base_dir
-        cls.logger = logger
         return cls
 
     def end_headers(self) -> None:
@@ -76,13 +66,12 @@ class HttpServerHandler(SimpleHTTPRequestHandler):
         super().end_headers()
 
     @staticmethod
-    def get_clip_time(clip_name: str, base_dir: str, logger: logging.Logger) -> float:
+    def get_clip_time(clip_name: str, base_dir: str) -> float:
         """Get start time for sorting clips.
 
         Args:
             clip_name: Name of the clip
             base_dir: Directory containing metas
-            logger: Logger instance
 
         Returns:
             Start time as a float, or inf if not found
@@ -94,13 +83,13 @@ class HttpServerHandler(SimpleHTTPRequestHandler):
                 with Path(meta_path).open() as f:
                     metadata = json.load(f)
                     return float(metadata.get("duration_span", [float("inf"), float("inf")])[0])
-            logger.warning("No metadata file found for %s", clip_name)
-        except (FileNotFoundError, PermissionError):
-            logger.exception("Cannot open metadata file '%s': ", meta_path)
-        except json.JSONDecodeError:
-            logger.exception("Invalid JSON in metadata file '%s': ", meta_path)
-        except (ValueError, TypeError):
-            logger.exception("Invalid 'duration_span' format in metadata file '%s': ", meta_path)
+            logger.warning(f"No metadata file found for {clip_name}")
+        except (FileNotFoundError, PermissionError) as e:
+            logger.exception(f"Cannot open metadata file '{meta_path}': {e}")
+        except json.JSONDecodeError as e:
+            logger.exception(f"Invalid JSON in metadata file '{meta_path}': {e}")
+        except (ValueError, TypeError) as e:
+            logger.exception(f"Invalid 'duration_span' format in metadata file '{meta_path}': {e}")
         return float("inf")
 
     @override
@@ -120,7 +109,7 @@ class HttpServerHandler(SimpleHTTPRequestHandler):
         # If path starts with /clips or /metas, serve from base_dir
         # Otherwise serve from web_dir (where index.html is)
         abs_path = Path(self.base_dir) / path if path.startswith(("clips", "metas")) else Path(self.web_dir) / path
-        self.logger.info(abs_path)
+        logger.info(f"Serving {abs_path}")
         return str(abs_path)
 
     def do_GET(self) -> None:
@@ -130,21 +119,21 @@ class HttpServerHandler(SimpleHTTPRequestHandler):
                 # Construct the clips_dir from base_dir
                 clips_dir = Path(self.base_dir) / "clips"
 
-                self.logger.info("Processing request for /list_clips")
-                self.logger.debug("Looking for clips in: %s", clips_dir)
+                logger.info("Processing request for /list_clips")
+                logger.debug(f"Looking for clips in: {clips_dir}")
 
                 # Check if directory exists
                 if not clips_dir.exists():
-                    self.logger.error("Clips directory '%s' does not exist", clips_dir)
+                    logger.error(f"Clips directory '{clips_dir}' does not exist")
                     clip_names = []
                 else:
                     # Get clip names without extension
                     clip_names = [f.stem for f in Path(clips_dir).rglob("*") if f.suffix.lower() == ".mp4"]
-                    self.logger.info("Found %d clips", len(clip_names))
+                    logger.info(f"Found {len(clip_names)} clips in {clips_dir}")
 
                     # Sort clips by their start time
-                    clip_names.sort(key=lambda x: self.get_clip_time(x, self.base_dir, self.logger))
-                    self.logger.info("Sorted clips by start time")
+                    clip_names.sort(key=lambda x: self.get_clip_time(x, self.base_dir))
+                    logger.info("Sorted clips by start time")
 
                 self.send_response(200)
                 self.send_header("Content-type", "application/json")
@@ -155,116 +144,88 @@ class HttpServerHandler(SimpleHTTPRequestHandler):
                 try:
                     super().do_GET()
                 except ConnectionResetError:
-                    self.logger.debug("Client disconnected during file transfer")
+                    logger.debug("Client disconnected during file transfer")
                 except BrokenPipeError:
-                    self.logger.debug("Broken pipe during file transfer")
+                    logger.debug("Broken pipe during file transfer")
                 except ConnectionAbortedError:
-                    self.logger.debug("Connection aborted during file transfer")
+                    logger.debug("Connection aborted during file transfer")
         except (OSError, json.JSONDecodeError, ValueError) as e:
-            self.logger.exception("Error handling GET request: ")
+            logger.exception(f"Error handling GET request: {e}")
             # If we can't even send the error, just ignore it
             with contextlib.suppress(ConnectionResetError, BrokenPipeError, ConnectionAbortedError):
                 self.send_error(500, f"Internal server error: {e}")
 
 
-class ClipViewer(NvcfBase):
-    """Viewer for NVCF clip data.
+class ClipViewer:
+    """Viewer for clip data.
 
     Provides methods to serve and display video clips and metadata using a local HTTP server.
     """
 
-    def __init__(self, url: str, nvcf_url: str, key: str, org: str, team: str, timeout: int) -> None:  # noqa: PLR0913
+    def __init__(self, clip_path: str, *, cleanup_on_exit: bool = False) -> None:
         """Initialize the ClipViewer.
 
         Args:
-            url: Base NGC URL
-            nvcf_url: Base NVCF URL
-            key: NGC NVCF API Key
-            org: Organization ID or name
-            team: Team name within the organization
-            timeout: Request timeout in seconds
+            clip_path: Path to directory containing clips and metadata.
+            cleanup_on_exit: If True, clean up the temporary clip directory on exit.
 
         """
-        super().__init__(url=url, nvcf_url=nvcf_url, key=key, org=org, team=team, timeout=timeout)
-        self.clip_path: str | None = None
+        self.clip_path: str = clip_path
+        self.cleanup_on_exit: bool = cleanup_on_exit
 
     def __del__(self) -> None:
         """Clean up temporary clip directory on deletion."""
-        if self.clip_path is not None and Path(self.clip_path).exists():
-            shutil.rmtree(self.clip_path)
+        logger.info("Tearing down ClipViewer ...")
+        if self.cleanup_on_exit and Path(self.clip_path).exists():
+            try:
+                shutil.rmtree(self.clip_path)
+            except OSError:
+                logger.exception(f"Failed to clean up clip directory: {self.clip_path}")
 
     def hdlr_factory(
         self,
         web_dir: str,
-        base_dir: str,
-        logger: logging.Logger,
     ) -> type[SimpleHTTPRequestHandler]:
         """Create a custom HTTP request handler for serving clips and metadata.
 
         Args:
             web_dir: Directory containing web files (index.html, etc.)
-            base_dir: Directory containing clips and metas
-            logger: Logger instance
 
         Returns:
             A subclass of SimpleHTTPRequestHandler
 
         """
-        return HttpServerHandler.initialize(web_dir, base_dir, logger)
+        return HttpServerHandler.initialize(web_dir, self.clip_path)
 
-    def serve(self, web_dir: str, base_dir: str, ip: str, port: int, *, no_clip_path: bool) -> None:
+    def serve(self, web_dir: str, ip: str, port: int) -> None:
         """Start the HTTP server to serve clips and metadata.
 
         Args:
             web_dir: Directory containing web files
-            base_dir: Directory containing clips and metas
             ip: IP address to bind the server
             port: Port to run the server on
-            no_clip_path: If True, do not log clip path info
 
         """
         try:
-            # Create server with both web_dir and base_dir attributes
-            # web_dir: Directory containing index.html and other web files
-            # base_dir: Directory containing clips and metas
-            self.hdlr = self.hdlr_factory(web_dir, base_dir, self.logger)
+            self.hdlr = self.hdlr_factory(web_dir)
             self.server = HTTPServer((ip, port), self.hdlr)
 
-            self.logger.info("Starting server on http://%s:%d", ip, port)
-            self.logger.info("Please connect your browser to the above URL to view the clips and captions")
-            if not no_clip_path:
-                self.logger.info("Base directory: %s", base_dir)
-                self.logger.info("Clips directory: %s", Path(base_dir) / "clips")
-                self.logger.info("Metadata directory: %s", Path(base_dir) / "metas/v0")
+            logger.info(f"Base directory: {self.clip_path}")
+            logger.info(f"Clips directory: {(Path(self.clip_path) / 'clips')}")
+            logger.info(f"Metadata directory: {(Path(self.clip_path) / 'metas/v0')}")
+
+            logger.info(f"Starting server on http://{ip}:{port}")
+            logger.info("Please connect your browser to the above URL to view the clips and captions")
 
             self.server.serve_forever()
         except KeyboardInterrupt:
-            self.logger.info("Shutting down server...")
+            logger.info("Shutting down server ...")
             self.server.server_close()
-        except Exception:
-            self.logger.exception("Server error: ")
+        except Exception as e:  # noqa: BLE001
+            logger.exception(f"Server error: {e}")
 
 
-clip_viewer = typer.Typer(
-    context_settings={
-        "max_content_width": 120,
-    },
-    pretty_exceptions_enable=False,
-    no_args_is_help=True,
-    callback=base_callback,
-)
-ins_name = "view"
-ins_help = "Browser based Local Clip Viewer"
-register_instance(ins_name=ins_name, ins_help=ins_help, ins_type=ClipViewer, ins_app=clip_viewer)
-
-
-@clip_viewer.command(
-    name="clips",
-    help="View Clips downloaded from a invoke-function",
-    no_args_is_help=True,
-)
-def nvcf_view_clip(
-    ctx: Context,
+def clip_viewer(
     ip: Annotated[
         str,
         Option(
@@ -287,8 +248,8 @@ def nvcf_view_clip(
             help="Path to directory containing clips/ and metas/v0/ subdirectories",
             rich_help_panel="View",
             exists=True,
-            file_okay=True,
-            dir_okay=False,
+            file_okay=False,
+            dir_okay=True,
             writable=False,
             readable=True,
             resolve_path=True,
@@ -318,36 +279,38 @@ def nvcf_view_clip(
         zip_file: Path to a downloaded zip file containing clips and metadata.
 
     """
-    nvcf_hdl = ctx.obj["nvcfHdl"]
+    logger.info("Starting clip viewer ...")
     if clip_path is None and zip_file is None:
-        nvcf_hdl.logger.error("Either --clip-path or --zip-file must be provided")
+        logger.error("Either --clip-path or --zip-file must be provided")
         return
 
     if clip_path is not None and zip_file is not None:
-        nvcf_hdl.logger.error("Only one of --clip-path or --zip-file should be provided")
+        logger.error("Only one of --clip-path or --zip-file should be provided")
         return
 
+    logger.info(f"Clip path: {clip_path}")
     if zip_file is not None:
         # Create a temporary directory to extract the zip file
-        nvcf_hdl.clip_path = tempfile.mkdtemp()
+        clip_path_temp = tempfile.mkdtemp()
         try:
             with zipfile.ZipFile(zip_file, "r") as zip_ref:
-                zip_ref.extractall(nvcf_hdl.clip_path)
-            nvcf_hdl.logger.info("Extracted zip file to %s", nvcf_hdl.clip_path)
-        except (FileNotFoundError, zipfile.BadZipFile, PermissionError, OSError):
-            nvcf_hdl.logger.exception("Failed to extract zip file: ")
+                zip_ref.extractall(clip_path_temp)
+            logger.info(f"Extracted zip file to {clip_path_temp}")
+        except (FileNotFoundError, zipfile.BadZipFile, PermissionError, OSError) as e:
+            logger.exception(f"Failed to extract zip file: {e}")
             return
-        base_dir = nvcf_hdl.clip_path
-    else:
-        base_dir = str(clip_path)
+        clip_path = Path(clip_path_temp)
 
     # Get the web directory from the package
-    web_dir = Path(__file__).parent / "webdocs"
+    web_dir = Path(__file__).parent / "clip_viewer_webdocs"
     if not web_dir.exists():
-        nvcf_hdl.logger.error("Web directory not found: %s", web_dir)
+        logger.error(f"Web directory not found: {web_dir}")
         return
 
-    nvcf_hdl.serve(web_dir=str(web_dir), base_dir=base_dir, ip=ip, port=port, no_clip_path=zip_file is not None)
+    logger.info(f"Web directory: {web_dir}")
+    viewer = ClipViewer(clip_path=str(clip_path), cleanup_on_exit=(zip_file is not None))
+    logger.info(f"Starting server on http://{ip}:{port}")
+    viewer.serve(web_dir=str(web_dir), ip=ip, port=port)
 
 
 if __name__ == "__main__":

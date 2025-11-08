@@ -129,8 +129,14 @@ function createTimestampElement(startTime, endTime) {
                 if (response.ok) {
                     const jsonData = await response.json();
                     // Get caption
-                    if (jsonData.windows?.[0]?.vila_caption) {
-                        captionText = jsonData.windows[0].vila_caption;
+                    if (jsonData.windows?.[0]?.cosmos_r1_caption) {
+                        captionText = jsonData.windows[0].cosmos_r1_caption;
+                    } else if (jsonData.windows?.[0]?.gemini_caption) {
+                        captionText = jsonData.windows[0].gemini_caption;
+                    } else if (jsonData.windows?.[0]?.nemotron_caption) {
+                        captionText = jsonData.windows[0].nemotron_caption;
+                    } else if (jsonData.windows?.[0]?.phi4_caption) {
+                        captionText = jsonData.windows[0].phi4_caption;
                     } else if (jsonData.windows?.[0]?.qwen_caption) {
                         captionText = jsonData.windows[0].qwen_caption;
                     }

@@ -19,7 +19,7 @@
     - [Prerequisites for Slurm Run](#prerequisites-for-slurm-run)
       - [Setup Password-less SSH to the Cluster](#setup-password-less-ssh-to-the-cluster)
       - [Identify User Path on the Cluster](#identify-user-path-on-the-cluster)
-    - [Copy Config File, Cloud Storage Credential, and Model Files to Cluster](#copy-config-file-cloud-storage-credential-and-model-files-to-cluster)
+    - [Copy Config File, Cloud Storage Credentials, and Model Files to Cluster](#copy-config-file-cloud-storage-credentials-and-model-files-to-cluster)
     - [Create sqsh Image and Copy to the Slurm Cluster](#create-sqsh-image-and-copy-to-the-slurm-cluster)
     - [Launch on Slurm](#launch-on-slurm)
     - [Find Logs](#find-logs)
