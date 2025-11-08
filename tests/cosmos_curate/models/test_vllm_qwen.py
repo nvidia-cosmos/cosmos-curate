@@ -41,7 +41,7 @@ def test_make_llm_input_qwen() -> None:
     prompt = "Describe the video"
 
     # Call the function
-    result = VllmQwen.make_llm_input(prompt, frames, mock_processor)
+    result = VllmQwen.make_llm_input(prompt, frames, {}, mock_processor)
 
     # Verify structure
     assert "multi_modal_data" in result

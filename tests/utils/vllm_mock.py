@@ -109,8 +109,10 @@ class MockVllmPlugin(VllmPlugin):
         return MockLLM()
 
     @staticmethod
-    def make_llm_input(prompt: str, frames: object, _processor: AutoProcessor) -> dict[str, object]:
-        return {"prompt": prompt, "multi_modal_data": {"video": frames}}
+    def make_llm_input(
+        prompt: str, frames: object, metadata: dict[str, object], _processor: AutoProcessor
+    ) -> dict[str, object]:
+        return {"prompt": prompt, "multi_modal_data": {"video": [(frames, metadata)]}}
 
     @staticmethod
     def make_refined_llm_input(

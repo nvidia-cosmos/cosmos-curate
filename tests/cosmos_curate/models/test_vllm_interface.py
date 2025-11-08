@@ -19,7 +19,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from cosmos_curate.core.utils.model import conda_utils
-from cosmos_curate.pipelines.video.utils.data_model import VllmCaptionRequest, VllmConfig
+from cosmos_curate.pipelines.video.utils.data_model import VllmCaptionRequest, VllmConfig, WindowConfig
 
 if conda_utils.is_running_in_env("unified"):
     import torch
@@ -31,6 +31,7 @@ if conda_utils.is_running_in_env("unified"):
         _caption_no_inflight_batching,
         _get_vllm_plugin,
         auto_processor,
+        make_metadata,
         make_model_inputs,
         process_vllm_output,
         sampling_params,
@@ -106,16 +107,53 @@ def test_auto_processor() -> None:
 
 
 @pytest.mark.env("unified")
+def test_make_metadata() -> None:
+    """Test make_metadata."""
+    width = 32
+    height = 64
+    num_videos = 5
+    num_frames = 2
+    fps = 1.0
+    frames = [torch.zeros((num_frames, 3, height, width)) for _ in range(num_videos)]
+    window_config = WindowConfig(sampling_fps=fps)
+    metadata = make_metadata(frames, window_config)
+    assert len(metadata) == len(frames)
+    for i in range(len(frames)):
+        assert metadata[i]["fps"] == fps
+        assert metadata[i]["duration"] == num_frames / fps
+        assert metadata[i]["width"] == width
+        assert metadata[i]["height"] == height
+        assert metadata[i]["total_num_frames"] == num_frames
+        assert metadata[i]["frames_indices"] == list(range(num_frames))
+        assert not metadata[i]["do_sample_frames"]
+
+
+@pytest.mark.env("unified")
+def test_make_metadata_raises() -> None:
+    """Test make_metadata raises ValueError for non-4D tensors."""
+    with pytest.raises(ValueError, match=r".*"):
+        make_metadata([torch.zeros((3, 32, 32))], WindowConfig(sampling_fps=1.0))
+
+
+@pytest.mark.env("unified")
 def test_make_model_inputs() -> None:
     """Test make_model_inputs."""
     videos = [torch.zeros((2, 3, 32, 32)) for _ in range(5)]
+    metadata = [{"fps": 1.0}] * len(videos)
     config = VllmConfig(model_variant="mock")
     processor = MagicMock()
     prompt = "p"
-    output = make_model_inputs(videos, config, processor, prompt)
+    output = make_model_inputs(videos, metadata, config, processor, prompt)
     assert len(output) == len(videos)
-    assert output[0]["prompt"] == prompt
-    assert output[0]["multi_modal_data"]["video"].shape == (2, 3, 32, 32)
+    for i in range(len(videos)):
+        ot = output[i]
+        assert "prompt" in ot
+        assert "multi_modal_data" in ot
+        assert ot["prompt"] == prompt
+
+        mm_data = ot["multi_modal_data"]
+        assert mm_data["video"][0][0].shape == (2, 3, 32, 32)
+        assert mm_data["video"][0][1] == metadata[i]
 
 
 @pytest.mark.env("unified")

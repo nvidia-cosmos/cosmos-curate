@@ -43,7 +43,7 @@ def test_make_llm_input_nemotron() -> None:
     prompt = "Describe the video"
 
     # Call the function
-    result = VllmNemotronNano12Bv2VL.make_llm_input(prompt, frames, mock_processor)
+    result = VllmNemotronNano12Bv2VL.make_llm_input(prompt, frames, {}, mock_processor)
 
     # Verify structure
     assert "multi_modal_data" in result

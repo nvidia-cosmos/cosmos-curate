@@ -87,6 +87,7 @@ from typing import (  # noqa: UP035, remove noqa when we drop support for python
     TYPE_CHECKING,
     Any,
     Deque,
+    Iterable,
     TypeVar,
     cast,
 )
@@ -99,7 +100,7 @@ from cosmos_curate.models.vllm_cosmos_reason1_vl import VllmCosmosReason1VL
 from cosmos_curate.models.vllm_nemotron import VllmNemotronNano12Bv2VL
 from cosmos_curate.models.vllm_phi import VllmPhi4
 from cosmos_curate.models.vllm_qwen import VllmQwen7B
-from cosmos_curate.pipelines.video.utils.data_model import VllmCaptionRequest
+from cosmos_curate.pipelines.video.utils.data_model import VllmCaptionRequest, WindowConfig
 
 if TYPE_CHECKING:
     import torch
@@ -111,10 +112,10 @@ if TYPE_CHECKING:
 
 # Add new vLLM plugins to _VLLM_PLUGINS
 _VLLM_PLUGINS = {
-    VllmPhi4.model_variant(): VllmPhi4,
-    VllmQwen7B.model_variant(): VllmQwen7B,
     VllmCosmosReason1VL.model_variant(): VllmCosmosReason1VL,
     VllmNemotronNano12Bv2VL.model_variant(): VllmNemotronNano12Bv2VL,
+    VllmPhi4.model_variant(): VllmPhi4,
+    VllmQwen7B.model_variant(): VllmQwen7B,
 }
 
 T = TypeVar("T")
@@ -186,8 +187,48 @@ def auto_processor(config: VllmConfig) -> AutoProcessor:
     return _get_vllm_plugin(config.model_variant).processor()
 
 
+def make_metadata(frames: Iterable[torch.Tensor], window_config: WindowConfig) -> list[dict[str, Any]]:
+    """Make metadata for a iterable of frames.
+
+    Args:
+        frames: The frames to make metadata for.
+        window_config: The window configuration to use for the metadata.
+
+    Returns:
+        The metadata for the frames.
+
+    """
+    # Verify that all tensors are 4D
+    NUM_EXPECTED_DIMS = 4
+    for i, f in enumerate(frames):
+        if f.ndim != NUM_EXPECTED_DIMS:
+            msg = (
+                f"Expected all frames to have 4 dimensions (batch of videos of shape [num_frames, C, H, W]), "
+                f"but frames[{i}] has shape {getattr(f, 'shape', None)}"
+            )
+            raise ValueError(msg)
+
+    def _make_metadata(frames: torch.Tensor) -> dict[str, Any]:
+        fps = window_config.sampling_fps
+        num_frames = frames.shape[0]
+
+        return {
+            "fps": fps,
+            "duration": num_frames / fps,
+            "width": frames.shape[3],
+            "height": frames.shape[2],
+            "total_num_frames": num_frames,
+            "frames_indices": list(range(num_frames)),
+            "video_backend": "opencv",
+            "do_sample_frames": False,
+        }
+
+    return [_make_metadata(frames) for frames in frames]
+
+
 def make_model_inputs(
     videos: list[torch.Tensor],
+    metadata: list[dict[str, Any]],
     config: VllmConfig,
     processor: AutoProcessor,
     prompt: str,
@@ -196,6 +237,7 @@ def make_model_inputs(
 
     Args:
         videos: list of decoded videos
+        metadata: The metadata for each video
         config: The configuration for the vLLM model.
         processor: The processor to use for the vLLM model.
         prompt: The prompt to use for the vLLM model.
@@ -205,7 +247,9 @@ def make_model_inputs(
 
     """
     vllm_plugin = _get_vllm_plugin(config.model_variant)
-    return [vllm_plugin.make_llm_input(prompt, frames, processor) for frames in videos]
+    return [
+        vllm_plugin.make_llm_input(prompt, frames, md, processor) for frames, md in zip(videos, metadata, strict=True)
+    ]
 
 
 def vllm_generate(

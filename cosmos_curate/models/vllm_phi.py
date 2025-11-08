@@ -165,12 +165,18 @@ class VllmPhi4(VllmPlugin):
         return cast("AutoProcessor", processor)
 
     @staticmethod
-    def make_llm_input(prompt: str, frames: torch.Tensor, processor: AutoProcessor) -> dict[str, Any]:
-        """Make LLM inputs for the Phi model.
+    def make_llm_input(
+        prompt: str,
+        frames: torch.Tensor,
+        metadata: dict[str, Any],  # noqa: ARG004
+        processor: AutoProcessor,
+    ) -> dict[str, Any]:
+        """Make LLM inputs for the model.
 
         Args:
             prompt: The prompt to use for the LLM.
             frames: The frames to use for the LLM.
+            metadata: The metadata to use for the LLM.
             processor: The AutoProcessor to use for the LLM.
 
         Returns:

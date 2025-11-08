@@ -82,12 +82,15 @@ class VllmPlugin(ABC):
 
     @staticmethod
     @abstractmethod
-    def make_llm_input(prompt: str, frames: torch.Tensor, processor: AutoProcessor) -> dict[str, Any]:
-        """Make a single LLM input for a vLLM model.
+    def make_llm_input(
+        prompt: str, frames: torch.Tensor, metadata: dict[str, Any], processor: AutoProcessor
+    ) -> dict[str, Any]:
+        """Make LLM inputs for the model.
 
         Args:
             prompt: The prompt to use for the LLM.
             frames: The frames to use for the LLM.
+            metadata: The metadata to use for the LLM.
             processor: The AutoProcessor to use for the LLM.
 
         Returns:

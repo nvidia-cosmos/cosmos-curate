@@ -84,7 +84,7 @@ def test_make_llm_input_phi() -> None:
     prompt = "Describe the video"
 
     # Call the function
-    result = VllmPhi4.make_llm_input(prompt, frames, mock_processor)
+    result = VllmPhi4.make_llm_input(prompt, frames, {}, mock_processor)
 
     # Verify structure
     expected_frame_count = 2
@@ -105,7 +105,7 @@ def test_make_llm_input_phi_no_tokenizer() -> None:
     prompt = "Test prompt"
 
     with pytest.raises(ValueError, match=r".*"):
-        VllmPhi4.make_llm_input(prompt, frames, mock_processor)
+        VllmPhi4.make_llm_input(prompt, frames, {}, mock_processor)
 
 
 @pytest.mark.env("unified")

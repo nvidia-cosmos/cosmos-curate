@@ -47,7 +47,7 @@ def test_make_llm_input_cosmos_r1() -> None:
     frames = torch.rand(2, 3, 32, 32)
     prompt = "Describe the video"
 
-    result = VllmCosmosReason1VL.make_llm_input(prompt, frames, mock_processor)
+    result = VllmCosmosReason1VL.make_llm_input(prompt, frames, {}, mock_processor)
 
     assert "multi_modal_data" in result
     assert "video" in result["multi_modal_data"]
@@ -124,7 +124,7 @@ def test_stage2_refine_prompt_equivalence_with_real_processor() -> None:
     frames = torch.rand(1, 3, 8, 8)
 
     # Generate initial prompt via real processor
-    initial_inputs = VllmCosmosReason1VL.make_llm_input("initial user text", frames, processor)
+    initial_inputs = VllmCosmosReason1VL.make_llm_input("initial user text", frames, {}, processor)
     initial_prompt = initial_inputs["prompt"]
 
     caption = "stage1 caption"

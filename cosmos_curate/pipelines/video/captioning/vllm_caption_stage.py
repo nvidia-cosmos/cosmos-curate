@@ -63,6 +63,7 @@ if conda_utils.is_running_in_env("unified"):
 
     from cosmos_curate.models.vllm_interface import (
         auto_processor,
+        make_metadata,
         make_model_inputs,
         sampling_params,
         vllm_caption,
@@ -331,7 +332,8 @@ class VllmPrepStage(CuratorStage):
 
         if self._prepare_model_inputs:
             assert self._processor is not None
-            llm_inputs = make_model_inputs(frames, self._vllm_config, self._processor, prompt)
+            metadata = make_metadata(frames, self._window_config)
+            llm_inputs = make_model_inputs(frames, metadata, self._vllm_config, self._processor, prompt)
 
             for window, llm_input in zip(windows, llm_inputs, strict=True):
                 window.model_input[self._vllm_config.model_variant] = llm_input
