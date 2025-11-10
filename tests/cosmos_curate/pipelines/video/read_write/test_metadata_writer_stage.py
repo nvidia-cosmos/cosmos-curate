@@ -333,3 +333,63 @@ def test_per_window_dataset_assets_written(tmp_path: Path) -> None:
     npt.assert_array_equal(stored_t5[0], np.array([1, 2], dtype=np.int32))
 
     assert window.mp4_bytes is None
+
+
+def test_video_errors_written_to_error_path(tmp_path: Path) -> None:
+    """Verify that videos with errors write to video_errors path and skip normal chunk metadata."""
+    input_dir = tmp_path / "input"
+    output_dir = tmp_path / "output"
+    errors = {"captioning": "test error"}
+    input_dir.mkdir()
+    video_path = input_dir / "video.mp4"
+    video_path.write_bytes(b"input-video")
+
+    stage = _create_stage(
+        output_dir,
+        input_dir,
+        upload_clips=False,
+        upload_cvds_parquet=False,
+        generate_embeddings=False,
+    )
+
+    # Create a video with errors (no clips)
+    metadata = VideoMetadata(
+        height=1080,
+        width=1920,
+        framerate=30.0,
+        num_frames=60,
+        duration=2.0,
+        video_codec="h264",
+        pixel_format="yuv420p",
+        audio_codec="aac",
+    )
+    video = Video(
+        input_video=video_path,
+        metadata=metadata,
+        clips=[],
+        filtered_clips=[],
+        num_total_clips=0,
+        num_clip_chunks=1,
+        clip_chunk_index=0,
+        errors=errors,
+    )
+    task = SplitPipeTask(video=video)
+
+    stage.process_data([task])
+
+    # Verify that normal chunk metadata is NOT written
+    chunk_meta_path = output_dir / "processed_clip_chunks" / "video.mp4_0.json"
+    assert not chunk_meta_path.exists()
+
+    # Verify that error file IS written
+    error_path = output_dir / "video_errors" / "video.mp4_0.json"
+    assert error_path.exists()
+
+    error_data = _read_json(error_path)
+    assert error_data["video"] == video_path.as_posix()
+    assert error_data["clip_chunk_index"] == 0
+    assert error_data["errors"] == errors
+
+    # Verify that video-level metadata is also NOT written (since errors exist)
+    video_meta_path = output_dir / "processed_videos" / "video.mp4.json"
+    assert not video_meta_path.exists()

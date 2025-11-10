@@ -153,6 +153,13 @@ class ClipWriterStage(CuratorStage):
         return ClipWriterStage._get_output_path(output_path, "processed_clip_chunks")
 
     @staticmethod
+    def get_output_path_video_errors(
+        output_path: str,
+    ) -> str:
+        """Get path to store video errors."""
+        return ClipWriterStage._get_output_path(output_path, "video_errors")
+
+    @staticmethod
     def get_output_path_clips(output_path: str, *, filtered: bool = False) -> str:
         """Get path to store generated clips."""
         directory = "filtered_clips" if filtered else "clips"
@@ -438,6 +445,12 @@ class ClipWriterStage(CuratorStage):
         output_path_videos = self.get_output_path_processed_clip_chunks(self._output_path)
         return get_full_path(output_path_videos, clip_chunk_path)
 
+    def _get_video_error_uri(self, input_video_path: str, idx: int) -> storage_client.StoragePrefix | pathlib.Path:
+        assert input_video_path.startswith(self._input_path)
+        error_chunk_path = input_video_path[len(self._input_path) :] + f"_{idx}.json"
+        output_path_videos = self.get_output_path_video_errors(self._output_path)
+        return get_full_path(output_path_videos, error_chunk_path)
+
     def _write_clip_window_webp(self, clip: Clip) -> ClipStats:
         clip_stats = ClipStats()
         has_webp = False
@@ -632,6 +645,11 @@ class ClipWriterStage(CuratorStage):
             input_video_path = video.input_video.path
         else:
             input_video_path = video.input_video.as_posix()
+
+        if video.errors:
+            self._write_video_errors(video, input_video_path)
+            return
+
         data: dict[str, Any] = {}
         # write video-level metadata from the first clip chunk
         if video.clip_chunk_index == 0:
@@ -687,6 +705,15 @@ class ClipWriterStage(CuratorStage):
                         break
         dest = self._get_clip_chunk_uri(input_video_path, video.clip_chunk_index)
         self._write_json_data(data, dest, "clip chunk metadata", input_video_path)
+
+    def _write_video_errors(self, video: Video, input_video_path: str) -> None:
+        error_data = {
+            "video": input_video_path,
+            "clip_chunk_index": video.clip_chunk_index,
+            "errors": video.errors,
+        }
+        error_dest = self._get_video_error_uri(input_video_path, video.clip_chunk_index)
+        self._write_json_data(error_data, error_dest, "video errors", input_video_path)
 
     def _write_per_window_data(self, clip: Clip) -> None:
         if self._generate_cosmos_predict_dataset == "disable":
