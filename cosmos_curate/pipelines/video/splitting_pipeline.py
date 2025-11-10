@@ -521,13 +521,16 @@ def split(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912, PLR0915
         # captioning
         if caption_algo in {"cosmos_r1", "nemotron", "phi4", "qwen"}:
             stages += [
-                VllmCaptionStage(
-                    vllm_config=vllm_config,
-                    verbose=args.verbose,
-                    keep_mp4=keep_mp4,
-                    log_stats=args.perf_profile,
-                    inflight_batching=args.vllm_use_inflight_batching,
-                )
+                CuratorStageSpec(
+                    VllmCaptionStage(
+                        vllm_config=vllm_config,
+                        verbose=args.verbose,
+                        keep_mp4=keep_mp4,
+                        log_stats=args.perf_profile,
+                        inflight_batching=args.vllm_use_inflight_batching,
+                    ),
+                    num_setup_attempts_python=2,
+                ),
             ]
         elif caption_algo == "gemini":
             stages += [
