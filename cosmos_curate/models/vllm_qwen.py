@@ -140,6 +140,7 @@ class VllmQwen(VllmPlugin):
             max_num_batched_tokens=MAX_NUM_BATCHED_TOKENS,
             tensor_parallel_size=config.num_gpus,
             trust_remote_code=TRUST_REMOTE_CODE,
+            compilation_config={"cudagraph_mode": "piecewise"},
         )
 
     @classmethod
