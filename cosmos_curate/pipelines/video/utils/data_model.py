@@ -578,6 +578,26 @@ class ShardPipeTask(PipelineTask):
         return total_size
 
 
+def get_video_from_task(task: PipelineTask) -> Video:
+    """Extract the Video object attached to a pipeline task.
+
+    Args:
+        task: Task expected to expose a `video` attribute.
+
+    Returns:
+        The associated `Video` instance.
+
+    Raises:
+        TypeError: If the task is missing a `video` attribute or it has an unexpected type.
+
+    """
+    video = getattr(task, "video", None)
+    if not isinstance(video, Video):
+        msg = f"task.video type={type(video)}, expected `Video`"
+        raise TypeError(msg)
+    return video
+
+
 @attrs.define
 class VllmConfig:
     """Configuration for a vLLM model.

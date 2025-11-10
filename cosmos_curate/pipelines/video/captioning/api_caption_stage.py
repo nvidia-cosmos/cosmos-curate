@@ -12,26 +12,96 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Remote API-backed captioning stage (Gemini)."""
+"""Remote API-backed caption preparation and captioning stages (Gemini)."""
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeVar
 
 import nvtx  # type: ignore[import-untyped]
 import tenacity
 from loguru import logger
 
-from cosmos_curate.core.interfaces.stage_interface import CuratorStage, CuratorStageResource
+from cosmos_curate.core.interfaces.stage_interface import CuratorStage, CuratorStageResource, PipelineTask
 from cosmos_curate.core.utils.config.config import load_config
 from cosmos_curate.core.utils.infra.performance_utils import StageTimer
 from cosmos_curate.models.prompts import get_prompt
+from cosmos_curate.pipelines.video.utils import windowing_utils
+from cosmos_curate.pipelines.video.utils.data_model import get_video_from_task
 
 if TYPE_CHECKING:
-    from cosmos_curate.pipelines.video.utils.data_model import SplitPipeTask, Window
+    from cosmos_curate.pipelines.video.utils.data_model import SplitPipeTask, Video, Window, WindowConfig
 
 from google import genai
 from google.genai import types as genai_types
+
+TTask = TypeVar("TTask", bound=PipelineTask)
+
+
+class ApiPrepStage(CuratorStage):
+    """Stage that prepares windows for remote API captioning."""
+
+    def __init__(
+        self,
+        window_config: WindowConfig,
+        *,
+        model_variant: str = "gemini",
+        num_cpus_for_prepare: float = 1.0,
+        verbose: bool = False,
+        log_stats: bool = False,
+    ) -> None:
+        """Initialize the API prep stage."""
+        super().__init__()
+        self._timer = StageTimer(self)
+        self._window_config = window_config
+        self._model_variant = model_variant
+        self._num_cpus_for_prepare = num_cpus_for_prepare
+        self._verbose = verbose
+        self._log_stats = log_stats
+
+    def secondary_name(self) -> str:
+        """Return the model variant for logging."""
+        return self._model_variant
+
+    @property
+    def resources(self) -> CuratorStageResource:
+        """Get the resource requirements for this stage."""
+        return CuratorStageResource(cpus=self._num_cpus_for_prepare)
+
+    @property
+    def conda_env_name(self) -> str:
+        """Use the unified environment for window preparation."""
+        return "unified"
+
+    def _prep_windows(self, video: Video) -> None:
+        """Create windows for the provided video."""
+        num_video_decode_threads = max(1, int(self.resources.cpus) + 1)
+        windows, _ = windowing_utils.make_windows_for_video(
+            video,
+            self._window_config,
+            num_video_decode_threads,
+            keep_mp4=True,
+            return_frames=False,
+        )
+        if self._verbose:
+            logger.debug(f"Prepared {len(windows)} windows for {video.input_video}")
+
+    @nvtx.annotate("ApiPrepStage")  # type: ignore[misc]
+    def process_data(self, tasks: list[TTask]) -> list[TTask]:
+        """Prepare data for API captioning."""
+        for task in tasks:
+            major_size = task.get_major_size()
+            self._timer.reinit(self, major_size)
+            video = get_video_from_task(task)
+            with self._timer.time_process():
+                self._prep_windows(video)
+
+            stage_perf = getattr(task, "stage_perf", None)
+            if self._log_stats and stage_perf is not None:
+                stage_name, stage_perf_stats = self._timer.log_stats()
+                stage_perf[stage_name] = stage_perf_stats
+
+        return tasks
 
 
 class NonRetryableGeminiError(RuntimeError):

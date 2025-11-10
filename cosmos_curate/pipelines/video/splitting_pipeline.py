@@ -41,7 +41,7 @@ from cosmos_curate.models.all_models import get_all_models_by_id
 from cosmos_curate.pipelines.pipeline_args import (
     add_common_args,
 )
-from cosmos_curate.pipelines.video.captioning.api_caption_stage import ApiCaptionStage
+from cosmos_curate.pipelines.video.captioning.api_caption_stage import ApiCaptionStage, ApiPrepStage
 from cosmos_curate.pipelines.video.captioning.captioning_stages import (
     EnhanceCaptionStage,
     T5StageForSplit,
@@ -435,12 +435,10 @@ def split(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912, PLR0915
         logger.debug(f"Embedding model id={embedding_model_id} version={embedding_model_version}")
 
     caption_algo = args.captioning_algorithm.lower()
-    vllm_config: VllmConfig | None = None
-    window_config: WindowConfig | None = None
     keep_mp4 = args.generate_previews or (args.generate_cosmos_predict_dataset != "disable") or caption_algo == "gemini"
 
     if args.generate_captions:
-        if caption_algo not in {"cosmos_r1", "nemotron", "phi4", "qwen", "gemini"}:
+        if caption_algo not in {"cosmos_r1", "gemini", "nemotron", "phi4", "qwen"}:
             msg = f"Unsupported captioning algorithm: {caption_algo}"
             raise RuntimeError(msg)
 
@@ -482,22 +480,31 @@ def split(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912, PLR0915
             window_config.preprocess_dtype = "float16"
             window_config.model_does_preprocess = False
         elif caption_algo == "gemini":
-            # Gemini still reuses VllmPrepStage for window extraction, so only window behaviour differs.
             window_config.model_does_preprocess = args.qwen_model_does_preprocess
-        elif args.captioning_algorithm.lower() == "nemotron":
+        elif caption_algo == "nemotron":
             vllm_config.stage2_caption = args.nemotron_stage2_caption
 
-        prepare_model_inputs = caption_algo in {"cosmos_r1", "nemotron", "phi4", "qwen"}
-        stages += [
-            VllmPrepStage(
-                vllm_config=vllm_config,
-                window_config=window_config,
-                prepare_model_inputs=prepare_model_inputs,
-                keep_mp4=keep_mp4,
-                verbose=args.verbose,
-                log_stats=args.perf_profile,
-            ),
-        ]
+        if caption_algo == "gemini":
+            stages += [
+                ApiPrepStage(
+                    window_config=window_config,
+                    model_variant=args.captioning_algorithm,
+                    num_cpus_for_prepare=args.vllm_prepare_num_cpus_per_worker,
+                    verbose=args.verbose,
+                    log_stats=args.perf_profile,
+                ),
+            ]
+        else:
+            assert vllm_config is not None
+            stages += [
+                VllmPrepStage(
+                    vllm_config=vllm_config,
+                    window_config=window_config,
+                    keep_mp4=keep_mp4,
+                    verbose=args.verbose,
+                    log_stats=args.perf_profile,
+                ),
+            ]
 
         # preview
         if args.generate_previews:

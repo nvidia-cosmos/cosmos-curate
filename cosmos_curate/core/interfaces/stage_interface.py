@@ -48,6 +48,15 @@ class PipelineTask:
         """
         return 1.0
 
+    def get_major_size(self) -> int:
+        """Return the major size (bytes) of the task for performance accounting.
+
+        Subclasses should override this when they can provide a meaningful size.
+        The default implementation returns 0.
+
+        """
+        return 0
+
 
 @attrs.define
 class CuratorStageResource:

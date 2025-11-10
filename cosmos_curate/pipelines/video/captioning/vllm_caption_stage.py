@@ -51,6 +51,7 @@ from cosmos_curate.pipelines.video.utils.data_model import (
     VllmConfig,
     Window,
     WindowConfig,
+    get_video_from_task,
 )
 
 if TYPE_CHECKING:
@@ -77,50 +78,6 @@ if conda_utils.is_running_in_env("unified"):
 T = TypeVar("T", bound=PipelineTask)
 
 
-def _get_major_size_task(task: T) -> int:
-    get_major_size = getattr(task, "get_major_size", None)
-    if callable(get_major_size):
-        return cast("int", get_major_size())
-    msg = f"{type(task)} does not have a callable `get_major_size()` method"
-    raise RuntimeError(msg)
-
-
-def _get_major_size_tasks(tasks: list[T]) -> int:
-    """Get the major size of the tasks.
-
-    Args:
-        tasks: The tasks to get the major size of.
-
-    Returns:
-        The major size of the tasks.
-
-    Raises:
-        RuntimeError: If the task does not have a callable `get_major_size()` method.
-
-    """
-    return sum(_get_major_size_task(t) for t in tasks)
-
-
-def _get_video_from_task(task: T) -> Video:
-    """Get the video from a task.
-
-    Args:
-        task: The task.
-
-    Returns:
-        The video from the task.
-
-    Raises:
-        TypeError: If the task does not have a video attribute.
-
-    """
-    video = getattr(task, "video", None)
-    if not isinstance(video, Video):
-        msg = f"task.video type={type(video)}, expected `Video`"
-        raise TypeError(msg)
-    return video
-
-
 def _get_windows_from_tasks(tasks: list[T]) -> tuple[list[Window], list[str]]:
     """Get the windows from a list of tasks.
 
@@ -137,7 +94,7 @@ def _get_windows_from_tasks(tasks: list[T]) -> tuple[list[Window], list[str]]:
     windows: list[Window] = []
     clip_uuids: list[str] = []
     for task in tasks:
-        video = _get_video_from_task(task)
+        video = get_video_from_task(task)
         for clip in video.clips:
             if not clip.windows:
                 logger.warning(f"Clip {clip.uuid} has no windows")
@@ -236,12 +193,11 @@ class VllmModelInterface(ModelInterface):
 class VllmPrepStage(CuratorStage):
     """Stage that prepares cosmos-curate video data for vLLM multimodal model processing."""
 
-    def __init__(  # noqa: PLR0913
+    def __init__(
         self,
         vllm_config: VllmConfig,
         window_config: WindowConfig,
         *,
-        prepare_model_inputs: bool = True,
         keep_mp4: bool = False,
         verbose: bool = False,
         log_stats: bool = False,
@@ -251,7 +207,6 @@ class VllmPrepStage(CuratorStage):
         Args:
             vllm_config: Configuration for the vLLM model.
             window_config: Configuration for the windowing.
-            prepare_model_inputs: Whether to build model-specific inputs for vLLM.
             keep_mp4: Keep mp4 bytes for the clips in memory.
             verbose: Whether to print verbose logs.
             log_stats: Whether to log performance statistics.
@@ -266,7 +221,6 @@ class VllmPrepStage(CuratorStage):
         self._log_stats = log_stats
         self._processor: AutoProcessor | None = None
         self._keep_mp4 = keep_mp4
-        self._prepare_model_inputs = prepare_model_inputs
 
     def secondary_name(self) -> str:
         """Get the secondary name of the stage.
@@ -299,8 +253,6 @@ class VllmPrepStage(CuratorStage):
 
     def stage_setup(self) -> None:
         """Set up the model for processing."""
-        if not self._prepare_model_inputs:
-            return
         self._processor = auto_processor(self._vllm_config)
 
     def _prep_windows(self, video: Video, prompt: str) -> None:
@@ -316,7 +268,7 @@ class VllmPrepStage(CuratorStage):
             prompt: The prompt to use for the vLLM model.
 
         """
-        if self._prepare_model_inputs and self._processor is None:
+        if self._processor is None:
             msg = "self._processor not initialized, call stage_setup() first"
             raise RuntimeError(msg)
 
@@ -327,16 +279,13 @@ class VllmPrepStage(CuratorStage):
             self._window_config,
             num_video_decode_threads,
             keep_mp4=self._keep_mp4,
-            return_frames=self._prepare_model_inputs,
         )
 
-        if self._prepare_model_inputs:
-            assert self._processor is not None
-            metadata = make_metadata(frames, self._window_config)
-            llm_inputs = make_model_inputs(frames, metadata, self._vllm_config, self._processor, prompt)
+        metadata = make_metadata(frames, self._window_config)
+        llm_inputs = make_model_inputs(frames, metadata, self._vllm_config, self._processor, prompt)
 
-            for window, llm_input in zip(windows, llm_inputs, strict=True):
-                window.model_input[self._vllm_config.model_variant] = llm_input
+        for window, llm_input in zip(windows, llm_inputs, strict=True):
+            window.model_input[self._vllm_config.model_variant] = llm_input
 
     @nvtx.annotate("VllmPrepStage")  # type: ignore[misc]
     def process_data(self, tasks: list[T]) -> list[T]:
@@ -349,7 +298,7 @@ class VllmPrepStage(CuratorStage):
             The processed tasks.
 
         """
-        if self._prepare_model_inputs and self._processor is None:
+        if self._processor is None:
             msg = "self._processor not initialized, call stage_setup() first"
             raise RuntimeError(msg)
 
@@ -360,10 +309,10 @@ class VllmPrepStage(CuratorStage):
         )
 
         for task in tasks:
-            major_size = _get_major_size_task(task)
+            major_size = task.get_major_size()
             self._timer.reinit(self, major_size)
 
-            video = _get_video_from_task(task)
+            video = get_video_from_task(task)
 
             with self._timer.time_process():
                 self._prep_windows(video, prompt)
@@ -497,7 +446,7 @@ class VllmCaptionStage(CuratorStage):
             msg = "Processor not initialized, call stage_setup() first"
             raise RuntimeError(msg)
 
-        major_size = _get_major_size_tasks(tasks)
+        major_size = sum(task.get_major_size() for task in tasks)
         self._timer.reinit(self, major_size)
 
         @tenacity.retry(stop=tenacity.stop_after_attempt(self._max_caption_retries), reraise=True)
@@ -514,7 +463,7 @@ class VllmCaptionStage(CuratorStage):
                     stage2_prompts=stage2_prompts,
                 )
             except Exception:
-                input_videos = [str(_get_video_from_task(t).input_video) for t in tasks]
+                input_videos = [str(get_video_from_task(t).input_video) for t in tasks]
                 input_videos_str = ", ".join(input_videos)
                 logger.exception(f"Error generating captions for video {input_videos_str}, trying again")
 

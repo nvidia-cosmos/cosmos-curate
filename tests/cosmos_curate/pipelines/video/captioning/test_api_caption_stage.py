@@ -19,14 +19,15 @@ from __future__ import annotations
 
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
 import pytest
 
 from cosmos_curate.core.utils.config.config import ConfigFileData, Gemini
 from cosmos_curate.pipelines.video.captioning import api_caption_stage
-from cosmos_curate.pipelines.video.captioning.api_caption_stage import ApiCaptionStage
-from cosmos_curate.pipelines.video.utils.data_model import Clip, SplitPipeTask, Video, Window
+from cosmos_curate.pipelines.video.captioning.api_caption_stage import ApiCaptionStage, ApiPrepStage
+from cosmos_curate.pipelines.video.utils.data_model import Clip, SplitPipeTask, Video, Window, WindowConfig
 
 
 class _DummyModels:
@@ -55,6 +56,36 @@ def _make_task(mp4_bytes: bytes | None) -> SplitPipeTask:
     video = Video(input_video=Path("source.mp4"))
     video.clips.append(clip)
     return SplitPipeTask(video=video)
+
+
+@patch("cosmos_curate.pipelines.video.captioning.api_caption_stage.windowing_utils.make_windows_for_video")
+def test_api_prep_stage_creates_windows_without_frames(mock_make_windows: MagicMock) -> None:
+    """ApiPrepStage should avoid frame decoding while keeping MP4 bytes."""
+    window_config = WindowConfig()
+    stage = ApiPrepStage(window_config, num_cpus_for_prepare=2.0)
+    mock_make_windows.return_value = ([Window(start_frame=0, end_frame=1)], [])
+    video = Video(input_video=Path("test.mp4"))
+
+    stage._prep_windows(video)
+
+    mock_make_windows.assert_called_once()
+    _, kwargs = mock_make_windows.call_args
+    assert kwargs["return_frames"] is False
+    assert kwargs["keep_mp4"] is True
+
+
+def test_api_prep_stage_processes_each_task(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ensure ApiPrepStage invokes window prep per task."""
+    window_config = WindowConfig()
+    stage = ApiPrepStage(window_config)
+    spy = MagicMock()
+    monkeypatch.setattr(stage, "_prep_windows", spy)
+    task = _make_task(b"\x00\x01")
+    task.stage_perf = {}
+
+    stage.process_data([task, task])
+
+    assert spy.call_count == 2
 
 
 def test_api_caption_stage_generates_captions(monkeypatch: pytest.MonkeyPatch) -> None:
