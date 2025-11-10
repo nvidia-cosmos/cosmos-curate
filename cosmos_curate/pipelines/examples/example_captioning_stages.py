@@ -31,12 +31,11 @@ from cosmos_curate.core.utils.infra.gpu_start_helper import (
 )
 from cosmos_curate.core.utils.infra.performance_utils import StageTimer
 from cosmos_curate.models import (
-    cosmos_reason1_vl,
-    phi_vl,
     qwen_vl,
     t5_encoder,
 )
 from cosmos_curate.models.chat_lm import ChatLM
+from cosmos_curate.pipelines.examples import cosmos_reason1_vl, phi_vl
 from cosmos_curate.pipelines.video.utils import windowing_utils
 from cosmos_curate.pipelines.video.utils.data_model import (
     Clip,
