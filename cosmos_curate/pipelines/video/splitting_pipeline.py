@@ -448,6 +448,7 @@ def split(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912, PLR0915
             prompt_text=args.captioning_prompt_text,
             max_output_tokens=args.captioning_max_output_tokens,
             num_cpus_for_prepare=args.vllm_prepare_num_cpus_per_worker,
+            max_retries=args.vllm_max_retries,
         )
 
         window_config = WindowConfig(
@@ -1197,6 +1198,12 @@ def _setup_parser(parser: argparse.ArgumentParser) -> None:  # noqa: PLR0915
         type=int,
         default=1,
         help="Whether to use inflight batching for vLLM captioning stage.",
+    )
+    parser.add_argument(
+        "--vllm-max-retries",
+        type=int,
+        default=3,
+        help="Number of times to retry vLLM captioning failures",
     )
     parser.add_argument(
         "--enhance-captions",

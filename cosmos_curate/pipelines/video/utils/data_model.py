@@ -614,6 +614,7 @@ class VllmConfig:
         batch_size: Number of samples to process in parallel.
         stage2_caption: Whether to enable stage 2 captioning.
         stage2_prompt_text: Custom prompt text for stage 2 captioning.
+        max_retries: Number of times to retry captioning failures.
 
     """
 
@@ -632,6 +633,7 @@ class VllmConfig:
     batch_size: int = 4
     stage2_caption: bool = False
     stage2_prompt_text: str | None = None
+    max_retries: int = 3
 
 
 @attrs.define
