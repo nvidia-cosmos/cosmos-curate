@@ -79,11 +79,13 @@ def test_s3prefix_invalid_characters() -> None:
         S3Prefix("s3://bucket?/key")
 
 
-def test_s3prefix_invalid_bucket_underscore() -> None:
+def test_s3prefix_underscore_in_bucket_name() -> None:
     """Ensure underscores in bucket names raise a ValueError."""
-    # Underscore not allowed in bucket name
-    with pytest.raises(ValueError, match=r"Invalid S3 bucket name"):
-        S3Prefix("s3://bucket_name/key")
+    # Underscore allowed in bucket name
+    sp = S3Prefix("s3://bucket_name/key")
+    assert sp.bucket == "bucket_name"
+    assert sp.prefix == "key"
+    assert sp.path == "s3://bucket_name/key"
 
 
 def test_s3prefix_key_length_limit() -> None:

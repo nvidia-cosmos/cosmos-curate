@@ -96,7 +96,8 @@ class S3Prefix(StoragePrefix):
         key = parts[1] if len(parts) > 1 else ""
 
         # Validate bucket name: 3-63 chars, lowercase letters, numbers, dots, hyphens, start/end alphanumeric
-        if not re.match(r"^[a-z0-9][a-z0-9\-.]{1,61}[a-z0-9]$", bucket):
+        # Add underscore since some S3-complaint storage allow underscores in bucket names
+        if not re.match(r"^[a-z0-9][a-z0-9_\-.]{1,61}[a-z0-9]$", bucket):
             error_msg = f"Invalid S3 bucket name: {bucket}"
             raise ValueError(error_msg)
 
