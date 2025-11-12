@@ -16,14 +16,12 @@
 """Video Pipe Input."""
 
 import pathlib
-from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 
 import pandas as pd
 from loguru import logger
 from six import BytesIO
 
-from cosmos_curate.core.utils.misc import filter_predicates
 from cosmos_curate.core.utils.storage.storage_client import StorageClient, StoragePrefix
 from cosmos_curate.core.utils.storage.storage_utils import (
     get_files_relative,
@@ -117,7 +115,6 @@ def extract_split_tasks(  # noqa: PLR0913
     limit: int = 0,
     *,
     verbose: bool = False,
-    filter_files_func: Callable[[str], bool] | None = None,
 ) -> tuple[list[Video], list[str], int]:
     """Extract list of input video paths from the input S3 or local path."""
     client_input = get_storage_client(input_path, profile_name=input_s3_profile_name)
@@ -156,8 +153,7 @@ def extract_split_tasks(  # noqa: PLR0913
         input_videos = get_files_relative(input_path, client_input, _limit)
 
     # apply filter func
-    _filter_files_func = filter_predicates.accept if filter_files_func is None else filter_files_func
-    all_videos = [video for video in input_videos if _filter_files_func(video)]
+    all_videos = list(input_videos)
     logger.info(f"Found {len(all_videos)} input videos in {input_path}")
     if verbose:
         for video in all_videos:
