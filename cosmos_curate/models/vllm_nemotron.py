@@ -163,7 +163,7 @@ class VllmNemotronNano12Bv2VL(VllmPlugin):
         """
         os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
         return LLM(
-            model=str(cls.model_path()),
+            model=str(cls.model_path(config)),
             trust_remote_code=TRUST_REMOTE_CODE,
             tensor_parallel_size=config.num_gpus,
             gpu_memory_utilization=GPU_MEMORY_UTILIZATION,
@@ -172,10 +172,10 @@ class VllmNemotronNano12Bv2VL(VllmPlugin):
         )
 
     @classmethod
-    def processor(cls) -> AutoProcessor:
+    def processor(cls, config: VllmConfig) -> AutoProcessor:
         """Return the AutoProcessor for the model."""
         processor = AutoProcessor.from_pretrained(  # type: ignore[no-untyped-call]
-            str(cls.model_path()),
+            str(cls.model_path(config)),
             trust_remote_code=TRUST_REMOTE_CODE,
         )
         return cast("AutoProcessor", processor)

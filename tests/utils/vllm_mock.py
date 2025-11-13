@@ -100,7 +100,7 @@ class MockVllmPlugin(VllmPlugin):
         return "mock"
 
     @classmethod
-    def processor(cls) -> AutoProcessor:
+    def processor(cls, _config: VllmConfig) -> AutoProcessor:
         # Avoid heavyweight initialization in tests.
         return cast("AutoProcessor", object())
 

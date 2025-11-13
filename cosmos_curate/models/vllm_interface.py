@@ -184,7 +184,7 @@ def auto_processor(config: VllmConfig) -> AutoProcessor:
         The auto processor for the model.
 
     """
-    return _get_vllm_plugin(config.model_variant).processor()
+    return _get_vllm_plugin(config.model_variant).processor(config)
 
 
 def make_metadata(frames: Iterable[torch.Tensor], window_config: WindowConfig) -> list[dict[str, Any]]:

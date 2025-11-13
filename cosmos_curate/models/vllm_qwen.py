@@ -130,7 +130,7 @@ class VllmQwen(VllmPlugin):
         }
 
         return LLM(
-            model=str(cls.model_path()),
+            model=str(cls.model_path(config)),
             limit_mm_per_prompt=LIMIT_MM_PER_PROMPT,
             quantization=quantization,
             max_model_len=MAX_MODEL_LEN,
@@ -144,10 +144,10 @@ class VllmQwen(VllmPlugin):
         )
 
     @classmethod
-    def processor(cls) -> AutoProcessor:
+    def processor(cls, config: VllmConfig) -> AutoProcessor:
         """Return the AutoProcessor for the model."""
         processor = AutoProcessor.from_pretrained(  # type: ignore[no-untyped-call]
-            cls.model_path(),
+            cls.model_path(config),
             trust_remote_code=TRUST_REMOTE_CODE,
         )
         return cast("AutoProcessor", processor)

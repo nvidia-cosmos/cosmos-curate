@@ -368,3 +368,129 @@ def test_reduce_t5_model_weights_filters_encoder(monkeypatch: pytest.MonkeyPatch
     model_utils._reduce_t5_model_weights(destination)
     assert fake_torch.loaded == 1
     assert fake_torch.saved[0] == "unchanged"
+
+
+def test_copy_model_weights_copies_new_files(tmp_path: pathlib.Path) -> None:
+    """Test that copy_model_weights copies files that don't exist in destination."""
+    source = tmp_path / "source"
+    dest = tmp_path / "dest"
+    source.mkdir()
+
+    # Create source files including nested directories
+    (source / "model.bin").write_bytes(b"model_data")
+    (source / "config.json").write_text('{"key": "value"}')
+    subdir = source / "subdir"
+    subdir.mkdir()
+    (subdir / "weights.safetensors").write_bytes(b"safetensor_data")
+    subdir2 = subdir / "subdir2"
+    subdir2.mkdir()
+    (subdir2 / "weights2.safetensors").write_bytes(b"safetensor_data2")
+
+    # Copy to destination
+    model_utils.copy_model_weights(source, dest)
+
+    # Verify all files were copied
+    assert (dest / "model.bin").read_bytes() == b"model_data"
+    assert (dest / "config.json").read_text() == '{"key": "value"}'
+    assert (dest / "subdir" / "weights.safetensors").read_bytes() == b"safetensor_data"
+    assert (dest / "subdir" / "subdir2" / "weights2.safetensors").read_bytes() == b"safetensor_data2"
+
+
+@pytest.mark.parametrize(
+    ("source_content", "dest_content", "size_check", "expected_content"),
+    [
+        (b"model_data", b"model_data", True, b"model_data"),
+        (b"new_model_data", b"old_data", True, b"new_model_data"),
+        (b"model_data", b"old_data", False, b"old_data"),
+    ],
+    ids=["same_size_check_true", "diff_size_check_true", "existing_size_check_false"],
+)
+def test_copy_model_weights_with_existing_files(
+    tmp_path: pathlib.Path,
+    source_content: bytes,
+    dest_content: bytes,
+    *,
+    size_check: bool,
+    expected_content: bytes,
+) -> None:
+    """Test copy_model_weights behavior with existing files and different size_check settings."""
+    source = tmp_path / "source"
+    dest = tmp_path / "dest"
+    source.mkdir()
+    dest.mkdir()
+
+    # Create files
+    source_file = source / "model.bin"
+    source_file.write_bytes(source_content)
+    dest_file = dest / "model.bin"
+    dest_file.write_bytes(dest_content)
+
+    # Copy
+    model_utils.copy_model_weights(source, dest, size_check=size_check)
+
+    # Verify the content is as expected (whether skipped or copied)
+    assert dest_file.read_bytes() == expected_content
+
+
+@pytest.mark.parametrize(
+    ("setup_func", "error_type", "error_match"),
+    [
+        (lambda _: None, FileNotFoundError, "Source directory does not exist"),
+        (lambda p: p.write_text("content"), ValueError, "Source path is not a directory"),
+    ],
+    ids=["source_missing", "source_is_file"],
+)
+def test_copy_model_weights_error_cases(
+    tmp_path: pathlib.Path,
+    setup_func: object,
+    error_type: type[Exception],
+    error_match: str,
+) -> None:
+    """Test copy_model_weights raises appropriate errors for invalid inputs."""
+    source = tmp_path / "source"
+    setup_func(source)  # type: ignore[operator]
+    dest = tmp_path / "dest"
+
+    with pytest.raises(error_type, match=error_match):
+        model_utils.copy_model_weights(source, dest)
+
+
+def test_copy_model_weights_creates_dest_if_missing(tmp_path: pathlib.Path) -> None:
+    """Test that copy_model_weights creates destination directory if it doesn't exist."""
+    source = tmp_path / "source"
+    dest = tmp_path / "deep" / "nested" / "dest"
+    source.mkdir()
+
+    (source / "model.bin").write_bytes(b"data")
+
+    # Destination doesn't exist yet
+    assert not dest.exists()
+
+    # Copy should create it
+    model_utils.copy_model_weights(source, dest)
+
+    assert dest.exists()
+    assert (dest / "model.bin").read_bytes() == b"data"
+
+
+def test_copy_model_weights_copies_new_files_when_size_check_false(tmp_path: pathlib.Path) -> None:
+    """Test that copy_model_weights still copies new files when size_check=False."""
+    source = tmp_path / "source"
+    dest = tmp_path / "dest"
+    source.mkdir()
+    dest.mkdir()
+
+    # Create source files
+    (source / "model.bin").write_bytes(b"model_data")
+    (source / "config.json").write_text('{"key": "value"}')
+
+    # Create only one file in destination
+    (dest / "model.bin").write_bytes(b"existing")
+
+    # Copy with size_check=False
+    model_utils.copy_model_weights(source, dest, size_check=False)
+
+    # Existing file should be unchanged
+    assert (dest / "model.bin").read_bytes() == b"existing"
+    # New file should be copied
+    assert (dest / "config.json").read_text() == '{"key": "value"}'

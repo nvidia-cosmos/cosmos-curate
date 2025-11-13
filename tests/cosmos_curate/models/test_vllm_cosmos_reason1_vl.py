@@ -24,7 +24,7 @@ import pytest
 import torch
 
 from cosmos_curate.core.utils.model import conda_utils
-from cosmos_curate.pipelines.video.utils.data_model import VllmCaptionRequest
+from cosmos_curate.pipelines.video.utils.data_model import VllmCaptionRequest, VllmConfig
 
 if conda_utils.is_running_in_env("unified"):
     from cosmos_curate.models.vllm_cosmos_reason1_vl import (
@@ -113,11 +113,12 @@ def test_stage2_refine_prompt_equivalence_with_real_processor() -> None:
     Over the long term, we expect to migrate away from the regex substitution and use the chat template
     provided by the model's processor, making this test obsolete.
     """
-    model_path = Path(str(VllmCosmosReason1VL.model_path()))
+    vllm_config = VllmConfig(model_variant="cosmos_r1")
+    model_path = Path(str(VllmCosmosReason1VL.model_path(vllm_config)))
     if not model_path.exists():
         pytest.fail("Cosmos-Reason1 weights not available locally; this integration test requires them.")
 
-    processor = VllmCosmosReason1VL.processor()
+    processor = VllmCosmosReason1VL.processor(vllm_config)
     if not hasattr(processor, "apply_chat_template"):
         pytest.fail("Processor lacks apply_chat_template; this integration test requires it.")
 

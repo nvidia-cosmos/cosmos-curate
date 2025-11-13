@@ -510,6 +510,18 @@ cosmos-curate slurm submit ...
 
 will not sync code from your local machine to the cluster. You'll need to either edit code directly on the cluster, or call the above source-code sync-ing command(s) again.
 
+### Speeding up Model Load on Slurm
+
+Model loading can sometimes be sped up by adding
+
+```
+--copy-weight-to /raid/scratch/models
+```
+
+to the launch command. This is because of the way that the transformers library loads safetensors from disk. Its method is efficient for local disk, but can be very slow if the model weights are stored on NFS or Lustre.
+
+This is only useful if there is enough space on the local nodes to store the model weights.
+
 ## Launch Pipelines on NVIDIA DGX Cloud
 
 Cosmos-Curate can be deployed on [NVIDIA Cloud Function (NVCF)](https://docs.nvidia.com/cloud-functions/index.html) platform.

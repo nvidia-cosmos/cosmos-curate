@@ -25,6 +25,7 @@ import importlib
 import json
 import pathlib
 import shutil
+import subprocess
 import time
 
 import attrs
@@ -432,6 +433,92 @@ def download_model_weights_from_local_to_workspace(
         ]
         for future in concurrent.futures.as_completed(futures):
             future.result()
+
+
+def copy_model_weights(source_dir: pathlib.Path, dest_dir: pathlib.Path, *, size_check: bool = True) -> None:
+    """Copy model weights from source to destination using rsync.
+
+    This function uses rsync for efficient, optimized file copying with built-in
+    resume capability and verification.
+
+    Args:
+        source_dir: Source directory containing the model weights.
+        dest_dir: Destination directory where the model weights should be copied.
+        size_check: Controls how to handle existing files:
+            - If True (default): Verifies existing files by comparing sizes. Re-copies
+              if sizes differ, skips if sizes match.
+            - If False: Skips all existing files without verification (assumes they're
+              correct). Only copies files that don't exist yet.
+            This is useful for efficiently copying model weights to a custom location
+            (e.g., local SSD) without re-copying files that are already present.
+
+    Raises:
+        FileNotFoundError: If the source directory does not exist.
+        ValueError: If the source path is not a directory.
+        OSError: If there are permission or I/O errors during copying, or if rsync is not available.
+
+    """
+    if not source_dir.exists():
+        msg = f"Source directory does not exist: {source_dir}"
+        raise FileNotFoundError(msg)
+
+    if not source_dir.is_dir():
+        msg = f"Source path is not a directory: {source_dir}"
+        raise ValueError(msg)
+
+    # Create destination directory if it doesn't exist
+    dest_dir.mkdir(parents=True, exist_ok=True)
+
+    size_check_msg = "with size check" if size_check else "without size check"
+    logger.info(f"Copying model weights from {source_dir} to {dest_dir} using rsync ({size_check_msg})...")
+
+    # Build rsync command
+    # -a: archive mode (recursive, preserves permissions, times, etc.)
+    # -v: verbose output
+    # --info=progress2: show overall progress
+    rsync_cmd = [
+        "rsync",
+        "-av",
+        "--info=progress2",
+    ]
+
+    if size_check:
+        # Only compare by size (skip files with matching size)
+        rsync_cmd.append("--size-only")
+    else:
+        # Skip all existing files without checking
+        rsync_cmd.append("--ignore-existing")
+
+    # Note: trailing slash on source is important for rsync
+    # It means "copy contents of dir" rather than "copy dir itself"
+    rsync_cmd.extend(
+        [
+            f"{source_dir}/",
+            str(dest_dir),
+        ]
+    )
+
+    try:
+        result = subprocess.run(  # noqa: S603
+            rsync_cmd,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+
+        # Log rsync output
+        if result.stdout:
+            logger.debug(f"rsync output:\n{result.stdout}")
+
+        logger.info("Model weight copy complete")
+
+    except FileNotFoundError as e:
+        msg = "rsync command not found. Please ensure rsync is installed."
+        raise OSError(msg) from e
+    except subprocess.CalledProcessError as e:
+        msg = f"rsync failed with exit code {e.returncode}"
+        logger.error(f"{msg}\nstderr: {e.stderr}")
+        raise OSError(msg) from e
 
 
 def _download_model_weights_from_huggingface_to_workspace(

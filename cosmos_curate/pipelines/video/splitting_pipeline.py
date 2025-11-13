@@ -25,6 +25,7 @@ Which:
 from __future__ import annotations
 
 import argparse
+import pathlib
 import time
 
 from loguru import logger
@@ -449,6 +450,7 @@ def split(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912, PLR0915
             max_output_tokens=args.captioning_max_output_tokens,
             num_cpus_for_prepare=args.vllm_prepare_num_cpus_per_worker,
             max_retries=args.vllm_max_retries,
+            copy_weights_to=pathlib.Path(args.copy_weights_to) if args.copy_weights_to else None,
         )
 
         window_config = WindowConfig(
@@ -1207,6 +1209,14 @@ def _setup_parser(parser: argparse.ArgumentParser) -> None:  # noqa: PLR0915
         type=int,
         default=3,
         help="Number of times to retry vLLM captioning failures",
+    )
+    parser.add_argument(
+        "--copy-weights-to",
+        type=str,
+        default=None,
+        help="Optional directory to copy model weights to before loading. "
+        "Useful for copying weights to faster storage, like local NVME on compute nodes, "
+        "and can reduce model load time. Common location is /raid/scratch/models.",
     )
     parser.add_argument(
         "--enhance-captions",

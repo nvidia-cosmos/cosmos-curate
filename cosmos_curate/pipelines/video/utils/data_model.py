@@ -615,6 +615,10 @@ class VllmConfig:
         stage2_caption: Whether to enable stage 2 captioning.
         stage2_prompt_text: Custom prompt text for stage 2 captioning.
         max_retries: Number of times to retry captioning failures.
+        copy_weights_to: Optional custom directory to copy model weights to before loading.
+            If set, model weights will be copied from the default cache location to this
+            directory before the model is loaded. This is useful for copying weights to
+            faster storage (e.g., local SSD) on compute nodes.
 
     """
 
@@ -634,6 +638,7 @@ class VllmConfig:
     stage2_caption: bool = False
     stage2_prompt_text: str | None = None
     max_retries: int = 3
+    copy_weights_to: pathlib.Path | None = None
 
 
 @attrs.define

@@ -38,6 +38,7 @@ if conda_utils.is_running_in_env("unified"):
 
     from cosmos_curate.models.vllm_interface import _VLLM_PLUGINS
     from cosmos_curate.pipelines.video.captioning.vllm_caption_stage import (
+        VllmCaptionStage,
         VllmModelInterface,
         VllmPrepStage,
         _free_vllm_inputs,
@@ -354,3 +355,152 @@ def test_scatter_captions(*, verbose: bool) -> None:
     _scatter_captions(windows, captions, clip_uuids, model_variant, verbose=verbose)
     for window, caption, _ in zip(windows, captions, clip_uuids, strict=True):
         assert window.caption[model_variant] == caption
+
+
+@pytest.mark.env("unified")
+@pytest.mark.parametrize(
+    ("copy_weights_to"),
+    [
+        (None),
+        ("custom_path"),
+    ],
+    ids=["no_copy_weights_to", "with_copy_weights_to"],
+)
+def test_setup_on_node_copies_weights(
+    tmp_path: Path,
+    copy_weights_to: str | None,
+) -> None:
+    """Test VllmCaptionStage.setup_on_node copies model weights correctly.
+
+    Args:
+        tmp_path: Pytest temporary directory fixture.
+        copy_weights_to: The copy_weights_to config value (None or "custom_path").
+
+    """
+    should_copy = copy_weights_to is not None
+    # Resolve copy_weights_to path if provided
+    resolved_copy_weights_to = tmp_path / copy_weights_to if copy_weights_to is not None else None
+
+    # Create mock source directory with a single file to validate
+    mock_source_dir = tmp_path / "mock_source"
+    mock_source_dir.mkdir()
+    (mock_source_dir / "model.bin").write_bytes(b"mock_model_data")
+    (mock_source_dir / "config.json").write_text('{"test": "config"}')
+
+    # Create VllmConfig with copy_weights_to
+    vllm_config = VllmConfig(
+        model_variant="qwen",
+        copy_weights_to=resolved_copy_weights_to,
+    )
+
+    # Create VllmCaptionStage instance
+    stage = VllmCaptionStage(vllm_config=vllm_config)
+
+    # Mock get_local_dir_for_weights_name to return our mock source directory
+    with patch(
+        "cosmos_curate.pipelines.video.captioning.vllm_caption_stage.model_utils.get_local_dir_for_weights_name"
+    ) as mock_get_local_dir:
+        mock_get_local_dir.return_value = mock_source_dir
+
+        # Call setup_on_node (uses real copy_model_weights)
+        stage.setup_on_node(node_info=None, worker_metadata=None)
+
+        # Verify the results based on whether copying should occur
+        if should_copy:
+            assert resolved_copy_weights_to is not None
+            # Verify files were actually copied to destination
+            model_id_names = stage._model.model_id_names
+            for model_id in model_id_names:
+                dest_dir = resolved_copy_weights_to / model_id
+                assert dest_dir.exists(), f"Destination directory not created for {model_id}"
+                assert (dest_dir / "model.bin").exists(), f"model.bin not copied for {model_id}"
+                assert (dest_dir / "model.bin").read_bytes() == b"mock_model_data"
+                assert (dest_dir / "config.json").exists(), f"config.json not copied for {model_id}"
+                assert (dest_dir / "config.json").read_text() == '{"test": "config"}'
+        else:
+            # Verify no files were copied (copy_weights_to is None)
+            assert resolved_copy_weights_to is None
+
+            # Verify filesystem: no destination directories should have been created
+            model_id_names = stage._model.model_id_names
+            for model_id in model_id_names:
+                # Check that no directory exists in tmp_path with this model_id
+                # (we only expect mock_source to exist)
+                potential_dest = tmp_path / model_id
+                assert not potential_dest.exists(), f"Unexpected directory created: {potential_dest}"
+
+            # Verify only the mock_source_dir exists in tmp_path (no other dirs created)
+            existing_dirs = [d for d in tmp_path.iterdir() if d.is_dir()]
+            assert len(existing_dirs) == 1, f"Expected only mock_source, found: {existing_dirs}"
+            assert existing_dirs[0] == mock_source_dir
+
+
+@pytest.mark.env("unified")
+def test_setup_on_node_raises_when_source_directory_missing(tmp_path: Path) -> None:
+    """Test VllmCaptionStage.setup_on_node raises error when source directory doesn't exist."""
+    # Create VllmConfig with copy_weights_to
+    copy_weights_to = tmp_path / "custom_weights"
+    vllm_config = VllmConfig(
+        model_variant="qwen",
+        copy_weights_to=copy_weights_to,
+    )
+
+    # Create VllmCaptionStage instance
+    stage = VllmCaptionStage(vllm_config=vllm_config)
+
+    # Mock get_local_dir_for_weights_name to return non-existent directory
+    # This should cause setup_on_node to raise FileNotFoundError
+    nonexistent_source_dir = tmp_path / "nonexistent_source"
+
+    with patch(
+        "cosmos_curate.pipelines.video.captioning.vllm_caption_stage.model_utils.get_local_dir_for_weights_name"
+    ) as mock_get_local_dir:
+        mock_get_local_dir.return_value = nonexistent_source_dir
+
+        # Verify that setup_on_node raises FileNotFoundError
+        with pytest.raises(FileNotFoundError, match=r".*"):
+            stage.setup_on_node(node_info=None, worker_metadata=None)
+
+
+@pytest.mark.env("unified")
+def test_setup_on_node_handles_copy_failure(tmp_path: Path) -> None:
+    """Test VllmCaptionStage.setup_on_node handles copy failures gracefully."""
+    # Create VllmConfig with copy_weights_to
+    copy_weights_to = tmp_path / "custom_weights"
+    vllm_config = VllmConfig(
+        model_variant="qwen",
+        copy_weights_to=copy_weights_to,
+    )
+
+    # Create VllmCaptionStage instance
+    stage = VllmCaptionStage(vllm_config=vllm_config)
+
+    # Create a mock source directory
+    mock_source_dir = tmp_path / "mock_source"
+    mock_source_dir.mkdir()
+
+    with (
+        patch(
+            "cosmos_curate.pipelines.video.captioning.vllm_caption_stage.model_utils.get_local_dir_for_weights_name"
+        ) as mock_get_local_dir,
+        patch(
+            "cosmos_curate.pipelines.video.captioning.vllm_caption_stage.model_utils.copy_model_weights"
+        ) as mock_copy_weights,
+    ):
+        mock_get_local_dir.return_value = mock_source_dir
+        # Simulate a copy failure (e.g., permission denied, disk full, etc.)
+        mock_copy_weights.side_effect = OSError("Permission denied")
+
+        # Verify that setup_on_node completes without raising (swallows the exception)
+        stage.setup_on_node(node_info=None, worker_metadata=None)
+
+        # Verify copy_model_weights was called (but failed)
+        model_id_names = stage._model.model_id_names
+        assert mock_copy_weights.call_count == len(model_id_names)
+
+        # Verify no files were actually copied (destination should not exist or be empty)
+        for model_id in model_id_names:
+            dest_dir = copy_weights_to / model_id
+            # Either the directory doesn't exist or it exists but is empty
+            if dest_dir.exists():
+                assert not any(dest_dir.iterdir()), f"Expected {dest_dir} to be empty after failed copy"

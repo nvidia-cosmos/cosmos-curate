@@ -58,14 +58,40 @@ class VllmPlugin(ABC):
         return get_vllm_model_id(cls.model_variant())
 
     @classmethod
-    def model_path(cls) -> Path:
-        """Return the path to the model."""
-        return model_utils.get_local_dir_for_weights_name(cls.model_id())
+    def model_path(cls, config: VllmConfig) -> Path:
+        """Return the path to the model.
+
+        Args:
+            config: VllmConfig. If config.copy_weights_to is set and the path exists,
+                uses the custom path. Otherwise falls back to the default cache path.
+
+        Returns:
+            Path to the model weights directory.
+
+        """
+        model_id = cls.model_id()
+
+        # Try custom path if configured and exists
+        if config.copy_weights_to is not None:
+            custom_path: Path = config.copy_weights_to / model_id
+            if custom_path.exists():
+                return custom_path
+
+        # Fall back to default cache path
+        return model_utils.get_local_dir_for_weights_name(model_id)
 
     @classmethod
     @abstractmethod
-    def processor(cls) -> AutoProcessor:
-        """Return the AutoProcessor for the model."""
+    def processor(cls, config: VllmConfig) -> AutoProcessor:
+        """Return the AutoProcessor for the model.
+
+        Args:
+            config: vLLM configuration
+
+        Returns:
+            The AutoProcessor for the model.
+
+        """
 
     @classmethod
     @abstractmethod

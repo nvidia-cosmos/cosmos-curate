@@ -27,6 +27,8 @@ RUN apt-get update \
     # Needed for cuda profiling \
     nsight-systems-2025.3.2 \
     --option=Dpkg::Options::=--force-confdef \
+    # Needed to copy model weights using rsync
+    rsync \
     && update-ca-certificates \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
