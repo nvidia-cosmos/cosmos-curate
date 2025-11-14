@@ -27,5 +27,6 @@
             "name": "byo-metrics-receiver-client-key",
             "value": "-----BEGIN RSA PRIVATE KEY-----\nFILL_IN_YOUR_THANOS_CLIENT_KEY\n-----END RSA PRIVATE KEY-----"
         }
-    ]
+    ],
+    "#telemetries": {"metricsTelemetryId":"VALUE" }
 }

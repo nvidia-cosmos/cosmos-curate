@@ -357,7 +357,7 @@ class NvcfHelper(NvcfBase):
 
         return data
 
-    def nvcf_helper_create_function(  # noqa: C901, PLR0912, PLR0913
+    def nvcf_helper_create_function(  # noqa: C901, PLR0912, PLR0913, PLR0915
         self,
         name: str,
         image: str,
@@ -425,6 +425,7 @@ class NvcfHelper(NvcfBase):
             resources = data.get("resources")
             secrets = data.get("secrets")
             envs = data.get("envs")
+            telemetries = data.get("telemetries")
             if secrets is not None:
                 for s in secrets:
                     k = s.get("key")
@@ -444,7 +445,8 @@ class NvcfHelper(NvcfBase):
                 create_data["secrets"] = secrets
             if envs is not None:
                 create_data["containerEnvironment"] = envs
-
+            if telemetries is not None:
+                create_data["telemetries"] = telemetries
         if helm_chart is not None and image == "":
             # Have to unset unsupported parameters - we could create different template jsons, but coalesce seems
             # simpler while we convert to exclusive helm (or until NVCF supports parity)

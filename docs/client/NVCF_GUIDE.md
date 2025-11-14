@@ -99,6 +99,10 @@ This is for the Prometheus agent to remote-write the metrics.
   - you can remove `byo-metrics-receiver-client-crt` and `byo-metrics-receiver-client-key` from the `secrets` list;
   - then disable `metrics` when deploying the function, see details in next step.
 
+The telemetries section can be uncommented and filled out if the appropriate endpoints are available in your account.
+See the [NVCF External Observability guide](https://docs.nvidia.com/cloud-functions/user-guide/latest/cloud-function/observability.html#external-observability)
+for additional information.
+
 ```bash
 cosmos-curate nvcf function create-function \
     --name "${USER}-cosmos-curate" \
