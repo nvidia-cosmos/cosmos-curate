@@ -223,6 +223,9 @@ def _get_python_version_from_pixi_toml(curator_path: Path) -> str | None:
         if not python_version or not isinstance(python_version, str):
             logger.warning("Python version not found or invalid in pixi.toml")
             return None
+        # strip the possible ">=" or "<=" prefix
+        if python_version.startswith((">=", "<=")):
+            python_version = python_version[2:]
         # strip the minor version
         version_parts = python_version.split(".")
         _TARGET_PYTHON_VERSION_PARTS = 2

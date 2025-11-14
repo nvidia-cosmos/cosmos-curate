@@ -2,6 +2,27 @@
 
 ## Latest
 
+## [1.1.8]
+
+### Released
+- 2025-11-17
+
+### Added
+- Nemotron-Nano-12B-v2-VL as an alternative VLM captioning model
+- Gemini API as an option for video captioning
+- Improved helm chart to simplify vanilla k8s deployment
+- Upgraded cosmos-xenna to 0.1.7 for better scalability
+- Significantly improved test coverage
+
+### Fixed
+- Fixed a bug in clip windowing utils which caused wrong caption for later windows within a clip
+- Allow underscore in S3 bucket name
+- Set cudagraph mode to piecewise for Qwen-based VL models to mitigate failure with illegal memory access
+- Improved exception handling in vllm-captioning stage setup and process
+
+### Documentation
+- Added documentation for [vllm_interface](https://github.com/nvidia-cosmos/cosmos-curate/tree/main/docs/curator/VLLM_INTERFACE_DESIGN.md) which simplifies the integration of new vLLM-powered VLMs for captioning.
+
 ## [1.1.7]
 
 ### Released
