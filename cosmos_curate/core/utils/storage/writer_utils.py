@@ -96,7 +96,7 @@ def write_bytes(  # noqa: C901, PLR0912, PLR0913
         def func_to_call() -> None:
             client.upload_bytes(dest, buffer)
 
-        do_with_retries(func_to_call)
+        do_with_retries(func_to_call, max_attempts=3, backoff_factor=16.0, max_wait_time_s=256.0)
 
     elif isinstance(dest, pathlib.Path):
         if dest.exists():
