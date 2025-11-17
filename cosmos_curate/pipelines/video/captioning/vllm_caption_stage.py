@@ -252,7 +252,7 @@ class VllmPrepStage(CuratorStage):
         """
         return "unified"
 
-    def setup_on_node(self, node_info: Any, worker_metadata: Any) -> None:  # noqa: ARG002, ANN401
+    def stage_setup_on_node(self) -> None:
         """Set up on a node by copying model weights if configured.
 
         This method copies model weights from the default cache location to a

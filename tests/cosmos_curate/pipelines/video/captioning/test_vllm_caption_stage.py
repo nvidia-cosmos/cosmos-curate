@@ -369,7 +369,7 @@ def test_setup_on_node_copies_weights(
     tmp_path: Path,
     copy_weights_to: str | None,
 ) -> None:
-    """Test VllmPrepStage.setup_on_node copies model weights correctly.
+    """Test VllmPrepStage.stage_setup_on_node copies model weights correctly.
 
     Args:
         tmp_path: Pytest temporary directory fixture.
@@ -400,8 +400,8 @@ def test_setup_on_node_copies_weights(
     ) as mock_get_local_dir:
         mock_get_local_dir.return_value = mock_source_dir
 
-        # Call setup_on_node (uses real copy_model_weights)
-        stage.setup_on_node(node_info=None, worker_metadata=None)
+        # Call stage_setup_on_node (uses real copy_model_weights)
+        stage.stage_setup_on_node()
 
         # Verify the results based on whether copying should occur
         if should_copy:
@@ -435,7 +435,7 @@ def test_setup_on_node_copies_weights(
 
 @pytest.mark.env("unified")
 def test_setup_on_node_raises_when_source_directory_missing(tmp_path: Path) -> None:
-    """Test VllmPrepStage.setup_on_node raises error when source directory doesn't exist."""
+    """Test VllmPrepStage.stage_setup_on_node raises error when source directory doesn't exist."""
     # Create VllmConfig with copy_weights_to
     copy_weights_to = tmp_path / "custom_weights"
     vllm_config = VllmConfig(
@@ -446,7 +446,7 @@ def test_setup_on_node_raises_when_source_directory_missing(tmp_path: Path) -> N
     stage = VllmPrepStage(vllm_config=vllm_config, window_config=WindowConfig())
 
     # Mock get_local_dir_for_weights_name to return non-existent directory
-    # This should cause setup_on_node to raise FileNotFoundError
+    # This should cause stage_setup_on_node to raise FileNotFoundError
     nonexistent_source_dir = tmp_path / "nonexistent_source"
 
     with patch(
@@ -454,14 +454,14 @@ def test_setup_on_node_raises_when_source_directory_missing(tmp_path: Path) -> N
     ) as mock_get_local_dir:
         mock_get_local_dir.return_value = nonexistent_source_dir
 
-        # Verify that setup_on_node raises FileNotFoundError
+        # Verify that stage_setup_on_node raises FileNotFoundError
         with pytest.raises(FileNotFoundError, match=r".*"):
-            stage.setup_on_node(node_info=None, worker_metadata=None)
+            stage.stage_setup_on_node()
 
 
 @pytest.mark.env("unified")
 def test_setup_on_node_handles_copy_failure(tmp_path: Path) -> None:
-    """Test VllmPrepStage.setup_on_node handles copy failures gracefully."""
+    """Test VllmPrepStage.stage_setup_on_node handles copy failures gracefully."""
     # Create VllmConfig with copy_weights_to
     copy_weights_to = tmp_path / "custom_weights"
     vllm_config = VllmConfig(
@@ -487,8 +487,8 @@ def test_setup_on_node_handles_copy_failure(tmp_path: Path) -> None:
         # Simulate a copy failure (e.g., permission denied, disk full, etc.)
         mock_copy_weights.side_effect = OSError("Permission denied")
 
-        # Verify that setup_on_node completes without raising (swallows the exception)
-        stage.setup_on_node(node_info=None, worker_metadata=None)
+        # Verify that stage_setup_on_node completes without raising (swallows the exception)
+        stage.stage_setup_on_node()
 
         # Verify copy_model_weights was called (but failed)
         model_id_names = stage._model.model_id_names

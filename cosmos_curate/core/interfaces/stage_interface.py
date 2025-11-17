@@ -19,7 +19,7 @@ import ray
 
 from cosmos_curate.core.interfaces.model_interface import ModelInterface
 from cosmos_curate.core.utils.pixi_runtime_envs import PixiRuntimeEnv
-from cosmos_xenna.pipelines.private.resources import Resources, WorkerMetadata
+from cosmos_xenna.pipelines.private.resources import NodeInfo, Resources, WorkerMetadata
 from cosmos_xenna.pipelines.private.specs import Stage, StageSpec
 from cosmos_xenna.ray_utils.runtime_envs import CondaEnv, RuntimeEnv
 
@@ -95,6 +95,14 @@ class CuratorStage(Stage[PipelineTask, PipelineTask]):
             return self.model.conda_env_name
         return None
 
+    def stage_setup_on_node(self) -> None:
+        """Optionally override this method to define the setup process per node.
+
+        This method is called exactly once per node, and is guaranteed to be called before the setup method.
+        This is useful if you need to do per node setup, like copying model weights from shared filesystem to local SSD.
+        """
+        return
+
     def stage_setup(self) -> None:
         """Need to override this method to define the setup process for the stage.
 
@@ -157,6 +165,17 @@ class CuratorStage(Stage[PipelineTask, PipelineTask]):
         if self.conda_env_name is not None:
             return _PixiRuntimeEnv(CondaEnv(self.conda_env_name))
         return None
+
+    # Should not override
+    def setup_on_node(self, _node_info: NodeInfo, _worker_metadata: WorkerMetadata) -> None:
+        """Set up the stage on a specific node.
+
+        Args:
+            _node_info: The node information.
+            _worker_metadata: The worker metadata.
+
+        """
+        self.stage_setup_on_node()
 
     # Should not override
     def setup(self, _: WorkerMetadata) -> None:

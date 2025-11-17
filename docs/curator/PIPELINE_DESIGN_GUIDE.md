@@ -86,7 +86,7 @@ class _LowerCaseStage(CuratorStage):
 
 **For a stage that uses an AI model, the following methods need to be overriden:**
 
-1. `model()`: returns a `ModelInterface` object.
+3. `model()`: returns a `ModelInterface` object.
    - This is needed by the underlying layer to derive pipeline runtime configuration.
 
 ```python
@@ -97,7 +97,7 @@ class _GPT2Stage(CuratorStage):
         return self._model
 ```
 
-2. `stage_setup()`: implements the setup work when a Ray actor for this stage's worker is created.
+4. `stage_setup()`: implements the setup work when a Ray actor for this stage's worker is created.
    - A subtle but important difference between the `__init__` constructor and this `stage_setup` method is that the constructor runs in the base conda environment while `stage_setup` runs in the conda environment specified by the model. Therefore code to setup the model need to be in this method.
    - The CPU stages without a model can also implement this method if any setup work is needed.
 
@@ -105,6 +105,12 @@ class _GPT2Stage(CuratorStage):
     def stage_setup(self) -> None:
         self._model.setup()
 ```
+
+**For advanced use cases, the following methods can be overriden:**
+
+5. `stage_setup_on_node()`: implements the setup work needed for this stage on a per-node basis.
+   - This is guaranteed to run exactly once per node by one of the stage's actors.
+   - An example usage is to copy model weights from distributed network filesystem to local SSD to speedup model loading. If we instead implement this in `stage_setup()`, some form of race-condition protection like file locking will need to be implemented.
 
 ### Model Class
 
