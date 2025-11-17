@@ -20,11 +20,8 @@ import math
 import torch
 from torchvision import transforms  # type: ignore[import-untyped]
 from torchvision.transforms import InterpolationMode, v2  # type: ignore[import-untyped]
-from transformers.utils import logging  # type: ignore[attr-defined]
 
 from cosmos_curate.pipelines.video.utils.decoder_utils import decode_video_cpu_frame_ids, get_avg_frame_rate
-
-logger = logging.get_logger(__name__)
 
 
 class WindowFrameInfo:
@@ -136,6 +133,7 @@ def read_video_cpu(
 
     Returns:
         torch.Tensor: the video tensor with shape (T, C, H, W).
+        list[int]: the number of frames for each window
 
     """
     video_fps = get_avg_frame_rate(video_path)
@@ -180,7 +178,7 @@ def fetch_video(  # noqa: C901, PLR0911, PLR0913
         flip_input: Whether to flip frames horizontally.
 
     Returns:
-        Tuple of (processed frames tensor, frame indices).
+        Tuple of (processed frames tensor, frame counts for each window).
 
     """
     if window_range is None:
@@ -248,4 +246,4 @@ def fetch_video(  # noqa: C901, PLR0911, PLR0913
         return video.to(torch.bfloat16), frame_counts
     if preprocess_dtype == "uint8":
         return video.to(torch.uint8), frame_counts
-    return video, frame_counts  # is video a list ? TODO: XXX
+    return video, frame_counts
