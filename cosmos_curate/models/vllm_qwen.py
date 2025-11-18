@@ -149,6 +149,7 @@ class VllmQwen(VllmPlugin):
         processor = AutoProcessor.from_pretrained(  # type: ignore[no-untyped-call]
             cls.model_path(config),
             trust_remote_code=TRUST_REMOTE_CODE,
+            use_fast=True,
         )
         return cast("AutoProcessor", processor)
 
