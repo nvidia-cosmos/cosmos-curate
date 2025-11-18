@@ -221,6 +221,7 @@ class VllmPrepStage(CuratorStage):
         self._log_stats = log_stats
         self._processor: AutoProcessor | None = None
         self._keep_mp4 = keep_mp4
+        self._model = VllmModelInterface(self._vllm_config)
 
     def secondary_name(self) -> str:
         """Get the secondary name of the stage.
@@ -250,6 +251,39 @@ class VllmPrepStage(CuratorStage):
 
         """
         return "unified"
+
+    def setup_on_node(self, node_info: Any, worker_metadata: Any) -> None:  # noqa: ARG002, ANN401
+        """Set up on a node by copying model weights if configured.
+
+        This method copies model weights from the default cache location to a
+        user-configured directory (e.g., local SSD) before loading the model.
+
+        If the copy fails, the model will use the default cache location.
+
+        Args:
+            node_info: Information about the node (unused).
+            worker_metadata: Metadata about the worker (unused).
+
+        """
+        if self._vllm_config.copy_weights_to is None:
+            logger.debug("No custom weights directory configured, skipping weight copy")
+            return
+
+        for model_id in self._model.model_id_names:
+            source_dir = model_utils.get_local_dir_for_weights_name(model_id)
+
+            if not source_dir.exists():
+                msg = f"Source model weights directory does not exist: {source_dir}"
+                raise FileNotFoundError(msg)
+
+            dest_dir = self._vllm_config.copy_weights_to / model_id
+            logger.info(f"Copying model weights for {model_id} from {source_dir} to {dest_dir}")
+
+            try:
+                model_utils.copy_model_weights(source_dir, dest_dir)
+                logger.info(f"Successfully copied model weights to {dest_dir}")
+            except Exception:  # noqa: BLE001
+                logger.exception("Failed to copy model weights, will use default location")
 
     def stage_setup(self) -> None:
         """Set up the model for processing."""
@@ -368,39 +402,6 @@ class VllmCaptionStage(CuratorStage):
         self._model = VllmModelInterface(self._vllm_config)
         self._max_inflight_requests = max_inflight_requests
         self._inflight_batching = inflight_batching
-
-    def setup_on_node(self, node_info: Any, worker_metadata: Any) -> None:  # noqa: ARG002, ANN401
-        """Set up on a node by copying model weights if configured.
-
-        This method copies model weights from the default cache location to a
-        user-configured directory (e.g., local SSD) before loading the model.
-
-        If the copy fails, the model will use the default cache location.
-
-        Args:
-            node_info: Information about the node (unused).
-            worker_metadata: Metadata about the worker (unused).
-
-        """
-        if self._vllm_config.copy_weights_to is None:
-            logger.debug("No custom weights directory configured, skipping weight copy")
-            return
-
-        for model_id in self._model.model_id_names:
-            source_dir = model_utils.get_local_dir_for_weights_name(model_id)
-
-            if not source_dir.exists():
-                msg = f"Source model weights directory does not exist: {source_dir}"
-                raise FileNotFoundError(msg)
-
-            dest_dir = self._vllm_config.copy_weights_to / model_id
-            logger.info(f"Copying model weights for {model_id} from {source_dir} to {dest_dir}")
-
-            try:
-                model_utils.copy_model_weights(source_dir, dest_dir)
-                logger.info(f"Successfully copied model weights to {dest_dir}")
-            except Exception:  # noqa: BLE001
-                logger.exception("Failed to copy model weights, will use default location")
 
     def stage_setup(self) -> None:
         """Set up the model for processing."""

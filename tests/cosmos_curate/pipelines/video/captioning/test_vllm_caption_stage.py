@@ -38,7 +38,6 @@ if conda_utils.is_running_in_env("unified"):
 
     from cosmos_curate.models.vllm_interface import _VLLM_PLUGINS
     from cosmos_curate.pipelines.video.captioning.vllm_caption_stage import (
-        VllmCaptionStage,
         VllmModelInterface,
         VllmPrepStage,
         _free_vllm_inputs,
@@ -370,7 +369,7 @@ def test_setup_on_node_copies_weights(
     tmp_path: Path,
     copy_weights_to: str | None,
 ) -> None:
-    """Test VllmCaptionStage.setup_on_node copies model weights correctly.
+    """Test VllmPrepStage.setup_on_node copies model weights correctly.
 
     Args:
         tmp_path: Pytest temporary directory fixture.
@@ -393,8 +392,7 @@ def test_setup_on_node_copies_weights(
         copy_weights_to=resolved_copy_weights_to,
     )
 
-    # Create VllmCaptionStage instance
-    stage = VllmCaptionStage(vllm_config=vllm_config)
+    stage = VllmPrepStage(vllm_config=vllm_config, window_config=WindowConfig())
 
     # Mock get_local_dir_for_weights_name to return our mock source directory
     with patch(
@@ -437,7 +435,7 @@ def test_setup_on_node_copies_weights(
 
 @pytest.mark.env("unified")
 def test_setup_on_node_raises_when_source_directory_missing(tmp_path: Path) -> None:
-    """Test VllmCaptionStage.setup_on_node raises error when source directory doesn't exist."""
+    """Test VllmPrepStage.setup_on_node raises error when source directory doesn't exist."""
     # Create VllmConfig with copy_weights_to
     copy_weights_to = tmp_path / "custom_weights"
     vllm_config = VllmConfig(
@@ -445,8 +443,7 @@ def test_setup_on_node_raises_when_source_directory_missing(tmp_path: Path) -> N
         copy_weights_to=copy_weights_to,
     )
 
-    # Create VllmCaptionStage instance
-    stage = VllmCaptionStage(vllm_config=vllm_config)
+    stage = VllmPrepStage(vllm_config=vllm_config, window_config=WindowConfig())
 
     # Mock get_local_dir_for_weights_name to return non-existent directory
     # This should cause setup_on_node to raise FileNotFoundError
@@ -464,7 +461,7 @@ def test_setup_on_node_raises_when_source_directory_missing(tmp_path: Path) -> N
 
 @pytest.mark.env("unified")
 def test_setup_on_node_handles_copy_failure(tmp_path: Path) -> None:
-    """Test VllmCaptionStage.setup_on_node handles copy failures gracefully."""
+    """Test VllmPrepStage.setup_on_node handles copy failures gracefully."""
     # Create VllmConfig with copy_weights_to
     copy_weights_to = tmp_path / "custom_weights"
     vllm_config = VllmConfig(
@@ -472,8 +469,7 @@ def test_setup_on_node_handles_copy_failure(tmp_path: Path) -> None:
         copy_weights_to=copy_weights_to,
     )
 
-    # Create VllmCaptionStage instance
-    stage = VllmCaptionStage(vllm_config=vllm_config)
+    stage = VllmPrepStage(vllm_config=vllm_config, window_config=WindowConfig())
 
     # Create a mock source directory
     mock_source_dir = tmp_path / "mock_source"
