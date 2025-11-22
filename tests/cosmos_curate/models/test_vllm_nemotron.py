@@ -42,14 +42,22 @@ def test_make_llm_input_nemotron() -> None:
     frames = torch.rand(N, C, H, W)  # 2 frames, 3 channels, 32x32
     prompt = "Describe the video"
 
+    metadata: dict[str, int | float | list[int] | str] = {
+        "fps": 2,
+        "duration": 1.0,
+        "frames_indices": [0, 1],
+        "video_backend": "opencv",
+    }
+
     # Call the function
-    result = VllmNemotronNano12Bv2VL.make_llm_input(prompt, frames, {}, mock_processor)
+    result = VllmNemotronNano12Bv2VL.make_llm_input(prompt, frames, metadata, mock_processor)
 
     # Verify structure
     assert "multi_modal_data" in result
     assert "video" in result["multi_modal_data"]
     assert result["prompt_token_ids"] == [1, 2, 3, 4, 5]  # Should be the token IDs as list
-    assert result["multi_modal_data"]["video"].shape == (N, H, W, C)
+    assert result["multi_modal_data"]["video"][0].shape == (N, H, W, C)
+    assert result["multi_modal_data"]["video"][1].fps == metadata["fps"]
 
 
 @pytest.mark.env("unified")
@@ -74,11 +82,19 @@ def test_make_prompt() -> None:
     mock_processor = MagicMock()
     mock_processor.apply_chat_template.return_value = mock_tensor
 
+    metadata: dict[str, int | float | list[int] | str] = {
+        "fps": 2,
+        "duration": 1.0,
+        "frames_indices": [0, 1],
+        "video_backend": "opencv",
+    }
+
     N, C, H, W = 2, 3, 32, 64
     C = 3
     prompt = "Test prompt"
     frames = torch.rand(N, C, H, W)
     message = make_message(prompt)
-    result = make_prompt(message, frames, mock_processor)
+    result = make_prompt(message, frames, metadata, mock_processor)
     assert result["prompt_token_ids"] == [10, 20, 30, 40]  # Should be the token IDs as list
-    assert result["multi_modal_data"]["video"].shape == (N, H, W, C)
+    assert result["multi_modal_data"]["video"][0].shape == (N, H, W, C)
+    assert result["multi_modal_data"]["video"][1].fps == metadata["fps"]

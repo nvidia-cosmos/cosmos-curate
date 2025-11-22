@@ -24,6 +24,7 @@ import numpy as np
 import numpy.typing as npt
 import torch
 from transformers import AutoProcessor
+from transformers.video_utils import VideoMetadata
 from vllm import LLM, RequestOutput
 
 from cosmos_curate.models.vllm_plugin import VllmPlugin
@@ -103,12 +104,15 @@ def _convert_video_format(
     return retval
 
 
-def make_prompt(message: dict[str, Any], frames: torch.Tensor, processor: AutoProcessor) -> dict[str, Any]:
+def make_prompt(
+    message: dict[str, Any], frames: torch.Tensor, metadata: dict[str, Any], processor: AutoProcessor
+) -> dict[str, Any]:
     """Make a prompt for the Nemotron Nano 12B v2 model.
 
     Args:
         message: The message to use for the prompt.
         frames: The frames to use for the prompt.
+        metadata: The metadata of the video clip.
         processor: The processor to use for the prompt.
 
     Returns:
@@ -120,9 +124,17 @@ def make_prompt(message: dict[str, Any], frames: torch.Tensor, processor: AutoPr
         [message], add_generation_prompt=True, tokenize=True, return_tensors="pt"
     )[0].tolist()
 
+    nemotron_metadata = VideoMetadata(
+        total_num_frames=frames.shape[0],
+        fps=metadata["fps"],
+        duration=metadata["duration"],
+        frames_indices=metadata["frames_indices"],  # type: ignore[call-arg]
+        video_backend=metadata["video_backend"],
+    )
+
     return {
         "prompt_token_ids": prompt_ids,
-        "multi_modal_data": {"video": video_np},
+        "multi_modal_data": {"video": (video_np, nemotron_metadata)},
     }
 
 
@@ -184,7 +196,7 @@ class VllmNemotronNano12Bv2VL(VllmPlugin):
     def make_llm_input(
         prompt: str,
         frames: torch.Tensor,
-        metadata: dict[str, Any],  # noqa: ARG004
+        metadata: dict[str, Any],
         processor: AutoProcessor,
     ) -> dict[str, Any]:
         """Make LLM inputs for the model.
@@ -200,7 +212,7 @@ class VllmNemotronNano12Bv2VL(VllmPlugin):
 
         """
         message = make_message(prompt)
-        return make_prompt(message, frames, processor)
+        return make_prompt(message, frames, metadata, processor)
 
     @staticmethod
     def make_refined_llm_request(
@@ -234,10 +246,13 @@ class VllmNemotronNano12Bv2VL(VllmPlugin):
             msg = "Message does not contain video"
             raise ValueError(msg)
 
-        video_frames = request.inputs["multi_modal_data"]["video"]
+        video_frames = request.inputs["multi_modal_data"]["video"][0]
         final_prompt = _refine_prompt + request.caption
 
-        inputs = make_prompt(make_message(final_prompt), video_frames, processor)
+        nemotron_metadata = request.inputs["multi_modal_data"]["video"][1]
+        metadata = nemotron_metadata.__dict__
+
+        inputs = make_prompt(make_message(final_prompt), video_frames, metadata, processor)
 
         return VllmCaptionRequest(
             request_id=secrets.token_hex(8),

@@ -102,7 +102,7 @@ pycuda = "*"
 cvcuda-cu12 = "*" # not available on conda-forge
 flashinfer-python = ">=0.4.0rc3" # not available on conda-forge; pre-release to avoid pynvml dependency
 PyNvVideoCodec = "*" # not available on conda-forge
-vllm = ">=0.11.0" # not available on conda-forge
+vllm = ">=0.11.2" # not available on conda-forge
 
 [feature.legacy-transformers.dependencies]
 flash-attn = "*"
