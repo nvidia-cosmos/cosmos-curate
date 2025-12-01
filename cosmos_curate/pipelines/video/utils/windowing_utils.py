@@ -150,7 +150,7 @@ def split_video_into_windows(  # noqa: PLR0913
 
             index = 0
             for count in frame_counts:
-                video_frames.append(video[index : index + count - 1])
+                video_frames.append(video[index : index + count])
                 index += count
 
         if return_bytes:
