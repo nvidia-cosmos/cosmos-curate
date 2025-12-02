@@ -486,6 +486,7 @@ def split(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912, PLR0915
             window_config.model_does_preprocess = args.qwen_model_does_preprocess
         elif caption_algo == "nemotron":
             vllm_config.stage2_caption = args.nemotron_stage2_caption
+            window_config.model_does_preprocess = True
 
         if caption_algo == "gemini":
             stages += [
