@@ -42,16 +42,10 @@ jobs:
           # Write to a temp file
           echo "$CHANGELOG" > release_notes.md
 
-          # Save multiline output to GITHUB_ENV via file
-          echo "RELEASE_BODY<<EOF" >> $GITHUB_ENV
-          cat release_notes.md >> $GITHUB_ENV
-          echo "EOF" >> $GITHUB_ENV
-
       - name: Create GitHub release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
-          name: Release ${{ github.event.inputs.tag || github.ref_name }}
-          body_path: release_notes.md
+        run: |
+          gh release create ${{ github.event.inputs.tag || github.ref_name }} \
+            --title "Release ${{ github.event.inputs.tag || github.ref_name }}" \
+            --notes-file release_notes.md
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
