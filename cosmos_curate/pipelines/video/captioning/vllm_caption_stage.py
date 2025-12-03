@@ -407,7 +407,7 @@ class VllmCaptionStage(CuratorStage):
         """Set up the model for processing."""
         gpu_stage_startup(self.__class__.__name__, self.resources.gpus, pre_setup=True)
         self._llm = vllm_model(self._vllm_config)
-        self._sampling_params = sampling_params(self._vllm_config)
+        self._sampling_params = sampling_params(self._vllm_config.sampling_config)
         self._processor = auto_processor(self._vllm_config)
         gpu_stage_startup(self.__class__.__name__, self.resources.gpus, pre_setup=False)
 

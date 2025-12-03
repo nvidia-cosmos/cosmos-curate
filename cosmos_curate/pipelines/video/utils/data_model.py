@@ -599,6 +599,35 @@ def get_video_from_task(task: PipelineTask) -> Video:
 
 
 @attrs.define
+class VllmSamplingConfig:
+    """Configuration for vLLM sampling parameters.
+
+    Unless otherwise specified, the vLLM default values are used.
+    The defaults differ to maintain compatibility with the previous configuration.
+
+    Args:
+        presence_penalty: Penalize tokens based on their presence in the generated text.
+        frequency_penalty: Penalize tokens based on their frequency in the generated text.
+        repetition_penalty: Penalize tokens that have been generated previously.
+        temperature: Controls randomness in sampling (higher = more random).
+        top_p: Nucleus sampling threshold.
+        top_k: Top-k sampling parameter (0 = disabled).
+        min_p: Minimum probability threshold for sampling.
+        max_tokens: Maximum number of tokens to generate (None = no limit).
+
+    """
+
+    presence_penalty: float = 0.0
+    frequency_penalty: float = 0.0
+    repetition_penalty: float = 1.05  # vLLM default is 1.0
+    temperature: float = 0.1  # vLLM default is 1.0
+    top_p: float = 0.001  # vLLM default is 1.0
+    top_k: int = 0
+    min_p: float = 0.0
+    max_tokens: int | None = 512  # vLLM default is None
+
+
+@attrs.define
 class VllmConfig:
     """Configuration for a vLLM model.
 
@@ -619,6 +648,7 @@ class VllmConfig:
             If set, model weights will be copied from the default cache location to this
             directory before the model is loaded. This is useful for copying weights to
             faster storage (e.g., local SSD) on compute nodes.
+        sampling_config: Configuration for sampling parameters.
 
     """
 
@@ -626,19 +656,16 @@ class VllmConfig:
     prompt_variant: str = "default"
     prompt_text: str | None = None
     fp8: bool = True
-    max_output_tokens: int = 512
     preprocess: bool = False
     disable_mmcache: bool = False
     num_cpus_for_prepare: float = 2.0
     num_gpus: int = 1
-    temperature: float = 0.1
-    top_p: float = 0.001
-    repetition_penalty: float = 1.05
     batch_size: int = 4
     stage2_caption: bool = False
     stage2_prompt_text: str | None = None
     max_retries: int = 3
     copy_weights_to: pathlib.Path | None = None
+    sampling_config: VllmSamplingConfig = attrs.Factory(VllmSamplingConfig)
 
 
 @attrs.define

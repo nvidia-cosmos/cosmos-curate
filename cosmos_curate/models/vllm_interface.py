@@ -107,7 +107,7 @@ if TYPE_CHECKING:
     from transformers import AutoProcessor
 
     from cosmos_curate.models.vllm_plugin import VllmPlugin
-    from cosmos_curate.pipelines.video.utils.data_model import VllmConfig
+    from cosmos_curate.pipelines.video.utils.data_model import VllmConfig, VllmSamplingConfig
 
 
 # Add new vLLM plugins to _VLLM_PLUGINS
@@ -154,7 +154,7 @@ def vllm_model(config: VllmConfig) -> LLM:
     return _get_vllm_plugin(config.model_variant).model(config)
 
 
-def sampling_params(config: VllmConfig) -> SamplingParams:
+def sampling_params(config: VllmSamplingConfig) -> SamplingParams:
     """Create a sampling parameters object for the vLLM model.
 
     Args:
@@ -167,8 +167,12 @@ def sampling_params(config: VllmConfig) -> SamplingParams:
     return SamplingParams(
         temperature=config.temperature,
         top_p=config.top_p,
+        top_k=config.top_k,
         repetition_penalty=config.repetition_penalty,
-        max_tokens=config.max_output_tokens,
+        presence_penalty=config.presence_penalty,
+        frequency_penalty=config.frequency_penalty,
+        min_p=config.min_p,
+        max_tokens=config.max_tokens,
         stop_token_ids=[],
         output_kind=RequestOutputKind.FINAL_ONLY,
     )

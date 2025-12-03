@@ -27,7 +27,9 @@ from __future__ import annotations
 import argparse
 import pathlib
 import time
+from typing import Any
 
+import attrs
 from loguru import logger
 
 from cosmos_curate.core.interfaces.pipeline_interface import run_pipeline
@@ -90,7 +92,7 @@ from cosmos_curate.pipelines.video.read_write.remux_stages import RemuxStage
 from cosmos_curate.pipelines.video.read_write.summary_writers import (
     write_split_summary,
 )
-from cosmos_curate.pipelines.video.utils.data_model import SplitPipeTask, VllmConfig, WindowConfig
+from cosmos_curate.pipelines.video.utils.data_model import SplitPipeTask, VllmConfig, VllmSamplingConfig, WindowConfig
 from cosmos_curate.pipelines.video.utils.decoder_utils import FrameExtractionPolicy
 from cosmos_curate.pipelines.video.utils.video_pipe_input import (
     extract_split_tasks,
@@ -238,6 +240,17 @@ def get_embedding_stages(args: argparse.Namespace) -> list[CuratorStage | Curato
         error_msg = f"{args.embedding_algorithm} embedding algorithm not implemented."
         raise NotImplementedError(error_msg)
     return stages
+
+
+def _get_vllm_sampling_defaults() -> dict[str, Any]:
+    """Get default values from VllmSamplingConfig.
+
+    Returns:
+        Dictionary mapping field names to default values.
+
+    """
+    default_config = VllmSamplingConfig()
+    return {field.name: getattr(default_config, field.name) for field in attrs.fields(VllmSamplingConfig)}
 
 
 def split(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912, PLR0915
@@ -443,14 +456,35 @@ def split(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912, PLR0915
             msg = f"Unsupported captioning algorithm: {caption_algo}"
             raise RuntimeError(msg)
 
+        # Use vllm_sampling_max_tokens if provided, otherwise fall back to captioning_max_output_tokens
+        max_tokens = (
+            args.vllm_sampling_max_tokens
+            if args.vllm_sampling_max_tokens is not None
+            else args.captioning_max_output_tokens
+        )
+
+        if max_tokens < 0:
+            max_tokens = None
+
+        sampling_config = VllmSamplingConfig(
+            temperature=args.vllm_sampling_temperature,
+            top_p=args.vllm_sampling_top_p,
+            top_k=args.vllm_sampling_top_k,
+            repetition_penalty=args.vllm_sampling_repetition_penalty,
+            presence_penalty=args.vllm_sampling_presence_penalty,
+            frequency_penalty=args.vllm_sampling_frequency_penalty,
+            min_p=args.vllm_sampling_min_p,
+            max_tokens=max_tokens,
+        )
+
         vllm_config = VllmConfig(
             model_variant=args.captioning_algorithm,
             prompt_variant=args.captioning_prompt_variant,
             prompt_text=args.captioning_prompt_text,
-            max_output_tokens=args.captioning_max_output_tokens,
             num_cpus_for_prepare=args.vllm_prepare_num_cpus_per_worker,
             max_retries=args.vllm_max_retries,
             copy_weights_to=pathlib.Path(args.copy_weights_to) if args.copy_weights_to else None,
+            sampling_config=sampling_config,
         )
 
         window_config = WindowConfig(
@@ -1322,6 +1356,57 @@ def _setup_parser(parser: argparse.ArgumentParser) -> None:  # noqa: PLR0915
         default=False,
         help="If set, generated captions are used as input prompts again into Nemotron to refine them",
     )
+    # vLLM sampling parameters - get defaults from VllmSamplingConfig
+    sampling_defaults = _get_vllm_sampling_defaults()
+    parser.add_argument(
+        "--vllm-sampling-temperature",
+        type=float,
+        default=sampling_defaults["temperature"],
+        help="Temperature for vLLM sampling (higher = more random).",
+    )
+    parser.add_argument(
+        "--vllm-sampling-top-p",
+        type=float,
+        default=sampling_defaults["top_p"],
+        help="Top-p (nucleus sampling) parameter for vLLM.",
+    )
+    parser.add_argument(
+        "--vllm-sampling-top-k",
+        type=int,
+        default=sampling_defaults["top_k"],
+        help="Top-k sampling parameter for vLLM (0 = disabled).",
+    )
+    parser.add_argument(
+        "--vllm-sampling-repetition-penalty",
+        type=float,
+        default=sampling_defaults["repetition_penalty"],
+        help="Repetition penalty for vLLM sampling.",
+    )
+    parser.add_argument(
+        "--vllm-sampling-presence-penalty",
+        type=float,
+        default=sampling_defaults["presence_penalty"],
+        help="Presence penalty for vLLM sampling.",
+    )
+    parser.add_argument(
+        "--vllm-sampling-frequency-penalty",
+        type=float,
+        default=sampling_defaults["frequency_penalty"],
+        help="Frequency penalty for vLLM sampling.",
+    )
+    parser.add_argument(
+        "--vllm-sampling-min-p",
+        type=float,
+        default=sampling_defaults["min_p"],
+        help="Minimum probability threshold for vLLM sampling.",
+    )
+    parser.add_argument(
+        "--vllm-sampling-max-tokens",
+        type=int,
+        default=sampling_defaults["max_tokens"],
+        help="Maximum number of tokens to generate (-1 = no limit).",
+    )
+
     # add common args applicable to all pipelines
     add_common_args(parser)
 

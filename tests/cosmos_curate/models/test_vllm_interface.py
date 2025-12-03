@@ -19,7 +19,12 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from cosmos_curate.core.utils.model import conda_utils
-from cosmos_curate.pipelines.video.utils.data_model import VllmCaptionRequest, VllmConfig, WindowConfig
+from cosmos_curate.pipelines.video.utils.data_model import (
+    VllmCaptionRequest,
+    VllmConfig,
+    VllmSamplingConfig,
+    WindowConfig,
+)
 
 if conda_utils.is_running_in_env("unified"):
     import torch
@@ -80,20 +85,22 @@ def test_sampling_params() -> None:
     temperature = 0.1
     top_p = 0.2
     repetition_penalty = 1.3
-    max_output_tokens = 1024
+    max_tokens = 1024
     vllm_config = VllmConfig(
         model_variant="mock",
-        temperature=temperature,
-        top_p=top_p,
-        repetition_penalty=repetition_penalty,
-        max_output_tokens=max_output_tokens,
+        sampling_config=VllmSamplingConfig(
+            temperature=temperature,
+            top_p=top_p,
+            repetition_penalty=repetition_penalty,
+            max_tokens=max_tokens,
+        ),
     )
-    sp = sampling_params(vllm_config)
+    sp = sampling_params(vllm_config.sampling_config)
     assert isinstance(sp, SamplingParams)
     assert sp.temperature == temperature
     assert sp.top_p == top_p
     assert sp.repetition_penalty == repetition_penalty
-    assert sp.max_tokens == max_output_tokens
+    assert sp.max_tokens == max_tokens
 
 
 @pytest.mark.env("unified")
@@ -210,7 +217,7 @@ def test_caption_no_inflight_batching(*, stage2: bool) -> None:
     vllm_config = VllmConfig(model_variant="mock")
     model = vllm_model(vllm_config)
     processor = auto_processor(vllm_config)
-    sp = sampling_params(vllm_config)
+    sp = sampling_params(vllm_config.sampling_config)
 
     model_inputs = [{"a": 1}, {"b": 2}]
     stage2_prompts: list[str | None] = [None, None] if not stage2 else ["ref", "ref"]
@@ -258,7 +265,7 @@ def test_caption_inflight_batching(*, stage2: bool) -> None:
     vllm_config = VllmConfig(model_variant="mock")
     model = vllm_model(vllm_config)
     processor = auto_processor(vllm_config)
-    sp = sampling_params(vllm_config)
+    sp = sampling_params(vllm_config.sampling_config)
 
     model_inputs = [{"a": 1}, {"b": 2}]
     stage2_prompts: list[str | None] = [None, None] if not stage2 else ["ref", "ref"]
