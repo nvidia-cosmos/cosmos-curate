@@ -760,7 +760,7 @@ class EnhanceCaptionStage(CuratorStage):
         prompt_variants: list[str] | None = None,
         prompt_text: str | None = None,
         batch_size: int = 128,
-        azure_deployment: str = "gpt-5-chat-20250807",
+        openai_model: str = "gpt-5.1-20251113",
         fp8_enable: bool = False,  # noqa: FBT001, FBT002
         max_output_tokens: int = 2048,
         verbose: bool = False,  # noqa: FBT001, FBT002
@@ -773,8 +773,7 @@ class EnhanceCaptionStage(CuratorStage):
             prompt_variants: The prompt variants.
             prompt_text: The prompt text.
             batch_size: The batch size.
-            azure_deployment: Azure OpenAI deployment name (only used when model_variant is "azure_openai").
-                Defaults to "gpt-5-chat-20250807".
+            openai_model: OpenAI model name (only used when model_variant is "openai").
             fp8_enable: Whether to use FP8 (only for local models).
             max_output_tokens: The maximum output tokens.
             verbose: If True, log verbose information.
@@ -791,7 +790,7 @@ class EnhanceCaptionStage(CuratorStage):
             model_variant,
             max_output_tokens=max_output_tokens,
             quantization=quantization,
-            azure_deployment=azure_deployment,
+            openai_model=openai_model,
             verbose=verbose,
         )
         self._prompt_variants = ["default"] if prompt_variants is None else prompt_variants

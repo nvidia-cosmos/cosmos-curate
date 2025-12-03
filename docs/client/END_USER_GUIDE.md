@@ -12,7 +12,7 @@
     - [Run the Hello-World Example Pipeline](#run-the-hello-world-example-pipeline)
     - [Run the Reference Video Pipeline](#run-the-reference-video-pipeline)
     - [Use Gemini for Captioning](#use-gemini-for-captioning)
-    - [Enhance Captions with Azure OpenAI](#enhance-captions-with-azure-openai)
+    - [Enhance Captions with OpenAI](#enhance-captions-with-openai)
     - [Generate Dataset for Cosmos-Predict2 Post-Training](#generate-dataset-for-cosmos-predict2-post-training)
     - [Useful Options for Local Run](#useful-options-for-local-run)
   - [Launch Pipelines on Slurm](#launch-pipelines-on-slurm)
@@ -65,7 +65,7 @@ Note that the docker daemon needs to be restarted after the installation of NVID
 
 ## Initial Setup
 
-1. Create a configuration file at `~/.config/cosmos_curate/config.yaml` and put your credentials. The Hugging Face section is required for model downloads; the Gemini and Azure OpenAI sections are optional but needed for their respective captioning features:
+1. Create a configuration file at `~/.config/cosmos_curate/config.yaml` and put your credentials. The Hugging Face section is required for model downloads; the Gemini and OpenAI sections are optional but needed for their respective captioning features:
 
 ```yaml
 huggingface:
@@ -73,10 +73,9 @@ huggingface:
     api_key: "<your-huggingface-token>"
 gemini:
     api_key: "<your-gemini-api-key>"
-azure_openai:
-    api_version: "2025-04-01-preview"
-    azure_endpoint: "https://<your-resource-name>.openai.azure.com/"
-    api_key: "<your-azure-openai-api-key>"
+openai:
+    api_key: "<your-openai-api-key>"
+    base_url: "https://<optional-base-url>/v1"
 ```
 
 2. To use `InternVideo2` embedding model:
@@ -248,12 +247,12 @@ You can further tune the behaviour with:
 
 If Gemini returns block reasons or empty responses, the stage will surface those details in the clip errors.
 
-### Enhance Captions with Azure OpenAI
+### Enhance Captions with OpenAI
 
-For a second-pass refinement of captions you can call Azure OpenAI deployments.
+For a second-pass refinement of captions you can call the OpenAI API.
 
-1. Populate the `azure_openai` section in `~/.config/cosmos_curate/config.yaml` with your Azure endpoint, API version, and key (see [Initial Setup](#initial-setup)).
-2. Launch the pipeline with the enhance caption stage enabled and point it to your deployment:
+1. Populate the `openai` section in `~/.config/cosmos_curate/config.yaml` with your API key (and optional `base_url`).
+2. Launch the pipeline with the enhance caption stage enabled and point it to your model:
 
 ```bash
 cosmos-curate local launch \
@@ -262,12 +261,12 @@ cosmos-curate local launch \
     --input-video-path <input path> \
     --output-clip-path <output path> \
     --enhance-captions \
-    --enhance-captions-lm-variant azure_openai \
-    --enhance-captions-azure-openai-deployment <your-deployment-name> \
+    --enhance-captions-lm-variant openai \
+    --enhance-captions-openai-model gpt-5.1-20251113 \
     --enhance-captions-max-output-tokens 2048
 ```
 
-The deployment name selects the model that Azure serves (for example, `gpt-4o-mini`). You can increase `--enhance-captions-max-output-tokens` if you need longer rewrites; the default `2048` works for most scenarios.
+`--enhance-captions-openai-model` selects the OpenAI API model (default `gpt-5.1-20251113`). Set `openai.base_url` in config if you need to use a custom base URL. You can increase `--enhance-captions-max-output-tokens` if you need longer rewrites; the default `2048` works for most scenarios.
 
 4. **Optionally, Run the Split-Annotate Pipeline via API Endpoint**
 

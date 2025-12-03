@@ -147,6 +147,19 @@ def add_common_args(parser: argparse.ArgumentParser, pipeline_name: str) -> None
             help="Number of clips to caption in one chunk.",
         )
         parser.add_argument(
+            "--enhance-captions-lm-variant",
+            type=str,
+            default="qwen_lm",
+            choices=["qwen_lm", "gpt_oss_20b", "openai"],
+            help="Language model for enhance captioning stage.",
+        )
+        parser.add_argument(
+            "--enhance-captions-openai-model",
+            type=str,
+            default="gpt-5.1-20251113",
+            help="OpenAI model when using --enhance-captions-lm-variant openai.",
+        )
+        parser.add_argument(
             "--qwen-lm-batch-size",
             type=int,
             default=128,

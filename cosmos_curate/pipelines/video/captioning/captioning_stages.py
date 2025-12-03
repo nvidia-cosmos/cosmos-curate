@@ -192,7 +192,7 @@ class EnhanceCaptionStage(CuratorStage):
         prompt_variant: str = "default",
         prompt_text: str | None = None,
         batch_size: int = 32,
-        azure_deployment: str = "gpt-5-chat-20250807",
+        openai_model: str = "gpt-5.1-20251113",
         *,
         fp8_enable: bool = False,
         max_output_tokens: int = 2048,
@@ -203,12 +203,11 @@ class EnhanceCaptionStage(CuratorStage):
 
         Args:
             model_variant: Language model to use for enhancement. One of
-                "qwen_lm", "gpt_oss_20b", or "azure_openai".
+                "qwen_lm", "gpt_oss_20b", or "openai".
             prompt_variant: Type of prompt to use.
             prompt_text: Custom prompt text if provided.
             batch_size: Number of samples to process in parallel.
-            azure_deployment: Azure OpenAI deployment name (only used when model_variant is "azure_openai").
-                Defaults to "gpt-5-chat-20250807".
+            openai_model: OpenAI model name (only used when model_variant is "openai").
             fp8_enable: Whether to enable FP8 precision (only for local models).
             max_output_tokens: Maximum number of tokens to generate.
             verbose: Whether to print verbose logs.
@@ -226,7 +225,7 @@ class EnhanceCaptionStage(CuratorStage):
             model_variant,
             max_output_tokens=max_output_tokens,
             quantization=quantization,
-            azure_deployment=azure_deployment,
+            openai_model=openai_model,
             verbose=verbose,
         )
         self._prompt_variant = prompt_variant

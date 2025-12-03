@@ -105,9 +105,11 @@ def build_caption_pipeline_stages(
     if enhance_caption:
         stages.append(
             EnhanceCaptionStage(
+                model_variant=args.enhance_captions_lm_variant,
                 batch_size=args.qwen_lm_batch_size,
                 fp8_enable=args.qwen_lm_use_fp8_weights,
                 max_output_tokens=args.captioning_max_output_tokens,
+                openai_model=args.enhance_captions_openai_model,
                 prompt_variants=args.prompt_types,
                 prompt_text=None,
                 verbose=args.verbose,

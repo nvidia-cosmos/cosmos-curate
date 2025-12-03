@@ -1,16 +1,16 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Chat-focused LM wrapper supporting both local (vLLM) and remote (Azure OpenAI) inference.
+"""Chat-focused LM wrapper supporting both local (vLLM) and remote (OpenAI API) inference.
 
 This module provides a unified implementation for chat-style text generation that can use:
 - Local models via vLLM for on-premises inference
-- Azure OpenAI API for cloud-based inference
+- OpenAI API for hosted inference
 
 Key capabilities:
 - Unified interface for both local and remote models via variant selection
 - For local: Resolves weights/tokenizer and constructs a vLLM `LLM` with optional quantization
-- For remote: Uses Azure OpenAI API with deployment-based model selection
+- For remote: Uses OpenAI API with model selection
 - Formats prompts with chat templates for consistent behavior across backends
 - Supports batching and provides `make_chat_lm_input` helper
 - Designed for the "unified" conda environment and emits NVTX ranges
@@ -22,17 +22,17 @@ from loguru import logger
 from nvtx import nvtx  # type: ignore[import-untyped]
 
 from cosmos_curate.core.interfaces.model_interface import ModelInterface
-from cosmos_curate.core.utils.config.config import load_config
+from cosmos_curate.core.utils.config.config import maybe_load_config
 from cosmos_curate.core.utils.environment import CONTAINER_PATHS_COSMOS_CURATOR_CONFIG_FILE
 from cosmos_curate.core.utils.misc import grouping
 from cosmos_curate.core.utils.model import conda_utils, model_utils
 
 if TYPE_CHECKING:
-    from openai import AzureOpenAI
+    from openai import OpenAI as OpenAIClient
     from vllm.model_executor.layers.quantization import QuantizationMethods
 
 if conda_utils.is_running_in_env("unified"):
-    from openai import AzureOpenAI
+    from openai import OpenAI as OpenAIClient
     from transformers import AutoTokenizer
     from vllm import LLM, SamplingParams
 
@@ -43,11 +43,11 @@ _VARIANT_TO_MODEL_ID: dict[str, str] = {
 }
 
 _LOCAL_VARIANTS = {"qwen_lm", "gpt_oss_20b"}
-_REMOTE_VARIANTS = {"azure_openai"}
+_REMOTE_VARIANTS = {"openai"}
 
 
 class ChatLM(ModelInterface):
-    """Unified chat LM supporting both local (vLLM) and remote (Azure OpenAI) backends."""
+    """Unified chat LM supporting both local (vLLM) and remote (OpenAI API) backends."""
 
     def __init__(
         self,
@@ -55,19 +55,18 @@ class ChatLM(ModelInterface):
         *,
         max_output_tokens: int = 2048,
         quantization: str | None = None,
-        azure_deployment: str = "gpt-5-chat-20250807",
+        openai_model: str = "gpt-5.1-20251113",
         verbose: bool = False,
     ) -> None:
         """Initialize the ChatLM.
 
         Args:
-            model_variant: Short variant key (e.g., "qwen_lm", "azure_openai").
+            model_variant: Short variant key (e.g., "qwen_lm", "openai").
             max_output_tokens: Maximum tokens to generate per prompt.
             quantization: Optional quantization override for vLLM (e.g., "fp8").
                 Only applies to local variants. If None, vLLM uses the model's config-defined quantization.
-            azure_deployment: Azure OpenAI deployment name (only used when model_variant is "azure_openai").
-                Defaults to "gpt-5-chat-20250807".
-            verbose: Whether to emit verbose debug logs (e.g., Azure request metadata).
+            openai_model: OpenAI API model name (only used when model_variant is "openai").
+            verbose: Whether to emit verbose debug logs (e.g., OpenAI request metadata).
 
         """
         super().__init__()
@@ -82,7 +81,8 @@ class ChatLM(ModelInterface):
         self._model_id = _VARIANT_TO_MODEL_ID.get(model_variant) if self._is_local else None
         self.max_output_tokens = max_output_tokens
         self._quantization = cast("QuantizationMethods | None", quantization)
-        self._azure_deployment = azure_deployment
+        self._openai_model = openai_model
+        self._openai_base_url: str | None = None
         self._temperature = 0.1
         self._top_p = 0.001
         self._verbose = verbose
@@ -93,9 +93,9 @@ class ChatLM(ModelInterface):
                 f"quantization parameter ('{quantization}') is ignored for remote model variant '{model_variant}'"
             )
 
-        # Early validation for Azure OpenAI to fail fast
+        # Early validation for OpenAI to fail fast
         if self._is_remote:
-            self._resolve_azure_openai_settings()
+            self._resolve_openai_settings()
 
     @property
     def conda_env_name(self) -> str:
@@ -121,36 +121,32 @@ class ChatLM(ModelInterface):
         # Remote API models don't require local weight downloads
         return []
 
-    @staticmethod
-    def _resolve_azure_openai_settings() -> tuple[str, str, str]:
-        """Load Azure OpenAI settings from the cosmos-curate config file.
+    def _resolve_openai_settings(self) -> tuple[str, str | None]:
+        """Load OpenAI settings from the cosmos-curate config file.
 
         Returns:
-            Tuple of (api_version, azure_endpoint, api_key).
+            Tuple of (api_key, base_url).
 
         """
-        config = load_config()
-        if config.azure_openai is None:
+        config = maybe_load_config()
+        if config is None or config.openai is None:
             error_msg = (
-                f"Azure OpenAI configuration not found. Ensure {CONTAINER_PATHS_COSMOS_CURATOR_CONFIG_FILE} contains "
-                "azure_openai.api_version, azure_openai.azure_endpoint, and azure_openai.api_key."
+                "OpenAI configuration not found. Provide openai.api_key in "
+                f"{CONTAINER_PATHS_COSMOS_CURATOR_CONFIG_FILE}"
             )
             raise RuntimeError(error_msg)
 
-        api_version = config.azure_openai.api_version
-        if not api_version:
-            error_msg = "Azure OpenAI API version missing from config file."
-            raise RuntimeError(error_msg)
-        azure_endpoint = config.azure_openai.azure_endpoint
-        if not azure_endpoint:
-            error_msg = "Azure OpenAI endpoint missing from config file."
-            raise RuntimeError(error_msg)
-        api_key = config.azure_openai.api_key
+        api_key = config.openai.api_key
+        base_url = config.openai.base_url
+
         if not api_key:
-            error_msg = "Azure OpenAI API key missing from config file."
+            error_msg = (
+                "OpenAI configuration not found. Provide openai.api_key in "
+                f"{CONTAINER_PATHS_COSMOS_CURATOR_CONFIG_FILE}"
+            )
             raise RuntimeError(error_msg)
 
-        return api_version, azure_endpoint, api_key
+        return api_key, base_url
 
     @nvtx.annotate("Setup Chat LM model")  # type: ignore[misc]
     def setup(self) -> None:
@@ -182,15 +178,14 @@ class ChatLM(ModelInterface):
             self.tokenizer = AutoTokenizer.from_pretrained(self.weight_file)  # type: ignore[no-untyped-call]
 
         elif self._is_remote:
-            # Set up Azure OpenAI client
-            version, endpoint, key = self._resolve_azure_openai_settings()
-            self.azure_client: AzureOpenAI = AzureOpenAI(
-                api_version=version,
-                azure_endpoint=endpoint,
-                azure_deployment=self._azure_deployment,
-                api_key=key,
-            )
-            # For Azure OpenAI, we'll format messages manually in generate()
+            # Set up OpenAI client
+            api_key, base_url = self._resolve_openai_settings()
+            self._openai_base_url = base_url
+            client_kwargs: dict[str, object] = {"api_key": api_key}
+            if base_url:
+                client_kwargs["base_url"] = base_url
+            self.openai_client: OpenAIClient = OpenAIClient(**client_kwargs)  # type: ignore[arg-type]
+            # For OpenAI API, we'll format messages manually in generate()
 
     @nvtx.annotate("Chat LM Generate tokens")  # type: ignore[misc]
     def generate(
@@ -229,81 +224,60 @@ class ChatLM(ModelInterface):
         return generated_text
 
     def _generate_remote(self, prompts: list[list[dict[str, str]]], batch_size: int | None) -> list[str]:
-        """Generate text using Azure OpenAI API."""
+        """Generate text using OpenAI API."""
         if not prompts:
             return []
+        # batch_size retained for interface parity; OpenAI API processes one conversation at a time.
+        _ = batch_size
 
-        chunk_size = batch_size or len(prompts)
         outputs: list[str] = []
 
-        for chunk_start in range(0, len(prompts), chunk_size):
-            chunk = prompts[chunk_start : chunk_start + chunk_size]
-            # The OpenAI Chat Completions API processes one conversation at a time
-            for message_bundle in chunk:
-                messages: list[dict[str, str]] = [
-                    {"role": message["role"], "content": message["content"]} for message in message_bundle
-                ]
-                try:
-                    if self._verbose:
+        for message_bundle in prompts:
+            messages: list[dict[str, str]] = [
+                {"role": message["role"], "content": str(message["content"])} for message in message_bundle
+            ]
+            try:
+                if self._verbose:
+                    logger.info(
+                        "OpenAI request (model='{}', messages={}, roles={}, max_output_tokens={}, base_url={})",
+                        self._openai_model,
+                        len(messages),
+                        [msg["role"] for msg in messages],
+                        self.max_output_tokens,
+                        self._openai_base_url,
+                    )
+                response = self.openai_client.responses.create(
+                    model=self._openai_model,
+                    input=messages,  # type: ignore[arg-type]
+                    max_output_tokens=self.max_output_tokens,
+                )
+                usage_info = getattr(response, "usage", None)
+                if self._verbose:
+                    if usage_info:
                         logger.info(
-                            (
-                                "Azure OpenAI request (deployment='{}', messages={}, roles={}, "
-                                "max_tokens={}, temperature={}, top_p={})"
-                            ),
-                            self._azure_deployment,
-                            len(messages),
-                            [msg["role"] for msg in messages],
-                            self.max_output_tokens,
-                            self._temperature,
-                            self._top_p,
+                            ("OpenAI response usage (model='{}', input_tokens={}, output_tokens={}, total_tokens={})"),
+                            self._openai_model,
+                            getattr(usage_info, "input_tokens", None),
+                            getattr(usage_info, "output_tokens", None),
+                            getattr(usage_info, "total_tokens", None),
                         )
-                    response = self.azure_client.chat.completions.create(
-                        model=self._azure_deployment,
-                        messages=messages,  # type: ignore[arg-type]
-                        max_tokens=self.max_output_tokens,
-                        temperature=self._temperature,
-                        top_p=self._top_p,
-                    )
-                    usage_info = getattr(response, "usage", None)
-                    if self._verbose:
-                        if usage_info:
-                            logger.info(
-                                (
-                                    "Azure OpenAI response usage (deployment='{}', prompt_tokens={}, "
-                                    "completion_tokens={}, total_tokens={})"
-                                ),
-                                self._azure_deployment,
-                                getattr(usage_info, "prompt_tokens", None),
-                                getattr(usage_info, "completion_tokens", None),
-                                getattr(usage_info, "total_tokens", None),
-                            )
-                        else:
-                            logger.info(
-                                "Azure OpenAI response (deployment='{}') returned without usage metadata",
-                                self._azure_deployment,
-                            )
-                except Exception as exc:  # noqa: BLE001  # pragma: no cover
-                    logger.error(
-                        "Azure OpenAI API call failed for deployment {}: {}",
-                        self._azure_deployment,
-                        exc,
-                    )
-                    outputs.append("")
-                    continue
-
-                if not response.choices:
-                    logger.warning(
-                        "Azure OpenAI API returned no choices for deployment {}",
-                        self._azure_deployment,
-                    )
-                    outputs.append("")
-                    continue
-
-                choice = response.choices[0]
-                content = ""
-                if choice.message and choice.message.content:
-                    content = choice.message.content
-                outputs.append(content)
+                    else:
+                        logger.info(
+                            "OpenAI response (model='{}') returned without usage metadata",
+                            self._openai_model,
+                        )
+            except Exception as exc:  # noqa: BLE001  # pragma: no cover
+                logger.error(
+                    "OpenAI API call failed for model {}: {}",
+                    self._openai_model,
+                    exc,
+                )
+                outputs.append("")
+                continue
+            content = getattr(response, "output_text", "")
+            if not content:
+                logger.warning("OpenAI API returned empty output for model {}", self._openai_model)
+            outputs.append(content)
 
         return outputs
 

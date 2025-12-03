@@ -29,24 +29,11 @@ from cosmos_curate.core.utils.environment import CONTAINER_PATHS_COSMOS_CURATOR_
 
 
 @attrs.define
-class OpenAI:
-    """A class to represent and interact with OpenAI configuration details."""
+class OpenAIConfig:
+    """Configuration for OpenAI API access."""
 
-    user: str = attrs.field(repr=True)
     api_key: str = attrs.field(repr=False)
-
-
-@attrs.define
-class AzureOpenAI:
-    """A class to represent and interact with Azure OpenAI configuration details.
-
-    Note: api_version should typically be "2025-04-01-preview" for Azure OpenAI.
-    The deployment name (model selection) is passed as a runtime parameter, not stored in config.
-    """
-
-    api_version: str = attrs.field(repr=True)
-    azure_endpoint: str = attrs.field(repr=True)
-    api_key: str = attrs.field(repr=False)
+    base_url: str | None = attrs.field(default=None, repr=True)
 
 
 @attrs.define
@@ -88,10 +75,9 @@ class ConfigFileData:
     The config file is stored at ~/.config/cosmos_curate/config.yaml. An example config file is:
 
     ``` yaml
-    azure_openai:
-        api_version: "2025-04-01-preview"
-        azure_endpoint: "https://..."
+    openai:
         api_key: "xyz"
+        base_url: "https://custom.base.url/v1"
     gemini:
         api_key: "xyz"
     huggingface:
@@ -106,8 +92,7 @@ class ConfigFileData:
     ```
     """
 
-    open_ai: OpenAI | None = None
-    azure_openai: AzureOpenAI | None = None
+    openai: OpenAIConfig | None = None
     gemini: Gemini | None = None
     huggingface: Huggingface | None = None
     postgres: Postgres | None = None

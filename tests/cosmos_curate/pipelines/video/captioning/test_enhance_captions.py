@@ -22,7 +22,7 @@ import pytest
 
 from cosmos_curate.core.interfaces.pipeline_interface import run_pipeline
 from cosmos_curate.core.interfaces.runner_interface import RunnerInterface
-from cosmos_curate.core.utils.config.config import ConfigFileData
+from cosmos_curate.core.utils.config.config import ConfigFileData, OpenAIConfig
 from cosmos_curate.pipelines.video.captioning.captioning_stages import (  # type: ignore[import-untyped]
     EnhanceCaptionStage,
 )
@@ -35,7 +35,7 @@ from cosmos_curate.pipelines.video.utils.data_model import (  # type: ignore[imp
 
 
 @pytest.mark.env("unified")
-@pytest.mark.parametrize("model_variant", ["qwen_lm", "gpt_oss_20b", "azure_openai"])
+@pytest.mark.parametrize("model_variant", ["qwen_lm", "gpt_oss_20b", "openai"])
 def test_enhance_caption_lm_variants(
     model_variant: str,
     sequential_runner: RunnerInterface,
@@ -66,12 +66,10 @@ def test_enhance_caption_lm_variants(
     video = Video(input_video=pathlib.Path("sample_video.mp4"), clips=clips)
     task = SplitPipeTask(video=video)
 
-    if model_variant == "azure_openai":
-        monkeypatch.setenv("OPENAI_API_KEY", "test-key")
-
+    if model_variant == "openai":
         monkeypatch.setattr(
-            "cosmos_curate.models.chat_lm.ChatLM._resolve_azure_openai_settings",
-            staticmethod(lambda: ("2025-04-01-preview", "https://fake.endpoint", "fake-key")),
+            "cosmos_curate.models.chat_lm.maybe_load_config",
+            lambda: ConfigFileData(openai=OpenAIConfig(api_key="fake-key", base_url="https://fake.endpoint")),
         )
 
         def _fake_generate_remote(
@@ -105,12 +103,12 @@ def test_enhance_caption_lm_variants(
         assert len(enhanced) > len(base_captions[i])
 
 
-def test_azure_openai_variant_requires_config(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_openai_variant_requires_config(monkeypatch: pytest.MonkeyPatch) -> None:
     """Remote enhance caption variant should fail fast without credentials."""
-    monkeypatch.setattr("cosmos_curate.models.chat_lm.load_config", lambda: ConfigFileData(azure_openai=None))
+    monkeypatch.setattr("cosmos_curate.models.chat_lm.maybe_load_config", lambda: ConfigFileData(openai=None))
 
     with pytest.raises(
         RuntimeError,
-        match="Azure OpenAI configuration not found",
+        match="OpenAI configuration not found",
     ):
-        EnhanceCaptionStage(model_variant="azure_openai")
+        EnhanceCaptionStage(model_variant="openai")
