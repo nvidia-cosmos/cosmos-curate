@@ -2,6 +2,14 @@
 
 ## Latest
 
+## [1.1.9]
+
+### Released
+- 2025-12-xx
+
+### Fixed
+- Fixed Nemotron-Nano VL as the captioning algorithm.
+
 ## [1.1.8]
 
 ### Released
