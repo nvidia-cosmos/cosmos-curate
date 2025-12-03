@@ -64,8 +64,6 @@ variables:
   NVCF_PROD_IMAGE: "nvcr.io/${NGC_NVCF_ORG}/${NVCF_PROD_BASE_IMAGE}"  # Complete NVCF prod image path
 
   # AWS configuration
-  AWS_ACCESS_KEY_ID: "$AWS_ACCESS_KEY_ID"
-  AWS_SECRET_ACCESS_KEY: "$AWS_SECRET_ACCESS_KEY"
   AWS_DEFAULT_REGION: "$AWS_DEFAULT_REGION"
   S3_INPUT_VIDEO_PATH: "s3://${AWS_S3_BUCKET_NAME}/cicd-curator-oss/raw_videos/samples"
   S3_OUTPUT_PATH: "s3://${AWS_S3_BUCKET_NAME}/cicd-curator-oss/output/${CI_PIPELINE_ID}"
@@ -382,6 +380,9 @@ gpu_tests:
 # Run end-to-end pipelines on SLURM cluster
 slurm_end_to_end:
   stage: end-to-end
+  id_tokens:
+    VAULT_JWT_TOKEN:
+      aud: ${VAULT_ADDR}
   needs: [ "build_deploy_curator" ]
   rules: *merge_result_and_web_rules
   tags:
@@ -392,6 +393,7 @@ slurm_end_to_end:
     SLURM_E2E_S3_PROFILE_NAME: "default"
   before_script:
     # Install tools directly without micromamba (SLURM runner doesn't have it)
+    - source .gitlab/vault/vault-auth.sh
     - python3 -m venv venv
     - source venv/bin/activate
     - pip install --upgrade pip

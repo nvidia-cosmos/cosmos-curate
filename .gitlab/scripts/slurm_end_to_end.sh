@@ -135,6 +135,12 @@ validate_path() {
     if aws s3 ls "${target}" >/dev/null 2>&1; then
       echo "Validated S3 object ${target}"
       return 0
+    else
+      set +e
+      aws s3 ls "${target}"
+      echo "AWS ls result is $?"
+      aws configure get aws_access_key_id
+      set -e
     fi
     echo "Waiting for ${target} to appear in S3 (${attempt}/${retries})..."
     sleep 5
