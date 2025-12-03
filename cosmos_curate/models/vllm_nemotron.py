@@ -24,7 +24,6 @@ import numpy as np
 import numpy.typing as npt
 import torch
 from transformers import AutoProcessor
-from transformers.video_utils import VideoMetadata
 from vllm import LLM, RequestOutput
 
 from cosmos_curate.models.vllm_plugin import VllmPlugin
@@ -124,13 +123,13 @@ def make_prompt(
         [message], add_generation_prompt=True, tokenize=True, return_tensors="pt"
     )[0].tolist()
 
-    nemotron_metadata = VideoMetadata(
-        total_num_frames=frames.shape[0],
-        fps=metadata["fps"],
-        duration=metadata["duration"],
-        frames_indices=metadata["frames_indices"],  # type: ignore[call-arg]
-        video_backend=metadata["video_backend"],
-    )
+    nemotron_metadata = {
+        "total_num_frames": frames.shape[0],
+        "fps": metadata["fps"],
+        "duration": metadata["duration"],
+        "frames_indices": metadata["frames_indices"],
+        "video_backend": metadata["video_backend"],
+    }
 
     return {
         "prompt_token_ids": prompt_ids,
@@ -189,6 +188,7 @@ class VllmNemotronNano12Bv2VL(VllmPlugin):
         processor = AutoProcessor.from_pretrained(  # type: ignore[no-untyped-call]
             str(cls.model_path(config)),
             trust_remote_code=TRUST_REMOTE_CODE,
+            use_fast=False,  # No fast processor available for nemotron, be explicit to silence warnings.
         )
         return cast("AutoProcessor", processor)
 
@@ -250,7 +250,8 @@ class VllmNemotronNano12Bv2VL(VllmPlugin):
         final_prompt = _refine_prompt + request.caption
 
         nemotron_metadata = request.inputs["multi_modal_data"]["video"][1]
-        metadata = nemotron_metadata.__dict__
+        # nemotron_metadata is now a dict (converted in make_prompt to avoid pickle issues)
+        metadata = nemotron_metadata if isinstance(nemotron_metadata, dict) else nemotron_metadata.__dict__
 
         inputs = make_prompt(make_message(final_prompt), video_frames, metadata, processor)
 

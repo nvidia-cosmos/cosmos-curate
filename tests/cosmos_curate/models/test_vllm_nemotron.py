@@ -57,7 +57,7 @@ def test_make_llm_input_nemotron() -> None:
     assert "video" in result["multi_modal_data"]
     assert result["prompt_token_ids"] == [1, 2, 3, 4, 5]  # Should be the token IDs as list
     assert result["multi_modal_data"]["video"][0].shape == (N, H, W, C)
-    assert result["multi_modal_data"]["video"][1].fps == metadata["fps"]
+    assert result["multi_modal_data"]["video"][1]["fps"] == metadata["fps"]
 
 
 @pytest.mark.env("unified")
@@ -97,4 +97,4 @@ def test_make_prompt() -> None:
     result = make_prompt(message, frames, metadata, mock_processor)
     assert result["prompt_token_ids"] == [10, 20, 30, 40]  # Should be the token IDs as list
     assert result["multi_modal_data"]["video"][0].shape == (N, H, W, C)
-    assert result["multi_modal_data"]["video"][1].fps == metadata["fps"]
+    assert result["multi_modal_data"]["video"][1]["fps"] == metadata["fps"]
