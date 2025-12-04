@@ -316,7 +316,28 @@ class VllmPrepStage(CuratorStage):
         )
 
         metadata = make_metadata(frames, self._window_config)
-        llm_inputs = make_model_inputs(frames, metadata, self._vllm_config, self._processor, prompt)
+
+        # Create debug identifiers for frame organization
+        debug_window_ids = None
+        if self._vllm_config.debug_save_frames:
+            debug_window_ids = []
+            for window in windows:
+                # Find which clip this window belongs to
+                clip_uuid = "unknown_clip"
+                for clip in video.clips:
+                    if window in clip.windows:
+                        clip_uuid = str(clip.uuid)
+                        break
+                debug_window_ids.append(clip_uuid)
+
+        llm_inputs = make_model_inputs(
+            frames,
+            metadata,
+            self._vllm_config,
+            self._processor,
+            prompt,
+            debug_window_ids=debug_window_ids,
+        )
 
         for window, llm_input in zip(windows, llm_inputs, strict=True):
             window.model_input[self._vllm_config.model_variant] = llm_input

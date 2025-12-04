@@ -649,6 +649,8 @@ class VllmConfig:
             directory before the model is loaded. This is useful for copying weights to
             faster storage (e.g., local SSD) on compute nodes.
         sampling_config: Configuration for sampling parameters.
+        debug_save_frames: Whether to save video frames as PNGs for debugging.
+        debug_frames_output_dir: Directory to save debug frame PNGs. Required if debug_save_frames is True.
 
     """
 
@@ -666,6 +668,8 @@ class VllmConfig:
     max_retries: int = 3
     copy_weights_to: pathlib.Path | None = None
     sampling_config: VllmSamplingConfig = attrs.Factory(VllmSamplingConfig)
+    debug_save_frames: bool = False
+    debug_frames_output_dir: pathlib.Path | None = None
 
 
 @attrs.define

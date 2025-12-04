@@ -92,6 +92,9 @@ from typing import (  # noqa: UP035, remove noqa when we drop support for python
     cast,
 )
 
+import numpy as np
+from loguru import logger
+from PIL import Image
 from vllm import LLM, PoolingOutput, PoolingRequestOutput, RequestOutput, SamplingParams
 from vllm.sampling_params import RequestOutputKind
 
@@ -103,6 +106,8 @@ from cosmos_curate.models.vllm_qwen import VllmQwen7B
 from cosmos_curate.pipelines.video.utils.data_model import VllmCaptionRequest, WindowConfig
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     import torch
     from transformers import AutoProcessor
 
@@ -139,6 +144,69 @@ def _get_vllm_plugin(variant: str) -> VllmPlugin:
         msg = f"vLLM model variant {variant} not supported"
         raise ValueError(msg)
     return cast("VllmPlugin", plugin)
+
+
+def _save_frames_as_pngs(
+    frames: torch.Tensor,
+    output_dir: Path,
+    prefix: str,
+) -> None:
+    """Save video frames as PNG files for debugging.
+
+    Args:
+        frames: Tensor of shape [num_frames, C, H, W] containing video frames.
+        output_dir: Directory to save the PNG files.
+        prefix: Prefix for the PNG filenames (e.g., "frame" or "window_0_frame").
+
+    """
+    # Create output directory if it doesn't exist
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # frames shape: [num_frames, C, H, W]
+    num_frames = frames.shape[0]
+    logger.info(f"Saving {num_frames} frames to {output_dir} with prefix '{prefix}' {frames.shape=}")
+
+    RGB_CHANNELS = 3
+    GRAYSCALE_CHANNELS = 1
+    MAX_NORMALIZED_VALUE = 1.0
+    PNG_MAX_VALUE = 255
+
+    for frame_idx in range(num_frames):
+        frame = frames[frame_idx]  # shape: [C, H, W]
+
+        # Convert from torch tensor to numpy
+        # Assuming frame is in [C, H, W] format with values in [0, 255] or [0, 1]
+        frame_np = frame.cpu().numpy()
+
+        # Convert from [C, H, W] to [H, W, C]
+        frame_np = np.transpose(frame_np, (1, 2, 0))
+
+        # Ensure values are in [0, 255] range
+        frame_np = (
+            (frame_np * PNG_MAX_VALUE).astype(np.uint8)
+            if frame_np.max() <= MAX_NORMALIZED_VALUE
+            else frame_np.astype(np.uint8)
+        )
+
+        # Handle grayscale (single channel) or RGB
+        if frame_np.shape[2] == GRAYSCALE_CHANNELS:
+            frame_np = frame_np.squeeze(2)
+            img = Image.fromarray(frame_np, mode="L")
+        elif frame_np.shape[2] == RGB_CHANNELS:
+            img = Image.fromarray(frame_np, mode="RGB")
+        else:
+            logger.warning(f"Unexpected number of channels: {frame_np.shape[2]}, skipping frame {frame_idx}")
+            continue
+
+        # Save as PNG - if prefix already ends with "_frame", don't add it again
+        if prefix.endswith("_frame") or prefix == "frame":
+            filename = f"{prefix}_{frame_idx:04d}.png"
+        else:
+            filename = f"{prefix}_frame_{frame_idx:04d}.png"
+        output_path = output_dir / filename
+        img.save(output_path, "PNG")
+
+    logger.info(f"Saved {num_frames} frames to {output_dir}")
 
 
 def vllm_model(config: VllmConfig) -> LLM:
@@ -230,12 +298,14 @@ def make_metadata(frames: Iterable[torch.Tensor], window_config: WindowConfig) -
     return [_make_metadata(frames) for frames in frames]
 
 
-def make_model_inputs(
+def make_model_inputs(  # noqa: PLR0913
     videos: list[torch.Tensor],
     metadata: list[dict[str, Any]],
     config: VllmConfig,
     processor: AutoProcessor,
     prompt: str,
+    *,
+    debug_window_ids: list[str] | None = None,
 ) -> list[dict[str, Any]]:
     """Make model inputs for a list of videos.
 
@@ -245,12 +315,35 @@ def make_model_inputs(
         config: The configuration for the vLLM model.
         processor: The processor to use for the vLLM model.
         prompt: The prompt to use for the vLLM model.
+        debug_window_ids: Optional list of clip UUIDs for organizing debug frames.
+            Frames will be saved to {debug_frames_output_dir}/{clip_uuid}/frame_NNNN.png
 
     Returns:
         A list of LLM inputs for each video
 
     """
     vllm_plugin = _get_vllm_plugin(config.model_variant)
+
+    # Debug: Save frames as PNGs if enabled
+    if config.debug_save_frames:
+        if config.debug_frames_output_dir is None:
+            logger.warning("debug_save_frames is True but debug_frames_output_dir is None, skipping frame saving")
+        else:
+            for idx, frames in enumerate(videos):
+                # Use clip UUID as the subdirectory if provided
+                if debug_window_ids and idx < len(debug_window_ids):
+                    clip_uuid = debug_window_ids[idx]
+                    output_dir = config.debug_frames_output_dir / clip_uuid
+                else:
+                    # Fallback to simple numeric naming
+                    output_dir = config.debug_frames_output_dir / f"window_{idx:04d}"
+
+                _save_frames_as_pngs(
+                    frames,
+                    output_dir,
+                    prefix="frame",
+                )
+
     return [
         vllm_plugin.make_llm_input(prompt, frames, md, processor) for frames, md in zip(videos, metadata, strict=True)
     ]

@@ -14,9 +14,12 @@
 # limitations under the License.
 """Test vllm_interface.py."""
 
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import numpy as np
 import pytest
+from PIL import Image
 
 from cosmos_curate.core.utils.model import conda_utils
 from cosmos_curate.pipelines.video.utils.data_model import (
@@ -35,6 +38,7 @@ if conda_utils.is_running_in_env("unified"):
         _caption_inflight_batching,
         _caption_no_inflight_batching,
         _get_vllm_plugin,
+        _save_frames_as_pngs,
         auto_processor,
         make_metadata,
         make_model_inputs,
@@ -344,3 +348,90 @@ def test_vllm_caption_dispatch(mock_no_ifb: MagicMock, mock_ifb: MagicMock, *, i
         inflight_batching=inflight,
     )
     assert out == (["ifb"] if inflight else ["no_ifb"])
+
+
+@pytest.mark.env("unified")
+@pytest.mark.parametrize(
+    ("shape", "values_normalized", "prefix"),
+    [
+        # RGB frames with normalized values [0, 1]
+        ((3, 3, 64, 64), True, "frame"),
+        # RGB frames with uint8 values [0, 255]
+        ((5, 3, 128, 128), False, "window_0_frame"),
+        # Grayscale frames with normalized values
+        ((2, 1, 32, 32), True, "test_prefix"),
+        # Grayscale frames with uint8 values
+        ((4, 1, 96, 96), False, "frame"),
+        # Single frame RGB
+        ((1, 3, 50, 50), True, "single"),
+        # Prefix already ending with "_frame"
+        ((2, 3, 40, 40), True, "window_5_frame"),
+    ],
+)
+def test_save_frames_as_pngs(
+    shape: tuple[int, int, int, int],
+    *,
+    values_normalized: bool,
+    prefix: str,
+    tmp_path: Path,
+) -> None:
+    """Test _save_frames_as_pngs with various frame configurations.
+
+    Tests:
+    - RGB and grayscale frames
+    - Normalized [0, 1] and uint8 [0, 255] value ranges
+    - Different frame counts, sizes, and prefixes
+    - Correct file naming with prefix handling
+    - PNG files can be loaded and have correct dimensions/channels
+    """
+    num_frames, channels, height, width = shape
+
+    # Create test frames with specified shape
+    if values_normalized:
+        frames = torch.rand((num_frames, channels, height, width))
+    else:
+        frames = torch.randint(0, 256, (num_frames, channels, height, width), dtype=torch.uint8).float()
+
+    output_dir = tmp_path / "frames_output"
+
+    # Call the function
+    _save_frames_as_pngs(frames, output_dir, prefix)
+
+    # Verify output directory was created
+    assert output_dir.exists()
+    assert output_dir.is_dir()
+
+    # Verify correct number of files were created
+    png_files = sorted(output_dir.glob("*.png"))
+    assert len(png_files) == num_frames
+
+    # Verify each frame was saved correctly
+    for frame_idx, png_file in enumerate(png_files):
+        # Check filename format
+        if prefix.endswith("_frame") or prefix == "frame":
+            expected_filename = f"{prefix}_{frame_idx:04d}.png"
+        else:
+            expected_filename = f"{prefix}_frame_{frame_idx:04d}.png"
+        assert png_file.name == expected_filename
+
+        # Load the saved image and verify properties
+        img = Image.open(png_file)
+        assert img.size == (width, height)
+
+        # Verify channel count
+        if channels == 1:
+            assert img.mode == "L"  # Grayscale
+        elif channels == 3:
+            assert img.mode == "RGB"
+
+        # Convert to numpy and verify value range
+        img_array = np.array(img)
+        assert img_array.dtype == np.uint8
+        assert img_array.min() >= 0
+        assert img_array.max() <= 255
+
+        # Verify dimensions match
+        if channels == 1:
+            assert img_array.shape == (height, width)
+        elif channels == 3:
+            assert img_array.shape == (height, width, channels)

@@ -522,6 +522,13 @@ def split(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912, PLR0915
             vllm_config.stage2_caption = args.nemotron_stage2_caption
             window_config.model_does_preprocess = True
 
+        # Wire up debug frame saving configuration
+        if args.debug_save_vllm_frames:
+            vllm_config.debug_save_frames = True
+            # Use output_clip_path/frames as the base directory for debug frames
+            vllm_config.debug_frames_output_dir = pathlib.Path(args.output_clip_path) / "frames"
+            logger.info(f"Debug frame saving enabled: output_dir={vllm_config.debug_frames_output_dir}")
+
         if caption_algo == "gemini":
             stages += [
                 ApiPrepStage(
@@ -1406,7 +1413,17 @@ def _setup_parser(parser: argparse.ArgumentParser) -> None:  # noqa: PLR0915
         default=sampling_defaults["max_tokens"],
         help="Maximum number of tokens to generate (-1 = no limit).",
     )
-
+    # Debug arguments for saving vLLM input frames
+    parser.add_argument(
+        "--debug-save-vllm-frames",
+        dest="debug_save_vllm_frames",
+        action="store_true",
+        default=False,
+        help=(
+            "Save video frames passed to vLLM as PNGs for debugging. "
+            "Frames will be saved to {output-clip-path}/frames/{clip_uuid}/"
+        ),
+    )
     # add common args applicable to all pipelines
     add_common_args(parser)
 
