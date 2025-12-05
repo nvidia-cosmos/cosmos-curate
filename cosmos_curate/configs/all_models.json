@@ -123,6 +123,20 @@
         "precision": "BF16",
         "nvcf_model_id": "qwen2_5_vl_7b_instruct"
     },
+    "qwen3_vl_30b": {
+        "model_id": "Qwen/Qwen3-VL-30B-A3B-Instruct",
+        "version": "4b184fbdab8886057d8d80c09f35bcfc65fe640e",
+        "filelist": null,
+        "precision": "BF16",
+        "nvcf_model_id": "qwen3_vl_30b_a3b_instruct"
+    },
+    "qwen3_vl_235b": {
+        "model_id": "Qwen/Qwen3-VL-235B-A22B-Instruct",
+        "version": "326b2e35ea25798d32df16d16d0dba461959e931",
+        "filelist": null,
+        "precision": "BF16",
+        "nvcf_model_id": "qwen3_vl_235b_a22b_instruct"
+    },
     "t5_xxl": {
         "model_id": "google-t5/t5-11b",
         "version": "90f37703b3334dfe9d2b009bfcbfbf1ac9d28ea3",

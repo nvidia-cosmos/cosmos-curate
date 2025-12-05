@@ -80,12 +80,14 @@ def make_message(
     )
 
 
-def make_prompt(message: QwenMessage, frames: torch.Tensor, processor: AutoProcessor) -> dict[str, Any]:
+def make_prompt(
+    message: QwenMessage, data: torch.Tensor | list[tuple[torch.Tensor, dict[str, Any]]], processor: AutoProcessor
+) -> dict[str, Any]:
     """Make a prompt for the Qwen model.
 
     Args:
         message: The message to use to create the prompt
-        frames: The frames to use for the prompt.
+        data: The data to use for the prompt.
         processor: The processor to use for the prompt.
 
     Returns:
@@ -101,7 +103,7 @@ def make_prompt(message: QwenMessage, frames: torch.Tensor, processor: AutoProce
 
     return {
         "prompt_token_ids": prompt_ids,
-        "multi_modal_data": ({"video": frames}),
+        "multi_modal_data": ({"video": data}),
     }
 
 
@@ -232,3 +234,66 @@ class VllmQwen7B(VllmQwen):
     def model_variant() -> str:
         """Return the model variant name."""
         return "qwen"
+
+
+class VllmQwen3VL(VllmQwen):
+    """Qwen3-VL vLLM model variant plugin base class."""
+
+    @classmethod
+    def model(cls, config: VllmConfig) -> LLM:
+        """Instantiate the vLLM model.
+
+        Args:
+            config: Configuration for the model.
+
+        Returns:
+            The vLLM model.
+
+        """
+        return LLM(
+            model=str(cls.model_path(config)),
+            limit_mm_per_prompt=LIMIT_MM_PER_PROMPT,
+            max_model_len=MAX_MODEL_LEN,
+            pipeline_parallel_size=1,
+            disable_mm_preprocessor_cache=config.disable_mmcache,
+            tensor_parallel_size=config.num_gpus,
+            trust_remote_code=TRUST_REMOTE_CODE,
+            compilation_config={"cudagraph_mode": "piecewise"},
+        )
+
+    @staticmethod
+    def make_llm_input(
+        prompt: str, frames: torch.Tensor, metadata: dict[str, Any], processor: AutoProcessor
+    ) -> dict[str, Any]:
+        """Make LLM inputs for the model.
+
+        Args:
+            prompt: The prompt to use for the LLM.
+            frames: The frames to use for the LLM.
+            metadata: The metadata to use for the LLM.
+            processor: The AutoProcessor to use for the LLM.
+
+        Returns:
+            A dictionary containing the LLM inputs.
+
+        """
+        message = make_message(prompt)
+        return make_prompt(message, [(frames, metadata)], processor)
+
+
+class VllmQwen3VL30B(VllmQwen3VL):
+    """Qwen3-VL-30B-A3B-Instruct vLLM model variant plugin."""
+
+    @staticmethod
+    def model_variant() -> str:
+        """Return the model variant name."""
+        return "qwen3_vl_30b"
+
+
+class VllmQwen3VL235B(VllmQwen3VL):
+    """Qwen3-VL-235B-A22B-Instruct vLLM model variant plugin."""
+
+    @staticmethod
+    def model_variant() -> str:
+        """Return the model variant name."""
+        return "qwen3_vl_235b"

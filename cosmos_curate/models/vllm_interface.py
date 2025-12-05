@@ -61,11 +61,14 @@ Note: No-inflight batching path (_caption_no_inflight_batching, line ~277) is a
 fallback for simpler debugging and testing. Production code uses inflight batching.
 
 Plugin Implementations (model-specific code):
-- VllmQwen7B:           cosmos_curate/models/vllm_qwen.py
-- VllmPhi4:             cosmos_curate/models/vllm_phi.py
-- VllmCosmosReason1VL:  cosmos_curate/models/vllm_cosmos_reason1_vl.py
-- Plugin Interface:     cosmos_curate/models/vllm_plugin.py (7 abstract methods)
-- Registry:             _VLLM_PLUGINS dict
+- VllmCosmosReason1VL:     cosmos_curate/models/vllm_cosmos_reason1_vl.py
+- VllmNemotronNano12Bv2VL: cosmos_curate/models/vllm_nemotron.py
+- VllmPhi4:                cosmos_curate/models/vllm_phi.py
+- VllmQwen7B:              cosmos_curate/models/vllm_qwen.py
+- VllmQwen3VL30B:          cosmos_curate/models/vllm_qwen.py
+- VllmQwen3VL235B:         cosmos_curate/models/vllm_qwen.py
+- Plugin Interface:        cosmos_curate/models/vllm_plugin.py (7 abstract methods)
+- Registry:                _VLLM_PLUGINS dict
 
 Public API (what pipeline stages call):
 - vllm_model()       - Create model instance
@@ -102,7 +105,7 @@ from cosmos_curate.core.utils.misc import grouping
 from cosmos_curate.models.vllm_cosmos_reason1_vl import VllmCosmosReason1VL
 from cosmos_curate.models.vllm_nemotron import VllmNemotronNano12Bv2VL
 from cosmos_curate.models.vllm_phi import VllmPhi4
-from cosmos_curate.models.vllm_qwen import VllmQwen7B
+from cosmos_curate.models.vllm_qwen import VllmQwen3VL30B, VllmQwen3VL235B, VllmQwen7B
 from cosmos_curate.pipelines.video.utils.data_model import VllmCaptionRequest, WindowConfig
 
 if TYPE_CHECKING:
@@ -120,6 +123,8 @@ _VLLM_PLUGINS = {
     VllmCosmosReason1VL.model_variant(): VllmCosmosReason1VL,
     VllmNemotronNano12Bv2VL.model_variant(): VllmNemotronNano12Bv2VL,
     VllmPhi4.model_variant(): VllmPhi4,
+    VllmQwen3VL235B.model_variant(): VllmQwen3VL235B,
+    VllmQwen3VL30B.model_variant(): VllmQwen3VL30B,
     VllmQwen7B.model_variant(): VllmQwen7B,
 }
 

@@ -98,6 +98,9 @@ from cosmos_curate.pipelines.video.utils.video_pipe_input import (
     extract_split_tasks,
 )
 
+VLLM_CAPTION_ALGOS = {"cosmos_r1", "nemotron", "phi4", "qwen", "qwen3_vl_30b", "qwen3_vl_235b"}
+ALL_CAPTION_ALGOS = VLLM_CAPTION_ALGOS | {"gemini"}
+
 
 def build_input_data(
     args: argparse.Namespace,
@@ -452,7 +455,7 @@ def split(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912, PLR0915
     keep_mp4 = args.generate_previews or (args.generate_cosmos_predict_dataset != "disable") or caption_algo == "gemini"
 
     if args.generate_captions:
-        if caption_algo not in {"cosmos_r1", "gemini", "nemotron", "phi4", "qwen"}:
+        if caption_algo not in ALL_CAPTION_ALGOS:
             msg = f"Unsupported captioning algorithm: {caption_algo}"
             raise RuntimeError(msg)
 
@@ -495,7 +498,7 @@ def split(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912, PLR0915
             use_input_bit_rate=args.transcode_use_input_video_bit_rate,
         )
 
-        if caption_algo == "qwen":
+        if caption_algo in {"qwen", "qwen3_vl_235b"}:
             vllm_config.batch_size = args.qwen_batch_size
             vllm_config.fp8 = args.qwen_use_fp8_weights
             vllm_config.disable_mmcache = not args.qwen_use_vllm_mmcache
@@ -504,6 +507,18 @@ def split(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912, PLR0915
             vllm_config.stage2_prompt_text = args.qwen_stage2_prompt_text
             window_config.preprocess_dtype = args.qwen_preprocess_dtype
             window_config.model_does_preprocess = args.qwen_model_does_preprocess
+
+            QWEN3_VL_235B_MIN_GPUS = 8
+            if caption_algo == "qwen3_vl_235b" and vllm_config.num_gpus < QWEN3_VL_235B_MIN_GPUS:
+                logger.warning(
+                    f"qwen3_vl_235b requires at least {QWEN3_VL_235B_MIN_GPUS} GPUs, "
+                    f"setting num_gpus to {QWEN3_VL_235B_MIN_GPUS}"
+                )
+                vllm_config.num_gpus = QWEN3_VL_235B_MIN_GPUS
+
+            if caption_algo.startswith("qwen3"):
+                window_config.model_does_preprocess = True
+
         elif caption_algo == "phi4":
             vllm_config.stage2_caption = args.phi4_stage2_caption
             vllm_config.stage2_prompt_text = args.phi4_stage2_prompt_text
@@ -563,7 +578,7 @@ def split(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912, PLR0915
             ]
 
         # captioning
-        if caption_algo in {"cosmos_r1", "nemotron", "phi4", "qwen"}:
+        if caption_algo in VLLM_CAPTION_ALGOS:
             stages += [
                 CuratorStageSpec(
                     VllmCaptionStage(
@@ -1091,7 +1106,7 @@ def _setup_parser(parser: argparse.ArgumentParser) -> None:  # noqa: PLR0915
         "--captioning-algorithm",
         type=str,
         default="qwen",
-        choices=["cosmos_r1", "gemini", "nemotron", "phi4", "qwen"],
+        choices=ALL_CAPTION_ALGOS,
         help="Captioning algorithm to use in annotation pipeline.",
     )
     parser.add_argument(
