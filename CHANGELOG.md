@@ -5,10 +5,24 @@
 ## [1.1.9]
 
 ### Released
-- 2025-12-xx
+- 2025-12-08
+
+### Added
+- Add support for Qwen/Qwen3-VL-235B-A22B-Instruct
+- Save model_input tensor input as pngs
+- Wire vllm sampling params into splitting cli
+- Switch enhance captions to OpenAI V1 Responses API
+- Expose setup_on_node in stage_interface
 
 ### Fixed
 - Fixed Nemotron-Nano VL as the captioning algorithm.
+- Upgrade vllm to 0.11.2 and add metadata field to fix nemotron-nano-v2-vl
+- Replace softprops/action-gh-release with gh release command
+- Nemotron: change VideoMetadata to dict, model_does_preprocess=True
+- Fix a bug in windowing which made us always lose 1 frame
+- Bump ray version, unset vars not used in CI
+- Dimensions aligned to i4
+- Race condition in --copy-weights-to
 
 ## [1.1.8]
 
