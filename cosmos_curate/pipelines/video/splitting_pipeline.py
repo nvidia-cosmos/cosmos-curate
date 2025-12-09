@@ -98,7 +98,8 @@ from cosmos_curate.pipelines.video.utils.video_pipe_input import (
     extract_split_tasks,
 )
 
-VLLM_CAPTION_ALGOS = {"cosmos_r1", "nemotron", "phi4", "qwen", "qwen3_vl_30b", "qwen3_vl_235b"}
+QWEN3_CAPTION_ALGOS = {"qwen3_vl_30b", "qwen3_vl_235b"}
+VLLM_CAPTION_ALGOS = {"cosmos_r1", "nemotron", "phi4", "qwen"} | QWEN3_CAPTION_ALGOS
 ALL_CAPTION_ALGOS = VLLM_CAPTION_ALGOS | {"gemini"}
 
 
@@ -498,7 +499,7 @@ def split(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912, PLR0915
             use_input_bit_rate=args.transcode_use_input_video_bit_rate,
         )
 
-        if caption_algo in {"qwen", "qwen3_vl_235b"}:
+        if caption_algo in {"qwen"} | QWEN3_CAPTION_ALGOS:
             vllm_config.batch_size = args.qwen_batch_size
             vllm_config.fp8 = args.qwen_use_fp8_weights
             vllm_config.disable_mmcache = not args.qwen_use_vllm_mmcache
@@ -516,7 +517,7 @@ def split(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912, PLR0915
                 )
                 vllm_config.num_gpus = QWEN3_VL_235B_MIN_GPUS
 
-            if caption_algo.startswith("qwen3"):
+            if caption_algo in QWEN3_CAPTION_ALGOS:
                 window_config.model_does_preprocess = True
 
         elif caption_algo == "phi4":
