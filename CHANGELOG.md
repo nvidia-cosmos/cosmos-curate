@@ -2,6 +2,15 @@
 
 ## Latest
 
+### Added
+- Add FP8 variant of Qwen3-VL-235B which can run on 4x H100s
+- Add FP8 variant of Qwen3-VL-30B which can run on a single 48GB GPU
+
+### Fixed
+- Race condition with --copy-weights-to by passing it only to the model captioning stage but not the prepare stage
+- Upgrade vllm in develop environment to match what is used inside container
+- Remove async engine code in qwen_vl
+
 ## [1.1.9]
 
 ### Released

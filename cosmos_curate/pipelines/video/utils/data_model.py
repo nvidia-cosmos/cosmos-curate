@@ -657,7 +657,7 @@ class VllmConfig:
     model_variant: str
     prompt_variant: str = "default"
     prompt_text: str | None = None
-    fp8: bool = True
+    fp8: bool = False
     preprocess: bool = False
     disable_mmcache: bool = False
     num_cpus_for_prepare: float = 2.0
@@ -689,7 +689,7 @@ class WindowConfig:
     window_size: int = 256
     sampling_fps: float = 2.0
     remainder_threshold: int = 128
-    model_does_preprocess: bool = False
+    model_does_preprocess: bool = True
     preprocess_dtype: str = "float32"
     use_input_bit_rate: bool = False
 

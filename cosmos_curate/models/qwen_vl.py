@@ -16,7 +16,6 @@
 """Qwen Video Model."""
 
 import logging
-import os
 import re
 from typing import TYPE_CHECKING, Any
 
@@ -42,8 +41,7 @@ Ensure the description is clear, precise, and paints a compelling picture of the
 # pyright: reportMissingImports=false
 if conda_utils.is_running_in_env("unified"):
     from transformers import AutoProcessor
-    from vllm import LLM, AsyncEngineArgs, AsyncLLMEngine, SamplingParams
-    from vllm.sampling_params import RequestOutputKind
+    from vllm import LLM, SamplingParams
 
     if TYPE_CHECKING:
         from vllm.model_executor.layers.quantization import QuantizationMethods
@@ -165,7 +163,6 @@ class QwenVL(ModelInterface):
         model_does_preprocess: bool = False,
         stage2_prompt_text: str | None = None,
         disable_mmcache: bool = False,
-        use_async_engine: bool = False,
         num_gpus: int = 1,
     ) -> None:
         """Initialize the QwenVL model.
@@ -177,7 +174,6 @@ class QwenVL(ModelInterface):
             model_does_preprocess: Whether to preprocess the model.
             stage2_prompt_text: The prompt for the stage 2 caption.
             disable_mmcache: Whether to disable the MM cache.
-            use_async_engine: Whether to use the async engine.
             num_gpus: Number of GPUs to use for processing.
 
         """
@@ -188,10 +184,9 @@ class QwenVL(ModelInterface):
         self.max_output_tokens = max_output_tokens
         self.model_does_preprocess = model_does_preprocess
         self.disable_mmcache = disable_mmcache
-        self.llm: LLM | AsyncLLMEngine | None = None
+        self.llm: LLM | None = None
         self.model_variant = model_variant
         self.sampling_params: SamplingParams | None = None
-        self.use_async_engine = use_async_engine
         self.num_gpus = num_gpus
         self.pattern = (
             r"(<\|im_start\|>user\s*<\|vision_start\|><\|video_pad\|><\|vision_end\|>\s*)(.*?)(\s*<\|im_end\|>)"
@@ -239,111 +234,28 @@ class QwenVL(ModelInterface):
         if self.fp8:
             quantization = "fp8"
 
-        if self.use_async_engine:
-            # Use V1 engine for async processing
-            os.environ["VLLM_USE_V1"] = "1"
-            engine_args = AsyncEngineArgs(
-                model=self.weight_file,
-                limit_mm_per_prompt={"image": 0, "video": 1},
-                quantization=quantization,
-                max_model_len=32768,
-                gpu_memory_utilization=0.85,
-                mm_processor_kwargs=mm_processor_kwargs,
-                disable_mm_preprocessor_cache=self.disable_mmcache,
-                max_num_batched_tokens=32768,
-                tensor_parallel_size=self.num_gpus,
-            )
-            self.llm = AsyncLLMEngine.from_engine_args(engine_args)
-            self.sampling_params = SamplingParams(
-                temperature=0.1,
-                top_p=0.001,
-                repetition_penalty=1.05,
-                max_tokens=self.max_output_tokens,
-                stop_token_ids=[],
-                output_kind=RequestOutputKind.FINAL_ONLY,
-            )
-
-        else:
-            self.llm = LLM(
-                model=self.weight_file,
-                limit_mm_per_prompt={"image": 0, "video": 1},
-                quantization=quantization,
-                max_model_len=32768,
-                gpu_memory_utilization=0.85,
-                mm_processor_kwargs=mm_processor_kwargs,
-                disable_mm_preprocessor_cache=self.disable_mmcache,
-                max_num_batched_tokens=32768,
-                tensor_parallel_size=self.num_gpus,
-            )
-            self.sampling_params = SamplingParams(
-                temperature=0.1,
-                top_p=0.001,
-                repetition_penalty=1.05,
-                max_tokens=self.max_output_tokens,
-                stop_token_ids=[],
-            )
+        self.llm = LLM(
+            model=self.weight_file,
+            limit_mm_per_prompt={"image": 0, "video": 1},
+            quantization=quantization,
+            max_model_len=32768,
+            gpu_memory_utilization=0.85,
+            mm_processor_kwargs=mm_processor_kwargs,
+            disable_mm_preprocessor_cache=self.disable_mmcache,
+            max_num_batched_tokens=32768,
+            tensor_parallel_size=self.num_gpus,
+        )
+        self.sampling_params = SamplingParams(
+            temperature=0.1,
+            top_p=0.001,
+            repetition_penalty=1.05,
+            max_tokens=self.max_output_tokens,
+            stop_token_ids=[],
+        )
 
         logger.info(
             "CUDA graph enabled for sequences smaller than 16k tokens; adjust accordingly for even longer sequences",
         )
-
-    async def generate_async(
-        self,
-        llm_input: dict[str, Any],
-        req_id_input: int,
-        *,
-        generate_stage2_caption: bool = False,
-    ) -> tuple[int, str]:
-        """Generate text asynchronously for a given input.
-
-        Args:
-            llm_input: Input dictionary for the LLM.
-            req_id_input: Request ID for the input.
-            generate_stage2_caption: Whether to generate a stage 2 caption.
-
-        Returns:
-            Tuple containing:
-                - Request ID
-                - Generated caption
-
-        """
-        req_id = str(req_id_input)
-        assert self.llm is not None
-        assert self.sampling_params is not None
-        generator = self.llm.generate(llm_input, self.sampling_params, req_id)  # type: ignore[arg-type, call-overload]
-
-        # Wait for this request's results
-        caption = ""
-        try:
-            async for output in generator:
-                caption = output.outputs[0].text
-        except Exception as e:
-            logger.exception(f"Error processing request {req_id}: {e}")
-            raise
-
-        if generate_stage2_caption:
-            req_id = "stage2_" + req_id
-            updated_prompt = self.stage2_prompt + caption
-            llm_input["prompt"] = re.sub(
-                self.pattern,
-                rf"\1{updated_prompt}\3",
-                llm_input["prompt"],
-                flags=re.DOTALL,
-            )
-            generator = self.llm.generate(  # type: ignore[call-overload]
-                llm_input,  # type: ignore[arg-type]
-                self.sampling_params,
-                req_id,
-            )
-
-            # Wait for this request's results
-            try:
-                async for output in generator:
-                    caption = "".join(output.outputs[0].text)
-            except Exception as e:
-                logger.exception(f"Error processing request {req_id}: {e}")
-                raise
-        return req_id_input, caption
 
     @nvtx.annotate("Qwen Generate tokens")  # type: ignore[misc]
     def generate(
@@ -371,14 +283,14 @@ class QwenVL(ModelInterface):
             try:
                 assert self.llm is not None
                 assert self.sampling_params is not None
-                outputs = self.llm.generate(  # type: ignore[call-arg]
+                outputs = self.llm.generate(
                     llm_inputs,  # type: ignore[arg-type]
                     sampling_params=self.sampling_params,
                     use_tqdm=False,
                 )
 
                 if generate_stage2_caption:
-                    for i, out in enumerate(outputs):  # type: ignore[arg-type]
+                    for i, out in enumerate(outputs):
                         updated_prompt = self.stage2_prompt + out.outputs[0].text
                         llm_inputs[i]["prompt"] = re.sub(
                             self.pattern,
@@ -387,13 +299,13 @@ class QwenVL(ModelInterface):
                             flags=re.DOTALL,
                         )
 
-                    outputs = self.llm.generate(  # type: ignore[call-arg]
+                    outputs = self.llm.generate(
                         llm_inputs,  # type: ignore[arg-type]
                         sampling_params=self.sampling_params,
                         use_tqdm=False,
                     )
 
-                generated_text.extend([out.outputs[0].text for out in outputs])  # type: ignore[union-attr]
+                generated_text.extend([out.outputs[0].text for out in outputs])
 
             except Exception as e:
                 logger.exception(f"Error generating text for batch of {len(batch_videos)}: {e}")

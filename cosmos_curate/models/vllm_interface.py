@@ -105,7 +105,13 @@ from cosmos_curate.core.utils.misc import grouping
 from cosmos_curate.models.vllm_cosmos_reason1_vl import VllmCosmosReason1VL
 from cosmos_curate.models.vllm_nemotron import VllmNemotronNano12Bv2VL
 from cosmos_curate.models.vllm_phi import VllmPhi4
-from cosmos_curate.models.vllm_qwen import VllmQwen3VL30B, VllmQwen3VL235B, VllmQwen7B
+from cosmos_curate.models.vllm_qwen import (
+    VllmQwen3VL30B,
+    VllmQwen3VL30BFP8,
+    VllmQwen3VL235B,
+    VllmQwen3VL235BFP8,
+    VllmQwen7B,
+)
 from cosmos_curate.pipelines.video.utils.data_model import VllmCaptionRequest, WindowConfig
 
 if TYPE_CHECKING:
@@ -124,7 +130,9 @@ _VLLM_PLUGINS = {
     VllmNemotronNano12Bv2VL.model_variant(): VllmNemotronNano12Bv2VL,
     VllmPhi4.model_variant(): VllmPhi4,
     VllmQwen3VL235B.model_variant(): VllmQwen3VL235B,
+    VllmQwen3VL235BFP8.model_variant(): VllmQwen3VL235BFP8,
     VllmQwen3VL30B.model_variant(): VllmQwen3VL30B,
+    VllmQwen3VL30BFP8.model_variant(): VllmQwen3VL30BFP8,
     VllmQwen7B.model_variant(): VllmQwen7B,
 }
 
@@ -389,7 +397,7 @@ def vllm_generate(
 
 
 def process_vllm_output(
-    engine_output: list[RequestOutput | PoolingRequestOutput[PoolingOutput]],
+    engine_output: list[RequestOutput] | list[PoolingRequestOutput[PoolingOutput]],
     in_flight_requests: dict[str, VllmCaptionRequest],
     vllm_config: VllmConfig,
 ) -> list[VllmCaptionRequest]:
@@ -463,7 +471,7 @@ def _caption_no_inflight_batching(  # noqa: PLR0913
     def _process_requests(requests: list[VllmCaptionRequest]) -> list[VllmCaptionRequest]:
         in_flight_requests: dict[str, VllmCaptionRequest] = {r.request_id: r for r in requests}
         outputs = vllm_generate(llm, sampling_params, requests, vllm_config.batch_size)
-        finished_requests = process_vllm_output(outputs, in_flight_requests, vllm_config)  # type: ignore[arg-type]
+        finished_requests = process_vllm_output(outputs, in_flight_requests, vllm_config)
 
         # Sanity check
         if len(finished_requests) != len(requests):

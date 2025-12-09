@@ -98,7 +98,8 @@ from cosmos_curate.pipelines.video.utils.video_pipe_input import (
     extract_split_tasks,
 )
 
-QWEN3_CAPTION_ALGOS = {"qwen3_vl_30b", "qwen3_vl_235b"}
+QWEN2_CAPTION_ALGOS = {"qwen"}
+QWEN3_CAPTION_ALGOS = {"qwen3_vl_30b", "qwen3_vl_30b_fp8", "qwen3_vl_235b", "qwen3_vl_235b_fp8"}
 VLLM_CAPTION_ALGOS = {"cosmos_r1", "nemotron", "phi4", "qwen"} | QWEN3_CAPTION_ALGOS
 ALL_CAPTION_ALGOS = VLLM_CAPTION_ALGOS | {"gemini"}
 
@@ -436,7 +437,6 @@ def split(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912, PLR0915
                     max_output_tokens=args.qwen_filter_max_output_tokens,
                     disable_mmcache=not args.qwen_use_vllm_mmcache,
                     score_only=args.qwen_filter == "score-only",
-                    use_async_engine=args.qwen_use_async_engine,
                     verbose=args.verbose,
                     log_stats=args.perf_profile,
                 ),
@@ -499,9 +499,9 @@ def split(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912, PLR0915
             use_input_bit_rate=args.transcode_use_input_video_bit_rate,
         )
 
-        if caption_algo in {"qwen"} | QWEN3_CAPTION_ALGOS:
+        if caption_algo in QWEN2_CAPTION_ALGOS | QWEN3_CAPTION_ALGOS:
             vllm_config.batch_size = args.qwen_batch_size
-            vllm_config.fp8 = args.qwen_use_fp8_weights
+            vllm_config.fp8 = args.qwen_use_fp8_weights  # only used for qwen (i.e. Qwen2.5-VL)
             vllm_config.disable_mmcache = not args.qwen_use_vllm_mmcache
             vllm_config.num_gpus = args.qwen_num_gpus_per_worker
             vllm_config.stage2_caption = args.qwen_stage2_caption
@@ -510,14 +510,25 @@ def split(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912, PLR0915
             window_config.model_does_preprocess = args.qwen_model_does_preprocess
 
             QWEN3_VL_235B_MIN_GPUS = 8
+            QWEN3_VL_235B_FP8_MIN_GPUS = 4
             if caption_algo == "qwen3_vl_235b" and vllm_config.num_gpus < QWEN3_VL_235B_MIN_GPUS:
                 logger.warning(
                     f"qwen3_vl_235b requires at least {QWEN3_VL_235B_MIN_GPUS} GPUs, "
                     f"setting num_gpus to {QWEN3_VL_235B_MIN_GPUS}"
                 )
                 vllm_config.num_gpus = QWEN3_VL_235B_MIN_GPUS
+            elif caption_algo == "qwen3_vl_235b_fp8" and vllm_config.num_gpus < QWEN3_VL_235B_FP8_MIN_GPUS:
+                logger.warning(
+                    f"qwen3_vl_235b_fp8 requires at least {QWEN3_VL_235B_FP8_MIN_GPUS} GPUs, "
+                    f"setting num_gpus to {QWEN3_VL_235B_FP8_MIN_GPUS}"
+                )
+                vllm_config.num_gpus = QWEN3_VL_235B_FP8_MIN_GPUS
 
-            if caption_algo in QWEN3_CAPTION_ALGOS:
+            if caption_algo not in QWEN2_CAPTION_ALGOS and not window_config.model_does_preprocess:
+                logger.warning(
+                    f"{caption_algo} does not support model_does_preprocess=False, "
+                    f"setting model_does_preprocess to True"
+                )
                 window_config.model_does_preprocess = True
 
         elif caption_algo == "phi4":
@@ -531,12 +542,11 @@ def split(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912, PLR0915
             vllm_config.stage2_caption = args.qwen_stage2_caption
             vllm_config.stage2_prompt_text = args.qwen_stage2_prompt_text
             window_config.preprocess_dtype = "float16"
-            window_config.model_does_preprocess = False
-        elif caption_algo == "gemini":
             window_config.model_does_preprocess = args.qwen_model_does_preprocess
+        elif caption_algo == "gemini":
+            pass
         elif caption_algo == "nemotron":
             vllm_config.stage2_caption = args.nemotron_stage2_caption
-            window_config.model_does_preprocess = True
 
         # Wire up debug frame saving configuration
         if args.debug_save_vllm_frames:
@@ -557,9 +567,11 @@ def split(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912, PLR0915
             ]
         else:
             assert vllm_config is not None
+            # Intentionally disable VllmPrepStage's involvement in copying weights business
+            vllm_config_prepare = attrs.evolve(vllm_config, copy_weights_to=None)
             stages += [
                 VllmPrepStage(
-                    vllm_config=vllm_config,
+                    vllm_config=vllm_config_prepare,
                     window_config=window_config,
                     keep_mp4=keep_mp4,
                     verbose=args.verbose,
@@ -1229,7 +1241,7 @@ def _setup_parser(parser: argparse.ArgumentParser) -> None:  # noqa: PLR0915
         "--qwen-use-async-engine",
         action="store_true",
         default=False,
-        help="Whether to use async engine for Qwen VL model or not.",
+        help="Whether to use async engine for Qwen VL model or not (no longer supported).",
     )
     parser.add_argument(
         "--qwen-num-gpus-per-worker",

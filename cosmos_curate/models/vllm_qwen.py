@@ -290,6 +290,15 @@ class VllmQwen3VL30B(VllmQwen3VL):
         return "qwen3_vl_30b"
 
 
+class VllmQwen3VL30BFP8(VllmQwen3VL):
+    """Qwen3-VL-30B-A3B-Instruct-FP8 vLLM model variant plugin."""
+
+    @staticmethod
+    def model_variant() -> str:
+        """Return the model variant name."""
+        return "qwen3_vl_30b_fp8"
+
+
 class VllmQwen3VL235B(VllmQwen3VL):
     """Qwen3-VL-235B-A22B-Instruct vLLM model variant plugin."""
 
@@ -297,3 +306,12 @@ class VllmQwen3VL235B(VllmQwen3VL):
     def model_variant() -> str:
         """Return the model variant name."""
         return "qwen3_vl_235b"
+
+
+class VllmQwen3VL235BFP8(VllmQwen3VL):
+    """Qwen3-VL-235B-A22B-Instruct-FP8 vLLM model variant plugin."""
+
+    @staticmethod
+    def model_variant() -> str:
+        """Return the model variant name."""
+        return "qwen3_vl_235b_fp8"

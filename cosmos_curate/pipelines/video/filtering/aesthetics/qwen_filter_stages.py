@@ -14,7 +14,6 @@
 # limitations under the License.
 """Aesthetic score filtering stages."""
 
-import asyncio
 import json
 import re
 from collections.abc import Iterable
@@ -295,7 +294,7 @@ class QwenFilteringStage(CuratorStage):
     """Stage that generates filtering results for video windows using the Qwen model.
 
     This stage processes prepared video windows through the Qwen vision-language model to
-    generate filtering results, with support for asynchronous processing.
+    generate filtering results.
     """
 
     def __init__(  # noqa: PLR0913
@@ -313,7 +312,6 @@ class QwenFilteringStage(CuratorStage):
         model_does_preprocess: bool = False,
         disable_mmcache: bool = False,
         score_only: bool = False,
-        use_async_engine: bool = False,
     ) -> None:
         """Initialize the Qwen filtering stage.
 
@@ -330,7 +328,6 @@ class QwenFilteringStage(CuratorStage):
             filter_variant: Variant of filter criteria to use.
             rejection_threshold: Threshold for clip rejection.
             score_only: Whether to only calculate Qwen-based content filtering scores without filtering clips.
-            use_async_engine: Whether to use the async engine.
 
         """
         self._timer = StageTimer(self)
@@ -340,7 +337,6 @@ class QwenFilteringStage(CuratorStage):
         self._user_prompt = user_prompt
         self._verbose = verbose
         self._log_stats = log_stats
-        self._use_async_engine = use_async_engine
         self._score_only = score_only
         self._model_does_preprocess = model_does_preprocess
         self._disable_mmcache = disable_mmcache
@@ -349,7 +345,6 @@ class QwenFilteringStage(CuratorStage):
             fp8=fp8_enable,
             max_output_tokens=max_output_tokens,
             model_does_preprocess=self._model_does_preprocess,
-            use_async_engine=self._use_async_engine,
             disable_mmcache=self._disable_mmcache,
         )
         self._model_variant = model_variant
@@ -446,77 +441,6 @@ class QwenFilteringStage(CuratorStage):
         return tasks
 
     @nvtx.annotate("QwenFilteringStage")  # type: ignore[misc]
-    async def _process_data_async(self, tasks: list[SplitPipeTask]) -> list[SplitPipeTask] | None:
-        """Process video samples to filter clips based on content analysis.
-
-        Args:
-            tasks: Tasks containing videos to process.
-
-        Returns:
-            Processed tasks with filtered clips.
-
-        """
-        for task in tasks:
-            self._timer.reinit(self, task.get_major_size())
-            video = task.video
-
-            mapping: dict[int, tuple[int, int]] = {}
-            idx = 0
-            vllm_tasks = []
-            with self._timer.time_process(len(video.clips)):
-                for clip_idx, clip in enumerate(video.clips):
-                    if len(clip.filter_windows) == 0:
-                        logger.warning(f"Clip {clip.uuid} has no windows.")
-                        clip.errors["windows"] = "empty"
-                    for window_idx, window in enumerate(clip.filter_windows):
-                        llm_input = window.model_input.get(self._model_variant)
-                        if llm_input is None:
-                            logger.error(f"Clip {clip.uuid} window {window_idx} has no prepared inputs.")
-                            clip.errors[f"window-{window_idx}"] = "empty"
-                            continue
-                        mapping[idx] = (clip_idx, window_idx)
-                        vllm_task = asyncio.create_task(
-                            self._model.generate_async(
-                                llm_input,
-                                idx,
-                                generate_stage2_caption=False,
-                            ),
-                        )
-                        vllm_tasks.append(vllm_task)
-                        idx += 1
-
-                results = await asyncio.gather(*vllm_tasks)
-                # Group captions by clip
-                self._filter_clips(video, mapping, results)
-
-            if self._verbose:
-                logger.info(
-                    f"Video {video.input_video} chunk-{video.clip_chunk_index} has "
-                    f"{len(video.clips)}/{len(video.filtered_clips)} clips "
-                    "passed/filtered"
-                )
-
-        if self._log_stats:
-            stage_name, stage_perf_stats = self._timer.log_stats()
-            task.stage_perf[stage_name] = stage_perf_stats
-
-        return tasks
-
-    def get_asyncio_loop(self) -> asyncio.AbstractEventLoop:
-        """Get the asyncio event loop.
-
-        Returns:
-            The asyncio event loop.
-
-        """
-        try:
-            asyncio_loop = asyncio.get_event_loop()
-        except RuntimeError:
-            asyncio_loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(asyncio_loop)
-        return asyncio_loop
-
-    @nvtx.annotate("QwenFilteringStage")  # type: ignore[misc]
     def process_data(self, tasks: list[SplitPipeTask]) -> list[SplitPipeTask] | None:
         """Process the data for the Qwen filtering stage.
 
@@ -527,10 +451,6 @@ class QwenFilteringStage(CuratorStage):
             The processed tasks.
 
         """
-        if self._use_async_engine:
-            asyncio_loop = self.get_asyncio_loop()
-            result: list[SplitPipeTask] | None = asyncio_loop.run_until_complete(self._process_data_async(tasks))
-            return result
         return self._process_data_sync(tasks)
 
     def _filter_clips(  # noqa: C901, PLR0912

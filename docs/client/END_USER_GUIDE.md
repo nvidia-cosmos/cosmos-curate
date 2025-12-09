@@ -26,6 +26,7 @@
     - [Developing on Slurm](#developing-on-slurm)
       - [Add the source-code mount to the `$CONTAINER_MOUNTS`:](#add-the-source-code-mount-to-the-container_mounts)
       - [Sync source code to the slurm cluster](#sync-source-code-to-the-slurm-cluster)
+    - [Speeding up Model Load on Slurm](#speeding-up-model-load-on-slurm)
   - [Launch Pipelines on NVIDIA DGX Cloud](#launch-pipelines-on-nvidia-dgx-cloud)
   - [Launch Pipelines on K8s Cluster (coming soon)](#launch-pipelines-on-k8s-cluster-coming-soon)
   - [Observability for Pipelines](#observability-for-pipelines)

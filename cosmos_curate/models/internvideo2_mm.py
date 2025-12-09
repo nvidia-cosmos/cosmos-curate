@@ -36,7 +36,7 @@ from cosmos_curate.core.utils.model import conda_utils, model_utils
 # pyright: reportMissingImports=false
 # pyright: reportUnboundVariable=false
 if conda_utils.is_running_in_env("legacy-transformers"):
-    from transformers import BatchEncoding, PreTrainedTokenizer  # type: ignore[attr-defined]  # noqa: F401
+    from transformers import BatchEncoding, PreTrainedTokenizer  # noqa: F401
 
     from .internvideo2_multi_modality.bert.builder import build_bert
     from .internvideo2_multi_modality.bert.tokenization_bert import BertTokenizer

@@ -110,6 +110,7 @@ def test_qwen_caption_generation(sample_captioning_task: SplitPipeTask, sequenti
     )
     window_config = WindowConfig(
         sampling_fps=2.0,
+        model_does_preprocess=False,
     )
     stages = [
         ClipTranscodingStage(encoder="libopenh264"),
@@ -178,5 +179,6 @@ def test_qwen_caption_generation(sample_captioning_task: SplitPipeTask, sequenti
 
             similarity = cosine_similarity(generated_caption, expected_caption)
             assert similarity >= _THRESHOLD, (
-                f"Caption similarity {similarity:.3f} below threshold for clip {clip_idx} window {window_idx}"
+                f"Caption similarity {similarity:.3f} below threshold for clip {clip_idx} window {window_idx}: "
+                f"[{generated_caption}] vs. [{expected_caption}]"
             )

@@ -28,6 +28,23 @@ from cosmos_curate.core.utils.model.model_utils import (
 from cosmos_curate.models.all_models import get_all_models
 
 
+def _get_default_models() -> list[str]:
+    all_models = get_all_models()
+    default_models_to_download = []
+    for model in all_models:
+        if model.startswith("_"):
+            # internal temporary entries
+            continue
+        if model in {"qwen3_vl_30b", "qwen3_vl_235b", "qwen3_vl_235b_fp8"}:
+            # too large for new users
+            continue
+        if model in {"gpt_oss_20b"}:
+            # large and only for enhanced caption
+            continue
+        default_models_to_download.append(model)
+    return default_models_to_download
+
+
 def setup_parsers() -> argparse.ArgumentParser:
     """Set up the parsers for the model CLI.
 
@@ -64,7 +81,7 @@ def setup_parsers() -> argparse.ArgumentParser:
         x_parser.add_argument(
             "--models",
             type=str,
-            default=",".join(x for x in get_all_models() if not x.startswith("_")),
+            default=",".join(_get_default_models()),
             help=f"comma-separated list of models to download. Available models: {','.join(get_all_models().keys())}",
         )
 
