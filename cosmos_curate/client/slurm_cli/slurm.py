@@ -247,6 +247,8 @@ class SlurmJobSpec:
     exclude_nodes: list[str] | None = None
     comment: str | None = None
     prometheus_service_discovery_path: Path | None = None
+    mail_type: str | None = None
+    mail_user: str | None = None
 
 
 def _render_sbatch_script(spec: SlurmJobSpec) -> str:
@@ -302,6 +304,8 @@ def _render_sbatch_script(spec: SlurmJobSpec) -> str:
         enable_metrics_scraping="yes" if spec.prometheus_service_discovery_path is not None else "no",
         job_artifact_path=str(spec.remote_job_path),
         prometheus_service_discovery_path=str(spec.prometheus_service_discovery_path),
+        mail_type=spec.mail_type,
+        mail_user=spec.mail_user,
     )
 
 
@@ -677,7 +681,7 @@ def submit_cli(  # noqa: PLR0913
     stop_retries_after: Annotated[
         int,
         Option(
-            help="Maximum time in secondsto wait before `ray start` retries end",
+            help="Maximum time in seconds to wait before `ray start` retries end",
             rich_help_panel="cluster",
         ),
     ] = 600,
@@ -698,8 +702,26 @@ def submit_cli(  # noqa: PLR0913
         Option(
             help=(
                 "Path on the cluster under which to create the Prometheus service discovery file. "
-                "If not provided, it will not be created."
+                "If not provided, it will not be created"
             ),
+            rich_help_panel="cluster",
+        ),
+    ] = None,
+    mail_type: Annotated[
+        str | None,
+        Option(
+            help=(
+                "Comma separated mail notification type: BEGIN, END, FAIL, REQUEUE, ALL, "
+                "STAGE_OUT, TIME_LIMIT, TIME_LIMIT_90, TIME_LIMIT_80. If not provided, "
+                "and --mail-user is provided, then slurm will likely default to END,FAIL"
+            ),
+            rich_help_panel="cluster",
+        ),
+    ] = None,
+    mail_user: Annotated[
+        str | None,
+        Option(
+            help="Email address for job notifications",
             rich_help_panel="cluster",
         ),
     ] = None,
@@ -707,6 +729,10 @@ def submit_cli(  # noqa: PLR0913
     """Submit a job to a SLURM cluster."""
     if not command:
         error_message = "A command must be provided"
+        raise ValueError(error_message)
+
+    if mail_type is not None and mail_user is None:
+        error_message = "If --mail-type is provided, --mail-user must also be provided"
         raise ValueError(error_message)
 
     container_mount_specs: list[MountSpec] = []
@@ -740,6 +766,8 @@ def submit_cli(  # noqa: PLR0913
         exclude_nodes=exclude_nodes_list,
         comment=comment,
         prometheus_service_discovery_path=prometheus_service_discovery_path,
+        mail_type=mail_type,
+        mail_user=mail_user,
     )
 
     job_id = curator_submit(slurm_job_spec)

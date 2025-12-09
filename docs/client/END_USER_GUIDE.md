@@ -461,6 +461,52 @@ The command above will print the slurm job id like below
 Submitted batch job <slurm_job_id>
 ```
 
+#### Email Notifications (Optional)
+
+You can optionally receive email notifications about your SLURM jobs using the `--mail-user` and `--mail-type` parameters.
+
+**Parameters:**
+- `--mail-user`: Email address to receive notifications
+- `--mail-type`: Comma-separated list of events to notify about. Options include:
+  - `BEGIN`: Job start
+  - `END`: Job completion
+  - `FAIL`: Job failure
+  - `REQUEUE`: Job requeue
+  - `ALL`: All events
+  - `STAGE_OUT`: Stage out (data transfer) completion
+  - `TIME_LIMIT`, `TIME_LIMIT_90`, `TIME_LIMIT_80`: Time limit warnings
+
+**Note:** If you provide `--mail-user` without `--mail-type`, SLURM will typically default to `END,FAIL`. If you provide `--mail-type`, you must also provide `--mail-user`.
+
+**Example with email notifications:**
+
+```bash
+cosmos-curate slurm submit \
+  --login-node my-slurm-login-01.my-cluster.com \
+  --username my_username_on_slurm_cluster_if_different_than_local_username \
+  --account my_slurm_account \
+  --partition my_slurm_gpu_partition \
+  --gres=my_slurm_cluster_gres \
+  --num-nodes 1 \
+  --job-name "hello-world" \
+  --remote-files-path "${SLURM_USER_DIR}/job_info" \
+  --container-image "${SLURM_IMAGE_DIR}/${COSMOS_CURATE_IMAGE_NAME}" \
+  --container-mounts "${CONTAINER_MOUNTS}" \
+  --mail-user your.email@example.com \
+  --mail-type END,FAIL \
+    -- python -m cosmos_curate.pipelines.examples.hello_world_pipeline
+```
+
+**⚠️ Cluster-Specific Considerations:**
+
+Email notification functionality depends on your cluster's configuration:
+- The cluster must have a properly configured mail server
+- Network firewalls or security policies may affect email delivery
+- Some clusters may have email notifications disabled or restricted by policy
+- Email delivery may be delayed depending on the mail server configuration
+
+If email notifications are not working as expected, please verify with your cluster administrators that this feature is enabled and properly configured for your environment.
+
 ### Find Logs
 
 The slurm job log is at `"${SLURM_LOG_DIR}/{job_name}_{slurm_job_id}.log"` on the cluster.

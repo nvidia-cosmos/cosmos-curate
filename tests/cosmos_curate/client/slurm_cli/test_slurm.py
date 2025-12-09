@@ -120,6 +120,55 @@ def test_render_sbatch_script(exclude_nodes: list[str] | None) -> None:
     assert "COSMOS_AZURE_PROFILE_PATH" in sbatch_script
 
 
+@pytest.mark.parametrize(
+    ("mail_type", "mail_user", "should_include_mail_type", "should_include_mail_user"),
+    [
+        (None, None, False, False),  # No mail options - should not include mail directives
+        ("END,FAIL", "user@example.com", True, True),  # Both provided - should include both directives
+        ("BEGIN", "user@example.com", True, True),  # Both provided with different type
+        (None, "user@example.com", False, True),  # Only mail_user - should include only mail_user
+    ],
+)
+def test_render_sbatch_script_with_mail_options(
+    mail_type: str | None, mail_user: str | None, *, should_include_mail_type: bool, should_include_mail_user: bool
+) -> None:
+    """Test that mail options are correctly rendered in the sbatch script."""
+    job_spec = SlurmJobSpec(
+        login_node="login_node",
+        container=ContainerSpec(
+            squashfs_path="test_path", command=[str(_START_RAY), "arg1", "arg2"], mounts=[], environment=[]
+        ),
+        job_name="test_job",
+        account="test_account",
+        partition="test_partition",
+        username="test_user",
+        num_nodes=1,
+        gres=GRES,
+        exclusive=True,
+        remote_job_path=pathlib.Path("/remote/files") / "test_job.20250611",
+        time_limit="01:00:00",
+        log_dir=pathlib.Path("/logs"),
+        stop_retries_after=100,
+        mail_type=mail_type,
+        mail_user=mail_user,
+    )
+    sbatch_script = _render_sbatch_script(job_spec)
+
+    if should_include_mail_type:
+        assert "--mail-type=" in sbatch_script
+        if mail_type:
+            assert f"--mail-type={mail_type}" in sbatch_script
+    else:
+        assert "--mail-type=" not in sbatch_script
+
+    if should_include_mail_user:
+        assert "--mail-user=" in sbatch_script
+        if mail_user:
+            assert f"--mail-user={mail_user}" in sbatch_script
+    else:
+        assert "--mail-user=" not in sbatch_script
+
+
 class TestSubmitCmd(unittest.TestCase):
     """Test the submit command."""
 
@@ -468,6 +517,58 @@ class TestLaunch:
                 container_mounts="invalid_mounts",
             )
         mock_curator_submit.assert_not_called()
+
+    @pytest.mark.parametrize(
+        ("mail_type", "mail_user", "expected_mail_type", "should_raise"),
+        [
+            (None, None, None, False),  # No mail options - valid
+            ("BEGIN", "user@example.com", "BEGIN", False),  # Both provided - valid
+            (None, "user@example.com", None, False),  # Only mail_user - valid, SLURM will use default
+            ("END", None, None, True),  # Only mail_type without user - should raise error
+        ],
+    )
+    def test_launch_with_mail_options(
+        self,
+        mock_curator_submit: Mock,
+        mail_type: str | None,
+        mail_user: str | None,
+        expected_mail_type: str | None,
+        *,
+        should_raise: bool,
+    ) -> None:
+        """Test that mail options are correctly handled in the launch function."""
+        ctx = (
+            pytest.raises(ValueError, match="If --mail-type is provided, --mail-user must also be provided")
+            if should_raise
+            else nullcontext()
+        )
+
+        with ctx:
+            submit_cli(
+                command=[str(_START_RAY), "arg1", "arg2"],
+                login_node="login_node",
+                account="test_account",
+                partition="test_partition",
+                container_image="test_image",
+                num_nodes=1,
+                remote_files_path=pathlib.Path("/remote/files"),
+                gres=GRES,
+                exclusive=True,
+                mail_type=mail_type,
+                mail_user=mail_user,
+            )
+
+        if should_raise:
+            mock_curator_submit.assert_not_called()
+        else:
+            mock_curator_submit.assert_called_once()
+
+            # Get the SlurmJobSpec that was passed to curator_submit
+            call_args = mock_curator_submit.call_args
+            job_spec: SlurmJobSpec = call_args[0][0]
+
+            assert job_spec.mail_user == mail_user
+            assert job_spec.mail_type == expected_mail_type
 
 
 @pytest.mark.parametrize(

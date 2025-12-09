@@ -14,6 +14,12 @@
 {% else %}
 #SBATCH --comment=fact_off
 {% endif %}
+{% if mail_user %}
+#SBATCH --mail-user={{mail_user}}
+{% endif %}
+{% if mail_type %}
+#SBATCH --mail-type={{mail_type}}
+{% endif %}
 
 {% if time_limit_string %}
 #SBATCH --time={{time_limit_string}}
