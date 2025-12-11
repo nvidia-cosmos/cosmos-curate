@@ -289,7 +289,7 @@ def _launch_in_docker_container(opts: LaunchDocker) -> None:
     is_model_cli = "model_cli" in opts.command
     is_postgres_cli = "postgres_cli" in opts.command
 
-    gpus_string = f"'\"device={opts.gpus}\"'" if opts.gpus else "all"
+    gpus_string = f"\"device={opts.gpus}\"" if opts.gpus else "all"
 
     user_strings = ["-u", f"{os.getuid()}:{os.getgid()}"] if is_model_cli else []
     interactive_strings = ["-i"] if is_postgres_cli else []
