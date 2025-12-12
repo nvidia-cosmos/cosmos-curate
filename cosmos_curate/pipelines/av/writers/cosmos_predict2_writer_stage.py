@@ -166,7 +166,7 @@ def _rm_files(
                 file_path.unlink()
                 if verbose:
                     logger.debug(f"Cleaned up partial file: {file_path}")
-        except Exception as cleanup_error:  # noqa: BLE001, PERF203
+        except Exception as cleanup_error:  # noqa: BLE001
             logger.warning(f"Failed to clean up file {file_path}: {cleanup_error}")
 
 

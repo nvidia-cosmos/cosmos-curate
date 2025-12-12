@@ -190,7 +190,7 @@ class VideoDownloader(CuratorStage):
         for video in task.videos:
             video.timestamps_ms = np.array(timestamps_ms.get(video.camera_id, []), dtype=np.int64)
 
-    @nvtx.annotate("VideoDownloader")  # type: ignore[misc]
+    @nvtx.annotate("VideoDownloader")  # type: ignore[untyped-decorator]
     def process_data(self, tasks: list[AvSessionVideoSplitTask]) -> list[AvSessionVideoSplitTask] | None:
         """Process the data.
 
@@ -311,7 +311,7 @@ class SqliteDownloader(CuratorStage):
         """
         self._client = s3_client.create_s3_client(self._output_prefix)
 
-    @nvtx.annotate("SqliteDownloader")  # type: ignore[misc]
+    @nvtx.annotate("SqliteDownloader")  # type: ignore[untyped-decorator]
     def process_data(self, task: AvSessionTrajectoryTask) -> list[AvSessionTrajectoryTask] | None:
         """Process the data.
 
@@ -415,7 +415,7 @@ class ClipDownloader(CuratorStage):
 
         return task
 
-    @nvtx.annotate("ClipDownloader")  # type: ignore[misc]
+    @nvtx.annotate("ClipDownloader")  # type: ignore[untyped-decorator]
     def process_data(self, tasks: list[AvClipAnnotationTask]) -> list[AvClipAnnotationTask] | None:
         """Process the data.
 

@@ -324,7 +324,7 @@ class QwenInputPreparationStage(CuratorStage):
         """Set up the QwenInputPreparationStage."""
         self._qwen_utils.setup()
 
-    @nvtx.annotate("QwenInputPreparationStage")  # type: ignore[misc]
+    @nvtx.annotate("QwenInputPreparationStage")  # type: ignore[untyped-decorator]
     def process_data(self, tasks: list[AvClipAnnotationTask]) -> list[AvClipAnnotationTask]:
         """Process the data.
 
@@ -527,7 +527,7 @@ class QwenCaptionStage(CuratorStage):
         """
         return self._raw_model
 
-    @nvtx.annotate("QwenCaptionStage")  # type: ignore[misc]
+    @nvtx.annotate("QwenCaptionStage")  # type: ignore[untyped-decorator]
     def process_data(self, tasks: list[AvClipAnnotationTask]) -> list[AvClipAnnotationTask]:
         """Process the data.
 
@@ -610,7 +610,7 @@ class T5Stage(CuratorStage):
             cpus=1,
         )
 
-    @nvtx.annotate("T5Stage")  # type: ignore[misc]
+    @nvtx.annotate("T5Stage")  # type: ignore[untyped-decorator]
     def process_data(self, tasks: list[AvClipAnnotationTask]) -> list[AvClipAnnotationTask]:
         """Process the data.
 
@@ -817,7 +817,7 @@ class EnhanceCaptionStage(CuratorStage):
         gpus = 1.0 if self._raw_model.requires_gpu else 0.0
         return CuratorStageResource(cpus=1.0, gpus=gpus)
 
-    @nvtx.annotate("EnhanceCaptionStage")  # type: ignore[misc]
+    @nvtx.annotate("EnhanceCaptionStage")  # type: ignore[untyped-decorator]
     def process_data(self, tasks: list[AvClipAnnotationTask]) -> list[AvClipAnnotationTask]:
         """Process the data.
 

@@ -96,7 +96,7 @@ class CosmosEmbed1FrameCreationStage(CuratorStage):
         """
         return CuratorStageResource(cpus=1.0)
 
-    @nvtx.annotate("CosmosEmbed1FrameCreationStage")  # type: ignore[misc]
+    @nvtx.annotate("CosmosEmbed1FrameCreationStage")  # type: ignore[untyped-decorator]
     def process_data(self, tasks: list[SplitPipeTask]) -> list[SplitPipeTask] | None:
         """Process video data to create Cosmos-Embed1 input frames.
 
@@ -219,7 +219,7 @@ class CosmosEmbed1EmbeddingStage(CuratorStage):
         """
         return CuratorStageResource(gpus=self._num_gpus_per_worker)
 
-    @nvtx.annotate("CosmosEmbed1EmbeddingStage")  # type: ignore[misc]
+    @nvtx.annotate("CosmosEmbed1EmbeddingStage")  # type: ignore[untyped-decorator]
     def process_data(self, tasks: list[SplitPipeTask]) -> list[SplitPipeTask] | None:
         """Process video data to generate embeddings.
 

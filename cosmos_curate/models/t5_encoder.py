@@ -18,10 +18,11 @@
 import enum
 import pathlib
 from collections.abc import Iterable
-from typing import Final
+from typing import Any, Final
 
 import attrs
 import numpy as np
+import numpy.typing as npt
 import torch
 
 from cosmos_curate.core.interfaces.model_interface import ModelInterface
@@ -55,10 +56,10 @@ class ModelVariant(enum.Enum):
 class EncodedSample:
     """Container for encoded text samples with associated metadata."""
 
-    encoded_text: np.ndarray  # type: ignore[type-arg]
+    encoded_text: npt.NDArray[Any]
     length: int
-    attn_mask: np.ndarray  # type: ignore[type-arg]
-    offset_mappings: np.ndarray | None = None  # type: ignore[type-arg]
+    attn_mask: npt.NDArray[Any]
+    offset_mappings: npt.NDArray[Any] | None = None
 
     def truncate(self, variant: ModelVariant) -> None:
         """Truncate the encoded text to the specified variant.

@@ -91,7 +91,7 @@ class ClipFrameExtractionStage(CuratorStage):
 
         return reduce(lcm, fps)
 
-    @nvtx.annotate("ClipFrameExtractionStage")  # type: ignore[misc]
+    @nvtx.annotate("ClipFrameExtractionStage")  # type: ignore[untyped-decorator]
     def process_data(self, tasks: list[SplitPipeTask]) -> list[SplitPipeTask] | None:  # noqa: C901
         """Process the data for the clip frame extraction stage.
 

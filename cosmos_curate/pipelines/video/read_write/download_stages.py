@@ -176,7 +176,7 @@ class VideoDownloader(CuratorStage):
             f"bit_rate={meta['bit_rate']}.",
         )
 
-    @nvtx.annotate("VideoDownloader")  # type: ignore[misc]
+    @nvtx.annotate("VideoDownloader")  # type: ignore[untyped-decorator]
     def process_data(self, tasks: list[SplitPipeTask]) -> list[SplitPipeTask] | None:
         """Read video specified in URI to task buffer."""
         for task in tasks:
@@ -288,7 +288,7 @@ class DownloadPackUpload(CuratorStage):
             client=self._client_output,
         )
 
-    @nvtx.annotate("DownloadPackUpload")  # type: ignore[misc]
+    @nvtx.annotate("DownloadPackUpload")  # type: ignore[untyped-decorator]
     def process_data(self, tasks: list[ShardPipeTask]) -> list[ShardPipeTask] | None:
         """Read video specified in URI to task buffer."""
         for task in tasks:

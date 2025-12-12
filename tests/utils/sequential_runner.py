@@ -49,7 +49,7 @@ class SequentialRunner(RunnerInterface):
 
         """
         # Extract the actual stages from the stage specs
-        stages: list[CuratorStage] = [spec.stage for spec in stage_specs]  # type: ignore[misc]
+        stages: list[CuratorStage] = [spec.stage for spec in stage_specs]  # type: ignore[untyped-decorator]
 
         # Setup all stages
         for stage in stages:

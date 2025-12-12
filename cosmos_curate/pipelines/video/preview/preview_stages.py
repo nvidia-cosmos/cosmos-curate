@@ -121,7 +121,7 @@ class PreviewStage(CuratorStage):
 
             window.webp_bytes = output_webp.read_bytes()
 
-    @nvtx.annotate("PreviewStage")  # type: ignore[misc]
+    @nvtx.annotate("PreviewStage")  # type: ignore[untyped-decorator]
     def process_data(self, tasks: list[SplitPipeTask]) -> list[SplitPipeTask] | None:
         """Process video data to generate previews.
 

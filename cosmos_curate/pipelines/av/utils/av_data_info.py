@@ -9,9 +9,7 @@
 # its affiliates is strictly prohibited.
 """Data information for AV pipelines."""
 
-from typing import TypedDict
-
-from typing_extensions import NotRequired
+from typing import NotRequired, TypedDict
 
 
 class CameraIdExtractor(TypedDict):
@@ -47,7 +45,7 @@ class CameraMapping(TypedDict):
     camera_id_mapping_cosmos: dict[int, int]
     camera_name_mapping_cosmos: dict[int, str]
     all_timestamp_files: list[str]
-    camera_id_for_vri_caption: list[int]
+    camera_id_for_vri_caption: NotRequired[list[int]]
     align_every_frame: NotRequired[bool]
     extract_timestamp_from_video: NotRequired[bool]
     timestamp_camera_id_mapping: NotRequired[dict[int, int]]

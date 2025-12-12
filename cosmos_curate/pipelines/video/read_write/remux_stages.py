@@ -152,7 +152,7 @@ class RemuxStage(CuratorStage):
         """
         return CuratorStageResource(cpus=1)
 
-    @nvtx.annotate("RemuxStage")  # type: ignore[misc]
+    @nvtx.annotate("RemuxStage")  # type: ignore[untyped-decorator]
     def process_data(self, tasks: list[SplitPipeTask]) -> list[SplitPipeTask] | None:
         """Remux the video if it is not in the correct format."""
         for task in tasks:

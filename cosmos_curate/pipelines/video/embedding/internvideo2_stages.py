@@ -93,7 +93,7 @@ class InternVideo2FrameCreationStage(CuratorStage):
         """
         return CuratorStageResource(cpus=1.0)
 
-    @nvtx.annotate("InternVideo2FrameCreationStage")  # type: ignore[misc]
+    @nvtx.annotate("InternVideo2FrameCreationStage")  # type: ignore[untyped-decorator]
     def process_data(self, tasks: list[SplitPipeTask]) -> list[SplitPipeTask] | None:
         """Process video data to create InternVideo2 input frames.
 
@@ -222,7 +222,7 @@ class InternVideo2EmbeddingStage(CuratorStage):
             probs, idxs = self._model.evaluate(torch.from_numpy(clip.intern_video_2_embedding), text_embeddings)
             clip.intern_video_2_text_match = (self._texts_to_verify[idxs[0]], probs[0])
 
-    @nvtx.annotate("InternVideo2EmbeddingStage")  # type: ignore[misc]
+    @nvtx.annotate("InternVideo2EmbeddingStage")  # type: ignore[untyped-decorator]
     def process_data(self, tasks: list[SplitPipeTask]) -> list[SplitPipeTask] | None:
         """Process video data to generate embeddings.
 

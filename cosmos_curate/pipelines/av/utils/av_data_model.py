@@ -187,7 +187,7 @@ def _append(key: str, value: T, container: dict[str, list[T]]) -> None:
     container[key].append(value)
 
 
-def _get_last(key: str, container: dict[str, list[T]]) -> T:
+def _get_last[T](key: str, container: dict[str, list[T]]) -> T:
     return container[key][-1]
 
 

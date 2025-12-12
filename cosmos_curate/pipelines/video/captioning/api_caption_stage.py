@@ -86,7 +86,7 @@ class ApiPrepStage(CuratorStage):
         if self._verbose:
             logger.debug(f"Prepared {len(windows)} windows for {video.input_video}")
 
-    @nvtx.annotate("ApiPrepStage")  # type: ignore[misc]
+    @nvtx.annotate("ApiPrepStage")  # type: ignore[untyped-decorator]
     def process_data(self, tasks: list[TTask]) -> list[TTask]:
         """Prepare data for API captioning."""
         for task in tasks:
@@ -306,7 +306,7 @@ class ApiCaptionStage(CuratorStage):
                 if self._verbose:
                     logger.info(f"Gemini caption clip {clip.uuid} window {window_index}: {caption}")
 
-    @nvtx.annotate("ApiCaptionStage")  # type: ignore[misc]
+    @nvtx.annotate("ApiCaptionStage")  # type: ignore[untyped-decorator]
     def process_data(self, tasks: list[SplitPipeTask]) -> list[SplitPipeTask]:
         """Caption each window in the provided tasks using Gemini."""
         for task in tasks:

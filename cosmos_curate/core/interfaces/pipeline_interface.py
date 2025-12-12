@@ -186,7 +186,7 @@ def _build_pipeline_stage_specs(stages: Sequence[CuratorStage | CuratorStageSpec
 T = TypeVar("T", bound=PipelineTask)
 
 
-def run_pipeline(
+def run_pipeline[T: PipelineTask](
     input_tasks: list[T],
     stages: Sequence[CuratorStage | CuratorStageSpec],
     model_weights_prefix: str = MODEL_WEIGHTS_PREFIX,

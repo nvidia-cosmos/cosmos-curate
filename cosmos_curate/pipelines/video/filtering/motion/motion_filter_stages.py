@@ -80,7 +80,7 @@ class MotionVectorDecodeStage(CuratorStage):
         """
         return CuratorStageResource(cpus=self._num_cpus_per_worker)
 
-    @nvtx.annotate("MotionVectorDecodeStage")  # type: ignore[misc]
+    @nvtx.annotate("MotionVectorDecodeStage")  # type: ignore[untyped-decorator]
     def process_data(self, tasks: list[SplitPipeTask]) -> list[SplitPipeTask] | None:  # noqa: C901
         """Decode data for motion vector computation and filter by side length."""
         for task in tasks:
@@ -179,7 +179,7 @@ class MotionFilterStage(CuratorStage):
         """
         return CuratorStageResource(gpus=self._num_gpus_per_worker)
 
-    @nvtx.annotate("MotionFilterStage")  # type: ignore[misc]
+    @nvtx.annotate("MotionFilterStage")  # type: ignore[untyped-decorator]
     def process_data(self, tasks: list[SplitPipeTask]) -> list[SplitPipeTask] | None:  # noqa: C901, PLR0912
         """Process video data to filter clips based on motion score.
 

@@ -104,7 +104,7 @@ class QwenUtils:
             },
         ]
 
-    @nvtx.annotate("Generate LLM inputs")  # type: ignore[misc]
+    @nvtx.annotate("Generate LLM inputs")  # type: ignore[untyped-decorator]
     def generate_llm_inputs(
         self,
         prompt: str,
@@ -215,7 +215,7 @@ class QwenVL(ModelInterface):
         """
         return [self._weights_name]
 
-    @nvtx.annotate("Setup Qwen model")  # type: ignore[misc]
+    @nvtx.annotate("Setup Qwen model")  # type: ignore[untyped-decorator]
     def setup(self) -> None:
         """Set up the Qwen model.
 
@@ -257,7 +257,7 @@ class QwenVL(ModelInterface):
             "CUDA graph enabled for sequences smaller than 16k tokens; adjust accordingly for even longer sequences",
         )
 
-    @nvtx.annotate("Qwen Generate tokens")  # type: ignore[misc]
+    @nvtx.annotate("Qwen Generate tokens")  # type: ignore[untyped-decorator]
     def generate(
         self,
         videos: list[dict[str, Any]],

@@ -14,7 +14,7 @@
 # limitations under the License.
 
 default_language_version:
-  python: python3.10
+  python: python3.12
 
 repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit

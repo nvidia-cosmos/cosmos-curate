@@ -66,7 +66,7 @@ def split_by_chunk_size(
         yield out
 
 
-def split_into_n_chunks(iterable: Iterable[T], num_chunks: int) -> Generator[list[T], None, None]:
+def split_into_n_chunks[T](iterable: Iterable[T], num_chunks: int) -> Generator[list[T], None, None]:
     """Split an iterable into a specified number of chunks.
 
     Args:
@@ -87,7 +87,7 @@ def split_into_n_chunks(iterable: Iterable[T], num_chunks: int) -> Generator[lis
         yield it[si : si + (d + 1 if i < r else d)]
 
 
-def pairwise(iterable: Iterable[T]) -> Iterable[tuple[T, T]]:
+def pairwise[T](iterable: Iterable[T]) -> Iterable[tuple[T, T]]:
     """Return pairs of consecutive items from the input iterable.
 
     Args:

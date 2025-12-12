@@ -125,7 +125,7 @@ class WindowingStage(CuratorStage):
         """
         return CuratorStageResource(cpus=4.0)
 
-    @nvtx.annotate("WindowingStage")  # type: ignore[misc]
+    @nvtx.annotate("WindowingStage")  # type: ignore[untyped-decorator]
     def process_data(self, tasks: list[SplitPipeTask]) -> list[SplitPipeTask] | None:
         """Process the data for the windowing stage.
 
@@ -321,7 +321,7 @@ class _T5Stage(CuratorStage):
 class T5StageForSplit(_T5Stage):
     """Stage that encodes captions using the T5 model for shard processing."""
 
-    @nvtx.annotate("T5StageForSplit")  # type: ignore[misc]
+    @nvtx.annotate("T5StageForSplit")  # type: ignore[untyped-decorator]
     def process_data(self, tasks: list[SplitPipeTask]) -> list[SplitPipeTask] | None:
         """Process the data for the T5 caption encoding stage.
 
@@ -362,7 +362,7 @@ class T5StageForSplit(_T5Stage):
 class T5StageForShard(_T5Stage):
     """Stage that encodes captions using the T5 model for shard processing."""
 
-    @nvtx.annotate("T5StageForShard")  # type: ignore[misc]
+    @nvtx.annotate("T5StageForShard")  # type: ignore[untyped-decorator]
     def process_data(self, tasks: list[ShardPipeTask]) -> list[ShardPipeTask] | None:
         """Process the data for the T5 caption encoding stage.
 
@@ -476,7 +476,7 @@ class EnhanceCaptionStage(CuratorStage):
         """
         return CuratorStageResource(gpus=1.0)
 
-    @nvtx.annotate("EnhanceCaptionStage")  # type: ignore[misc]
+    @nvtx.annotate("EnhanceCaptionStage")  # type: ignore[untyped-decorator]
     def process_data(self, tasks: list[SplitPipeTask]) -> list[SplitPipeTask] | None:  # noqa: C901
         """Process the data for the caption enhancement stage.
 

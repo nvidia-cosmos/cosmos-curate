@@ -323,7 +323,7 @@ def find_closest_indices(src: npt.NDArray[np.float32], dst: npt.NDArray[np.float
     beyond_end = dst >= src[-1]
     closest_idx[beyond_end] = len(src) - 1
 
-    return closest_idx
+    return closest_idx.astype(np.int32)
 
 
 def sample_closest(  # noqa: PLR0913
@@ -389,12 +389,15 @@ def sample_closest(  # noqa: PLR0913
         indices = indices[:-1]
         sample_elements = sample_elements[:-1]
 
+    counts_int32: npt.NDArray[np.int32]
     if dedup:
         indices, counts = np.unique(indices, return_counts=True)
+        indices = indices.astype(np.int32)
+        counts_int32 = counts.astype(np.int32)
     else:
-        counts = np.ones_like(indices)
+        counts_int32 = np.ones_like(indices, dtype=np.int32)
 
-    return indices, counts, sample_elements
+    return indices, counts_int32, sample_elements
 
 
 def decode_video_cpu_frame_ids(  # noqa: PLR0913

@@ -23,7 +23,7 @@ from loguru import logger
 T = typing.TypeVar("T")
 
 
-def do_with_retries(  # noqa: PLR0913
+def do_with_retries[T](  # noqa: PLR0913
     func: Callable[[], T],
     exceptions_to_retry: Iterable[type[Exception]] | None = None,
     max_attempts: int = 5,
@@ -53,7 +53,7 @@ def do_with_retries(  # noqa: PLR0913
     while attempt < max_attempts:
         try:
             return func()
-        except exceptions_to_retry as e:  # noqa: PERF203
+        except exceptions_to_retry as e:
             attempt += 1
             if attempt == max_attempts:
                 raise

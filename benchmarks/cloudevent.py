@@ -15,7 +15,7 @@
 """CloudEvent / Kratos handling for the benchmarks."""
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any, cast
 
 import requests
@@ -53,7 +53,7 @@ def make_cloudevent(data: dict[str, Any]) -> dict[str, Any]:
     return {
         "specversion": "1.0",
         "id": f"{uuid.uuid4()!s}",
-        "time": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+        "time": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
         "source": f"cosmos-curate-{uuid.uuid4()!s}",
         "type": "performance-benchmark",
         "subject": "nvcf-performance-metrics",

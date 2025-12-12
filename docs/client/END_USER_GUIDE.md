@@ -50,7 +50,7 @@ Cosmos-Curate is a powerful tool for video curation and processing. This guide w
 
 #### Software Requirement
 - Ubuntu >= 22.04
-- Python >=3.10 on your host
+- Python >=3.12 on your host
   - We will require a specific version in your virtual environment below.
 - [Docker](https://docs.docker.com/engine/install/)
 - [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)
@@ -128,7 +128,7 @@ docker login --username '$oauthtoken' nvcr.io
 
 ```bash
 # 1. Create virtual environment (using micromamba as an example)
-micromamba create -n cosmos-curate -c conda-forge python=3.10.18 poetry
+micromamba create -n cosmos-curate -c conda-forge python=3.12.12 poetry
 micromamba activate cosmos-curate
 
 # 2. Clone the repository and update `cosmos-xenna` submodule

@@ -114,7 +114,7 @@ class AssetManager(NvcfBase):
                 self.do_upload(src_path=src_path, desc=desc, url=str(upload_url))
                 return {"Path": str(src_path), "AssetId": asset_id}
 
-            except (OSError, requests.RequestException, ValueError) as e:  # noqa : PERF203
+            except (OSError, requests.RequestException, ValueError) as e:
                 retries -= 1
                 if retries > 0:
                     self.logger.warning("Retrying upload for %s: %s. Attempts left: %d", src_path, e, retries)

@@ -77,7 +77,7 @@ class CosmosEmbed1(ModelInterface):
         """
         return [self._weights_name]
 
-    @nvtx.annotate("Setup Cosmos-Embed1 model")  # type: ignore[misc]
+    @nvtx.annotate("Setup Cosmos-Embed1 model")  # type: ignore[untyped-decorator]
     def setup(self) -> None:
         """Set up the Cosmos-Embed1 model.
 
@@ -94,7 +94,7 @@ class CosmosEmbed1(ModelInterface):
                 local_files_only=True,
             ).to("cuda", dtype=torch.bfloat16)
             assert self._model is not None
-            self._model.eval()  # type: ignore[attr-defined]
+            self._model.eval()  # type: ignore[union-attr]
         self._processor = AutoProcessor.from_pretrained(  # type: ignore[no-untyped-call]
             self._weights_dir,
             trust_remote_code=True,

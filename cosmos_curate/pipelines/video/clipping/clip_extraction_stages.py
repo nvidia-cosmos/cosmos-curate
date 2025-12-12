@@ -88,7 +88,7 @@ class ClipTranscodingStage(CuratorStage):
             error_msg = f"Expected encoder of `libopenh264` or `h264_nvenc`. Got {encoder}"
             raise ValueError(error_msg)
 
-    @nvtx.annotate("ClipTranscodingStage")  # type: ignore[misc]
+    @nvtx.annotate("ClipTranscodingStage")  # type: ignore[untyped-decorator]
     def process_data(self, tasks: list[SplitPipeTask]) -> list[SplitPipeTask] | None:  # noqa: C901
         """Process the data for the clip transcoding stage.
 
@@ -199,7 +199,7 @@ class ClipTranscodingStage(CuratorStage):
             return CuratorStageResource(gpus=1.0)
         return CuratorStageResource(cpus=self._num_cpus_per_worker)
 
-    @nvtx.annotate("ClipLoadingStage:_extract_clips")  # type: ignore[misc]
+    @nvtx.annotate("ClipLoadingStage:_extract_clips")  # type: ignore[untyped-decorator]
     def _extract_clips(  # noqa: C901, PLR0912, PLR0913
         self,
         working_dir: pathlib.Path,

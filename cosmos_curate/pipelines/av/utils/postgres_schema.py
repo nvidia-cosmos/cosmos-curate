@@ -68,7 +68,7 @@ class Run(Base):
 
     __tablename__ = "run"
     run_uuid = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    datetime = Column(DateTime, nullable=False, default=datetime.datetime.now(datetime.timezone.utc))
+    datetime = Column(DateTime, nullable=False, default=datetime.datetime.now(datetime.UTC))
     run_type = Column(String, nullable=False, index=True, comment="Run type, e.g. split")
     pipeline_version = Column(String, nullable=False, comment="Pipeline implementation Version")
     description = Column(String, comment="Run description")
@@ -91,7 +91,7 @@ class ClippedSession(Base):
     split_algo_name = Column(String, nullable=False)
     encoder = Column(String, nullable=False)
 
-    datetime = Column(DateTime, nullable=False, default=datetime.datetime.now(datetime.timezone.utc))
+    datetime = Column(DateTime, nullable=False, default=datetime.datetime.now(datetime.UTC))
     run_uuid = Column(UUID(as_uuid=True), ForeignKey("run.run_uuid"), nullable=False)
 
     __table_args__ = (
@@ -138,7 +138,7 @@ class VideoSpan(Base):
     height = Column(Integer, nullable=False, index=True)
     width = Column(Integer, nullable=False, index=True)
     sha256 = Column(String(64), nullable=False)
-    datatime = Column(DateTime, nullable=False, default=datetime.datetime.now(datetime.timezone.utc))
+    datatime = Column(DateTime, nullable=False, default=datetime.datetime.now(datetime.UTC))
     run_uuid = Column(UUID(as_uuid=True), ForeignKey("run.run_uuid"), nullable=False, index=True)
 
     __table_args__ = (
@@ -170,7 +170,7 @@ class ClipCaption(Base):
     window_caption: Column[list[str]] = Column(ARRAY(String), nullable=False)
     t5_embedding_url = Column(String, nullable=False)
 
-    datetime = Column(DateTime, nullable=False, default=datetime.datetime.now(datetime.timezone.utc))
+    datetime = Column(DateTime, nullable=False, default=datetime.datetime.now(datetime.UTC))
     run_uuid = Column(UUID(as_uuid=True), ForeignKey("run.run_uuid"), nullable=False, index=True)
 
     __table_args__ = (
@@ -197,7 +197,7 @@ class ClipTrajectory(Base):
 
     trajectory_url = Column(String, nullable=False)
 
-    datetime = Column(DateTime, nullable=False, default=datetime.datetime.now(datetime.timezone.utc))
+    datetime = Column(DateTime, nullable=False, default=datetime.datetime.now(datetime.UTC))
     run_uuid = Column(UUID(as_uuid=True), ForeignKey("run.run_uuid"), nullable=False, index=True)
 
     __table_args__ = (
@@ -233,7 +233,7 @@ class ClipTag(Base):
     road_surface = Column(String, nullable=False, index=True)
     illumination = Column(String, nullable=False, index=True)
 
-    datetime = Column(DateTime, nullable=False, default=datetime.datetime.now(datetime.timezone.utc))
+    datetime = Column(DateTime, nullable=False, default=datetime.datetime.now(datetime.UTC))
     run_uuid = Column(UUID(as_uuid=True), ForeignKey("run.run_uuid"), nullable=False, index=True)
 
     __table_args__ = (UniqueConstraint("clip_uuid", "version", name="clip_tag_clip_uuid_version"),)

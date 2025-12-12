@@ -8,13 +8,13 @@ version = "1.0.0"
 extra-index-urls = ["https://pypi.nvidia.com"]
 
 [dependencies]
-python = ">=3.10.19,<3.11"
+python = ">=3.12,<3.13"
 pip = "*"
-click = { version = "!=8.3.0" } # click 8.3.0 is broken
+click = "<8.3.0" # click 8.3.0 is broken
 
 [pypi-dependencies]
 cosmos-xenna = "==0.1.8"
-ray = { version = "==2.52.0", extras = ["default"] } # conda-forge package pulls in an old version of protobuf
+ray = { version = "==2.52.1", extras = ["default"] } # conda-forge package pulls in an old version of protobuf
 
 [feature.core.system-requirements]
 cuda = "12.9.1" # match the version of the nvidia/cuda docker base image
@@ -31,7 +31,7 @@ gpustat = "*"
 huggingface_hub = "*"
 jinja2 = "*"
 loguru = "*"
-numpy = "*"
+numpy = "<2.0" # for numba and pycuda compatibility
 nvidia-ml-py = "*"
 nvtx = "*"
 pandas = "*"
@@ -68,8 +68,10 @@ cuda = "12.9.1" # match the version of the nvidia/cuda docker base image
 [feature.cuml.dependencies]
 azure-identity = "*"
 azure-storage-blob = "*"
-cuml = "==25.08"
+cuml = "==25.12"
 loguru = "*"
+numpy = "<2.0" # for numba and pycuda compatibility
+raft-dask = "*"
 tqdm = "*"
 
 [feature.cuml.pypi-dependencies]
@@ -82,7 +84,7 @@ cattrs = "*"
 huggingface_hub = "*"
 loguru = "*"
 pandas = "*"
-numpy = "*"
+numpy = "<2.0" # for numba and pycuda compatibility
 nvidia-ml-py = "*"
 scipy = "*"
 tabulate = "*"
@@ -102,7 +104,7 @@ pycuda = "*"
 cvcuda-cu12 = "*" # not available on conda-forge
 flashinfer-python = ">=0.4.0rc3" # not available on conda-forge; pre-release to avoid pynvml dependency
 PyNvVideoCodec = "*" # not available on conda-forge
-vllm = ">=0.11.2" # not available on conda-forge
+vllm = "==0.11.2" # not available on conda-forge
 
 [feature.legacy-transformers.dependencies]
 flash-attn = "*"

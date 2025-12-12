@@ -81,7 +81,7 @@ class DecodedData:
         return total_size
 
 
-@nvtx.annotate()  # type: ignore[misc]
+@nvtx.annotate()  # type: ignore[untyped-decorator]
 def motion_vectors_to_flowfield(mvs: Tensor, size: list[int], flow: Tensor | None = None) -> Tensor:
     """Compute a canonical flow from motion vectors."""
     # get relevant info for later
@@ -165,7 +165,7 @@ def motion_vectors_to_flowfield(mvs: Tensor, size: list[int], flow: Tensor | Non
     return flow
 
 
-@nvtx.annotate()  # type: ignore[misc]
+@nvtx.annotate()  # type: ignore[untyped-decorator]
 def decode_for_motion(  # noqa: C901
     video: io.BytesIO,
     thread_count: int = 4,
@@ -249,7 +249,7 @@ def decode_for_motion(  # noqa: C901
     return DecodedData(mv_data, shape)
 
 
-@nvtx.annotate()  # type: ignore[misc]
+@nvtx.annotate()  # type: ignore[untyped-decorator]
 def check_if_small_motion(  # noqa: PLR0913
     mv_list: list[npt.NDArray],  # type: ignore[type-arg]
     frame_shape: torch.Size,

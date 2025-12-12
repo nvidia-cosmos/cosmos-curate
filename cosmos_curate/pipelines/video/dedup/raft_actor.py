@@ -210,7 +210,7 @@ class RAFTActor:
 T = TypeVar("T", bound=RAFTActor)
 
 
-def initialize_raft_actor_pool(pool_size: int, actor_class: type[T], *, verbose: bool = False) -> list[T]:
+def initialize_raft_actor_pool[T: RAFTActor](pool_size: int, actor_class: type[T], *, verbose: bool = False) -> list[T]:
     """Initialize a pool of RAFT actors with the specified size and configuration.
 
     This function initializes a pool of RAFT actors with the specified size and

@@ -11,7 +11,7 @@
 
 from contextlib import AbstractContextManager
 from contextlib import nullcontext as does_not_raise
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
@@ -231,7 +231,7 @@ def test_get_caption_chain_len(
                     window_caption=["caption1-a", "caption2-a"],
                     t5_embedding_url="t5_embedding_url",
                     run_uuid=UUID("12345678-1234-5678-1234-567812345678"),
-                    datetime=datetime.now(timezone.utc),
+                    datetime=datetime.now(UTC),
                 ),
             ],
             does_not_raise(),
@@ -279,7 +279,7 @@ def test_get_caption_chain_len(
                     window_caption=["caption2-b", "caption4-b"],
                     t5_embedding_url="t5_embedding_url",
                     run_uuid=UUID("12345678-1234-5678-1234-567812345678"),
-                    datetime=datetime.now(timezone.utc),
+                    datetime=datetime.now(UTC),
                 ),
                 ClipCaption(
                     clip_uuid=UUID("12345678-1234-5678-1234-567812345678"),
@@ -290,7 +290,7 @@ def test_get_caption_chain_len(
                     window_caption=["caption1-b", "caption3-b"],
                     t5_embedding_url="t5_embedding_url",
                     run_uuid=UUID("12345678-1234-5678-1234-567812345678"),
-                    datetime=datetime.now(timezone.utc),
+                    datetime=datetime.now(UTC),
                 ),
             ],
             does_not_raise(),
@@ -412,7 +412,7 @@ def test_get_caption_chain_len(
                     window_caption=["caption1-f"],
                     t5_embedding_url=None,
                     run_uuid=UUID("12345678-1234-5678-1234-567812345678"),
-                    datetime=datetime.now(timezone.utc),
+                    datetime=datetime.now(UTC),
                 ),
             ],
             does_not_raise(),

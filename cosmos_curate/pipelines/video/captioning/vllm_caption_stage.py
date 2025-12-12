@@ -78,7 +78,7 @@ if conda_utils.is_running_in_env("unified"):
 T = TypeVar("T", bound=PipelineTask)
 
 
-def _get_windows_from_tasks(tasks: list[T]) -> tuple[list[Window], list[str]]:
+def _get_windows_from_tasks[T: PipelineTask](tasks: list[T]) -> tuple[list[Window], list[str]]:
     """Get the windows from a list of tasks.
 
     Args:
@@ -309,7 +309,7 @@ class VllmPrepStage(CuratorStage):
         for window, llm_input in zip(windows, llm_inputs, strict=True):
             window.model_input[self._vllm_config.model_variant] = llm_input
 
-    @nvtx.annotate("VllmPrepStage")  # type: ignore[misc]
+    @nvtx.annotate("VllmPrepStage")  # type: ignore[untyped-decorator]
     def process_data(self, tasks: list[T]) -> list[T]:
         """Prepare the data for the vLLM caption stage.
 
@@ -479,7 +479,7 @@ class VllmCaptionStage(CuratorStage):
         """
         return self._model
 
-    @nvtx.annotate("VllmCaptionStage")  # type: ignore[misc]
+    @nvtx.annotate("VllmCaptionStage")  # type: ignore[untyped-decorator]
     def process_data(self, tasks: list[T]) -> list[T]:  # noqa: C901
         """Process the data for the vLLM caption stage.
 

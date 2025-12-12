@@ -22,11 +22,10 @@ import tempfile
 import zipfile
 from http.server import HTTPServer, SimpleHTTPRequestHandler
 from pathlib import Path
-from typing import Annotated, ClassVar
+from typing import Annotated, ClassVar, override
 
 from loguru import logger
 from typer import Option
-from typing_extensions import override
 
 from cosmos_curate.client.utils.validations import validate_address, validate_in
 

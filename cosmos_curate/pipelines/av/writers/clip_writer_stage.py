@@ -353,7 +353,7 @@ class ClipWriterStage(BaseWriterStage):
                     for future in futures:
                         try:
                             num_uploaded_clips += future.result()
-                        except Exception as e:  # noqa: PERF203
+                        except Exception as e:
                             logger.error(f"Error uploading clips: {e!s}")
                             raise
             except Exception as e:  # noqa: BLE001

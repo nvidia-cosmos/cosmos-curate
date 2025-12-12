@@ -216,7 +216,7 @@ class _InternVideo2Stage2(nn.Module):
             _, vfeat = self.encode_vision(frames)
             vfeat = self.vision_proj(vfeat)
             vfeat /= vfeat.norm(dim=-1, keepdim=True)
-        return vfeat
+        return vfeat  # type: ignore[no-any-return]
 
     def get_txt_feat(self, text: str) -> torch.Tensor:
         """Get the text features for the given text.
@@ -240,7 +240,7 @@ class _InternVideo2Stage2(nn.Module):
             _, tfeat = self.encode_text(text_for_encoder)
             tfeat = self.text_proj(tfeat)
             tfeat /= tfeat.norm(dim=-1, keepdim=True)
-        return tfeat
+        return tfeat  # type: ignore[no-any-return]
 
     def predict_label(
         self,
@@ -383,7 +383,8 @@ class InternVideo2MultiModality(ModelInterface):
             self._model = None
 
     def _normalize(self, data: npt.NDArray[np.uint8]) -> npt.NDArray[np.float32]:
-        return ((data / np.float32(255.0) - self._v_mean) / self._v_std).astype(np.float32)  # type: ignore[no-any-return]
+        result: npt.NDArray[np.float32] = ((data / np.float32(255.0) - self._v_mean) / self._v_std).astype(np.float32)
+        return result
 
     def _construct_frames(
         self,

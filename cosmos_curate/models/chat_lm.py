@@ -148,7 +148,7 @@ class ChatLM(ModelInterface):
 
         return api_key, base_url
 
-    @nvtx.annotate("Setup Chat LM model")  # type: ignore[misc]
+    @nvtx.annotate("Setup Chat LM model")  # type: ignore[untyped-decorator]
     def setup(self) -> None:
         """Set up the model and tokenizer, and sampling parameters."""
         if self._is_local:
@@ -187,7 +187,7 @@ class ChatLM(ModelInterface):
             self.openai_client: OpenAIClient = OpenAIClient(**client_kwargs)  # type: ignore[arg-type]
             # For OpenAI API, we'll format messages manually in generate()
 
-    @nvtx.annotate("Chat LM Generate tokens")  # type: ignore[misc]
+    @nvtx.annotate("Chat LM Generate tokens")  # type: ignore[untyped-decorator]
     def generate(
         self,
         prompts: list[list[dict[str, str]]],

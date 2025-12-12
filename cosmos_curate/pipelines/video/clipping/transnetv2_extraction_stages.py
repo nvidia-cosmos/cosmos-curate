@@ -141,7 +141,7 @@ class TransNetV2ClipExtractionStage(CuratorStage):
     def _get_max_length(self, framerate: float) -> int | None:
         return math.ceil(self.max_length_s * framerate) if self.max_length_s is not None else None
 
-    @nvtx.annotate("TransNetV2ClipExtractionStage")  # type: ignore[misc]
+    @nvtx.annotate("TransNetV2ClipExtractionStage")  # type: ignore[untyped-decorator]
     def process_data(self, tasks: list[SplitPipeTask]) -> list[SplitPipeTask] | None:  # noqa: C901
         """Process video data to extract clips.
 
@@ -355,7 +355,8 @@ def _crop_scenes(scenes: npt.NDArray[np.int32], crop_length: int) -> npt.NDArray
     """
     cropped = np.stack([scenes[:, 0] + crop_length, scenes[:, 1] - crop_length]).T
     length = cropped[:, 1] - cropped[:, 0]
-    return cropped[length > 0]  # type: ignore[no-any-return]
+    result: npt.NDArray[np.int32] = cropped[length > 0]
+    return result
 
 
 def _create_spans(start: int, end: int, max_length: int, min_length: int | None) -> list[list[int]]:

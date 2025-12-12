@@ -24,8 +24,8 @@ default:
 
 variables:
   # Versions
-  PYTHON_VERSION: "3.10.19"
-  RUFF_VERSION: "0.13.2"
+  PYTHON_VERSION: "3.12.12"
+  RUFF_VERSION: "0.14.9"
 
   # Git config
   GIT_STRATEGY: fetch
@@ -392,9 +392,12 @@ slurm_end_to_end:
     ENROOT_CONFIG_PATH: "${CI_BUILDS_DIR}/.enroot"
     SLURM_E2E_S3_PROFILE_NAME: "default"
   before_script:
-    # Install tools directly without micromamba (SLURM runner doesn't have it)
+    # Install tools directly without micromamba (SLURM runner doesn't have it); use uv to pin Python
     - source .gitlab/vault/vault-auth.sh
-    - python3 -m venv venv
+    - export PATH="$HOME/.local/bin:${PATH}"
+    - curl -LsSf https://astral.sh/uv/install.sh | sh
+    - uv python install ${PYTHON_VERSION}
+    - uv venv --python ${PYTHON_VERSION} venv
     - source venv/bin/activate
     - pip install --upgrade pip
     - pip install poetry awscli
@@ -423,7 +426,7 @@ combine_coverage:
   stage: end-to-end
   needs: ["unit_tests", "gpu_tests"]
   rules: *pre_post_merge_rules
-  image: python:3.10
+  image: python:3.12
   tags:
     - build-runner  # Override to Docker executor
   script:

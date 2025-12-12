@@ -551,7 +551,10 @@ def _caption_inflight_batching(  # noqa: PLR0913
 
         # Finished requests are requests that have been completed by the vLLM engine and have a caption.
         # These requests may still need stage2 refinement.
-        finished = process_vllm_output(engine_output, in_flight_requests, vllm_config)
+        # engine.step() returns list[RequestOutput | PoolingRequestOutput], but process_vllm_output
+        # expects either list[RequestOutput] or list[PoolingRequestOutput] - at runtime, the list
+        # will contain only one type based on the engine configuration
+        finished = process_vllm_output(engine_output, in_flight_requests, vllm_config)  # type: ignore[arg-type]
 
         for request in finished:
             del in_flight_requests[request.request_id]

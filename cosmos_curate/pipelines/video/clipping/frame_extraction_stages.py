@@ -152,7 +152,7 @@ class VideoFrameExtractionStage(CuratorStage):
         """
         return "unified"
 
-    @nvtx.annotate("VideoFrameExtractionStage")  # type: ignore[misc]
+    @nvtx.annotate("VideoFrameExtractionStage")  # type: ignore[untyped-decorator]
     def process_data(self, tasks: list[SplitPipeTask]) -> list[SplitPipeTask] | None:
         """Process the data for the frame extraction stage.
 

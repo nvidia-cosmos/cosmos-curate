@@ -25,7 +25,7 @@ import socket
 import tempfile
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Any, Protocol
+from typing import TYPE_CHECKING, Annotated, Any, Protocol, cast
 
 import attrs
 import fabric  # type: ignore[import-untyped]
@@ -383,7 +383,7 @@ def connect(remote_host: str, user: str) -> ConnectionProtocol:
 
     conn = fabric.Connection(remote_host, user=user)
     conn.run("ls", hide=True)
-    return conn
+    return cast("ConnectionProtocol", conn)
 
 
 def upload_text(connection: ConnectionProtocol, files: list[tuple[str, Path, int]]) -> None:

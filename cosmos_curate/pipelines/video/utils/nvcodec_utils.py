@@ -30,7 +30,6 @@ from cosmos_curate.core.utils.model import conda_utils
 
 if conda_utils.is_running_in_env("unified"):
     import cvcuda  # type: ignore[import-untyped]
-    import nvcv  # type: ignore[import-untyped]
     import pycuda.driver as cuda  # type: ignore[import-untyped]
     import PyNvVideoCodec as Nvc  # type: ignore[import-untyped]
 
@@ -262,7 +261,7 @@ class NvVideoDecoder:
         for packet in self.nvDemux:
             list_frames = self.nvDec.Decode(packet)
             for decodedFrame in list_frames:
-                nvcvTensor = nvcv.as_tensor(nvcv.as_image(decodedFrame.nvcv_image(), nvcv.Format.U8))
+                nvcvTensor = cvcuda.as_tensor(cvcuda.as_image(decodedFrame.nvcv_image(), cvcuda.Format.U8))
                 if nvcvTensor.layout == "NCHW":
                     nchw_shape = nvcvTensor.shape
                     nhwc_shape = (nchw_shape[0], nchw_shape[2], nchw_shape[3], nchw_shape[1])

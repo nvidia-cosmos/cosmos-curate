@@ -54,7 +54,7 @@ See `cosmos_curate/pipelines/examples/hello_world_pipeline.py` and `docs/curator
 
 ## Code Style
 
-PEP 8 (4-space indent, `snake_case`/`CamelCase`), type hints, ruff formatting. Config: `pyproject.toml` (Python 3.10, 120 chars)
+PEP 8 (4-space indent, `snake_case`/`CamelCase`), type hints, ruff formatting. Config: `pyproject.toml` (Python 3.12, 120 chars)
 
 ## Commits & PRs
 

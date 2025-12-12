@@ -229,7 +229,7 @@ class QwenInputPreparationStageFiltering(CuratorStage):
         """Initialize stage resources and configuration."""
         self._qwen_utils.setup()
 
-    @nvtx.annotate("QwenInputPreparationStage")  # type: ignore[misc]
+    @nvtx.annotate("QwenInputPreparationStage")  # type: ignore[untyped-decorator]
     def process_data(self, tasks: list[SplitPipeTask]) -> list[SplitPipeTask] | None:
         """Process the data for the Qwen input preparation stage.
 
@@ -440,7 +440,7 @@ class QwenFilteringStage(CuratorStage):
 
         return tasks
 
-    @nvtx.annotate("QwenFilteringStage")  # type: ignore[misc]
+    @nvtx.annotate("QwenFilteringStage")  # type: ignore[untyped-decorator]
     def process_data(self, tasks: list[SplitPipeTask]) -> list[SplitPipeTask] | None:
         """Process the data for the Qwen filtering stage.
 

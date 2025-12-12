@@ -14,7 +14,7 @@
 # limitations under the License.
 """Process summary.json written by the pipeline."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 
@@ -84,7 +84,7 @@ def make_summary_metrics(
         {
             "env": env,
             "num_nodes": num_nodes,
-            "time": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+            "time": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
             "video_hours_per_day_per_gpu": video_hours_per_day_per_gpu(
                 video_seconds, runtime_minutes, num_nodes, gpus_per_node
             ),

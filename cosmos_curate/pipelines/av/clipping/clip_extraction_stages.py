@@ -70,7 +70,7 @@ class ClipTranscodingStage(CuratorStage):
             error = f"Expected encoder of `libopenh264` or `h264_nvenc`. Got {encoder}"
             raise ValueError(error)
 
-    @nvtx.annotate("ClipTranscodingStage")  # type: ignore[misc]
+    @nvtx.annotate("ClipTranscodingStage")  # type: ignore[untyped-decorator]
     def process_data(self, tasks: list[AvSessionVideoSplitTask]) -> list[AvSessionVideoSplitTask]:
         """Process the data.
 
@@ -170,7 +170,7 @@ class ClipTranscodingStage(CuratorStage):
 
         return CuratorStageResource(**kwargs)
 
-    @nvtx.annotate("ClipLoadingStage:_extract_clips")  # type: ignore[misc]
+    @nvtx.annotate("ClipLoadingStage:_extract_clips")  # type: ignore[untyped-decorator]
     def _extract_clips(  # noqa: PLR0912, C901
         self,
         working_dir: pathlib.Path,
@@ -310,7 +310,7 @@ class FixedStrideExtractorStage(CuratorStage):
         self._verbose = verbose
         self._log_stats = log_stats
 
-    @nvtx.annotate("FixedStrideExtractorStage")  # type: ignore[misc]
+    @nvtx.annotate("FixedStrideExtractorStage")  # type: ignore[untyped-decorator]
     def process_data(self, tasks: list[AvSessionVideoSplitTask]) -> list[AvSessionVideoSplitTask] | None:
         """Process the data.
 

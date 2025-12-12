@@ -91,7 +91,7 @@ def _cleanup_pipeline_lock_files() -> None:
             if lock_file.exists():
                 lock_file.unlink()
                 logger.debug(f"Cleaned up {lock_file.name}")
-        except Exception as e:  # noqa: BLE001 PERF203
+        except Exception as e:  # noqa: BLE001
             logger.warning(f"Failed to clean up {lock_file.name}: {e}")
 
 
@@ -1057,7 +1057,7 @@ def update_progress(  # noqa: C901, PLR0912, PLR0913, PLR0915
             if using_nvcf_status["get_req_sts"]:
                 logs.append(line)
             buffer.append(line)
-        except Empty:  # noqa: PERF203
+        except Empty:
             break
 
     # Final update with any remaining logs

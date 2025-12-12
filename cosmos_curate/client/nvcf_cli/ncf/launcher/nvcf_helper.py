@@ -453,12 +453,13 @@ class NvcfHelper(NvcfBase):
             del create_data["containerImage"]
             del create_data["models"]
             # Also - have additional secrets to set to allow model retrieval
-            create_data["secrets"] = [
-                *(create_data["secrets"] or []),
+            existing_secrets = create_data["secrets"] or []
+            create_data["secrets"] = [  # type: ignore[misc]
+                *existing_secrets,
                 {"name": "NGC_NVCF_ORG", "value": self.org},
                 {"name": "NGC_NVCF_TEAM", "value": self.team},
                 {"name": "NGC_NVCF_API_KEY", "value": self.key},
-            ]  # type: ignore[misc]
+            ]
         else:
             create_data["helmChart"] = None
             create_data["helmChartServiceName"] = None
@@ -722,7 +723,7 @@ class NvcfHelper(NvcfBase):
                 data_file_list.append(data_file)
 
             for _, item in enumerate(data_file_list):
-                job = {}
+                job: dict[str, str | None | bool | int] = {}
                 job["data_file"] = item
                 job["ddir"] = ddir
                 job["s3_config"] = s3_config
@@ -758,7 +759,7 @@ class NvcfHelper(NvcfBase):
             num_workers = min(id_len, io_len)
             with concurrent.futures.ThreadPoolExecutor(max_workers=num_workers) as futs:
                 # Spawn them
-                future_jobs = [futs.submit(self.nvcf_helper_invoke_wait_retry_function, **kw) for kw in job_list]
+                future_jobs = [futs.submit(self.nvcf_helper_invoke_wait_retry_function, **kw) for kw in job_list]  # type: ignore[arg-type]
                 for done_job in concurrent.futures.as_completed(future_jobs):
                     done_job.result()  # Propagate exceptions
         finally:
@@ -877,7 +878,7 @@ class NvcfHelper(NvcfBase):
                             self.nvcf_helper_get_request_status_with_wait(
                                 reqid=reqid, ddir=ddir, funcid=funcid, version=version, wait=wait, legacy_cf=legacy_cf
                             )
-                        except TimeoutError as e:  # noqa: PERF203
+                        except TimeoutError as e:
                             cnt -= 1
                             msg = f"Timeout getting request status, retrys left = {cnt}: {e!s}"
                             self.logger.warning(msg)
@@ -1220,12 +1221,13 @@ class NvcfHelper(NvcfBase):
                     # in case the request was asset, but for non-asset cases, this is
                     # not needed. Failure to fetch the asset will not be marked error
                     # set legacy_cf to None to indicate we only care for download
-                    try:
-                        resp = self.nvcf_helper_get_request_status(
-                            rqid, ddir=ddir, funcid=funcid, version=version, legacy_cf=None
-                        )
-                    except (RuntimeError, TimeoutError):
-                        self.logger.info("Not downloading any assets")
+                    if rqid is not None:
+                        try:
+                            resp = self.nvcf_helper_get_request_status(
+                                rqid, ddir=ddir, funcid=funcid, version=version, legacy_cf=None
+                            )
+                        except (RuntimeError, TimeoutError):
+                            self.logger.info("Not downloading any assets")
                     break
                 if status == "failed":
                     msg = f"RequestId: {reqid} has failed, check logs for details"
