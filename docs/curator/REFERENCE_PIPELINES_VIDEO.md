@@ -69,7 +69,7 @@ Today the split-annotate pipeline produces the following artifacts under the pat
 │   ├── {clip-uuid}.json
 ├── metas_jsonl/v0/                 # metadatas grouped by a chunk of clips; enabled by `--upload-clip-info-in-chunks`
 │   ├── {video-uuid}_{chunk_index}.jsonl
-├── cvds_parquet/                   # metadata parquets for Milvus indexing; enabled by `--upload-cvds-parquet`
+├── cds_parquet/                    # metadata parquets for Milvus indexing; enabled by `--upload-cds-parquet`
 │   ├── {clip-chunk-uuid}.parquet
 ├── cosmos_video2world_dataset/     # dataset for Cosmos-Predict2 Video2World model post-training
 │   ├── metas/
@@ -132,7 +132,7 @@ In case you want the output to be in a different S3 bucket than the input, you c
 - `--no-generate-captions`: disables VLM captioning; use `"generate_captions": false` in API endpoint.
 - `--generate-previews`: enables web preview generation.
 - `--upload-clip-info-in-chunks`: enables metadata jsonl for a group of clips and disables per-clip embedding & metadata writes.
-- `--upload-cvds-parquet`: enables generating parquet files for Milvus indexing.
+- `--upload-cds-parquet`: enables generating parquet files for Milvus indexing.
 - `--generate-cosmos-predict-dataset`: enable generating dataset that is ready for [Cosmos-Predict2 Video2World model post-training](https://github.com/nvidia-cosmos/cosmos-predict2/blob/main/documentations/post-training_video2world.md).
 - `--splitting-algorithm`: specifies video-to-clip splitting algorithm, available options are `transnetv2` (default) and `fixed-stride`.
 - `--motion-filter`: specifies the working mode for motion filter, available options are `disable` (default), `enable`, `score-only` (generate score but do not filter out clips).

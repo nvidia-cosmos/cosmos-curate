@@ -656,7 +656,7 @@ def split(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912, PLR0915
                 output_s3_profile_name=args.output_s3_profile_name,
                 upload_clips=args.upload_clips,
                 upload_clip_info_in_chunks=args.upload_clip_info_in_chunks,
-                upload_cvds_parquet=args.upload_cvds_parquet,
+                upload_cds_parquet=args.upload_cds_parquet,
                 dry_run=args.dry_run,
                 generate_embeddings=args.generate_embeddings,
                 embedding_algorithm=args.embedding_algorithm,
@@ -787,10 +787,11 @@ def _setup_parser(parser: argparse.ArgumentParser) -> None:  # noqa: PLR0915
     )
     parser.add_argument(
         "--upload-cvds-parquet",
-        dest="upload_cvds_parquet",
+        "--upload-cds-parquet",
+        dest="upload_cds_parquet",
         action="store_true",
         default=False,
-        help="Whether to upload parquet files for CVDS.",
+        help="Whether to upload parquet files for CDS.",
     )
     parser.add_argument(
         "--generate-cosmos-predict-dataset",

@@ -37,7 +37,7 @@ def _create_stage(output_dir: Path, input_dir: Path, **overrides: object) -> Cli
         "output_s3_profile_name": "default",
         "upload_clips": True,
         "upload_clip_info_in_chunks": False,
-        "upload_cvds_parquet": True,
+        "upload_cds_parquet": True,
         "dry_run": False,
         "generate_embeddings": True,
         "embedding_algorithm": "internvideo2",
@@ -218,16 +218,16 @@ def test_process_data_writes_expected_local_outputs(tmp_path: Path) -> None:
 
     _assert_embeddings_written(output_dir, clip, video_uuid)
 
-    cvds_parquet_path = output_dir / "cvds_parquet" / f"{video_uuid}_0.parquet"
-    cvds_df = pd.read_parquet(cvds_parquet_path)
-    assert len(cvds_df) == 1
-    assert cvds_df.iloc[0]["id"] == str(clip.uuid)
-    npt.assert_allclose(np.array(cvds_df.iloc[0]["embedding"]), np.array([0.1, 0.2], dtype=np.float32))
-    cvds_meta = cvds_df.iloc[0]["$meta"]
-    assert cvds_meta["model_name"] == "internvideo2"
-    assert cvds_meta["model_version"] == "v1"
-    assert cvds_meta["caption"] == "main caption"
-    assert cvds_meta["clip_location"].endswith(f"clips/{clip.uuid}.mp4")
+    cds_parquet_path = output_dir / "cds_parquet" / f"{video_uuid}_0.parquet"
+    cds_df = pd.read_parquet(cds_parquet_path)
+    assert len(cds_df) == 1
+    assert cds_df.iloc[0]["id"] == str(clip.uuid)
+    npt.assert_allclose(np.array(cds_df.iloc[0]["embedding"]), np.array([0.1, 0.2], dtype=np.float32))
+    cds_meta = json.loads(cds_df.iloc[0]["$meta"])
+    assert cds_meta["model_name"] == "internvideo2"
+    assert cds_meta["model_version"] == "v1"
+    assert cds_meta["caption"] == "main caption"
+    assert cds_meta["clip_location"].endswith(f"clips/{clip.uuid}.mp4")
 
 
 def test_chunked_metadata_writes_group_jsonl(tmp_path: Path) -> None:
@@ -242,7 +242,7 @@ def test_chunked_metadata_writes_group_jsonl(tmp_path: Path) -> None:
         output_dir,
         input_dir,
         upload_clip_info_in_chunks=True,
-        upload_cvds_parquet=False,
+        upload_cds_parquet=False,
         generate_embeddings=False,
     )
 
@@ -295,7 +295,7 @@ def test_per_window_dataset_assets_written(tmp_path: Path) -> None:
         output_dir,
         input_dir,
         upload_clips=False,
-        upload_cvds_parquet=False,
+        upload_cds_parquet=False,
         generate_embeddings=False,
         generate_cosmos_predict_dataset="enable",
     )
@@ -348,7 +348,7 @@ def test_video_errors_written_to_error_path(tmp_path: Path) -> None:
         output_dir,
         input_dir,
         upload_clips=False,
-        upload_cvds_parquet=False,
+        upload_cds_parquet=False,
         generate_embeddings=False,
     )
 

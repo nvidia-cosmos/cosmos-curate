@@ -15,6 +15,7 @@
 """Write metadata for clips to DB."""
 
 import io
+import json
 import pathlib
 import pickle
 import uuid
@@ -61,7 +62,7 @@ class ClipWriterStage(CuratorStage):
         *,
         upload_clips: bool,
         upload_clip_info_in_chunks: bool,
-        upload_cvds_parquet: bool,
+        upload_cds_parquet: bool,
         dry_run: bool,
         generate_embeddings: bool,
         embedding_algorithm: str,
@@ -84,7 +85,7 @@ class ClipWriterStage(CuratorStage):
         self._output_s3_profile_name = output_s3_profile_name
         self._upload_clips = upload_clips
         self._upload_clip_info_in_chunks = upload_clip_info_in_chunks
-        self._upload_cvds_parquet = upload_cvds_parquet
+        self._upload_cds_parquet = upload_cds_parquet
         self._dry_run = dry_run
         self._generate_embeddings = generate_embeddings
         self._embedding_algorithm = embedding_algorithm
@@ -97,7 +98,7 @@ class ClipWriterStage(CuratorStage):
         self._log_stats = log_stats
         self._embedding_buffer: list[dict[str, Any]] = []
         self._metadata_buffer: list[dict[str, Any]] = []
-        self._cvds_data_buffer: list[dict[str, Any]] = []
+        self._cds_data_buffer: list[dict[str, Any]] = []
         self._max_workers = 4
 
     def stage_setup(self) -> None:
@@ -201,9 +202,9 @@ class ClipWriterStage(CuratorStage):
         return ClipWriterStage._get_output_path(output_path, f"{embedding_algorithm}_embd_parquet")
 
     @staticmethod
-    def get_output_path_cvds_parquets(output_path: str) -> str:
+    def get_output_path_cds_parquets(output_path: str) -> str:
         """Get path to store generated clips in a parquet file."""
-        return ClipWriterStage._get_output_path(output_path, "cvds_parquet")
+        return ClipWriterStage._get_output_path(output_path, "cds_parquet")
 
     @staticmethod
     def get_video_uuid(input_video_path: str) -> uuid.UUID:
@@ -288,7 +289,7 @@ class ClipWriterStage(CuratorStage):
                     for clip in video.clips:
                         self._add_clip_embedding_to_buffer(clip)
                         self._add_clip_metadata_to_buffer(clip, video.metadata)
-                        self._add_cvds_data_to_buffer(clip)
+                        self._add_cds_data_to_buffer(clip)
 
                     # schedule all clip-level writes for a chunk of clips from a single video and wait
                     futures_clips = []
@@ -321,7 +322,7 @@ class ClipWriterStage(CuratorStage):
                     # write buffered embeddings and metadata
                     futures_no_rt += [executor.submit(self._write_grouped_embeddings_to_parquet, video)]
                     futures_no_rt += [executor.submit(self._write_grouped_metadata_to_jsonl, video)]
-                    futures_no_rt += [executor.submit(self._write_grouped_cvds_data_to_parquet, video)]
+                    futures_no_rt += [executor.submit(self._write_grouped_cds_data_to_parquet, video)]
 
                     for future_n in futures_no_rt:
                         future_n.result()
@@ -384,25 +385,25 @@ class ClipWriterStage(CuratorStage):
             )
         self._metadata_buffer.clear()
 
-    def _write_grouped_cvds_data_to_parquet(self, video: Video) -> None:
-        if self._cvds_data_buffer and not self._dry_run:
+    def _write_grouped_cds_data_to_parquet(self, video: Video) -> None:
+        if self._cds_data_buffer and not self._dry_run:
             path = self.get_grouped_clips_uri(
                 self.get_video_uuid(video.input_path),
                 video.clip_chunk_index,
-                self.get_output_path_cvds_parquets(self._output_path),
+                self.get_output_path_cds_parquets(self._output_path),
                 "parquet",
             )
-            pdf = pd.DataFrame(self._cvds_data_buffer)
+            pdf = pd.DataFrame(self._cds_data_buffer)
             write_parquet(
                 pdf,
                 path,
-                "cvds",
+                "cds",
                 video.input_path,
                 verbose=self._verbose,
                 client=self._storage_client,
                 overwrite=True,
             )
-        self._cvds_data_buffer.clear()
+        self._cds_data_buffer.clear()
 
     def _get_window_uri(
         self,
@@ -617,28 +618,30 @@ class ClipWriterStage(CuratorStage):
         clip_stats.max_clip_duration = max(clip_stats.max_clip_duration, clip_duration)
         return clip_stats
 
-    def _add_cvds_data_to_buffer(self, clip: Clip) -> None:
-        if self._upload_cvds_parquet:
+    def _add_cds_data_to_buffer(self, clip: Clip) -> None:
+        if self._upload_cds_parquet:
             embedding_to_write = self._get_clip_embedding(clip)
             if embedding_to_write is not None:
                 data = {
                     "id": str(clip.uuid),
                     "embedding": embedding_to_write.reshape(-1).tolist(),
-                    "$meta": {
-                        "clip_location": str(
-                            self._get_clip_uri(
-                                clip.uuid,
-                                self.get_output_path_clips(self._output_path),
-                                "mp4",
-                            )
-                        ),
-                        "model_name": str(self._embedding_algorithm),
-                        "model_version": str(self._embedding_model_version),
-                        "source_video_location": str(clip.source_video),
-                        "caption": " | ".join(clip.get_all_captions()),
-                    },
+                    "$meta": json.dumps(
+                        {
+                            "clip_location": str(
+                                self._get_clip_uri(
+                                    clip.uuid,
+                                    self.get_output_path_clips(self._output_path),
+                                    "mp4",
+                                )
+                            ),
+                            "model_name": str(self._embedding_algorithm),
+                            "model_version": str(self._embedding_model_version),
+                            "source_video_location": str(clip.source_video),
+                            "caption": " | ".join(clip.get_all_captions()),
+                        }
+                    ),
                 }
-                self._cvds_data_buffer.append(data)
+                self._cds_data_buffer.append(data)
 
     def _write_video_metadata(self, video: Video) -> None:
         if isinstance(video.input_video, storage_client.StoragePrefix):
