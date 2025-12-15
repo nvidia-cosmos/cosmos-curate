@@ -23,11 +23,11 @@ import pynvml  # type: ignore[import-untyped]
 import torch
 from loguru import logger
 
-_START_UP_RETRIES = 2
-_START_UP_RETRY_INTERVAL_S = 10
+_START_UP_RETRIES = 3
+_START_UP_RETRY_INTERVAL_S = 120
 
 
-def _dump_gpu_info(  # noqa: C901
+def _dump_gpu_info(
     stage_name: str,
     prefix: str,
     *,
@@ -58,20 +58,19 @@ def _dump_gpu_info(  # noqa: C901
                     # dump individual process info
                     processes = pynvml.nvmlDeviceGetComputeRunningProcesses(handle)
                     for proc in processes:
-                        logger.debug(
+                        logger.info(
                             f"{log_line_prefix}: GPU-{idx} pid={proc.pid} "
                             f"used_mem={proc.usedGpuMemory / (1024**3):.0f} GB",
                         )
                     # check memory usage
-                    if check_mem:
-                        fraction_free = 1.0 - used_mem / (total_mem + 1e-6)
-                        fraction_lower_bound = min(1.0, num_gpus) * 0.9
-                        if fraction_free < fraction_lower_bound:
-                            all_clean = False
-                            log_line += f"{fraction_free=:.2f} < {fraction_lower_bound=:.2f}"
-                            logger.warning(log_line)
-                        else:
-                            logger.info(log_line)
+                    fraction_free = 1.0 - used_mem / (total_mem + 1e-6)
+                    fraction_lower_bound = min(1.0, num_gpus) * 0.9
+                    if check_mem and fraction_free < fraction_lower_bound:
+                        all_clean = False
+                        log_line += f"memory usage: {fraction_free=:.2f} < {fraction_lower_bound=:.2f}"
+                        logger.warning(log_line)
+                    else:
+                        logger.info(log_line)
                 if not check_mem:
                     break
                 if all_clean:

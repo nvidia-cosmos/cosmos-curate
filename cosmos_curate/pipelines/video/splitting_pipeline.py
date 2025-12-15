@@ -601,7 +601,7 @@ def split(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912, PLR0915
                         log_stats=args.perf_profile,
                         inflight_batching=args.vllm_use_inflight_batching,
                     ),
-                    num_setup_attempts_python=2,
+                    num_setup_attempts_python=None,
                 ),
             ]
         elif caption_algo == "gemini":

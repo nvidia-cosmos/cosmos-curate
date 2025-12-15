@@ -178,6 +178,9 @@ COPY pytest.ini .coveragerc {{code_dir_str}}/
 COPY {{code_path}} {{code_dir_str}}/{{code_path}}
 {% endfor %}
 
+# Debug env vars
+# ENV PYTHON_LOG=debug RUST_LOG=debug VLLM_LOG_LEVEL=DEBUG
+
 # Expose port for FastAPI & Ray
 EXPOSE 8000 6379
 
