@@ -566,6 +566,7 @@ class NvcfClient:
                     data["body-status"] = data.pop("status")
                 retval.update(data)
         except ValueError as v:
+            error_msg = str(v)
             if not ignore_if_not_json and resp.status_code < http_error:
                 error_msg = f"Failed to parse response: {v!s} [{resp.text}]"
             else:
