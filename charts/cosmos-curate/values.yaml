@@ -100,6 +100,9 @@ rayPorts:
   objectManagerPort: 8076
   nodeManagerPort: 8077
 
+rayMetrics:
+  enableOpenTelemetry: false #Default to legacy opencensus implementation
+
 readiness:
   initialDelaySeconds: 5  # With the startup probe, no need to delay significantly
 
@@ -178,10 +181,18 @@ metrics:
             action: drop
         # static-config.targets will be generated in the config map template based on service name and replica count
   remoteWrite:
+    enabled: true
     endpoint: "https://FILL_IN/api/v1/receive"
     certPath: "/etc/curate-remote-write/certs/tls.crt"
     keyPath: "/etc/curate-remote-write/certs/tls.key"
   
+  otlp:
+    enabled: false
+    endpoint: "${env:OTEL_EXPORTER_OTLP_METRICS_ENDPOINT}"
+    certPath: ""
+    keyPath: ""
+    insecureSkipVerify: false
+
   # ServiceMonitor for Prometheus Operator (independent of metrics.enabled)
   # Requires prometheus-operator CRDs installed
   serviceMonitor:

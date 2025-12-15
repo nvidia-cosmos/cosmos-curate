@@ -6,6 +6,7 @@ data:
   NVCF_MULTI_NODE: "true"
   NODES_PER_INSTANCE: {{ .Values.replicas | quote }}
   HEADLESS_SERVICE_NAME: {{ include "curate-ray.name" . }}-headless
+  RAY_enable_open_telemetry: {{ .Values.rayMetrics.enableOpenTelemetry | quote }}
   RAY_GCS_SERVER_PORT: {{ .Values.rayPorts.gcsServerPort | quote }}
   RAY_DASHBOARD_PORT: {{ .Values.rayPorts.dashboardPort | quote }}
   RAY_OBJECT_MANAGER_PORT: {{ .Values.rayPorts.objectManagerPort | quote }}

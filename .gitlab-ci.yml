@@ -98,7 +98,7 @@ variables:
     value: "cosmos-curate"
   CICD_HELM_CHART_VERSION:
     description: "Helm chart version for the CICD pipeline"
-    value: "2.1.1"
+    value: "2.2.1"
 
   # Vault integration
   VAULT_ADDR: "$VAULT_ADDR"

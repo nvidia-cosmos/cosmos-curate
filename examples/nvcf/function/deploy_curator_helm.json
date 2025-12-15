@@ -23,7 +23,10 @@
           "remoteWrite": {
             "endpoint": "FILL_IN"
           },
-          "enabled": true
+          "enabled": true,
+          "otlp": {
+            "enabled": false
+          }
         },
         "#commentScratch": "path to additional node storage on host",
         "#scratchDir": "/scratch"

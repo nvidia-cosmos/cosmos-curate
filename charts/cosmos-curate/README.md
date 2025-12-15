@@ -32,9 +32,9 @@ helm repo update
 ```
 
 ### Set Chart Version
-The latest version is `2.2.0`. Set this as an environment variable:
+The latest version is `2.2.1`. Set this as an environment variable:
 ```bash
-export CHART_VERSION=2.2.0
+export CHART_VERSION=2.2.1
 ```
 
 ## Deployment
@@ -202,6 +202,16 @@ metrics:
     keyPath: "/etc/certs/tls.key"
 ```
 
+Or an OTLP endpoint - by default, it will use the [NVCF BYOO endpoint](https://docs.nvidia.com/cloud-functions/user-guide/latest/cloud-function/observability.html#appendix-c-adding-custom-application-metrics-logs-traces). 
+```yaml
+metrics:
+  enabled: true
+  remoteWrite:
+    enabled: false
+  otlp:
+    enabled: true
+    endpoint: "${env:OTEL_EXPORTER_OTLP_METRICS_ENDPOINT}"
+```
 #### ServiceMonitor
 
 For in-cluster Prometheus configured to monitor ServiceMonitor CRs
