@@ -476,6 +476,24 @@ class AzureClient(StorageClient):
         """
         return AzureBackgroundUploader(self, chunk_size_bytes)
 
+    def delete_object(self, dest: StoragePrefix) -> None:
+        """Delete an object at the specified Azure URI.
+
+        Args:
+            dest (AzurePrefix): The Azure prefix of the object to delete.
+
+        Raises:
+            ValueError: If deletion is not allowed by the client configuration.
+
+        """
+        assert isinstance(dest, AzurePrefix)
+        if not self.can_delete:
+            error_msg = f"Deletion not allowed for object {dest.blob} in container {dest.container}."
+            raise ValueError(error_msg)
+
+        blob_client = self._get_blob_client(dest.container, dest.blob)
+        blob_client.delete_blob()
+
 
 def _make_azure_client_config(
     profile_path: pathlib.Path,

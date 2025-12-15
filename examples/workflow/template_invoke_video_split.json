@@ -13,6 +13,7 @@
         "generate_captions": true,
         "upload_clips": false,
         "upload_clip_info_in_chunks": true,
+        "upload_clip_info_in_lance": true,
         "splitting_algorithm": "transnetv2",
         "transnetv2_frame_decoder_mode": "ffmpeg_cpu",
         "transnetv2_frame_decode_cpus_per_worker": 4.0,

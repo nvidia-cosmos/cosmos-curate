@@ -14,6 +14,7 @@
 # limitations under the License.
 """Write metadata for clips to DB."""
 
+import base64
 import io
 import json
 import pathlib
@@ -22,19 +23,28 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
+import lance  # type: ignore[import-untyped]
 import numpy as np
 import numpy.typing as npt
 import pandas as pd
+import pyarrow as pa  # type: ignore[import-untyped]
+from azure.core.exceptions import AzureError, ResourceNotFoundError
+from botocore.exceptions import ClientError
 from loguru import logger
 
 from cosmos_curate.core.interfaces.stage_interface import CuratorStage, CuratorStageResource
 from cosmos_curate.core.utils.infra.performance_utils import StageTimer
 from cosmos_curate.core.utils.storage import storage_client, storage_utils
-from cosmos_curate.core.utils.storage.storage_utils import get_full_path
+from cosmos_curate.core.utils.storage.storage_utils import (
+    get_files_relative,
+    get_full_path,
+    read_json_file,
+)
 from cosmos_curate.core.utils.storage.writer_utils import (
     write_bytes,
     write_json,
     write_jsonl,
+    write_lance_fragments,
     write_parquet,
     write_text,
 )
@@ -62,6 +72,7 @@ class ClipWriterStage(CuratorStage):
         *,
         upload_clips: bool,
         upload_clip_info_in_chunks: bool,
+        upload_clip_info_in_lance: bool,
         upload_cds_parquet: bool,
         dry_run: bool,
         generate_embeddings: bool,
@@ -85,6 +96,10 @@ class ClipWriterStage(CuratorStage):
         self._output_s3_profile_name = output_s3_profile_name
         self._upload_clips = upload_clips
         self._upload_clip_info_in_chunks = upload_clip_info_in_chunks
+        self._upload_clip_info_in_lance = upload_clip_info_in_lance
+        self._emit_per_clip_metadata = not (self._upload_clip_info_in_chunks or self._upload_clip_info_in_lance)
+        self._emit_jsonl_metadata = self._upload_clip_info_in_chunks
+        self._emit_lance_metadata = self._upload_clip_info_in_lance
         self._upload_cds_parquet = upload_cds_parquet
         self._dry_run = dry_run
         self._generate_embeddings = generate_embeddings
@@ -100,6 +115,7 @@ class ClipWriterStage(CuratorStage):
         self._metadata_buffer: list[dict[str, Any]] = []
         self._cds_data_buffer: list[dict[str, Any]] = []
         self._max_workers = 4
+        self._lance_storage_options: dict[str, str] | None = None
 
     def stage_setup(self) -> None:
         """Initialize stage resources and configuration."""
@@ -107,6 +123,10 @@ class ClipWriterStage(CuratorStage):
             self._output_path,
             profile_name=self._output_s3_profile_name,
             can_overwrite=True,
+        )
+        self._lance_storage_options = storage_utils.get_lance_storage_options(
+            self.get_output_path_meta_lance(self._output_path, "v0"),
+            profile_name=self._output_s3_profile_name,
         )
 
     def _set_input_path(self, input_path: str) -> None:
@@ -182,6 +202,21 @@ class ClipWriterStage(CuratorStage):
         return ClipWriterStage._get_output_path(output_path, f"metas_jsonl/{version}")
 
     @staticmethod
+    def get_output_path_meta_lance(output_path: str, version: str) -> str:
+        """Get path to store clip metadata in a Lance dataset."""
+        return ClipWriterStage._get_output_path(output_path, f"lance/{version}")
+
+    @staticmethod
+    def get_output_path_meta_lance_fragments(output_path: str, version: str) -> str:
+        """Get path to store Lance fragment sidecars."""
+        return ClipWriterStage._get_output_path(output_path, f"lance_fragments/{version}")
+
+    @staticmethod
+    def get_output_path_meta_lance_fragments_processed(output_path: str, version: str) -> str:
+        """Get path to store processed Lance fragment sidecars."""
+        return ClipWriterStage._get_output_path(output_path, f"processed_lance_fragments/{version}")
+
+    @staticmethod
     def get_output_path_embds(output_path: str, embedding_algorithm: str) -> str:
         """Get path to store generated clips."""
         if embedding_algorithm == "internvideo2":
@@ -200,6 +235,33 @@ class ClipWriterStage(CuratorStage):
         if embedding_algorithm.startswith("cosmos-embed1"):
             return ClipWriterStage._get_output_path(output_path, "ce1_embd_parquet")
         return ClipWriterStage._get_output_path(output_path, f"{embedding_algorithm}_embd_parquet")
+
+    @staticmethod
+    def get_output_path_embd_lance(output_path: str, embedding_algorithm: str) -> str:
+        """Get path to store generated clip embeddings in a Lance dataset."""
+        if embedding_algorithm == "internvideo2":
+            return ClipWriterStage._get_output_path(output_path, "iv2_embd_lance")
+        if embedding_algorithm.startswith("cosmos-embed1"):
+            return ClipWriterStage._get_output_path(output_path, "ce1_embd_lance")
+        return ClipWriterStage._get_output_path(output_path, f"{embedding_algorithm}_embd_lance")
+
+    @staticmethod
+    def get_output_path_embd_lance_fragments(output_path: str, embedding_algorithm: str) -> str:
+        """Get path to store staged Lance fragments for embeddings."""
+        if embedding_algorithm == "internvideo2":
+            return ClipWriterStage._get_output_path(output_path, "iv2_embd_lance_fragments")
+        if embedding_algorithm.startswith("cosmos-embed1"):
+            return ClipWriterStage._get_output_path(output_path, "ce1_embd_lance_fragments")
+        return ClipWriterStage._get_output_path(output_path, f"{embedding_algorithm}_embd_lance_fragments")
+
+    @staticmethod
+    def get_output_path_embd_lance_fragments_processed(output_path: str, embedding_algorithm: str) -> str:
+        """Get path to store processed Lance fragment sidecars for embeddings."""
+        if embedding_algorithm == "internvideo2":
+            return ClipWriterStage._get_output_path(output_path, "iv2_embd_lance_fragments_processed")
+        if embedding_algorithm.startswith("cosmos-embed1"):
+            return ClipWriterStage._get_output_path(output_path, "ce1_embd_lance_fragments_processed")
+        return ClipWriterStage._get_output_path(output_path, f"{embedding_algorithm}_embd_lance_fragments_processed")
 
     @staticmethod
     def get_output_path_cds_parquets(output_path: str) -> str:
@@ -319,9 +381,11 @@ class ClipWriterStage(CuratorStage):
                     futures_no_rt = [executor.submit(self._write_per_window_data, clip) for clip in video.clips]
                     # write video-level metadata after all clip-level tasks are done
                     futures_no_rt += [executor.submit(self._write_video_metadata, video)]
+                    metadata_rows = list(self._metadata_buffer)
+                    self._metadata_buffer.clear()
                     # write buffered embeddings and metadata
                     futures_no_rt += [executor.submit(self._write_grouped_embeddings_to_parquet, video)]
-                    futures_no_rt += [executor.submit(self._write_grouped_metadata_to_jsonl, video)]
+                    futures_no_rt += [executor.submit(self._write_grouped_metadata, video, metadata_rows)]
                     futures_no_rt += [executor.submit(self._write_grouped_cds_data_to_parquet, video)]
 
                     for future_n in futures_no_rt:
@@ -366,8 +430,12 @@ class ClipWriterStage(CuratorStage):
             )
         self._embedding_buffer.clear()
 
-    def _write_grouped_metadata_to_jsonl(self, video: Video) -> None:
-        if self._metadata_buffer and not self._dry_run:
+    def _write_grouped_metadata_to_jsonl(self, video: Video, metadata_rows: list[dict[str, Any]]) -> None:
+        if metadata_rows and not self._dry_run and self._emit_jsonl_metadata:
+            jsonl_rows = []
+            for row in metadata_rows:
+                row_copy = {k: v for k, v in row.items() if k != "embedding"}
+                jsonl_rows.append(row_copy)
             path = self.get_grouped_clips_uri(
                 self.get_video_uuid(video.input_path),
                 video.clip_chunk_index,
@@ -375,7 +443,7 @@ class ClipWriterStage(CuratorStage):
                 "jsonl",
             )
             write_jsonl(
-                self._metadata_buffer,
+                jsonl_rows,
                 path,
                 "metadata",
                 video.input_path,
@@ -383,7 +451,56 @@ class ClipWriterStage(CuratorStage):
                 client=self._storage_client,
                 overwrite=True,
             )
-        self._metadata_buffer.clear()
+
+    def _write_grouped_metadata_to_lance(self, video: Video, metadata_rows: list[dict[str, Any]]) -> None:
+        if not self._emit_lance_metadata or not metadata_rows or self._dry_run:
+            return
+
+        video_uuid = str(self.get_video_uuid(video.input_path))
+        enriched_rows = [
+            {
+                **row,
+                "video_uuid": video_uuid,
+                "clip_chunk_index": video.clip_chunk_index,
+            }
+            for row in metadata_rows
+        ]
+        table = pa.Table.from_pylist(enriched_rows)
+
+        fragment_staging = self.get_output_path_meta_lance(self._output_path, "v0")
+        fragments_json, schema_b64 = write_lance_fragments(
+            table,
+            fragment_staging,
+            schema=table.schema,
+            storage_options=self._lance_storage_options,
+            verbose=self._verbose,
+        )
+        sidecar_path = get_full_path(
+            self.get_output_path_meta_lance_fragments(self._output_path, "v0"),
+            f"{video_uuid}_{video.clip_chunk_index}.json",
+        )
+        sidecar_payload = {
+            "fragments": fragments_json,
+            "schema_b64": schema_b64,
+            "video_uuid": video_uuid,
+            "clip_chunk_index": video.clip_chunk_index,
+        }
+        write_json(
+            sidecar_payload,
+            sidecar_path,
+            "lance fragments metadata",
+            video.input_path,
+            verbose=self._verbose,
+            client=self._storage_client,
+            overwrite=True,
+        )
+
+    def _write_grouped_metadata(self, video: Video, metadata_rows: list[dict[str, Any]]) -> None:
+        if not metadata_rows:
+            return
+        self._write_grouped_metadata_to_jsonl(video, metadata_rows)
+        if self._upload_clip_info_in_lance:
+            self._write_grouped_metadata_to_lance(video, metadata_rows)
 
     def _write_grouped_cds_data_to_parquet(self, video: Video) -> None:
         if self._cds_data_buffer and not self._dry_run:
@@ -529,7 +646,7 @@ class ClipWriterStage(CuratorStage):
                 self.get_output_path_embds(self._output_path, self._embedding_algorithm),
                 "pickle",
             )
-            if not self._dry_run and not self._upload_clip_info_in_chunks:
+            if not self._dry_run and self._emit_per_clip_metadata:
                 self._write_data(buffer.getvalue(), dest, f"embedding {clip.uuid}", clip.source_video)
             clip_stats.num_with_embeddings += 1
         elif self._generate_embeddings:
@@ -595,13 +712,18 @@ class ClipWriterStage(CuratorStage):
             data["windows"].append(curr_window)
         data["valid"] = bool(clip.encoded_data and len(clip.windows) > 0)
         data["has_caption"] = has_caption
+        embedding = self._get_clip_embedding(clip)
+        if embedding is not None:
+            data["embedding"] = embedding.reshape(-1).tolist()
+            data["embedding_model_name"] = self._embedding_algorithm
+            data["embedding_model_version"] = self._embedding_model_version
 
         return data
 
     def _add_clip_metadata_to_buffer(
         self, clip: Clip, video_metadata: VideoMetadata, *, filtered: bool = False
     ) -> None:
-        if self._upload_clip_info_in_chunks:
+        if self._upload_clip_info_in_chunks or self._upload_clip_info_in_lance:
             data = self._make_clip_metadata(clip, video_metadata, filtered=filtered)
             if data:
                 self._metadata_buffer.append(data)
@@ -610,8 +732,13 @@ class ClipWriterStage(CuratorStage):
         clip_stats = ClipStats()
         data = self._make_clip_metadata(clip, video_metadata, filtered=filtered)
         dest = self._get_clip_uri(clip.uuid, self.get_output_path_metas(self._output_path, "v0"), "json")
-        if not self._dry_run and not self._upload_clip_info_in_chunks:
-            self._write_json_data(data, dest, f"metadata {clip.uuid}", clip.source_video)
+        if not self._dry_run and self._emit_per_clip_metadata:
+            data_to_write = {
+                k: v
+                for k, v in data.items()
+                if k not in ("embedding", "embedding_model_name", "embedding_model_version")
+            }
+            self._write_json_data(data_to_write, dest, f"metadata {clip.uuid}", clip.source_video)
         clip_stats.num_with_caption += 1 if data.get("has_caption", False) else 0
         clip_duration = clip.span[1] - clip.span[0]
         clip_stats.total_clip_duration += clip_duration
@@ -783,3 +910,114 @@ class ClipWriterStage(CuratorStage):
                 "dataset t5_xxl {clip.uuid} {window.start_frame}_{window.end_frame}",
                 clip.source_video,
             )
+
+
+def consolidate_lance_fragments(output_path: str, output_s3_profile_name: str) -> None:
+    """Consolidate staged Lance fragments into the final metadata dataset."""
+    _consolidate_one(
+        staging_root=ClipWriterStage.get_output_path_meta_lance_fragments(output_path, "v0"),
+        processed_root=ClipWriterStage.get_output_path_meta_lance_fragments_processed(output_path, "v0"),
+        final_uri=ClipWriterStage.get_output_path_meta_lance(output_path, "v0"),
+        output_s3_profile_name=output_s3_profile_name,
+    )
+
+
+def _consolidate_one(staging_root: str, processed_root: str, final_uri: str, output_s3_profile_name: str) -> None:
+    client = storage_utils.get_storage_client(
+        staging_root, profile_name=output_s3_profile_name, can_overwrite=True, can_delete=True
+    )
+    storage_options = storage_utils.get_lance_storage_options(final_uri, profile_name=output_s3_profile_name)
+    sidecars = [fname for fname in get_files_relative(staging_root, client) if fname.endswith(".json")]
+    if not sidecars:
+        return
+
+    processed_client = storage_utils.get_storage_client(
+        processed_root,
+        profile_name=output_s3_profile_name,
+        can_overwrite=True,
+    )
+    processed_seen: set[str] = set()
+    if storage_utils.path_exists(processed_root, processed_client):
+        processed_seen.update(
+            fname for fname in get_files_relative(processed_root, processed_client) if fname.endswith(".json")
+        )
+    sidecars = [fname for fname in sidecars if fname not in processed_seen]
+    if not sidecars:
+        return
+
+    fragments: list[lance.FragmentMetadata] = []
+    schema_b64: str | None = None
+    for rel_path in sidecars:
+        payload = read_json_file(get_full_path(staging_root, rel_path), client)
+        frag_payload = payload.get("fragments", [])
+        fragments.extend(lance.FragmentMetadata.from_json(json.dumps(frag)) for frag in frag_payload)
+        if schema_b64 is None:
+            schema_b64 = payload.get("schema_b64")
+
+    if schema_b64 is None:
+        logger.warning(f"No schema found for Lance consolidation under {staging_root}")
+        return
+
+    schema_buf = base64.b64decode(schema_b64)
+    schema = pa.ipc.read_schema(pa.py_buffer(schema_buf))
+    try:
+        dataset = lance.dataset(final_uri, storage_options=storage_options)
+        read_version = dataset.version
+        op = lance.LanceOperation.Append(fragments)
+    except (FileNotFoundError, ValueError):
+        read_version = 0
+        op = lance.LanceOperation.Overwrite(schema, fragments)
+
+    lance.LanceDataset.commit(
+        final_uri,
+        op,
+        read_version=read_version,
+        storage_options=storage_options,
+    )
+    _archive_processed_sidecars(sidecars, staging_root, processed_root, client, processed_client)
+    logger.info(f"Consolidated {len(fragments)} Lance fragments into {final_uri}")
+
+
+def _archive_processed_sidecars(
+    sidecars: list[str],
+    staging_root: str,
+    processed_root: str,
+    staging_client: storage_client.StorageClient | None,
+    processed_client: storage_client.StorageClient | None,
+) -> None:
+    """Archive processed sidecars and avoid reprocessing on subsequent runs."""
+    for rel_path in sidecars:
+        payload = read_json_file(get_full_path(staging_root, rel_path), staging_client)
+        dest = get_full_path(processed_root, rel_path)
+        write_json(
+            payload,
+            dest,
+            "processed lance fragment metadata",
+            rel_path,
+            verbose=False,
+            client=processed_client,
+            overwrite=True,
+        )
+        staged_path = get_full_path(staging_root, rel_path)
+        if isinstance(staged_path, pathlib.Path):
+            staged_path.unlink(missing_ok=True)
+        elif staging_client is not None:
+            try:
+                staging_client.delete_object(staged_path)
+            except ValueError as exc:
+                logger.warning(f"Skipping deletion for {staged_path}: {exc}")
+            except ClientError as exc:
+                err_code = exc.response.get("Error", {}).get("Code")
+                if err_code in {"NoSuchKey", "404"}:
+                    logger.warning(f"Remote sidecar already missing {staged_path}: {exc}")
+                else:
+                    error_msg = f"Failed to delete remote sidecar {staged_path}"
+                    raise RuntimeError(error_msg) from exc
+            except ResourceNotFoundError as exc:
+                logger.warning(f"Remote sidecar already missing {staged_path}: {exc}")
+            except AzureError as exc:
+                error_msg = f"Failed to delete remote sidecar {staged_path}"
+                raise RuntimeError(error_msg) from exc
+            except Exception as exc:
+                error_msg = f"Failed to delete remote sidecar {staged_path}"
+                raise RuntimeError(error_msg) from exc

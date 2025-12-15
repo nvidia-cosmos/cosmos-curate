@@ -87,7 +87,10 @@ from cosmos_curate.pipelines.video.filtering.motion.motion_filter_stages import 
 )
 from cosmos_curate.pipelines.video.preview.preview_stages import PreviewStage
 from cosmos_curate.pipelines.video.read_write.download_stages import VideoDownloader
-from cosmos_curate.pipelines.video.read_write.metadata_writer_stage import ClipWriterStage
+from cosmos_curate.pipelines.video.read_write.metadata_writer_stage import (
+    ClipWriterStage,
+    consolidate_lance_fragments,
+)
 from cosmos_curate.pipelines.video.read_write.remux_stages import RemuxStage
 from cosmos_curate.pipelines.video.read_write.summary_writers import (
     write_split_summary,
@@ -656,6 +659,7 @@ def split(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912, PLR0915
                 output_s3_profile_name=args.output_s3_profile_name,
                 upload_clips=args.upload_clips,
                 upload_clip_info_in_chunks=args.upload_clip_info_in_chunks,
+                upload_clip_info_in_lance=args.upload_clip_info_in_lance,
                 upload_cds_parquet=args.upload_cds_parquet,
                 dry_run=args.dry_run,
                 generate_embeddings=args.generate_embeddings,
@@ -679,6 +683,9 @@ def split(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912, PLR0915
         stages,
         args.model_weights_path,
     )
+
+    if args.upload_clip_info_in_lance:
+        consolidate_lance_fragments(args.output_clip_path, args.output_s3_profile_name)
 
     summary_start = time.time()
 
@@ -774,6 +781,12 @@ def _setup_parser(parser: argparse.ArgumentParser) -> None:  # noqa: PLR0915
         action="store_false",
         default=True,
         help="Whether to upload clips to output path.",
+    )
+    parser.add_argument(
+        "--upload-clip-info-in-lance",
+        action="store_true",
+        default=False,
+        help="Whether to also stage clip metadata/embeddings into Lance and consolidate at the end.",
     )
     parser.add_argument(
         "--upload-clip-info-in-chunks",

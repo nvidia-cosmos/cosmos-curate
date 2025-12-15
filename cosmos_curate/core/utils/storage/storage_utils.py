@@ -72,6 +72,40 @@ def get_storage_client(
     return None
 
 
+def get_lance_storage_options(path: str, *, profile_name: str = "default") -> dict[str, str] | None:
+    """Build storage options for Lance based on configured profiles."""
+    if is_s3path(path):
+        s3_cfg = s3_client.get_s3_client_config(profile_name, can_overwrite=True)
+        options = {
+            k: v
+            for k, v in {
+                "aws_access_key_id": s3_cfg.aws_access_key_id,
+                "aws_secret_access_key": s3_cfg.aws_secret_access_key,
+                "aws_session_token": s3_cfg.aws_session_token,
+                "aws_region": s3_cfg.region,
+                "aws_endpoint": s3_cfg.endpoint_url,
+            }.items()
+            if v
+        }
+        return options or None
+
+    if is_azure_path(path):
+        azure_cfg = azure_client.get_azure_client_config(profile_name=profile_name, can_overwrite=True)
+        options = {
+            k: v
+            for k, v in {
+                "account_name": azure_cfg.account_name,
+                "account_key": azure_cfg.account_key,
+                "account_url": azure_cfg.account_url,
+                "connection_string": azure_cfg.connection_string,
+            }.items()
+            if v
+        }
+        return options or None
+
+    return None
+
+
 def path_to_prefix(path: str) -> StoragePrefix:
     """Convert a path string to the appropriate storage prefix object.
 

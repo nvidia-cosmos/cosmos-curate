@@ -263,6 +263,18 @@ class StorageClient(abc.ABC):
 
         """
 
+    @abc.abstractmethod
+    def delete_object(self, dest: StoragePrefix) -> None:
+        """Delete an object at the specified path.
+
+        Args:
+            dest: The storage prefix of the object to delete.
+
+        Raises:
+            ValueError: If deletion is not allowed by the client configuration.
+
+        """
+
 
 def is_storage_path(path: str | None, protocol: str) -> bool:
     """Check if a path string is a storage path with the given protocol.

@@ -112,6 +112,10 @@ class FakeStorageClient(StorageClient):
         """Unused StorageClient API surface."""
         raise NotImplementedError
 
+    def delete_object(self, dest: StoragePrefix) -> None:
+        """Delete an object from the fake storage."""
+        self.objects.pop(str(dest), None)
+
 
 def _remote_path(*components: str) -> str:
     cleaned = [part.strip("/") for part in components if part]
@@ -179,6 +183,67 @@ def test_get_storage_client_dispatches_to_implementations(
     )
     assert azure_args == ("az://container/blob", "azure-profile", False, False)
     assert storage_utils.get_storage_client(str(tmp_path / "local")) is None
+
+
+def test_get_lance_storage_options_from_profiles(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Build Lance storage_options from configured S3/Azure profiles."""
+
+    class DummyS3Config:
+        aws_access_key_id = "id"
+        aws_secret_access_key = "secret"  # noqa: S105
+        aws_session_token = "token"  # noqa: S105
+        endpoint_url = "http://localhost:9000"
+        region = "us-west-2"
+
+    class DummyAzureConfig:
+        connection_string = "UseDevelopmentStorage=true"
+        account_url = "https://acct.blob.core.windows.net"
+        account_name = "acct"
+        account_key = "key"
+
+    def fake_s3_config(
+        profile_name: str = "default",
+        *,
+        can_overwrite: bool = False,
+        can_delete: bool = False,
+    ) -> DummyS3Config:
+        assert profile_name == "profile"
+        assert can_overwrite is True
+        assert can_delete is False
+        return DummyS3Config()
+
+    def fake_azure_config(
+        *,
+        profile_name: str = "default",
+        can_overwrite: bool = False,
+        can_delete: bool = False,
+    ) -> DummyAzureConfig:
+        assert profile_name == "az-profile"
+        assert can_overwrite is True
+        assert can_delete is False
+        return DummyAzureConfig()
+
+    monkeypatch.setattr(storage_utils.s3_client, "get_s3_client_config", fake_s3_config)
+    monkeypatch.setattr(storage_utils.azure_client, "get_azure_client_config", fake_azure_config)
+
+    s3_options = storage_utils.get_lance_storage_options(_remote_path("dataset"), profile_name="profile")
+    assert s3_options == {
+        "aws_access_key_id": "id",
+        "aws_secret_access_key": "secret",
+        "aws_session_token": "token",
+        "aws_region": "us-west-2",
+        "aws_endpoint": "http://localhost:9000",
+    }
+
+    azure_options = storage_utils.get_lance_storage_options("az://container/data", profile_name="az-profile")
+    assert azure_options == {
+        "account_name": "acct",
+        "account_key": "key",
+        "account_url": "https://acct.blob.core.windows.net",
+        "connection_string": "UseDevelopmentStorage=true",
+    }
+
+    assert storage_utils.get_lance_storage_options("/tmp/local") is None  # noqa: S108
 
 
 def test_path_to_prefix_validates_remote_paths() -> None:

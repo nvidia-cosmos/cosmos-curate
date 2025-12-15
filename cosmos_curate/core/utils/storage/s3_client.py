@@ -425,6 +425,23 @@ class S3Client(StorageClient):
         """
         return S3BackgroundUploader(self, chunk_size_bytes)
 
+    def delete_object(self, dest: StoragePrefix) -> None:
+        """Delete an object at the specified S3 URI.
+
+        Args:
+            dest (S3Prefix): The S3 prefix of the object to delete.
+
+        Raises:
+            ValueError: If deletion is not allowed by the client configuration.
+
+        """
+        assert isinstance(dest, S3Prefix)
+        if not self.can_delete:
+            error_msg = f"Deletion not allowed for object {dest.prefix} in bucket {dest.bucket}."
+            raise ValueError(error_msg)
+
+        self.s3.delete_object(Bucket=dest.bucket, Key=dest.prefix)
+
 
 class S3BackgroundUploader(BackgroundUploader):
     """Handles background uploads to S3."""

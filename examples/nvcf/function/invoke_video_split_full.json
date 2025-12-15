@@ -15,6 +15,7 @@
         "generate_captions": true,
         "upload_clips": true,
         "upload_clip_info_in_chunks": false,
+        "upload_clip_info_in_lance": false,
         "generate_cosmos_predict_dataset": "disable",
         "splitting_algorithm": "transnetv2",
         "fixed_stride_split_duration": 10,

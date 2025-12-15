@@ -14,19 +14,26 @@
 # limitations under the License.
 """Write metadata for clips to DB."""
 
+from __future__ import annotations
+
+import base64
 import csv
 import io
 import json
 import pathlib
 import uuid
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-import pandas as pd
+from lance.fragment import write_fragments  # type: ignore[import-untyped]
 from loguru import logger
 
 from cosmos_curate.core.utils.misc.retry_utils import do_with_retries
-from cosmos_curate.core.utils.storage import storage_client
+from cosmos_curate.core.utils.storage import storage_client, storage_utils
 from cosmos_curate.core.utils.storage.storage_utils import backup_file
+
+if TYPE_CHECKING:
+    import pandas as pd
+    import pyarrow as pa  # type: ignore[import-untyped]
 
 
 class JsonEncoderCustom(json.JSONEncoder):
@@ -155,6 +162,34 @@ def write_parquet(  # noqa: PLR0913
         backup_and_overwrite=backup_and_overwrite,
         overwrite=overwrite,
     )
+
+
+def write_lance_fragments(
+    table: pa.Table,
+    dest: storage_client.StoragePrefix | pathlib.Path | str,
+    *,
+    schema: pa.Schema | None = None,
+    storage_options: dict[str, str] | None = None,
+    verbose: bool = False,
+) -> tuple[list[dict[str, Any]], str]:
+    """Write Lance fragments without committing, returning fragment metadata JSON and schema (base64)."""
+    if isinstance(dest, str):
+        dest = storage_utils.path_to_prefix(dest) if storage_utils.is_remote_path(dest) else pathlib.Path(dest)
+
+    if isinstance(dest, storage_client.StoragePrefix):
+        dest_uri = dest.path
+    else:
+        dest.mkdir(parents=True, exist_ok=True)
+        dest_uri = dest.as_posix()
+
+    if verbose:
+        logger.debug(f"Writing Lance fragments to {dest_uri}")
+
+    fragments = write_fragments(table, dest_uri, schema=schema or table.schema, storage_options=storage_options)
+    fragments_json = [fragment.to_json() for fragment in fragments]
+    schema_buf = (schema or table.schema).serialize().to_pybytes()
+    schema_b64 = base64.b64encode(schema_buf).decode("ascii")
+    return fragments_json, schema_b64
 
 
 def write_json(  # noqa: PLR0913
