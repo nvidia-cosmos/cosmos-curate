@@ -15,6 +15,7 @@
 
 """Video Pipe Input."""
 
+import json
 import pathlib
 from concurrent.futures import ThreadPoolExecutor
 
@@ -172,6 +173,61 @@ def extract_split_tasks(  # noqa: PLR0913
     )
 
 
+def _get_clip_metadata_paths_from_summary(
+    input_path: str,
+    client: StorageClient | None,
+    annotate_version: str,
+) -> list[StoragePrefix | pathlib.Path]:
+    # TODO: handle chunked jsonl metadata case
+    clip_metadata_paths: list[StoragePrefix | pathlib.Path] = []
+    try:
+        summary_file_path = get_full_path(input_path, "summary.json")
+        logger.info(f"Reading split-annotate pipeline summary from {summary_file_path}")
+        summary_data = read_json_file(summary_file_path, client, max_attempts=2)
+        for v in summary_data.values():
+            if isinstance(v, dict) and "clips" in v:
+                for clip_uuid in v["clips"]:
+                    clip_metadata_path = get_full_path(input_path, "metas", annotate_version, f"{clip_uuid}.json")
+                    clip_metadata_paths.append(clip_metadata_path)
+    except (json.JSONDecodeError, KeyError, TypeError) as e:
+        logger.error(f"Failed to parse summary from {input_path}: {e}")
+        return []
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"Failed to read summary file from {input_path}: {e}")
+        return []
+    else:
+        return sorted(clip_metadata_paths, key=lambda x: str(x))
+
+
+def _worker_read_clip_metadata(
+    clip_metadata_path: StoragePrefix | pathlib.Path,
+    client: StorageClient | None,
+    *,
+    verbose: bool = False,
+) -> ClipSample | None:
+    try:
+        clip_metadata = read_json_file(clip_metadata_path, client)
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"Failed to read clip metadata from {clip_metadata_path}: {e}")
+        return None
+    else:
+        if clip_metadata["valid"]:
+            return ClipSample(
+                uuid=str(clip_metadata["span_uuid"]),
+                width=clip_metadata["width"],
+                height=clip_metadata["height"],
+                num_frames=clip_metadata["num_frames"],
+                num_bytes=clip_metadata["num_bytes"],
+                clip_location=get_full_path(clip_metadata["clip_location"]),
+                clip_metadata=clip_metadata,
+            )
+        # the clip is marked invalid by the split-annotate pipeline
+        logger.warning(f"Clip {clip_metadata['span_uuid']} is invalid, skipping ...")
+        if verbose:
+            logger.warning(clip_metadata)
+        return None
+
+
 def extract_shard_tasks(  # noqa: PLR0913
     input_path: str,
     output_path: str,
@@ -192,35 +248,25 @@ def extract_shard_tasks(  # noqa: PLR0913
         error_msg = f"Expect output path {output_path} to be empty"
         raise ValueError(error_msg)
     # extract clip metadata paths
-    metadata_path = get_full_path(input_path, "metas", version)
-    items = get_files_relative(str(metadata_path), client_input)
-    logger.info(f"Reading {len(items)} clip metadata from {metadata_path} ...")
-    for item in items:
-        if not item:
-            continue
-        clip_metadata_path = get_full_path(metadata_path, item)
-        try:
-            clip_metadata = read_json_file(clip_metadata_path, client_input)
-        except Exception as e:  # noqa: BLE001
-            logger.error(f"Failed to read clip metadata from {clip_metadata_path}")
-            logger.error(e)
-            continue
-        if clip_metadata["valid"]:
-            clip_samples.append(
-                ClipSample(
-                    uuid=str(clip_metadata["span_uuid"]),
-                    width=clip_metadata["width"],
-                    height=clip_metadata["height"],
-                    num_frames=clip_metadata["num_frames"],
-                    num_bytes=clip_metadata["num_bytes"],
-                    clip_location=get_full_path(clip_metadata["clip_location"]),
-                    clip_metadata=clip_metadata,
-                ),
+    logger.info(f"Extracting clip metadata from {input_path} ...")
+    clip_metadata_paths = _get_clip_metadata_paths_from_summary(input_path, client_input, version)
+    # read clip metadata in parallel
+    logger.info(f"Reading {len(clip_metadata_paths)} clip metadata from {input_path} ...")
+    with ThreadPoolExecutor(max_workers=32) as executor:
+        futures = [
+            executor.submit(
+                _worker_read_clip_metadata,
+                clip_metadata_path,
+                client_input,
+                verbose=verbose,
             )
-        else:
-            logger.warning(f"Clip {clip_metadata['span_uuid']} is invalid, skipping ...")
-            if verbose:
-                logger.warning(clip_metadata)
+            for clip_metadata_path in clip_metadata_paths
+        ]
+        for future in futures:
+            clip_sample = future.result()
+            if clip_sample is not None:
+                clip_samples.append(clip_sample)
+
     return clip_samples
 
 

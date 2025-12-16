@@ -41,7 +41,7 @@ dependencies = [
     "rich==14.0.0",
     "tomli>=2.2.1",
     "tqdm==4.67.1",
-    "typer==0.15.3",
+    "typer",
     "urllib3==1.26.18"
 ]
 classifiers = [
@@ -74,6 +74,8 @@ local = [
     "astral",
     "attrs",
     "av==15.1.0",
+    "awscli",
+    "awscli_plugin_endpoint",
     "azure-identity==1.22.0",
     "azure-storage-blob==12.26.0b1",
     "boto3",
@@ -115,7 +117,7 @@ local = [
     "torch",
     "tqdm==4.67.1",
     "transformers<5.0",
-    "typer[all]==0.15.3",
+    "typer[all]",
     "uvicorn",
     "vllm==0.11.2",
     "webdataset==0.2.111",
