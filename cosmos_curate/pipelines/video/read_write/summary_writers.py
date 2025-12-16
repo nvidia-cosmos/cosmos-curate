@@ -126,6 +126,7 @@ def _write_split_result_summary(  # noqa: PLR0913
     limit: int,
     pipeline_run_time: float = 0.0,
     write_all_caption_json: bool = True,
+    video_bytes: int = 0,
 ) -> None:
     logger.info(f"Starting to summarize data in {output_path} ...")
     client_output = storage_utils.get_storage_client(
@@ -153,6 +154,7 @@ def _write_split_result_summary(  # noqa: PLR0913
         "total_clip_duration": 0,
         "max_clip_duration": 0,
         "pipeline_run_time": pipeline_run_time,
+        "total_video_bytes": video_bytes,
     }
     for key in clip_stats_keys:
         summary_data[f"total_{key}"] = 0
@@ -244,6 +246,8 @@ def write_split_summary(  # noqa: PLR0913
 
     """
     # dump and write job summary
+    video_bytes = sum(task.video.metadata.size for task in output_tasks if task.video.metadata.size is not None)
+
     _write_split_result_summary(
         input_path,
         input_videos_relative,
@@ -253,6 +257,7 @@ def write_split_summary(  # noqa: PLR0913
         limit=limit,
         pipeline_run_time=pipeline_run_time,
         write_all_caption_json=write_all_caption_json,
+        video_bytes=video_bytes,
     )
     # dump and write performance stats
     if perf_profile:
