@@ -89,6 +89,7 @@ def nvcf_split_benchmark(  # noqa: PLR0913
     version: str,
     nvcf_secrets: NvcfSecrets,
     s3_secrets: S3Secrets,
+    captioning_algorithm: str,
     kratos_metrics_token_env: str,
     kratos_bearer_url: str,
     image_repository: str,
@@ -140,7 +141,7 @@ def nvcf_split_benchmark(  # noqa: PLR0913
         {
             "input_video_path": s3_input_prefix,
             "output_clip_path": s3_output_prefix,
-            "captioning_algorithm": "qwen",
+            "captioning_algorithm": captioning_algorithm,
             "qwen_preprocess_dtype": "uint8" if caption == 1 else "float16",
             "generate_captions": caption == 1,
             "limit": limit,
@@ -230,6 +231,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--caption", type=int, default=0, help="Whether to use captioning for the benchmark.")
     parser.add_argument("--funcid", type=str, required=True, help="Function ID to run.")
     parser.add_argument("--version", type=str, required=True, help="Function version to use.")
+    parser.add_argument("--captioning-algorithm", type=str, required=True, help="Captioning algorithm to use")
     parser.add_argument(
         "--ngc-org-env",
         type=str,
@@ -372,6 +374,7 @@ def main() -> None:
         version=args.version,
         nvcf_secrets=nvcf_secrets,
         s3_secrets=s3_secrets,
+        captioning_algorithm=args.captioning_algorithm,
         kratos_metrics_token_env=args.kratos_metrics_token_env,
         kratos_bearer_url=args.kratos_bearer_url,
         image_repository=args.image_repository,
