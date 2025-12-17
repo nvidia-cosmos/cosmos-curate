@@ -5033,13 +5033,13 @@ test-extras = ["pytest-mpl", "pytest-randomly"]
 
 [[package]]
 name = "ngcsdk"
-version = "4.3.0"
+version = "4.10.0"
 description = "NVIDIA GPU Cloud SDK"
 optional = false
 python-versions = "<4.0,>=3.9.16"
 groups = ["main"]
 files = [
-    {file = "ngcsdk-4.3.0-py3-none-any.whl", hash = "sha256:574c9c2bace471d02fe30f060b3cfa2dbe72746cb3a8c84b349d2f0002ea27ce"},
+    {file = "ngcsdk-4.10.0-py3-none-any.whl", hash = "sha256:5a2674f1e41d26832b23dab67ea52dc50c92712ed1138cb2206f37a1625cb7d9"},
 ]
 
 [package.dependencies]
@@ -11664,4 +11664,4 @@ local = ["Pillow", "aiofiles", "astral", "attrs", "av", "awscli", "awscli_plugin
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.12,<3.13"
-content-hash = "667bfd2d804b9ce0b42fdee474679973d613c3c36b43e27b62d58dd72a0d4b39"
+content-hash = "566a15e69656c3f4d7da87d7d8614cb12648b6d5a171d39170b35ecfbb61d02a"
