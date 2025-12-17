@@ -347,8 +347,9 @@ gpu_tests:
     # Submit SLURM job using the Docker image
     - DATA_DIR=/lustre/fsw/coreai_dlalgo_ci/datasets/nemo_curator/video
     - MODEL_DIR=/lustre/fsw/coreai_dlalgo_ci/nemo_video_curator/models
+    - WORKSPACE_DIR=/lustre/fsw/coreai_dlalgo_ci/nemo_video_curator/default_workspace
     - AWS_CREDS_PATH="/lustre/fsw/coreai_dlalgo_ci/datasets/nemo_curator/video/awscreds"
-    - MOUNTS="${DATA_DIR}:/config/data,${MODEL_DIR}:/config/models,${AWS_CREDS_PATH}:/dev/shm/s3_creds_file,${CI_PROJECT_DIR}:/config/project"
+    - MOUNTS="${DATA_DIR}:/config/data,${MODEL_DIR}:/config/models,${WORKSPACE_DIR}:/config/default_workspace,${AWS_CREDS_PATH}:/dev/shm/s3_creds_file,${CI_PROJECT_DIR}:/config/project"
     - NODES=1
     - export LOCAL_DOCKER_ENV_VAR_NAME=1
     # Run pytest for each environment; sleep 15 min before retry
