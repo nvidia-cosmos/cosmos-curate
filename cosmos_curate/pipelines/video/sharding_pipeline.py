@@ -46,6 +46,7 @@ from cosmos_curate.pipelines.pipeline_args import add_common_args
 from cosmos_curate.pipelines.video.captioning.captioning_stages import T5StageForShard
 from cosmos_curate.pipelines.video.read_write.download_stages import DownloadPackUpload
 from cosmos_curate.pipelines.video.read_write.summary_writers import write_shard_summary
+from cosmos_curate.pipelines.video.splitting_pipeline import ALL_CAPTION_ALGOS
 from cosmos_curate.pipelines.video.utils.data_model import (
     ClipSample,
     ShardPipeTask,
@@ -227,6 +228,7 @@ def shard(args: argparse.Namespace) -> None:
 
     stages: list[CuratorStage | CuratorStageSpec] = [
         T5StageForShard(
+            caption_fields=[f"{args.captioning_algorithm}_caption"],
             verbose=args.verbose,
             log_stats=args.perf_profile,
         ),
@@ -284,6 +286,13 @@ def _setup_parser(parser: argparse.ArgumentParser) -> None:
         type=str,
         required=True,
         help="S3 or local path to store output webdataset",
+    )
+    parser.add_argument(
+        "--captioning-algorithm",
+        type=str,
+        default="qwen",
+        choices=sorted(ALL_CAPTION_ALGOS),
+        help="Captioning algorithm used in annotation pipeline.",
     )
     parser.add_argument(
         "--annotation-version",
