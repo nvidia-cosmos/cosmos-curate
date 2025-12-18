@@ -396,9 +396,19 @@ def test_setup_on_node_copies_weights(
     stage = VllmCaptionStage(vllm_config=vllm_config)
 
     # Mock get_local_dir_for_weights_name to return our mock source directory
-    with patch(
-        "cosmos_curate.pipelines.video.captioning.vllm_caption_stage.model_utils.get_local_dir_for_weights_name"
-    ) as mock_get_local_dir:
+    with (
+        patch(
+            "cosmos_curate.pipelines.video.captioning.vllm_caption_stage.model_utils.get_local_dir_for_weights_name"
+        ) as mock_get_local_dir,
+        patch(
+            "cosmos_curate.pipelines.video.captioning.vllm_caption_stage.vllm_model",
+            return_value=MagicMock(),
+        ),
+        patch(
+            "cosmos_curate.pipelines.video.captioning.vllm_caption_stage.gpu_stage_startup",
+            return_value=None,
+        ),
+    ):
         mock_get_local_dir.return_value = mock_source_dir
 
         # Call stage_setup_on_node (uses real copy_model_weights)
@@ -483,6 +493,14 @@ def test_setup_on_node_handles_copy_failure(tmp_path: Path) -> None:
         patch(
             "cosmos_curate.pipelines.video.captioning.vllm_caption_stage.model_utils.copy_model_weights"
         ) as mock_copy_weights,
+        patch(
+            "cosmos_curate.pipelines.video.captioning.vllm_caption_stage.vllm_model",
+            return_value=MagicMock(),
+        ),
+        patch(
+            "cosmos_curate.pipelines.video.captioning.vllm_caption_stage.gpu_stage_startup",
+            return_value=None,
+        ),
     ):
         mock_get_local_dir.return_value = mock_source_dir
         # Simulate a copy failure (e.g., permission denied, disk full, etc.)

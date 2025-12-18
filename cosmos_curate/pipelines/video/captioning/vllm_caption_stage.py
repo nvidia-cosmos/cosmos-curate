@@ -402,28 +402,34 @@ class VllmCaptionStage(CuratorStage):
         """
         if self._vllm_config.copy_weights_to is None:
             logger.debug("No custom weights directory configured, skipping weight copy")
-            return
+        else:
+            for model_id in self._model.model_id_names:
+                source_dir = model_utils.get_local_dir_for_weights_name(model_id)
 
-        for model_id in self._model.model_id_names:
-            source_dir = model_utils.get_local_dir_for_weights_name(model_id)
+                if not source_dir.exists():
+                    msg = f"Source model weights directory does not exist: {source_dir}"
+                    raise FileNotFoundError(msg)
 
-            if not source_dir.exists():
-                msg = f"Source model weights directory does not exist: {source_dir}"
-                raise FileNotFoundError(msg)
+                dest_dir = self._vllm_config.copy_weights_to / model_id
+                logger.info(f"Copying model weights for {model_id} from {source_dir} to {dest_dir}")
 
-            dest_dir = self._vllm_config.copy_weights_to / model_id
-            logger.info(f"Copying model weights for {model_id} from {source_dir} to {dest_dir}")
+                try:
+                    model_utils.copy_model_weights(source_dir, dest_dir)
+                    logger.info(f"Successfully copied model weights to {dest_dir}")
+                except Exception:  # noqa: BLE001
+                    logger.exception("Failed to copy model weights, will use default location")
 
-            try:
-                model_utils.copy_model_weights(source_dir, dest_dir)
-                logger.info(f"Successfully copied model weights to {dest_dir}")
-            except Exception:  # noqa: BLE001
-                logger.exception("Failed to copy model weights, will use default location")
+        # Instantiate vLLM Engine involves torch.compile which produces cache
+        # To avoid conflict, do it once here
+        gpu_stage_startup(f"{self.__class__.__name__}-on-node", self.resources.gpus, pre_setup=True)
+        self._llm = vllm_model(self._vllm_config)
+        gpu_stage_startup(f"{self.__class__.__name__}-on-node", self.resources.gpus, pre_setup=False)
 
     def stage_setup(self) -> None:
         """Set up the model for processing."""
-        gpu_stage_startup(self.__class__.__name__, self.resources.gpus, pre_setup=True)
-        self._llm = vllm_model(self._vllm_config)
+        if self._llm is None:
+            gpu_stage_startup(self.__class__.__name__, self.resources.gpus, pre_setup=True)
+            self._llm = vllm_model(self._vllm_config)
         self._sampling_params = sampling_params(self._vllm_config.sampling_config)
         self._processor = auto_processor(self._vllm_config)
         gpu_stage_startup(self.__class__.__name__, self.resources.gpus, pre_setup=False)

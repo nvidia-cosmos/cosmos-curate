@@ -35,6 +35,7 @@ if TYPE_CHECKING:
     from cosmos_curate.pipelines.video.utils.data_model import VllmConfig
 
 
+MAX_MODEL_LEN = 32768
 GPU_MEMORY_UTILIZATION = 0.85
 MAX_NUM_BATCHED_TOKENS = 32768
 TRUST_REMOTE_CODE = True
@@ -147,12 +148,14 @@ class VllmPhi4(VllmPlugin):
         return LLM(
             model=str(cls.model_path(config)),
             limit_mm_per_prompt=LIMIT_MM_PER_PROMPT,
+            max_model_len=MAX_MODEL_LEN,
             quantization=quantization,
             gpu_memory_utilization=GPU_MEMORY_UTILIZATION,
             disable_mm_preprocessor_cache=config.disable_mmcache,
             max_num_batched_tokens=MAX_NUM_BATCHED_TOKENS,
             tensor_parallel_size=config.num_gpus,
             trust_remote_code=TRUST_REMOTE_CODE,
+            compilation_config={"cudagraph_mode": "piecewise"},
         )
 
     @classmethod

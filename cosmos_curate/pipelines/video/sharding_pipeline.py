@@ -241,7 +241,7 @@ def shard(args: argparse.Namespace) -> None:
                 verbose=args.verbose,
                 log_stats=args.perf_profile,
             ),
-            num_workers_per_node=4,
+            num_workers_per_node=8,
         ),
     ]
 
