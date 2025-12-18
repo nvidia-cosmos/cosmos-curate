@@ -2,14 +2,27 @@
 
 ## Latest
 
+## [1.1.10]
+
+### Released
+- 2025-12-18
+
 ### Added
+- Improve sharding pipeline input gathering time
+- Release new helm chart 2.2.1 that improves robustness of metrics collection
+- Add support for Lance outputs for clips and embeddings
+- Upgrade python from 3.10 to 3.12
 - Add FP8 variant of Qwen3-VL-235B which can run on 4x H100s
 - Add FP8 variant of Qwen3-VL-30B which can run on a single 48GB GPU
+- Upgrade cosmos-xenna to 0.1.8 with support for online-serving mode
 
 ### Fixed
+- Local launch CLI when specifying GPU list
+- Parquet output format for Cosmos Dataset Search (CDS)
 - Race condition with --copy-weights-to by passing it only to the model captioning stage but not the prepare stage
 - Upgrade vllm in develop environment to match what is used inside container
 - Remove async engine code in qwen_vl
+- Fix Qwen3-VL models regarding pre-processing
 
 ## [1.1.9]
 
