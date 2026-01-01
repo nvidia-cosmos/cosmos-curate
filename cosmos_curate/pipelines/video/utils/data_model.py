@@ -526,13 +526,14 @@ class ClipSample:
     """Container for video clip sample data including metadata, frames, and embeddings.
 
     This class stores information about a video clip sample, including its UUID, dimensions,
-    frame count, byte size, and metadata.
+    frame count, frame rate, byte size, and metadata.
     """
 
     uuid: str
     width: int
     height: int
     num_frames: int
+    framerate: float
     num_bytes: int
     clip_location: storage_client.StoragePrefix | pathlib.Path
     clip_metadata: dict[str, Any] = attrs.Factory(dict)

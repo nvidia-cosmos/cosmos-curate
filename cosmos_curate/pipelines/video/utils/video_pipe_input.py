@@ -217,6 +217,7 @@ def _worker_read_clip_metadata(
                 width=clip_metadata["width"],
                 height=clip_metadata["height"],
                 num_frames=clip_metadata["num_frames"],
+                framerate=clip_metadata["framerate"],
                 num_bytes=clip_metadata["num_bytes"],
                 clip_location=get_full_path(clip_metadata["clip_location"]),
                 clip_metadata=clip_metadata,

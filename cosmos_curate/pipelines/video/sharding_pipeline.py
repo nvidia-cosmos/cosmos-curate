@@ -74,9 +74,15 @@ def _group_samples_by_bin(
     bin_spec = dimensions.ResolutionAspectRatioFramesBinsSpec.for_standard_video_datasets()
     count = 0
     for sample in samples:
-        out[
-            bin_spec.find_appropriate_bin(dimensions.Dimensions(sample.width, sample.height), sample.num_frames)
-        ].append(sample)
+        framerate = getattr(sample, "framerate", None)
+        if framerate and framerate > 0:
+            lbin = bin_spec.find_appropriate_bin(
+                dimensions.Dimensions(sample.width, sample.height), float(sample.num_frames) / sample.framerate
+            )
+        else:
+            logger.warning(f"Invalid framerate={framerate} for sample; assigning to None bin.")
+            lbin = None
+        out[lbin].append(sample)
         count += 1
     logger.info(f"Found {count} total samples in {len(out)} bins.")
     return out
