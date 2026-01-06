@@ -40,6 +40,7 @@ The `vllm_interface` provides separation of concerns, enabling CuratorStage clas
 │  │  Plugin Registry: _VLLM_PLUGINS                      │   │
 │  │  • VllmPhi4        • VllmQwen7B                      │   │
 │  │  • VllmCosmosReason1VL                               │   │
+│  │  • VllmCosmosReason2VL                               │   │
 │  └──────────────────────────────────────────────────────┘   │
 └──────────────────────┬──────────────────────────────────────┘
                        │
@@ -56,13 +57,13 @@ The `vllm_interface` provides separation of concerns, enabling CuratorStage clas
 └──────────────────────┬──────────────────────────────────────┘
                        │
                        ▼
-┌─────────────────────────────────────────────────────────────┐
-│                Concrete Plugin Implementations              │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────────┐   │
-│  │  VllmPhi4    │  │  VllmQwen7B  │  │ VllmCosmosR1VL   │   │
-│  │  (vllm_phi)  │  │ (vllm_qwen)  │  │(vllm_cosmos_r1)  │   │
-│  └──────────────┘  └──────────────┘  └──────────────────┘   │
-└──────────────────────┬──────────────────────────────────────┘
+┌───────────────────────────────────────────────────────────────────────────────────┐
+│                        Concrete Plugin Implementations                            │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────────┐  ┌──────────────────┐   │
+│  │  VllmPhi4    │  │  VllmQwen7B  │  │ VllmCosmosR1VL   │  │ VllmCosmosR2VL   │   │
+│  │  (vllm_phi)  │  │ (vllm_qwen)  │  │(vllm_cosmos_r1)  │  │(vllm_cosmos_r2)  │   │
+│  └──────────────┘  └──────────────┘  └──────────────────┘  └──────────────────┘   │
+└──────────────────────┬────────────────────────────────────────────────────────────┘
                        │
                        ▼
 ┌─────────────────────────────────────────────────────────────┐
@@ -90,6 +91,7 @@ _VLLM_PLUGINS = {
     VllmPhi4.model_variant(): VllmPhi4,
     VllmQwen7B.model_variant(): VllmQwen7B,
     VllmCosmosReason1VL.model_variant(): VllmCosmosReason1VL,
+    VllmCosmosReason2VL.model_variant(): VllmCosmosReason2VL,
 }
 ```
 
@@ -216,7 +218,7 @@ Converts decoded video frames into model-ready inputs.
 **Model-Specific Formats**:
 - **Qwen**: `{"prompt_token_ids": [...], "multi_modal_data": {"video": tensor}}`
 - **Phi-4**: `{"prompt": "...", "multi_modal_data": {"image": [PIL.Image, ...]}}`
-- **CosmosReason1VL**: Similar to Qwen
+- **CosmosReason1VL/CosmosReason2VL**: Similar to Qwen
 
 ### Inference Functions
 
@@ -612,7 +614,7 @@ except Exception:
 
 - `cosmos_curate.core.utils.misc.grouping`: Batch splitting utilities
 - `cosmos_curate.pipelines.video.utils.data_model`: Configuration and request objects
-- Plugin implementations: `vllm_phi.py`, `vllm_qwen.py`, `vllm_cosmos_reason1_vl.py`
+- Plugin implementations: `vllm_phi.py`, `vllm_qwen.py`, `vllm_cosmos_reason1_vl.py`, `vllm_cosmos_reason2_vl.py`
 
 ### Conda Environment
 
@@ -727,4 +729,3 @@ See **[`VLLM_INTERFACE_DEBUG.md`](VLLM_INTERFACE_DEBUG.md)** for:
 - [Pipeline Design Guide](PIPELINE_DESIGN_GUIDE.md)
 - [Model Interface](../../cosmos_curate/core/interfaces/model_interface.py)
 - [VllmCaptionStage](../../cosmos_curate/pipelines/video/captioning/vllm_caption_stage.py)
-

@@ -62,6 +62,7 @@ fallback for simpler debugging and testing. Production code uses inflight batchi
 
 Plugin Implementations (model-specific code):
 - VllmCosmosReason1VL:     cosmos_curate/models/vllm_cosmos_reason1_vl.py
+- VllmCosmosReason2VL:     cosmos_curate/models/vllm_cosmos_reason2_vl.py
 - VllmNemotronNano12Bv2VL: cosmos_curate/models/vllm_nemotron.py
 - VllmPhi4:                cosmos_curate/models/vllm_phi.py
 - VllmQwen7B:              cosmos_curate/models/vllm_qwen.py
@@ -103,6 +104,7 @@ from vllm.sampling_params import RequestOutputKind
 
 from cosmos_curate.core.utils.misc import grouping
 from cosmos_curate.models.vllm_cosmos_reason1_vl import VllmCosmosReason1VL
+from cosmos_curate.models.vllm_cosmos_reason2_vl import VllmCosmosReason2VL
 from cosmos_curate.models.vllm_nemotron import VllmNemotronNano12Bv2VL
 from cosmos_curate.models.vllm_phi import VllmPhi4
 from cosmos_curate.models.vllm_qwen import (
@@ -127,6 +129,7 @@ if TYPE_CHECKING:
 # Add new vLLM plugins to _VLLM_PLUGINS
 _VLLM_PLUGINS = {
     VllmCosmosReason1VL.model_variant(): VllmCosmosReason1VL,
+    VllmCosmosReason2VL.model_variant(): VllmCosmosReason2VL,
     VllmNemotronNano12Bv2VL.model_variant(): VllmNemotronNano12Bv2VL,
     VllmPhi4.model_variant(): VllmPhi4,
     VllmQwen3VL235B.model_variant(): VllmQwen3VL235B,

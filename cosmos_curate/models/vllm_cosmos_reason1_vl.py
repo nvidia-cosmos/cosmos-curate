@@ -86,11 +86,13 @@ def make_message(text_input: str) -> list[dict[str, Any]]:
     ]
 
 
-def make_prompt(message: list[dict[str, Any]], frames: torch.Tensor, processor: AutoProcessor) -> dict[str, Any]:
+def make_prompt(
+    message: list[dict[str, Any]], frames: torch.Tensor, metadata: dict[str, Any], processor: AutoProcessor
+) -> dict[str, Any]:
     """Create a prompt payload for vLLM using the processor chat template.
 
     Returns a dict containing the prompt string and the multi_modal_data payload
-    that includes the video frames.
+    that includes the video frames and metadata.
     """
     apply_chat_template = getattr(processor, "apply_chat_template", None)
     if apply_chat_template is None:
@@ -105,8 +107,8 @@ def make_prompt(message: list[dict[str, Any]], frames: torch.Tensor, processor: 
 
     return {
         "prompt": cast("str", prompt_str),
-        # vLLM expects a list of tensors for video under multi_modal_data
-        "multi_modal_data": {"video": [frames]},
+        # vLLM expects a list of (tensor, metadata) tuples for video under multi_modal_data
+        "multi_modal_data": {"video": [(frames, metadata)]},
     }
 
 
@@ -166,7 +168,7 @@ class VllmCosmosReason1VL(VllmPlugin):
     def make_llm_input(
         prompt: str,
         frames: torch.Tensor,
-        metadata: dict[str, Any],  # noqa: ARG004
+        metadata: dict[str, Any],
         processor: AutoProcessor,
     ) -> dict[str, Any]:
         """Make LLM inputs for the model.
@@ -182,7 +184,7 @@ class VllmCosmosReason1VL(VllmPlugin):
 
         """
         message = make_message(prompt)
-        return make_prompt(message, frames, processor)
+        return make_prompt(message, frames, metadata, processor)
 
     @staticmethod
     def make_refined_llm_request(
@@ -216,10 +218,11 @@ class VllmCosmosReason1VL(VllmPlugin):
             msg = "Message does not contain video"
             raise ValueError(msg)
 
-        video_frames = request.inputs["multi_modal_data"]["video"][0]
+        video_data = request.inputs["multi_modal_data"]["video"][0]
+        video_frames, video_metadata = video_data
         final_prompt = _refine_prompt + request.caption
 
-        inputs = make_prompt(make_message(final_prompt), video_frames, processor)
+        inputs = make_prompt(make_message(final_prompt), video_frames, video_metadata, processor)
 
         return VllmCaptionRequest(
             request_id=secrets.token_hex(8),

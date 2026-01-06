@@ -459,6 +459,7 @@ _VLLM_PLUGINS = {
     VllmPhi4.model_variant(): VllmPhi4,
     VllmQwen7B.model_variant(): VllmQwen7B,
     VllmCosmosReason1VL.model_variant(): VllmCosmosReason1VL,
+    VllmCosmosReason2VL.model_variant(): VllmCosmosReason2VL,
     VllmMyModel.model_variant(): VllmMyModel,  # Add this line
 }
 ```
@@ -472,6 +473,7 @@ _VLLM_MODELS = {
     "qwen": "Qwen/Qwen2.5-VL-7B-Instruct",
     "phi4": "microsoft/Phi-4-multimodal-instruct",
     "cosmos_r1": "nvidia/Cosmos-Reason1-7B",
+    "cosmos_r2": "nvidia/Cosmos-Reason2-8B",
     "mymodel": "organization/my-model-name",  # Add this line
 }
 ```
@@ -1113,4 +1115,3 @@ class VllmVideoLLaMA(VllmPlugin):
 - **Design Document**: [VLLM_INTERFACE_DESIGN.md](VLLM_INTERFACE_DESIGN.md)
 - **Debug Guide**: [VLLM_INTERFACE_DEBUG.md](VLLM_INTERFACE_DEBUG.md)
 - **Testing Guide**: [VLLM_INTERFACE_TEST_AND_PROFILE.md](VLLM_INTERFACE_TEST_AND_PROFILE.md)
-

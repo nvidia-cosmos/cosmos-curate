@@ -26,6 +26,8 @@ import torch
 from cosmos_curate.core.utils.model import conda_utils
 from cosmos_curate.pipelines.video.utils.data_model import VllmCaptionRequest, VllmConfig
 
+_PLUGIN_CLASSES: tuple[type, ...] = ()
+
 if conda_utils.is_running_in_env("unified"):
     from cosmos_curate.models.vllm_cosmos_reason1_vl import (
         VllmCosmosReason1VL,
@@ -33,27 +35,35 @@ if conda_utils.is_running_in_env("unified"):
         make_message,
         make_prompt,
     )
+    from cosmos_curate.models.vllm_cosmos_reason2_vl import VllmCosmosReason2VL
 
-    _MODEL_VARIANT = VllmCosmosReason1VL.model_variant()
+    _PLUGIN_CLASSES = (VllmCosmosReason1VL, VllmCosmosReason2VL)
+
+if not _PLUGIN_CLASSES:
+    pytest.skip("Cosmos Reason vLLM tests require unified environment", allow_module_level=True)
 
 
 @pytest.mark.env("unified")
-def test_make_llm_input_cosmos_r1() -> None:
-    """Test make_llm_input for Cosmos-Reason1 plugin."""
-    # Mock processor with apply_chat_template
+@pytest.mark.parametrize("plugin_cls", _PLUGIN_CLASSES, ids=lambda cls: cls.model_variant())
+def test_make_llm_input_cosmos_reason(plugin_cls: type[VllmCosmosReason1VL]) -> None:
+    """Test make_llm_input for Cosmos-Reason plugins."""
     mock_processor = MagicMock()
     mock_processor.apply_chat_template.return_value = "mocked_reasoning_prompt"
 
     frames = torch.rand(2, 3, 32, 32)
     prompt = "Describe the video"
 
-    result = VllmCosmosReason1VL.make_llm_input(prompt, frames, {}, mock_processor)
+    metadata = {"fps": 30, "duration": 1.0}
+    result = plugin_cls.make_llm_input(prompt, frames, metadata, mock_processor)
 
     assert "multi_modal_data" in result
     assert "video" in result["multi_modal_data"]
     assert result["prompt"] == "mocked_reasoning_prompt"
     assert len(result["multi_modal_data"]["video"]) == 1
-    assert result["multi_modal_data"]["video"][0].shape == (2, 3, 32, 32)
+    # Video is stored as (frames, metadata) tuple
+    video_frames, video_metadata = result["multi_modal_data"]["video"][0]
+    assert video_frames.shape == (2, 3, 32, 32)
+    assert video_metadata == metadata
 
 
 @pytest.mark.env("unified")
@@ -74,19 +84,26 @@ def test_make_prompt_uses_chat_template() -> None:
     mock_processor.apply_chat_template.return_value = "chat-prompt"
 
     frames = torch.rand(1, 3, 16, 16)
-    result = make_prompt(make_message("hello"), frames, mock_processor)
+    metadata = {"fps": 30, "duration": 1.0}
+    result = make_prompt(make_message("hello"), frames, metadata, mock_processor)
     assert result["prompt"] == "chat-prompt"
-    assert result["multi_modal_data"]["video"][0].shape == (1, 3, 16, 16)
+    # Video is stored as (frames, metadata) tuple
+    video_frames, video_metadata = result["multi_modal_data"]["video"][0]
+    assert video_frames.shape == (1, 3, 16, 16)
+    assert video_metadata == metadata
 
 
 @pytest.mark.env("unified")
-def test_make_refined_llm_request() -> None:
+@pytest.mark.parametrize("plugin_cls", _PLUGIN_CLASSES, ids=lambda cls: cls.model_variant())
+def test_make_refined_llm_request(plugin_cls: type[VllmCosmosReason1VL]) -> None:
     """Test refine flow creates a new request preserving video and updating prompt."""
     mock_processor = MagicMock()
     mock_processor.apply_chat_template.return_value = "refined-prompt"
 
     frames = torch.rand(1, 3, 8, 8)
-    base_inputs = {"prompt": "base", "multi_modal_data": {"video": [frames]}}
+    metadata = {"fps": 30, "duration": 1.0}
+    # Video is stored as (frames, metadata) tuple
+    base_inputs = {"prompt": "base", "multi_modal_data": {"video": [(frames, metadata)]}}
 
     base_req = VllmCaptionRequest(
         request_id="r1",
@@ -94,9 +111,11 @@ def test_make_refined_llm_request() -> None:
         caption="stage1 caption",
     )
 
-    refined = VllmCosmosReason1VL.make_refined_llm_request(base_req, mock_processor, refine_prompt=None)
+    refined = plugin_cls.make_refined_llm_request(base_req, mock_processor, refine_prompt=None)
     assert refined.inputs["prompt"] == "refined-prompt"
-    assert refined.inputs["multi_modal_data"]["video"][0].shape == (1, 3, 8, 8)
+    refined_frames, refined_metadata = refined.inputs["multi_modal_data"]["video"][0]
+    assert refined_frames.shape == (1, 3, 8, 8)
+    assert refined_metadata == metadata
 
 
 @pytest.mark.env("unified")
@@ -123,9 +142,10 @@ def test_stage2_refine_prompt_equivalence_with_real_processor() -> None:
         pytest.fail("Processor lacks apply_chat_template; this integration test requires it.")
 
     frames = torch.rand(1, 3, 8, 8)
+    metadata = {"fps": 30, "duration": 1.0}
 
     # Generate initial prompt via real processor
-    initial_inputs = VllmCosmosReason1VL.make_llm_input("initial user text", frames, {}, processor)
+    initial_inputs = VllmCosmosReason1VL.make_llm_input("initial user text", frames, metadata, processor)
     initial_prompt = initial_inputs["prompt"]
 
     caption = "stage1 caption"

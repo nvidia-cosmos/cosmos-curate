@@ -103,7 +103,8 @@ from cosmos_curate.pipelines.video.utils.video_pipe_input import (
 
 QWEN2_CAPTION_ALGOS = {"qwen"}
 QWEN3_CAPTION_ALGOS = {"qwen3_vl_30b", "qwen3_vl_30b_fp8", "qwen3_vl_235b", "qwen3_vl_235b_fp8"}
-VLLM_CAPTION_ALGOS = {"cosmos_r1", "nemotron", "phi4", "qwen"} | QWEN3_CAPTION_ALGOS
+COSMOS_REASON_ALGOS = {"cosmos_r1", "cosmos_r2"}
+VLLM_CAPTION_ALGOS = COSMOS_REASON_ALGOS | {"nemotron", "phi4", "qwen"} | QWEN3_CAPTION_ALGOS
 ALL_CAPTION_ALGOS = VLLM_CAPTION_ALGOS | {"gemini"}
 
 
@@ -537,7 +538,7 @@ def split(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912, PLR0915
         elif caption_algo == "phi4":
             vllm_config.stage2_caption = args.phi4_stage2_caption
             vllm_config.stage2_prompt_text = args.phi4_stage2_prompt_text
-        elif caption_algo == "cosmos_r1":
+        elif caption_algo in COSMOS_REASON_ALGOS:
             vllm_config.batch_size = args.qwen_batch_size
             vllm_config.fp8 = args.qwen_use_fp8_weights
             vllm_config.disable_mmcache = not args.qwen_use_vllm_mmcache
@@ -546,6 +547,9 @@ def split(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912, PLR0915
             vllm_config.stage2_prompt_text = args.qwen_stage2_prompt_text
             window_config.preprocess_dtype = "float16"
             window_config.model_does_preprocess = args.qwen_model_does_preprocess
+            if caption_algo == "cosmos_r2":
+                vllm_config.preprocess = True
+                window_config.model_does_preprocess = True
         elif caption_algo == "gemini":
             pass
         elif caption_algo == "nemotron":

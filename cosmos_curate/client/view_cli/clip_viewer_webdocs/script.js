@@ -129,7 +129,9 @@ function createTimestampElement(startTime, endTime) {
                 if (response.ok) {
                     const jsonData = await response.json();
                     // Get caption
-                    if (jsonData.windows?.[0]?.cosmos_r1_caption) {
+                    if (jsonData.windows?.[0]?.cosmos_r2_caption) {
+                        captionText = jsonData.windows[0].cosmos_r2_caption;
+                    } else if (jsonData.windows?.[0]?.cosmos_r1_caption) {
                         captionText = jsonData.windows[0].cosmos_r1_caption;
                     } else if (jsonData.windows?.[0]?.gemini_caption) {
                         captionText = jsonData.windows[0].gemini_caption;

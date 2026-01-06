@@ -63,6 +63,13 @@
         "precision": "BF16",
         "nvcf_model_id": "cosmos_reason1_7b"
     },
+    "cosmos_reason2": {
+        "model_id": "nvidia/Cosmos-Reason2-8B",
+        "version": "b9806227bdb6f9dce8d0fb9d832718dd8b5efdf5",
+        "filelist": null,
+        "precision": "BF16",
+        "nvcf_model_id": "cosmos_reason2_8b"
+    },
     "gpt2": {
         "model_id": "openai-community/gpt2",
         "version": "607a30d783dfa663caf39e06633721c8d4cfcd7e",
