@@ -2,6 +2,15 @@
 
 ## Latest
 
+## [1.1.11]
+
+### Released
+- 2026-01-08
+
+### Added
+- Add support for Cosmos-Reason2-8B as an alternative VLM captioning model
+- Conform shard pipeline output folder name to include duration
+
 ## [1.1.10]
 
 ### Released
