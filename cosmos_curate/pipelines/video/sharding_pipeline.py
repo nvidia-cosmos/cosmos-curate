@@ -93,6 +93,7 @@ def _group_samples_by_size(
     target_size_bytes: int,
     *,
     drop_small_shards: bool,
+    min_clips_per_tar: int = _MIN_CLIPS_PER_TAR,
 ) -> Generator[list[ClipSample], None, None]:
     current_size = 0
     out: list[ClipSample] = []
@@ -109,14 +110,17 @@ def _group_samples_by_size(
             out.append(sample)
             current_size += sample.num_bytes
 
-    if out and not (drop_small_shards and len(out) < _MIN_CLIPS_PER_TAR):
+    if out and not (drop_small_shards and len(out) < min_clips_per_tar):
         yield out
 
 
-def _group_samples_into_tasks(
+def _group_samples_into_tasks(  # noqa: PLR0913
     samples: Iterable[ClipSample],
     *,
     drop_small_shards: bool,
+    max_tars_per_part: int,
+    target_tar_size_bytes: int,
+    min_clips_per_tar: int,
     output_path: str,
     output_s3_profile_name: str,
 ) -> tuple[list[ShardPipeTask], list[StoragePrefix | pathlib.Path], int]:
@@ -154,8 +158,13 @@ def _group_samples_into_tasks(
 
         for part_idx, tar_group in enumerate(
             grouping.split_by_chunk_size(
-                _group_samples_by_size(binned_samples, _TARGET_TAR_SIZE_BYTES, drop_small_shards=drop_small_shards),
-                _MAX_TARS_PER_PART,
+                _group_samples_by_size(
+                    binned_samples,
+                    target_tar_size_bytes,
+                    drop_small_shards=drop_small_shards,
+                    min_clips_per_tar=min_clips_per_tar,
+                ),
+                max_tars_per_part,
             ),
         ):
             part_num = starting_part_num + part_idx
@@ -221,9 +230,15 @@ def shard(args: argparse.Namespace) -> None:
         )
         logger.info(f"After semantic deduplication, {len(samples)} samples remain.")
 
+    # Convert target tar size from MB to bytes
+    target_tar_size_bytes = args.target_tar_size_mb * 1024 * 1024
+
     tasks, all_bins, num_dropped_samples = _group_samples_into_tasks(
         samples,
-        drop_small_shards=False,
+        drop_small_shards=args.drop_small_shards,
+        max_tars_per_part=args.max_tars_per_part,
+        target_tar_size_bytes=target_tar_size_bytes,
+        min_clips_per_tar=args.min_clips_per_tar,
         output_path=output_dataset_path,
         output_s3_profile_name=args.output_s3_profile_name,
     )
@@ -263,7 +278,7 @@ def shard(args: argparse.Namespace) -> None:
         args.output_dataset_path,
         args.output_s3_profile_name,
         all_bins,
-        _MAX_TARS_PER_PART,
+        args.max_tars_per_part,
         output_packets,
         perf_profile=args.perf_profile,
     )
@@ -324,6 +339,30 @@ def _setup_parser(parser: argparse.ArgumentParser) -> None:
         default=0.01,
         help="Epsilon threshold for semantic dedup (default: 0.01). "
         "Clips with cosine similarity ≥ (1 - epsilon) will be considered duplicates.",
+    )
+    parser.add_argument(
+        "--max-tars-per-part",
+        type=int,
+        default=_MAX_TARS_PER_PART,
+        help=f"Maximum number of tar archives per part (default: {_MAX_TARS_PER_PART}).",
+    )
+    parser.add_argument(
+        "--target-tar-size-mb",
+        type=int,
+        default=_TARGET_TAR_SIZE_BYTES // (1024 * 1024),
+        help=f"Target size in MB for each tar archive (default: {_TARGET_TAR_SIZE_BYTES // (1024 * 1024)}).",
+    )
+    parser.add_argument(
+        "--min-clips-per-tar",
+        type=int,
+        default=_MIN_CLIPS_PER_TAR,
+        help=f"Minimum number of clips required per tar archive (default: {_MIN_CLIPS_PER_TAR}).",
+    )
+    parser.add_argument(
+        "--drop-small-shards",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Drop shards that have fewer than --min-clips-per-tar clips (default: False).",
     )
     # add common args applicable to all pipelines
     add_common_args(parser)
