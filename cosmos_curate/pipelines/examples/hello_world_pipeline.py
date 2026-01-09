@@ -32,6 +32,8 @@ from cosmos_curate.core.interfaces.stage_interface import (
 from cosmos_curate.core.utils.model.conda_utils import get_conda_env_name
 from cosmos_curate.models.gpt2 import GPT2
 
+EXAMPLE_PROMPTS = ["The KEY TO A CREATING GOOD art is", "Once upon a time"]
+
 
 # pipeline task object that is being passed between stages
 @attrs.define
@@ -46,12 +48,13 @@ class HelloWorldTask(PipelineTask):
     output: str | None = None
 
 
+def get_processing_log_str(component_name: str, prompt: str) -> str:
+    """Format a consistent processing log message for pipeline components."""
+    return f"processing task prompt='{prompt}' in stage={component_name} pid={os.getpid()} env={get_conda_env_name()}"
+
+
 def _get_stage_processing_log_str(stage: CuratorStage, task: HelloWorldTask) -> str:
-    return (
-        f"processing task prompt='{task.prompt}' in "
-        f"stage={stage.__class__.__name__} pid={os.getpid()} "
-        f"env={get_conda_env_name()}"
-    )
+    return get_processing_log_str(stage.__class__.__name__, task.prompt)
 
 
 class _LowerCaseStage(CuratorStage):
@@ -114,8 +117,7 @@ class _GPT2Stage(CuratorStage):
 def main() -> None:
     """Run the hello world pipeline with example prompts."""
     # build a list of input tasks
-    prompts = ["The KEY TO A CREATING GOOD art is", "Once upon a time"]
-    tasks: list[PipelineTask] = [HelloWorldTask(prompt=x) for x in prompts]
+    tasks: list[PipelineTask] = [HelloWorldTask(prompt=x) for x in EXAMPLE_PROMPTS]
     logger.info(f"Number of input tasks: {len(tasks)}")
 
     # construct a list of pipeline stages
