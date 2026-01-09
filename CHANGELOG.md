@@ -5,11 +5,13 @@
 ## [1.1.11]
 
 ### Released
-- 2026-01-08
+- 2026-01-09
 
 ### Added
 - Add support for Cosmos-Reason2-8B as an alternative VLM captioning model
 - Conform shard pipeline output folder name to include duration
+- Add configurable sharding parameters to the video shard pipeline
+- Add a Ray Data-based hello world pipeline example
 
 ## [1.1.10]
 
