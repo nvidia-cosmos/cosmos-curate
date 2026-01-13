@@ -31,6 +31,7 @@ for caption in 1 0 ; do
     micromamba run -n curator python benchmarks/split_pipeline/nvcf_split_benchmark.py \
       --num-nodes "${num_nodes}" \
       --caption "${caption}" \
+      --captioning-algorithm "qwen" \
       --funcid "${PERF_NVCF_FUNC_ID}" \
       --version "${PERF_NVCF_FUNC_VERSION}" \
       --image-repository "${PERF_NVCF_IMAGE_REPOSITORY}" \
@@ -45,6 +46,7 @@ for caption in 1 0 ; do
       --max-concurrency 2 \
       --kratos-metrics-endpoint "${PERF_KRATOS_METRICS_ENDPOINT}" \
       --kratos-bearer-url "${PERF_KRATOS_BEARER_URL}" \
-      --limit "${LIMIT_INPUT_VIDEOS}"
+      --limit "${LIMIT_INPUT_VIDEOS}" \
+      --report-metrics-to-kratos
   done
 done

@@ -15,6 +15,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+import boto3
 import smart_open  # type: ignore[import-untyped]
 from loguru import logger
 from rich import print_json
@@ -165,11 +166,12 @@ aws_region = {s3_secrets.aws_region}
 """
 
     transport_params = {
-        "client_kwargs": {
-            "aws_access_key_id": s3_secrets.aws_access_key_id,
-            "aws_secret_access_key": s3_secrets.aws_secret_access_key,
-            "region_name": s3_secrets.aws_region,
-        }
+        "client": boto3.client(
+            "s3",
+            aws_access_key_id=s3_secrets.aws_access_key_id,
+            aws_secret_access_key=s3_secrets.aws_secret_access_key,
+            region_name=s3_secrets.aws_region,
+        )
     }
     summary_path = s3_output_prefix + "/summary.json"
 
