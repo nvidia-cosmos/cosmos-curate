@@ -12,6 +12,8 @@ trace.log
 
 /.idea/
 /.vscode/
+/.cursor/
+.cursorrules
 **/client.key
 **/client.crt
 **/charts/*.tgz

@@ -54,8 +54,9 @@ Cosmos-Curate is a powerful tool for video curation and processing. This guide w
   - We will require a specific version in your virtual environment below.
 - [Docker](https://docs.docker.com/engine/install/)
 - [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)
+  - **Note:** Install latest NVIDIA Container Toolkit 
 
-Note that the docker daemon needs to be restarted after the installation of NVIDIA Container Toolkit as described [here](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html#configuring-docker).
+**Note:** The Docker daemon needs to be restarted after the installation of NVIDIA Container Toolkit as described [here](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html#configuring-docker).
 
 #### Additional Requirement
 - [Hugging Face account and access token](https://huggingface.co/settings/tokens) (a read token should suffice for accessing the InternVideo2 model)
@@ -65,6 +66,7 @@ Note that the docker daemon needs to be restarted after the installation of NVID
   - basic support for Azure blob storage
 
 ## Initial Setup
+This guide covers launching the video curator on multiple platforms (local, DGXC, and slurm). The steps below are platform‑agnostic; complete them on whichever platform you plan to run the video curator on.
 
 1. Create a configuration file at `~/.config/cosmos_curate/config.yaml` and put your credentials. The Hugging Face section is required for model downloads; the Gemini and OpenAI sections are optional but needed for their respective captioning features:
 
@@ -79,52 +81,38 @@ openai:
     base_url: "https://<optional-base-url>/v1"
 ```
 
-2. To use `InternVideo2` embedding model:
+1. To use `InternVideo2` embedding model:
    - Visit [InternVideo2 Hugging Face page](https://huggingface.co/OpenGVLab/InternVideo2-Stage2_1B-224p-f4/tree/main)
    - Log in to your Hugging Face account
    - Click "agree" to accept the model terms; this is required before you can download this model using HuggingFace API with your token
 
-3. By default, `~/cosmos_curate_local_workspace/` is used as the local workspace for model weights and temporary files at runtime. To configure its location, set environment variable `COSMOS_CURATE_LOCAL_WORKSPACE_PREFIX` to move it to `${COSMOS_CURATE_LOCAL_WORKSPACE_PREFIX}/cosmos_curate_local_workspace/`.
+1. By default, `~/cosmos_curate_local_workspace/` is used as the local workspace for model weights and temporary files at runtime. To configure its location, set environment variable `COSMOS_CURATE_LOCAL_WORKSPACE_PREFIX` to move it to `${COSMOS_CURATE_LOCAL_WORKSPACE_PREFIX}/cosmos_curate_local_workspace/`.
    - In other words, `"${COSMOS_CURATE_LOCAL_WORKSPACE_PREFIX:-$HOME}/cosmos_curate_local_workspace"` is used as the local workspace.
 
-4. Log into the NGC container registry via the Docker CLI. For the username, use `'$oauthtoken'` exactly as shown. It is a special name that indicates that you will authenticate with an API key. Paste your key value at the password prompt.
+1. Log into the NGC container registry via the Docker CLI. For the username, use `'$oauthtoken'` exactly as shown. It is a special name that indicates that you will authenticate with an API key. Paste your key value at the password prompt.
 ```bash
 docker login --username '$oauthtoken' nvcr.io
 ```
 
-5. If you will run pipelines with videos on cloud storage, configure `~/.aws/credentials` properly.
+1. If you will run pipelines with videos on cloud storage, configure `~/.aws/credentials` properly.
    - All S3-compatible cloud storage should work with Cosmos-Curate.
      - Right now, since cosmos-curate only relies on `~/.aws/credentials` (not `~/.aws/config`), certain configuration entries need to be in `~/.aws/credentials`; e.g. `region` and `endpoint_url` if it's not AWS S3.
      - It should look similar to [this example file](../../examples/nvcf/creds/aws_credentials).
    - Azure blob storage is also supported but is tested much less extensively.
      - If using Azure blob storage, `~/.azure/credentials` should be configured properly.
 
-## Quick Start for Local Run
-
-**The overall workflow is as follows:**
-1. Setup environment and install dependencies
-   - This will give you a CLI for steps below
-2. Build a docker container image
-3. Download model weights from HuggingFace
-4. Launch a pipeline
-   - locally using local-docker launcher - **focus of this section**
-   - on a slurm cluster using slurm launcer
-   - on [NVIDIA Cloud Functions (NVCF)](https://docs.nvidia.com/cloud-functions/user-guide/latest/cloud-function/overview.html) by reaching out to NVIDIA Cosmos-Curate team.
-   - on Kubernetes cluster (coming soon)
-
-### Setup Environment and Install Dependencies
-
-- It is strongly recommended to use a Python virtual environment management system that can specify the Python version, such as
-  [conda](https://docs.conda.io/projects/conda/en/latest/user-guide/install/index.html),
-  [mamba](https://mamba.readthedocs.io/en/latest/installation/mamba-installation.html),
-  [micromamba](https://mamba.readthedocs.io/en/latest/installation/micromamba-installation.html),
-  [uv](https://docs.astral.sh/uv/),
-  etc.
-  - Also it is best to prevent packages under `$HOME/.local/` being used in the virtual environment,
-    you can set environment variable **`export PYTHONNOUSERSITE=1`** to exclude user site-package directory.
-- In case you are running in a headless display environment,
-  you may need to set environment variable **`export PYTHON_KEYRING_BACKEND=keyring.backends.null.Keyring`**
-  before running `poetry` to avoid getting stuck due to a keyring pop-up.
+1. Set up the environment and install dependencies (This provides a CLI for the steps described in the platform sections of this guide)
+    - It is strongly recommended to use a Python virtual environment management system that can specify the Python version, such as
+      [conda](https://docs.conda.io/projects/conda/en/latest/user-guide/install/index.html),
+      [mamba](https://mamba.readthedocs.io/en/latest/installation/mamba-installation.html),
+      [micromamba](https://mamba.readthedocs.io/en/latest/installation/micromamba-installation.html),
+      [uv](https://docs.astral.sh/uv/),
+      etc.
+      - Also it is best to prevent packages under `$HOME/.local/` being used in the virtual environment,
+        you can set environment variable **`export PYTHONNOUSERSITE=1`** to exclude user site-package directory.
+    - In case you are running in a headless display environment,
+      you may need to set environment variable **`export PYTHON_KEYRING_BACKEND=keyring.backends.null.Keyring`**
+      before running `poetry` to avoid getting stuck due to a keyring pop-up.
 
 ```bash
 # 1. Create virtual environment (using micromamba as an example)
@@ -142,11 +130,23 @@ poetry install --extras=local
 cosmos-curate --help
 ```
 
-Alternatively, you may execute `./devset.sh` to complete inital setup of environment **from within your virtual environment**.
+Alternatively, you may execute `./devset.sh` to complete initial setup of environment **from within your virtual environment**.
+
+## Quick Start for Local Run
+
+**The overall workflow is as follows:**
+1. Build a Docker container image
+1. Download model weights from Hugging Face
+1. Launch a pipeline
+   - locally using local-docker launcher - **focus of this section**
+   - on a slurm cluster using slurm launcher
+   - on [NVIDIA Cloud Functions (NVCF)](https://docs.nvidia.com/cloud-functions/user-guide/latest/cloud-function/overview.html) by reaching out to NVIDIA Cosmos-Curate team.
+   - on Kubernetes cluster (coming soon)
 
 ### Run the Hello-World Example Pipeline
 
 The hello-world example pipeline aims to provide a minimal example to help understand the framework.
+
 - Define the class for pipeline task as `HelloWorldTask` in [hello_world_pipeline.py](../../cosmos_curate/pipelines/examples/hello_world_pipeline.py).
 - Define `GPT2` model in [gpt2](../../cosmos_curate/models/gpt2.py).
 - Define 3 simple stages (`_LowerCaseStage`, `_PrintStage`, `_GPT2Stage`) in [hello_world_pipeline.py](../../cosmos_curate/pipelines/examples/hello_world_pipeline.py). So the functionality of this pipeline is:
@@ -335,7 +335,7 @@ such that you don't have to rebuild the container after code changes for local r
 
 ## Launch Pipelines on Slurm
 
-This section assumes that you have set up a local environment and have launched a pipeline locally.
+### **PLEASE READ: For end users walking through this section, the guide assumes that you have already set up a local environment and have launched a reference pipeline locally per [Initial Setup](#initial-setup) + [Run the Reference Video Pipeline](#run-the-reference-video-pipeline).**
 
 ### Prerequisites for Slurm Run
 
@@ -378,7 +378,9 @@ These helper scripts detect the presence of AWS and Azure credential files and o
 
 ### Copy Config File, Cloud Storage Credentials, and Model Files to Cluster
 
-**Note**: Cloud storage credentials are only required if your input videos or output paths use S3/Azure URIs. If all data resides on the cluster's local or shared storage, you can skip the credential sync steps below.
+**Note 1**: Cloud storage credentials are only required if your input videos or output paths use S3/Azure URIs. If all data resides on the cluster's local or shared storage, you can skip the credential sync steps below.
+
+**Note 2**: The steps below assume that you set up config files, model files, and cloud storage credentials on a different host. If you completed the steps mentioned in [Initial Setup](#initial-setup) + [Run the Reference Video Pipeline](#run-the-reference-video-pipeline) directly on the login node of the Slurm cluster OR on a mounted filesystem visible to all Slurm nodes, you can skip the steps below.
 
 If you have defined `my-slurm-login-01.my-cluster.com` in your `/.ssh/config` like mentioned above, you can simply run
 
