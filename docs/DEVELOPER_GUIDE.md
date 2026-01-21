@@ -265,6 +265,11 @@ If you encounter issues during development:
    - Rebuild the environment if necessary
    - Check for conflicting dependencies
 
+3. **Pipeline Stage Debugging**:
+   - Use [Stage Replay](./curator/STAGE_REPLAY.md) to debug specific stages without re-running entire pipelines
+   - Save task inputs from problematic stages and replay them in isolation
+   - Iterate rapidly on stage logic by replaying saved tasks
+
 ## Responsible Use of AI Models
 [Responsible Use](./RESPONSIBLE_USE.md)
 

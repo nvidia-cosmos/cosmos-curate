@@ -608,6 +608,7 @@ If you encounter any issues:
 2. Verify that you have sufficient disk space for model downloads
 3. Check that Docker is running and accessible
 4. Check that [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html) is installed and `docker.service` is restarted after the installation of NVIDIA Container Toolkit.
+5. For debugging specific pipeline stages, see the [Stage Replay Guide](../curator/STAGE_REPLAY.md)
 6. Ensure you have the correct Python version installed
 
 ## Support

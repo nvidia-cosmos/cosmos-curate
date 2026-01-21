@@ -27,7 +27,8 @@ from __future__ import annotations
 import argparse
 import pathlib
 import time
-from typing import Any
+from pathlib import Path
+from typing import Any, cast
 
 import attrs
 from loguru import logger
@@ -35,6 +36,13 @@ from loguru import logger
 from cosmos_curate.core.interfaces.pipeline_interface import run_pipeline
 from cosmos_curate.core.interfaces.stage_interface import CuratorStage, CuratorStageSpec
 from cosmos_curate.core.utils.config import args_utils
+from cosmos_curate.core.utils.misc.stage_replay import (
+    StageSaveConfig,
+    add_stage_replay_args,
+    get_stages_to_replay,
+    run_stage_replay,
+    validate_stage_replay_args,
+)
 from cosmos_curate.core.utils.storage.storage_utils import (
     create_path,
     is_path_nested,
@@ -272,6 +280,8 @@ def split(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912, PLR0915
         args: Command line arguments.
 
     """
+    validate_stage_replay_args(args)
+
     zero_start = time.time()
     input_tasks, input_videos_relative, _ = build_input_data(args)
 
@@ -682,11 +692,35 @@ def split(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912, PLR0915
     )
 
     pipeline_start = time.time()
-    output_tasks: list[SplitPipeTask] = run_pipeline(
-        input_tasks,
-        stages,
-        args.model_weights_path,
-    )
+
+    stage_save_config: StageSaveConfig | None = None
+    if args.stage_save:
+        stage_save_config = StageSaveConfig(
+            path=Path(str(args.output_clip_path)) / "tasks",
+            stages=args.stage_save,
+            sample_rate=args.stage_save_sample_rate,
+        )
+
+    if len(args.stage_replay) == 0:
+        # Run the full pipeline
+        output_tasks: list[SplitPipeTask] = run_pipeline(
+            input_tasks,
+            stages,
+            args.model_weights_path,
+            stage_save_config=stage_save_config,
+        )
+    else:
+        # Stage replay
+        start_stage_name = args.stage_replay[0]
+        end_stage_name = args.stage_replay[-1] if len(args.stage_replay) > 1 else start_stage_name
+        stage_to_replay = get_stages_to_replay(stages, start_stage_name, end_stage_name)
+
+        output_tasks = cast(
+            "list[SplitPipeTask]",
+            run_stage_replay(
+                stage_to_replay, Path(str(args.output_clip_path)) / "tasks" / start_stage_name, args.limit
+            ),
+        )
 
     if args.upload_clip_info_in_lance:
         consolidate_lance_fragments(args.output_clip_path, args.output_s3_profile_name)
@@ -1472,6 +1506,7 @@ def _setup_parser(parser: argparse.ArgumentParser) -> None:  # noqa: PLR0915
     )
     # add common args applicable to all pipelines
     add_common_args(parser)
+    add_stage_replay_args(parser)
 
 
 def nvcf_run_split(args: argparse.Namespace) -> None:

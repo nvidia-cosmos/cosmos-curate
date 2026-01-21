@@ -237,3 +237,18 @@ One way is to request a fraction of GPU and allow multiple stage workers to be a
 The GPU memory usage metric above would help define this fractional number to maximize the GPU usage while avoiding CUDA OOM.
 
 In the reference video pipeline, `AestheticFilterStage` in [cosmos_curate/pipelines/video/filtering/aesthetics/aesthetic_filter_stages.py](../../cosmos_curate/pipelines/video/filtering/aesthetics/aesthetic_filter_stages.py) requests 0.25 GPUs per worker.
+
+## Pipeline Debugging
+
+When developing or debugging pipeline stages, you can use **Stage Replay** to run individual stages in isolation without re-executing the entire pipeline.
+
+See the [Stage Replay Guide](STAGE_REPLAY.md) for:
+- Saving task inputs from specific stages
+- Replaying stages with saved data
+- Rapid iteration on stage logic
+- Debugging stage-specific issues
+
+This is especially useful when:
+- A specific stage is failing or producing unexpected results
+- You want to test changes to a single stage quickly
+- You need to debug complex multi-stage pipelines

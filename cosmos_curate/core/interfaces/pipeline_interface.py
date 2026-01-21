@@ -26,6 +26,7 @@ from cosmos_curate.core.interfaces.stage_interface import CuratorStage, CuratorS
 from cosmos_curate.core.utils.config.operation_context import get_tmp_dir
 from cosmos_curate.core.utils.environment import MODEL_WEIGHTS_PREFIX
 from cosmos_curate.core.utils.infra import hardware_info, ray_cluster_utils
+from cosmos_curate.core.utils.misc.stage_replay import StageSaveConfig, should_save_stage, stage_save_wrapper
 from cosmos_curate.core.utils.model.model_utils import download_model_weights_on_all_nodes
 from cosmos_xenna.pipelines.private.specs import (
     ExecutionMode,
@@ -147,17 +148,41 @@ def _prepare_to_run_pipeline(
     return ExecutionMode["STREAMING"] if num_gpus_requested <= num_gpus_available else ExecutionMode["BATCH"]
 
 
-def _build_pipeline_stage_specs(stages: Sequence[CuratorStage | CuratorStageSpec]) -> list[CuratorStageSpec]:
+def _conditionally_wrap_stage(
+    stage: CuratorStage | CuratorStageSpec, stage_save_config: StageSaveConfig | None
+) -> CuratorStage | CuratorStageSpec:
+    """Wrap the stage with the stage save wrapper if the stage should be saved.
+
+    Args:
+        stage: The stage to wrap.
+        stage_save_config: The configuration for saving stages.
+
+    Returns:
+        The stage or stage spec with the process_data method wrapped.
+
+    """
+    if stage_save_config is None:
+        return stage
+    if should_save_stage(stage, stage_save_config):
+        return stage_save_wrapper(stage, stage_save_config)
+    return stage
+
+
+def _build_pipeline_stage_specs(
+    stages: Sequence[CuratorStage | CuratorStageSpec],
+    stage_save_config: StageSaveConfig | None,
+) -> list[CuratorStageSpec]:
     """Build a list of pipeline stage specs from the given stages."""
     # Unify the stage spec and stage
     stage_specs: list[CuratorStageSpec] = []
     for stage in stages:
-        if isinstance(stage, CuratorStage):
-            stage_specs.append(CuratorStageSpec(stage))
-        elif isinstance(stage, CuratorStageSpec):
-            stage_specs.append(stage)
+        _stage = _conditionally_wrap_stage(stage, stage_save_config)
+        if isinstance(_stage, CuratorStage):
+            stage_specs.append(CuratorStageSpec(_stage))
+        elif isinstance(_stage, CuratorStageSpec):
+            stage_specs.append(_stage)
         else:
-            err_msg = f"Invalid stage type: {type(stage)}. Expected CuratorStage or CuratorStageSpec."  # type: ignore[unreachable]
+            err_msg = f"Invalid stage type: {type(_stage)}. Expected CuratorStage or CuratorStageSpec."  # type: ignore[unreachable]
             raise PipelineExecutionError(err_msg, original_error=None)
 
     # Fill in some default pipeline stage spec values
@@ -191,6 +216,7 @@ def run_pipeline[T: PipelineTask](
     stages: Sequence[CuratorStage | CuratorStageSpec],
     model_weights_prefix: str = MODEL_WEIGHTS_PREFIX,
     runner: RunnerInterface | None = None,
+    stage_save_config: StageSaveConfig | None = None,
 ) -> list[T]:
     """Run the pipeline with the given pipeline spec.
 
@@ -199,6 +225,7 @@ def run_pipeline[T: PipelineTask](
         stages: A list of stages.
         model_weights_prefix: Prefix for model weights in local or cloud storage.
         runner: Runner implementation for executing the pipeline. Defaults to XennaRunner.
+        stage_save_config: Configuration for saving stages for replay.
 
     Returns:
         A list of pipeline payloads.
@@ -211,7 +238,7 @@ def run_pipeline[T: PipelineTask](
         runner = XennaRunner()
 
     # Build a list of StageSpecs and fill in default config values.
-    stage_specs = _build_pipeline_stage_specs(stages)
+    stage_specs = _build_pipeline_stage_specs(stages, stage_save_config)
 
     # Run the pipeline!
     try:
