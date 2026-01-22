@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# shellcheck source=common.sh
+source "$(dirname "$0")/common.sh"
+
 export NVCF_BACKEND="${NVCF_CUSTOM_BACKEND:-$NVCF_BACKEND}"
 
 # Determine HELM_IMAGE_TAG based on pipeline source
@@ -11,7 +14,7 @@ elif [[ "$CI_PIPELINE_SOURCE" == "web" ]]; then
   # Web triggers use staging images unless e2e is specified, then tests latest dev image
   export HELM_IMAGE_TAG=${HELM_IMAGE_TAG:-$(cosmos-curate nvcf image list-image-detail --iname "$NVCF_STAGING_BASE_IMAGE" |grep latestTag |sed "s/['│,]//g" |awk '{print $2}')}
 else
-  export HELM_IMAGE_TAG="${CI_COMMIT_TIMESTAMP%%T*}_${CI_COMMIT_SHORT_SHA}"
+  export HELM_IMAGE_TAG="$(get_image_tag)"
 fi
 
 # Determine NVCF_IMAGE based on pipeline source
@@ -71,7 +74,7 @@ done
 
 # Invoke NVCF function
 # Create S3 credentials file
-echo -n "$AWS_CONFIG_FILE_CONTENTS" | base64 -d > aws_credentials
+setup_s3_credentials aws_credentials
 sed -i '/^endpoint/d' aws_credentials
 
 # Determine whether to raise on pynvc error

@@ -296,6 +296,10 @@ build_deploy_curator:
   before_script:
     - source .gitlab/vault/vault-auth.sh
   script:
+    - IMAGE_TAG="${CI_COMMIT_TIMESTAMP%%T*}_${CI_COMMIT_SHORT_SHA}"
+    - CURATOR_FULL_IMAGE="${CURATOR_IMAGE}:${IMAGE_TAG}"
+    # Export for downstream jobs via dotenv
+    - echo "CURATOR_FULL_IMAGE=${CURATOR_FULL_IMAGE}" >> build.env
     # For web triggers, this is a no-op since we use existing images
     - |
       if [[ "$CI_PIPELINE_SOURCE" == "web" ]]; then
@@ -306,21 +310,22 @@ build_deploy_curator:
     - *docker_login
     - *setup_micromamba
     - *setup_curator_cli
-    - IMAGE_TAG="${CI_COMMIT_TIMESTAMP%%T*}_${CI_COMMIT_SHORT_SHA}"
     - |
       cosmos-curate image build \
       --curator-path . \
       --image-name ${CURATOR_IMAGE} \
       --image-tag ${IMAGE_TAG}
-    - FULL_IMAGE=${CURATOR_IMAGE}:${IMAGE_TAG}
-    - echo "Built image ${FULL_IMAGE} from curator commit [${CI_COMMIT_SHA}]"
-    - docker push ${FULL_IMAGE}
-    - echo "Pushed image ${FULL_IMAGE} to GitLab registry"
+    - echo "Built image ${CURATOR_FULL_IMAGE} from curator commit [${CI_COMMIT_SHA}]"
+    - docker push ${CURATOR_FULL_IMAGE}
+    - echo "Pushed image ${CURATOR_FULL_IMAGE} to GitLab registry"
     - NVCF_IMAGE=${NVCF_DEV_IMAGE}:${IMAGE_TAG}
-    - docker buildx imagetools create -t ${NVCF_IMAGE} ${FULL_IMAGE}
+    - docker buildx imagetools create -t ${NVCF_IMAGE} ${CURATOR_FULL_IMAGE}
     - echo "Copied to image ${NVCF_IMAGE} from curator commit [${CI_COMMIT_SHA}]"
     # Cleanup
     - *teardown_micromamba
+  artifacts:
+    reports:
+      dotenv: build.env
   retry:
     max: 2
     when: always
@@ -329,7 +334,7 @@ build_deploy_curator:
 gpu_tests:
   stage: end-to-end
   rules: *pre_post_merge_rules
-  needs: [ "build_deploy_curator" ]
+  needs: ["build_deploy_curator"]
   tags:
     - ${SLURM_RUNNER_TAG}
   variables:
@@ -384,7 +389,7 @@ slurm_end_to_end:
   id_tokens:
     VAULT_JWT_TOKEN:
       aud: ${VAULT_ADDR}
-  needs: [ "build_deploy_curator" ]
+  needs: ["build_deploy_curator"]
   rules: *merge_result_and_web_rules
   tags:
     - ${SLURM_RUNNER_TAG}
@@ -469,7 +474,7 @@ semgrep-sast:
 # Run end-to-end tests on NVCF cluster
 nvcf-helm:
   stage: end-to-end
-  needs: [ "build_deploy_curator" ]
+  needs: ["build_deploy_curator"]
   rules: *merge_result_and_web_rules
   image: mambaorg/micromamba:latest
   tags:
@@ -621,3 +626,65 @@ nvcf_split_benchmark:
     - *setup_curator
     - .gitlab/scripts/nvcf_split_benchmark.sh
     - *teardown_micromamba
+
+# GPU tests - runs actual mini pipeline with GPU
+k8s_gpu_tests:
+  stage: end-to-end
+  tags:
+    - k8s-gpu
+  needs: ["build_deploy_curator"]
+  image: ${CURATOR_FULL_IMAGE}
+  timeout: 45 minutes
+  allow_failure: true
+  variables:
+    KUBERNETES_POLL_TIMEOUT: 1800
+  id_tokens:
+    VAULT_JWT_TOKEN:
+      aud: ${VAULT_ADDR}
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      when: on_success
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+      when: manual
+    - when: never
+  before_script:
+    - source .gitlab/vault/vault-auth.sh
+  script:
+    - .gitlab/scripts/k8s_gpu_tests.sh
+  artifacts:
+    when: always
+    paths:
+      - "*-report.xml"
+      - "*-coverage.xml"
+    expire_in: 1 week
+
+# Helm chart deployment test on vanilla K8s
+k8s_helm_test:
+  stage: end-to-end
+  tags:
+    - k8s-cpu
+  needs: ["build_deploy_curator"]
+  image: ubuntu:22.04
+  timeout: 45 minutes
+  allow_failure: true
+  variables:
+    KUBERNETES_POLL_TIMEOUT: 1800
+  id_tokens:
+    VAULT_JWT_TOKEN:
+      aud: ${VAULT_ADDR}
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      when: on_success
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+      when: manual
+    - when: never
+  before_script:
+    - apt-get update && apt-get install -y curl unzip
+    - source .gitlab/vault/vault-auth.sh
+    - curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+    - curl -LO "https://dl.k8s.io/release/$(curl -sL https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+    - install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl
+  script:
+    - .gitlab/scripts/k8s_helm_test.sh
+  after_script:
+    - .gitlab/scripts/k8s_helm_cleanup.sh

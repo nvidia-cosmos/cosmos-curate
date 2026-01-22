@@ -106,7 +106,7 @@ When the deployment is ready (view with kubectl get pods), jobs can be submitted
 Port-forward for local access and invoke:
 ```bash
 kubectl -n cosmos-curate port-forward svc/cosmos-curate 8000:8000 > /dev/null &
-# Copy an example invoke from  ../../examples/nvcf/function, and add "s3_config":"<base64 encoded credentials>" as standalone-invoke.json 
+# Copy an example invoke from  ../../examples/nvcf/function, and add "s3_config":"<base64 encoded credentials>" as standalone-invoke.json
 REQUEST_ID=$(uuidgen)
 curl -sX POST localhost:8000/v1/run_pipeline \
   -H "NVCF-REQID: ${REQUEST_ID}" \
@@ -114,7 +114,7 @@ curl -sX POST localhost:8000/v1/run_pipeline \
 
 # To check progress (percentage)
 curl -s "localhost:8000/v1/progress?request_id=${REQUEST_ID}"
- 
+
 # Or get full logs
 curl -s "localhost:8000/v1/logs?request_id=${REQUEST_ID}"
 ```
@@ -146,7 +146,7 @@ Refer to the  `values.yaml` for a complete list and default values.
 
 ### Persistent Storage
 
-The `/config` directory (used for model caching via `modelCacheDir: "/config/models"`) as well as Ray spill can be configured for various persistence options. 
+The `/config` directory (used for model caching via `modelCacheDir: "/config/models"`) as well as Ray spill can be configured for various persistence options.
 #### Custom storage class
 Preferred option - should be high bandwidth storage class, at least 500GB of capacity.
 ```yaml
@@ -202,7 +202,7 @@ metrics:
     keyPath: "/etc/certs/tls.key"
 ```
 
-Or an OTLP endpoint - by default, it will use the [NVCF BYOO endpoint](https://docs.nvidia.com/cloud-functions/user-guide/latest/cloud-function/observability.html#appendix-c-adding-custom-application-metrics-logs-traces). 
+Or an OTLP endpoint - by default, it will use the [NVCF BYOO endpoint](https://docs.nvidia.com/cloud-functions/user-guide/latest/cloud-function/observability.html#appendix-c-adding-custom-application-metrics-logs-traces).
 ```yaml
 metrics:
   enabled: true

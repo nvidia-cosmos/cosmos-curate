@@ -3,10 +3,13 @@
 
 set -euo pipefail
 
+# shellcheck source=common.sh
+source "$(dirname "$0")/common.sh"
+
 mkdir -p "${ENROOT_CONFIG_PATH}"
 echo "machine ${CI_REGISTRY/:5005/} login gitlab-ci-token password ${CI_JOB_TOKEN}" > "${ENROOT_CONFIG_PATH}/.credentials"
 
-IMAGE_TAG="${CI_COMMIT_TIMESTAMP%%T*}_${CI_COMMIT_SHORT_SHA}"
+IMAGE_TAG="$(get_image_tag)"
 FULL_IMAGE=${CURATOR_IMAGE}:${IMAGE_TAG}
 BUILD_IMAGE_NAME_SBATCH="${FULL_IMAGE/:5005\///}"
 
@@ -123,39 +126,10 @@ fi
 
 export AWS_SHARED_CREDENTIALS_FILE="${AWS_CREDS_PATH}"
 
-json_is_valid() {
-  python -c 'import json, sys; json.load(sys.stdin)' >/dev/null 2>&1
-}
+# Validate outputs using common functions
+wait_for_s3_file "${SLURM_E2E_OUTPUT_CLIP_PATH}/summary.json" || exit 1
+wait_for_s3_file "${SLURM_E2E_OUTPUT_DEDUP_PATH}/extraction/dedup_summary_0.01.csv" || exit 1
+wait_for_s3_file "${SLURM_E2E_OUTPUT_DATASET_PATH}/v0/wdinfo_list.csv" || exit 1
 
-validate_path() {
-  local target=$1
-  local retries=10
-  local attempt=0
-  while (( attempt < retries )); do
-    if aws s3 ls "${target}" >/dev/null 2>&1; then
-      echo "Validated S3 object ${target}"
-      return 0
-    else
-      set +e
-      aws s3 ls "${target}"
-      echo "AWS ls result is $?"
-      aws configure get aws_access_key_id
-      set -e
-    fi
-    echo "Waiting for ${target} to appear in S3 (${attempt}/${retries})..."
-    sleep 5
-    attempt=$((attempt + 1))
-  done
-  echo "S3 object ${target} not found after retries" >&2
-  return 1
-}
-
-validate_path "${SLURM_E2E_OUTPUT_CLIP_PATH}/summary.json"
-validate_path "${SLURM_E2E_OUTPUT_DEDUP_PATH}/extraction/dedup_summary_0.01.csv"
-validate_path "${SLURM_E2E_OUTPUT_DATASET_PATH}/v0/wdinfo_list.csv"
-
-SUMMARY_CONTENT=$(aws s3 cp "${SLURM_E2E_OUTPUT_CLIP_PATH}/summary.json" -)
-if ! json_is_valid <<<"${SUMMARY_CONTENT}"; then
-  echo "Split summary JSON is invalid" >&2
-  exit 1
-fi
+SUMMARY_CONTENT=$(validate_s3_json "${SLURM_E2E_OUTPUT_CLIP_PATH}/summary.json") || exit 1
+echo "Split summary JSON is valid"
