@@ -109,10 +109,11 @@ PyNvVideoCodec = "*" # not available on conda-forge
 vllm = "==0.11.2" # not available on conda-forge
 
 [feature.legacy-transformers.dependencies]
-flash-attn = "*"
-flash-attn-fused-dense = "*"
-flash-attn-layer-norm = "*"
+einops = "*"
 transformers = "==4.55.4" # legacy models (cosmos-embed1, internvideo2) require older transformers
+
+[feature.legacy-transformers.pypi-dependencies]
+torch = "==2.9.1" # pin PyTorch version for compatibility with legacy models
 
 [environments]
 cuml = ["cuml"]

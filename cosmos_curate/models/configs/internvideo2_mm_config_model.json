@@ -395,7 +395,7 @@
     "max_txt_l": 40,
     "origin_num_frames": 4,
     "use_half_precision": false,
-    "use_bf16": false,
+    "use_bf16": true,
     "inputs": {
         "image_res": 224,
         "video_input": {
@@ -437,9 +437,6 @@
             "pretrained": "your_model_path/1B_stage2_pt.pth",
             "use_checkpoint": true,
             "checkpoint_num": 40,
-            "use_flash_attn": false,
-            "use_fused_rmsnorm": false,
-            "use_fused_mlp": false,
             "clip_teacher": null,
             "clip_input_resolution": 224,
             "clip_teacher_return_interval": 1,

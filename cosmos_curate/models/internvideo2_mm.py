@@ -248,8 +248,11 @@ class _InternVideo2Stage2(nn.Module):
         txt_feat: torch.Tensor,
         top: int = 5,
     ) -> tuple[torch.Tensor, torch.Tensor]:
+        # Ensure same dtype (vid_feat may be float32 from numpy, txt_feat may be bf16)
+        vid_feat = vid_feat.float()
+        txt_feat = txt_feat.float()
         label_probs = (100.0 * vid_feat @ txt_feat.T).softmax(dim=-1)
-        top_probs, top_labels = label_probs.float().cpu().topk(top, dim=-1)
+        top_probs, top_labels = label_probs.cpu().topk(top, dim=-1)
         return top_probs, top_labels
 
 
@@ -458,7 +461,7 @@ class InternVideo2MultiModality(ModelInterface):
         per_video_embeddings = []
         for batched_frames in grouping.split_by_chunk_size(videos, chunk_size=batch_size):
             embeddings = self.encode_video_frames(np.concatenate(batched_frames, axis=0))
-            per_video_embeddings.extend(np.split(embeddings.cpu().numpy(), embeddings.shape[0], axis=0))
+            per_video_embeddings.extend(np.split(embeddings.cpu().float().numpy(), embeddings.shape[0], axis=0))
         return per_video_embeddings
 
     def get_text_embedding(self, text: str) -> torch.Tensor:
