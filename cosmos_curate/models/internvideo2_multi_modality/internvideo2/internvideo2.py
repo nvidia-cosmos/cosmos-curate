@@ -219,7 +219,7 @@ class Attention(nn.Module):
             q = self.q_norm(q.transpose(1, 2).flatten(-2, -1)).view(B_, N_, H_, D_).transpose(1, 2)
             k = self.k_norm(k.transpose(1, 2).flatten(-2, -1)).view(B_, N_, H_, D_).transpose(1, 2)
 
-        # PyTorch SDPA auto-selects best backend (flash attention, memory-efficient, etc.)
+        # PyTorch SDPA auto-selects the best available attention backend
         dropout_p = self.attn_drop.p if self.training else 0.0
         x = F.scaled_dot_product_attention(q, k, v, dropout_p=dropout_p, scale=self.scale)
         x = x.transpose(1, 2).reshape(B, N, C)
