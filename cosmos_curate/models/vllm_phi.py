@@ -151,7 +151,7 @@ class VllmPhi4(VllmPlugin):
             max_model_len=MAX_MODEL_LEN,
             quantization=quantization,
             gpu_memory_utilization=GPU_MEMORY_UTILIZATION,
-            disable_mm_preprocessor_cache=config.disable_mmcache,
+            mm_processor_cache_gb=0.0 if config.disable_mmcache else 4.0,
             max_num_batched_tokens=MAX_NUM_BATCHED_TOKENS,
             tensor_parallel_size=config.num_gpus,
             trust_remote_code=TRUST_REMOTE_CODE,

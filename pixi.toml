@@ -18,6 +18,7 @@ ray = { version = "==2.48.0", extras = ["default", "data"] } # conda-forge packa
 
 [feature.core.system-requirements]
 cuda = "12.9.1" # match the version of the nvidia/cuda docker base image
+libc = { family = "glibc", version = "2.31" } # vllm 0.15+ requires manylinux_2_31 wheels
 
 [feature.core.dependencies]
 astral = "*"
@@ -31,7 +32,7 @@ gpustat = "*"
 huggingface_hub = "*"
 jinja2 = "*"
 loguru = "*"
-numpy = "<2.0" # for numba and pycuda compatibility
+numpy = ">2,<2.3" # vllm requires numpy>=2 via opencv; numba 0.61.x requires <2.3
 nvidia-ml-py = "*"
 nvtx = "*"
 pandas = "*"
@@ -51,6 +52,7 @@ timezonefinder = "*"
 tqdm = "*"
 typer = "*"
 uvicorn = "*"
+websockets = "<16" # google-genai requires websockets<16
 
 [feature.core.pypi-dependencies]
 av = "*" # conda-forge package pulls in ffmpeg
@@ -71,7 +73,7 @@ azure-identity = "*"
 azure-storage-blob = "*"
 cuml = "==25.12"
 loguru = "*"
-numpy = "<2.0" # for numba and pycuda compatibility
+numpy = ">2,<2.3" # vllm requires numpy>=2 via opencv; numba 0.61.x requires <2.3
 raft-dask = "*"
 tqdm = "*"
 
@@ -86,7 +88,7 @@ cattrs = "*"
 huggingface_hub = "*"
 loguru = "*"
 pandas = "*"
-numpy = "<2.0" # for numba and pycuda compatibility
+numpy = ">2,<2.3" # vllm requires numpy>=2 via opencv; numba 0.61.x requires <2.3
 nvidia-ml-py = "*"
 scipy = "*"
 tabulate = "*"
@@ -96,17 +98,18 @@ ngcsdk = "*" # not available on conda-forge
 opencv-python-headless = "*" # not available on conda-forge
 
 [feature.transformers.dependencies]
-transformers = ">=4.57.1"
+transformers = ">=4.57.1,<5.0.0" # vllm 0.15 requires transformers<5
 
 [feature.unified.dependencies]
 cuda-libraries-dev = "*"
-pycuda = "*"
+pycountry = "*"
 
 [feature.unified.pypi-dependencies]
 cvcuda-cu12 = "*" # not available on conda-forge
 flashinfer-python = ">=0.4.0rc3" # not available on conda-forge; pre-release to avoid pynvml dependency
+pycuda = "*" # conda-forge package is too old
 PyNvVideoCodec = "*" # not available on conda-forge
-vllm = "==0.11.2" # not available on conda-forge
+vllm = "==0.15.0" # not available on conda-forge
 
 [feature.legacy-transformers.dependencies]
 einops = "*"

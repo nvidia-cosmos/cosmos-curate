@@ -184,7 +184,7 @@ def model(cls, config: VllmConfig) -> LLM:
         max_model_len=32768,  # Model-specific
         gpu_memory_utilization=0.85,
         mm_processor_kwargs=mm_processor_kwargs,
-        disable_mm_preprocessor_cache=config.disable_mmcache,
+        mm_processor_cache_gb=0.0 if config.disable_mmcache else 4.0,
         max_num_batched_tokens=32768,  # Model-specific
         trust_remote_code=True,  # Set based on model requirements
         limit_mm_per_prompt={"video": 1},  # Model-specific: video vs image
