@@ -2,8 +2,8 @@ workflow:
   rules:
     # Run pipeline for merge requests
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
-    # Run pipeline for merged commits to default branch
-    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+    # Run pipeline for merged commits to protected branches
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_REF_PROTECTED == "true"'
     # Run pipeline for scheduled pipelines (cron)
     - if: '$CI_PIPELINE_SOURCE == "schedule"'
     # Run pipeline for E2E testing
@@ -135,7 +135,8 @@ stages:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event" || $TEST_END_TO_END == "True"'
     - when: never
 
-  # Rules for post-merge jobs
+  # Rules for post-merge jobs (promotion to staging/prod - main branch only)
+  # Note: Intentionally uses $CI_DEFAULT_BRANCH, not $CI_COMMIT_REF_PROTECTED
   post_merge_rules: &post_merge_rules
     - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
     - when: never
@@ -167,15 +168,17 @@ stages:
     - when: never
 
   # Rules for jobs that should run both before and after merging
+  # Post-merge runs on any protected branch
   pre_post_merge_rules: &pre_post_merge_rules
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event" || $TEST_END_TO_END == "True"'
-    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_REF_PROTECTED == "true"'
     - when: never
 
   # Rules for jobs that should run on pre/post merge AND web triggers
+  # Post-merge runs on any protected branch
   pre_post_merge_and_web_rules: &pre_post_merge_and_web_rules
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event" || $TEST_END_TO_END == "True"'
-    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_REF_PROTECTED == "true"'
     - if: '$CI_PIPELINE_SOURCE == "web"'
     - when: never
 
