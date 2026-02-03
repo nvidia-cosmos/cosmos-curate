@@ -19,6 +19,9 @@ spec:
   template:
     metadata:
       annotations:
+      {{- if .Values.rayAuth.enabled }}
+        checksum/ray-auth-token: {{ include (print $.Template.BasePath "/ray-auth-token-secret.yaml") . | sha256sum }}
+      {{- end }}
       {{- with .Values.podAnnotations }}
         {{- toYaml . | nindent 8 }}
       {{- end }}
@@ -56,6 +59,12 @@ spec:
           configMap:
             name: curate-config
             defaultMode: 0440
+      {{- if .Values.rayAuth.enabled }}
+        - name: ray-auth-token
+          secret:
+            secretName: ray-auth-token
+            defaultMode: 0440
+      {{- end }}
       {{- if .Values.ngcImagePullSecretName }}
       imagePullSecrets:
       - name: {{ .Values.ngcImagePullSecretName }}
@@ -77,6 +86,11 @@ spec:
            {{- if .Values.s3.secret.enabled }}
             - mountPath: /s3config
               name: s3config
+              readOnly: true
+           {{- end }}
+           {{- if .Values.rayAuth.enabled }}
+            - mountPath: /ray-auth
+              name: ray-auth-token
               readOnly: true
            {{- end }}
           {{- if .Values.command}}
@@ -115,6 +129,10 @@ spec:
               value: {{ .Values.rayPorts.objectManagerPort | quote }}
             - name: RAY_NODE_MANAGER_PORT
               value: {{ .Values.rayPorts.nodeManagerPort | quote }}
+            {{- if .Values.rayAuth.enabled }}
+            - name: RAY_AUTH_TOKEN_PATH
+              value: "/ray-auth/token"
+            {{- end }}
             {{- if .Values.huggingFaceHubToken }}
             - name: HUGGING_FACE_HUB_TOKEN
               value: {{ .Values.huggingFaceHubToken | quote }}

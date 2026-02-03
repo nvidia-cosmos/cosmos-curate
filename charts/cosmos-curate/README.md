@@ -32,9 +32,9 @@ helm repo update
 ```
 
 ### Set Chart Version
-The latest version is `2.2.1`. Set this as an environment variable:
+The latest version is `2.2.2`. Set this as an environment variable:
 ```bash
-export CHART_VERSION=2.2.1
+export CHART_VERSION=2.2.2
 ```
 
 ## Deployment
