@@ -290,8 +290,16 @@ unit_tests:
     max: 2
     when: always
 
-build_deploy_curator:
+build_deploy_curator_arch:
   stage: build
+  parallel:
+    matrix:
+      - PLATFORM: amd64
+        RUNNER_TAG: vm-builder
+      - PLATFORM: arm64
+        RUNNER_TAG: vm-builder-arm64
+  tags:
+    - ${RUNNER_TAG}
   rules: *pre_post_merge_and_web_rules
   id_tokens:
     VAULT_JWT_TOKEN:
@@ -300,9 +308,7 @@ build_deploy_curator:
     - source .gitlab/vault/vault-auth.sh
   script:
     - IMAGE_TAG="${CI_COMMIT_TIMESTAMP%%T*}_${CI_COMMIT_SHORT_SHA}"
-    - CURATOR_FULL_IMAGE="${CURATOR_IMAGE}:${IMAGE_TAG}"
-    # Export for downstream jobs via dotenv
-    - echo "CURATOR_FULL_IMAGE=${CURATOR_FULL_IMAGE}" >> build.env
+    - CURATOR_ARCH_IMAGE="${CURATOR_IMAGE}:${IMAGE_TAG}-${PLATFORM}"
     # For web triggers, this is a no-op since we use existing images
     - |
       if [[ "$CI_PIPELINE_SOURCE" == "web" ]]; then
@@ -317,15 +323,60 @@ build_deploy_curator:
       cosmos-curate image build \
       --curator-path . \
       --image-name ${CURATOR_IMAGE} \
-      --image-tag ${IMAGE_TAG}
-    - echo "Built image ${CURATOR_FULL_IMAGE} from curator commit [${CI_COMMIT_SHA}]"
-    - docker push ${CURATOR_FULL_IMAGE}
-    - echo "Pushed image ${CURATOR_FULL_IMAGE} to GitLab registry"
-    - NVCF_IMAGE=${NVCF_DEV_IMAGE}:${IMAGE_TAG}
-    - docker buildx imagetools create -t ${NVCF_IMAGE} ${CURATOR_FULL_IMAGE}
-    - echo "Copied to image ${NVCF_IMAGE} from curator commit [${CI_COMMIT_SHA}]"
+      --image-tag ${IMAGE_TAG}-${PLATFORM}
+    - echo "Built image ${CURATOR_ARCH_IMAGE} from curator commit [${CI_COMMIT_SHA}]"
+    - docker push ${CURATOR_ARCH_IMAGE}
+    - echo "Pushed image ${CURATOR_ARCH_IMAGE} to GitLab registry"
     # Cleanup
     - *teardown_micromamba
+  retry:
+    max: 2
+    when: always
+
+build_deploy_curator:
+  stage: build
+  rules: *pre_post_merge_and_web_rules
+  id_tokens:
+    VAULT_JWT_TOKEN:
+      aud: ${VAULT_ADDR}
+  before_script:
+    - source .gitlab/vault/vault-auth.sh
+  needs:
+    - build_deploy_curator_arch
+  script:
+    - IMAGE_TAG="${CI_COMMIT_TIMESTAMP%%T*}_${CI_COMMIT_SHORT_SHA}"
+    - CURATOR_FULL_IMAGE="${CURATOR_IMAGE}:${IMAGE_TAG}"
+    # Export for downstream jobs via dotenv
+    - echo "CURATOR_FULL_IMAGE=${CURATOR_FULL_IMAGE}" >> build.env
+    # For web triggers, this is a no-op since we use existing images
+    - |
+      if [[ "$CI_PIPELINE_SOURCE" == "web" ]]; then
+        echo "Web trigger detected - skipping manifest creation, using existing images"
+        exit 0
+      fi
+    # Enable Docker experimental features for manifest commands
+    - |
+      mkdir -p ~/.docker
+      if [ -f ~/.docker/config.json ]; then
+        jq '. + {"experimental":"enabled"}' ~/.docker/config.json > ~/.docker/config.json.tmp \
+          && mv ~/.docker/config.json.tmp ~/.docker/config.json
+      else
+        echo '{"experimental":"enabled"}' > ~/.docker/config.json
+      fi
+    - *docker_login
+    - CURATOR_AMD64_IMAGE="${CURATOR_IMAGE}:${IMAGE_TAG}-amd64"
+    - CURATOR_ARM64_IMAGE="${CURATOR_IMAGE}:${IMAGE_TAG}-arm64"
+    - |
+      echo "Manifest details:"
+      echo "  Repository: ${NVCF_DEV_IMAGE}"
+      echo "  Final tag: ${IMAGE_TAG}"
+      echo "  AMD64 tag: ${IMAGE_TAG}-amd64"
+      echo "  ARM64 tag: ${IMAGE_TAG}-arm64"
+    - docker buildx imagetools create --tag "${CURATOR_FULL_IMAGE}" "${CURATOR_AMD64_IMAGE}" "${CURATOR_ARM64_IMAGE}"
+    - echo "Created multi-arch image ${CURATOR_FULL_IMAGE} from curator commit [${CI_COMMIT_SHA}]"
+    - NVCF_IMAGE=${NVCF_DEV_IMAGE}:${IMAGE_TAG}
+    - docker buildx imagetools create -t "${NVCF_IMAGE}" "${CURATOR_AMD64_IMAGE}" "${CURATOR_ARM64_IMAGE}"
+    - echo "Copied to image ${NVCF_IMAGE} from curator commit [${CI_COMMIT_SHA}]"
   artifacts:
     reports:
       dotenv: build.env

@@ -30,7 +30,12 @@ fi
 
 echo "Downloading Vault agent..."
 rm -f vault_agent.zip vault
-curl https://urm.nvidia.com/artifactory/sw-kaizen-data-generic-local/com/nvidia/vault/vault-agent/2.4.4/nvault_agent_v2.4.4_linux_amd64.zip -L -o vault_agent.zip
+ARCH="$(uname -m)"
+VAULT_AGENT_URL="https://urm.nvidia.com/artifactory/sw-kaizen-data-generic-local/com/nvidia/vault/vault-agent/2.4.4/nvault_agent_v2.4.4_linux_amd64.zip"
+if [ "${ARCH}" = "aarch64" ]; then
+  VAULT_AGENT_URL="https://urm.nvidia.com/artifactory/sw-kaizen-data-generic-local/com/nvidia/vault/vault-agent/2.4.4/nvault_agent_v2.4.4_linux_arm64.zip"
+fi
+curl "${VAULT_AGENT_URL}" -L -o vault_agent.zip
 unzip vault_agent.zip
 chmod +x vault
 
