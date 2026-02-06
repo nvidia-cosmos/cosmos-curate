@@ -1,7 +1,7 @@
 [workspace]
 channels = ["rapidsai", "conda-forge", "nvidia"]
 name = "cosmos-curate"
-platforms = ["linux-64"]
+platforms = ["linux-64", "linux-aarch64"]
 version = "1.0.0"
 
 [pypi-options]
@@ -56,14 +56,49 @@ websockets = "<16" # google-genai requires websockets<16
 
 [feature.core.pypi-dependencies]
 av = "*" # conda-forge package pulls in ffmpeg
-google-genai = "*" # conda-forge package is too old
+google-genai= ">=1.59.0" # conda-forge package is too old
 ngcsdk = "*" # not available on conda-forge
 opencv-python-headless = "*" # not available on conda-forge
 pillow = "==11.3.0"  # required by phi-4 and nemotron models, 12.0 breaks nemotron
 pylance = ">=0.39.0" # conda-forge package is too old
 pulp = "*" # conda-forge package is too old
 timm = "*" # conda-forge package pulls in torchvision, which is behind
+uvicorn = "*"
 webdataset = "*" # conda-forge package pulls in pytorch
+
+[feature.core.target.linux-aarch64.dependencies]
+# Add CUDA toolchain packages on aarch64 -- these are automatic dependencies on linux-64.
+cuda-nvvm-tools = "12.9.*"
+cuda-nvcc-tools = "12.9.*"
+cuda-nvrtc = "12.9.*"
+cuda-nvrtc-dev = "12.9.*"
+cuda-nvrtc-static = "12.9.*"
+cuda-cupti = "12.9.*"
+cuda-cuobjdump = "12.9.*"
+cuda-nvdisasm = "12.9.*"
+triton = "==3.5.1"
+
+[feature.core.target.linux-aarch64.pypi-dependencies]
+# Add available NVIDIA CUDA runtime wheels for aarch64 to match linux-64 installs.
+nvidia-cublas-cu12 = "*"
+nvidia-cuda-cupti-cu12 = "*"
+nvidia-cuda-nvrtc-cu12 = "*"
+nvidia-cuda-runtime-cu12 = "*"
+nvidia-cudnn-cu12 = "*"
+nvidia-cufft-cu12 = "*"
+nvidia-curand-cu12 = "*"
+nvidia-cusolver-cu12 = "*"
+nvidia-cusparse-cu12 = "*"
+nvidia-cusparselt-cu12 = "*"
+nvidia-cufile-cu12 = "*"
+nvidia-nccl-cu12 = "*"
+nvidia-nvjitlink-cu12 = "*"
+nvidia-nvshmem-cu12 = "*"
+nvidia-nvtx-cu12 = "*"
+
+# Use CUDA-enabled PyTorch wheels on aarch64 to avoid CPU-only builds.
+torch = { version = "==2.9.1+cu129", index = "https://download.pytorch.org/whl/cu129" }
+torchvision = { version = "==0.24.1", index = "https://download.pytorch.org/whl/cu129" }
 
 [feature.cuml.system-requirements]
 cuda = "12.9.1" # match the version of the nvidia/cuda docker base image
@@ -109,7 +144,7 @@ cvcuda-cu12 = "*" # not available on conda-forge
 flashinfer-python = ">=0.4.0rc3" # not available on conda-forge; pre-release to avoid pynvml dependency
 pycuda = "*" # conda-forge package is too old
 PyNvVideoCodec = "*" # not available on conda-forge
-vllm = "==0.15.0" # not available on conda-forge
+vllm = "==0.15.1" # not available on conda-forge
 
 [feature.legacy-transformers.dependencies]
 einops = "*"
