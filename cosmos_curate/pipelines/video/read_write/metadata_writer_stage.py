@@ -23,7 +23,7 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
-import lance  # type: ignore[import-untyped]
+import lance
 import numpy as np
 import numpy.typing as npt
 import pandas as pd
@@ -963,7 +963,7 @@ def _consolidate_one(staging_root: str, processed_root: str, final_uri: str, out
     try:
         dataset = lance.dataset(final_uri, storage_options=storage_options)
         read_version = dataset.version
-        op = lance.LanceOperation.Append(fragments)
+        op: lance.LanceOperation.Append | lance.LanceOperation.Overwrite = lance.LanceOperation.Append(fragments)
     except (FileNotFoundError, ValueError):
         read_version = 0
         op = lance.LanceOperation.Overwrite(schema, fragments)

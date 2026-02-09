@@ -41,7 +41,7 @@ dependencies = [
     "rich==14.0.0",
     "tomli>=2.2.1",
     "tqdm==4.67.1",
-    "typer",
+    "typer>=0.21.0",
     "urllib3==1.26.18"
 ]
 classifiers = [
@@ -117,7 +117,7 @@ local = [
     "torch",
     "tqdm==4.67.1",
     "transformers<5.0",
-    "typer[all]",
+    "typer[all]>=0.21.0",
     "uvicorn",
     "vllm==0.11.2",
     "webdataset==0.2.111",

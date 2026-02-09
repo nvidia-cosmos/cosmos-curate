@@ -24,7 +24,7 @@ import pathlib
 import uuid
 from typing import TYPE_CHECKING, Any
 
-from lance.fragment import write_fragments  # type: ignore[import-untyped]
+from lance.fragment import write_fragments
 from loguru import logger
 
 from cosmos_curate.core.utils.misc.retry_utils import do_with_retries
