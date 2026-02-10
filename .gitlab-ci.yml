@@ -187,6 +187,17 @@ stages:
     - if: '$CI_PIPELINE_SOURCE == "schedule"'
     - when: never
 
+  # Compute IMAGE_TAG from target branch (MR) or commit branch (push/web)
+  # nvidia/main → main_2025-01-01_abc1234, nvidia/internal → internal_2025-01-01_abc1234
+  compute_image_tag: &compute_image_tag |
+    if [ -n "${CI_MERGE_REQUEST_TARGET_BRANCH_NAME}" ]; then
+      BRANCH_PREFIX="${CI_MERGE_REQUEST_TARGET_BRANCH_NAME##*/}"
+    else
+      BRANCH_PREFIX="${CI_COMMIT_BRANCH##*/}"
+    fi
+    IMAGE_TAG="${BRANCH_PREFIX}_${CI_COMMIT_TIMESTAMP%%T*}_${CI_COMMIT_SHORT_SHA}"
+    echo "Image tag: ${IMAGE_TAG}"
+
   # Configure Docker authentication for GitLab/NVCF registries
   docker_login: &docker_login |
     export DOCKER_CONFIG="${CI_PROJECT_DIR}/.docker"
@@ -307,7 +318,7 @@ build_deploy_curator_arch:
   before_script:
     - source .gitlab/vault/vault-auth.sh
   script:
-    - IMAGE_TAG="${CI_COMMIT_TIMESTAMP%%T*}_${CI_COMMIT_SHORT_SHA}"
+    - *compute_image_tag
     - CURATOR_ARCH_IMAGE="${CURATOR_IMAGE}:${IMAGE_TAG}-${PLATFORM}"
     # For web triggers, this is a no-op since we use existing images
     - |
@@ -344,7 +355,7 @@ build_deploy_curator:
   needs:
     - build_deploy_curator_arch
   script:
-    - IMAGE_TAG="${CI_COMMIT_TIMESTAMP%%T*}_${CI_COMMIT_SHORT_SHA}"
+    - *compute_image_tag
     - CURATOR_FULL_IMAGE="${CURATOR_IMAGE}:${IMAGE_TAG}"
     # Export for downstream jobs via dotenv
     - echo "CURATOR_FULL_IMAGE=${CURATOR_FULL_IMAGE}" >> build.env
@@ -400,7 +411,7 @@ gpu_tests:
     - echo "machine ${CI_REGISTRY/:5005/} login gitlab-ci-token password ${CI_JOB_TOKEN}" > $ENROOT_CONFIG_PATH/.credentials
 
     # Pull the specific image version to test
-    - IMAGE_TAG="${CI_COMMIT_TIMESTAMP%%T*}_${CI_COMMIT_SHORT_SHA}"
+    - *compute_image_tag
     - FULL_IMAGE=${CURATOR_IMAGE}:${IMAGE_TAG}
     - BUILD_IMAGE_NAME_SBATCH="${FULL_IMAGE/:5005\///}"
     # Submit SLURM job using the Docker image
@@ -611,7 +622,7 @@ promote_to_staging:
   before_script:
     - source .gitlab/vault/vault-auth.sh
   script:
-    - IMAGE_TAG="${CI_COMMIT_TIMESTAMP%%T*}_${CI_COMMIT_SHORT_SHA}"
+    - *compute_image_tag
     - echo "Promoting to staging from $IMAGE_TAG"
     - *docker_login
     - DEV="${NVCF_DEV_IMAGE}:${IMAGE_TAG}"

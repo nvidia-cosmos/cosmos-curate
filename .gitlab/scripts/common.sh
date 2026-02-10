@@ -15,8 +15,15 @@ setup_s3_credentials() {
 }
 
 # Generate consistent image tag from CI variables
+# Mirrors the compute_image_tag anchor in .gitlab-ci.yml
 get_image_tag() {
-    echo "${CI_COMMIT_TIMESTAMP%%T*}_${CI_COMMIT_SHORT_SHA}"
+    local branch_prefix
+    if [ -n "${CI_MERGE_REQUEST_TARGET_BRANCH_NAME:-}" ]; then
+        branch_prefix="${CI_MERGE_REQUEST_TARGET_BRANCH_NAME##*/}"
+    else
+        branch_prefix="${CI_COMMIT_BRANCH##*/}"
+    fi
+    echo "${branch_prefix}_${CI_COMMIT_TIMESTAMP%%T*}_${CI_COMMIT_SHORT_SHA}"
 }
 
 # Canonical NGC credentials
