@@ -747,7 +747,7 @@ k8s_helm_test:
     - apt-get update && apt-get install -y curl unzip
     - source .gitlab/vault/vault-auth.sh
     - curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
-    - curl -LO "https://dl.k8s.io/release/$(curl -sL https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+    - curl -LO "https://dl.k8s.io/release/v1.34.2/bin/linux/amd64/kubectl"
     - install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl
   script:
     - .gitlab/scripts/k8s_helm_test.sh

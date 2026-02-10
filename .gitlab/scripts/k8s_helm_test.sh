@@ -92,7 +92,7 @@ while [ $WAITED -lt $POLL_TIMEOUT ]; do
     echo "Waiting... (${WAITED}s elapsed, ${READY}/${DESIRED} ready)"
 
     # Show pod status for debugging
-    kubectl get pods -n "${NAMESPACE}" -l app.kubernetes.io/name=cosmos-curate --no-headers 2>/dev/null || true
+    kubectl get pods -n "${NAMESPACE}" -l app.kubernetes.io/name=cosmos-curate -o wide --no-headers 2>/dev/null || true
 
     sleep 15
     WAITED=$((WAITED + 15))
