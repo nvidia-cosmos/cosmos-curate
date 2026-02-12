@@ -675,7 +675,14 @@ class ClipWriterStage(CuratorStage):
                 )
             ),
         }
-        clip_metadata = clip.extract_metadata()
+
+        clip_metadata = None
+        try:
+            clip_metadata = clip.extract_metadata()
+        except Exception as e:  # noqa: BLE001
+            logger.exception(f"Failed to extract metadata for {clip.source_video=} {clip.uuid=}, {clip.span=}")
+            clip.errors["extract_metadata"] = str(e)
+
         if clip_metadata:
             data.update(clip_metadata)
         if clip.motion_score_global_mean is not None:

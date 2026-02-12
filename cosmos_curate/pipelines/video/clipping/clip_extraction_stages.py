@@ -305,6 +305,12 @@ class ClipTranscodingStage(CuratorStage):
         # read clips back into memory
         for clip in clips:
             clip.encoded_data = (working_dir / f"{clip.uuid}.mp4").read_bytes()
+            try:
+                clip.extract_metadata()
+            except Exception as e:  # noqa: BLE001
+                logger.exception(f"Failed to extract metadata for {clip.source_video=} {clip.uuid=} {clip.span=}")
+                clip.errors["extract_metadata"] = str(e)
+                clip.encoded_data = None
 
 
 class FixedStrideExtractorStage(CuratorStage):
