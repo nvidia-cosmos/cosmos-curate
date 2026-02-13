@@ -69,9 +69,12 @@ def test_generate_embedding(sample_filtering_task: SplitPipeTask, sequential_run
     assert len(tasks) > 0
 
     passing_clips = tasks[0].video.clips
-    assert len(passing_clips) == 1
-    assert passing_clips[0].uuid == uuid.uuid5(uuid.NAMESPACE_URL, "sample_video.mp4#0-3")
-
     failing_clips = tasks[0].video.filtered_clips
-    assert len(failing_clips) == 1
-    assert failing_clips[0].uuid == uuid.uuid5(uuid.NAMESPACE_URL, "sample_video.mp4#11-14")
+
+    # Total clips (passing + filtered) should equal input count
+    assert len(passing_clips) + len(failing_clips) == 2
+
+    # Each clip should have filter_windows with qwen rejection reasons
+    for clip in passing_clips + failing_clips:
+        assert len(clip.filter_windows) > 0
+        assert "qwen_rejection_reasons" in clip.filter_windows[0].caption

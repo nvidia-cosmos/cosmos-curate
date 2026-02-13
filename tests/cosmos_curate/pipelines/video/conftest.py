@@ -21,8 +21,6 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-import requests
-from loguru import logger
 
 from cosmos_curate.pipelines.video.utils.data_model import Clip, SplitPipeTask, Video
 from cosmos_curate.pipelines.video.utils.decoder_utils import (
@@ -31,43 +29,32 @@ from cosmos_curate.pipelines.video.utils.decoder_utils import (
     extract_frames,
 )
 
-# Sample video URLs - These are publicly available test videos
-_SAMPLE_CLIP_URL = "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4"
-_SAMPLE_VIDEO_URL = "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/WeAreGoingOnBullrun.mp4"
-_HTTP_OK: int = 200
-_REQUEST_TIMEOUT: int = 30
+# Local test video fixtures (Sintel trailer segments, Creative Commons Attribution 3.0)
+_FIXTURES_DIR = Path(__file__).parent / "data"
+_SAMPLE_CLIP_PATH = _FIXTURES_DIR / "test_clip_10s.mp4"
+_SAMPLE_VIDEO_PATH = _FIXTURES_DIR / "test_video_30s.mp4"
 
 
 @pytest.fixture(scope="session")
 def sample_clip_data() -> bytes:
-    """Fixture to download and provide the shorter sample video data (ForBiggerBlazes.mp4).
-
-    This is a shorter video suitable for clip-based testing.
+    """Provide the shorter sample video data (10s clip).
 
     Returns:
         bytes: The video file content
 
     """
-    response = requests.get(_SAMPLE_CLIP_URL, timeout=_REQUEST_TIMEOUT)
-    assert response.status_code == _HTTP_OK, f"Failed to download sample clip from {_SAMPLE_CLIP_URL}"
-    logger.info(f"Downloaded clip from {_SAMPLE_CLIP_URL}, size={len(response.content)} bytes")
-    return response.content
+    return _SAMPLE_CLIP_PATH.read_bytes()
 
 
 @pytest.fixture(scope="session")
 def sample_video_data() -> bytes:
-    """Fixture to download and provide the longer sample video data (WeAreGoingOnBullrun.mp4).
-
-    This is a longer video suitable for full video processing testing.
+    """Provide the longer sample video data (30s video).
 
     Returns:
         bytes: The video file content
 
     """
-    response = requests.get(_SAMPLE_VIDEO_URL, timeout=_REQUEST_TIMEOUT)
-    assert response.status_code == _HTTP_OK, f"Failed to download sample video from {_SAMPLE_VIDEO_URL}"
-    logger.info(f"Downloaded video from {_SAMPLE_VIDEO_URL}, size={len(response.content)} bytes")
-    return response.content
+    return _SAMPLE_VIDEO_PATH.read_bytes()
 
 
 @pytest.fixture
@@ -135,7 +122,7 @@ def sample_filtering_task(sample_clip_data: bytes) -> SplitPipeTask:
     clip = Clip(
         uuid=uuid.UUID("12345678-1234-5678-1234-567812345678"),
         source_video="sample_video.mp4",
-        span=(0.0, 15.0),
+        span=(0.0, 10.0),
         encoded_data=sample_clip_data,
     )
 

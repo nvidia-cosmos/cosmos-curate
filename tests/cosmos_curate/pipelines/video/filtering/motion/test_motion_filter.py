@@ -32,8 +32,8 @@ from cosmos_curate.pipelines.video.filtering.motion.motion_filter_stages import 
 from cosmos_curate.pipelines.video.utils.data_model import SplitPipeTask
 
 # Golden values for motion scores
-EXPECTED_MOTION_GLOBAL_MEAN: float = 0.001881
-EXPECTED_MOTION_PER_PATCH_MIN_256: float = 0.000228
+EXPECTED_MOTION_GLOBAL_MEAN: float = 0.002402
+EXPECTED_MOTION_PER_PATCH_MIN_256: float = 0.001553
 TOLERANCE: float = 0.000001
 
 
@@ -149,13 +149,13 @@ def test_motion_filter_calculation(
     ("global_threshold", "patch_threshold", "should_be_filtered"),
     [
         # Both thresholds higher than actual values - clip should be filtered
-        (0.002, 0.0003, True),
+        (0.003, 0.002, True),
         # Global threshold higher, patch threshold lower - clip should be filtered
-        (0.002, 0.0001, True),
+        (0.003, 0.001, True),
         # Global threshold lower, patch threshold higher - clip should be filtered
-        (0.001, 0.0003, True),
+        (0.002, 0.002, True),
         # Both thresholds lower than actual values - clip should NOT be filtered
-        (0.001, 0.0001, False),
+        (0.002, 0.001, False),
     ],
 )
 def test_end_to_end_motion_processing(  # noqa: PLR0913 - parametrized test with multiple fixtures

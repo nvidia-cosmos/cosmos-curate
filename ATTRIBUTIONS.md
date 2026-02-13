@@ -6950,6 +6950,17 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
+## Sintel Trailer - [Creative Commons Attribution 3.0](https://creativecommons.org/licenses/by/3.0/)
+```text
+(c) copyright Blender Foundation | durian.blender.org
+
+Test video fixtures (tests/cosmos_curate/pipelines/video/data/) are clips
+trimmed from the Sintel open movie trailer.
+
+Source: https://download.blender.org/durian/trailer/sintel_trailer-480p.mp4
+Project: https://durian.blender.org/
+```
+
 ## scikit-image - [BSD-3-Clause License](https://github.com/scikit-image/scikit-image/blob/main/LICENSE.txt)
 ```
 Files: *

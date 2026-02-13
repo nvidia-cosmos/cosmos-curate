@@ -30,8 +30,8 @@ from cosmos_curate.pipelines.video.filtering.aesthetics.aesthetic_filter_stages 
 )
 from cosmos_curate.pipelines.video.utils.data_model import SplitPipeTask
 
-EXPECTED_AESTHETIC_SCORE_MEAN: float = 4.544
-EXPECTED_AESTHETIC_SCORE_MIN: float = 4.0103
+EXPECTED_AESTHETIC_SCORE_MEAN: float = 4.8575
+EXPECTED_AESTHETIC_SCORE_MIN: float = 3.7989
 TOLERANCE: float = 0.002
 
 

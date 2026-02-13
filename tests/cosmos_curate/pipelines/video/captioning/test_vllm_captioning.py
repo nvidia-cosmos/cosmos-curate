@@ -62,104 +62,106 @@ _WINDOW_CONFIG_OVERRIDES: dict[str, dict[str, object]] = {
         "model_does_preprocess": True,
     },
 }
-_EXPECTED_CAPTIONS: dict[str, list[str | None]] = {
+_EXPECTED_CAPTIONS: dict[str, list[str]] = {
     "qwen": [
         (
-            "The video begins with a close-up shot of a tablet placed on a wooden table, displaying a scene from a "
-            "fantasy series. The tablet screen shows a character with long blonde hair, dressed in a blue outfit, "
-            "standing amidst a crowd of people. The background features a sky with clouds and some flags, "
-            "suggesting an outdoor setting, possibly a marketplace or a gathering place.\n"
+            "The video begins with a scene set in a snowy, mountainous environment. The atmosphere is cold and harsh, "
+            "with snow covering the ground and mountains in the background. A character, dressed in rugged, "
+            "survivalist attire, is seen walking through this treacherous landscape. The character appears to be "
+            "equipped for extreme conditions, holding a long stick or staff, which suggests they might be using it "
+            "for navigation or defense against potential threats. The overall tone of the scene is one of isolation "
+            "and resilience, as the character navigates through the challenging terrain.\n"
             "\n"
-            "As the camera pans to the right, it reveals a hand reaching out to interact with the tablet. The hand "
-            "taps the screen, causing the scene to transition. The next shot is a close-up of a dragon breathing fire, "
-            'which is a dramatic and iconic moment often associated with fantasy series like "Game of Thrones."\n'
+            'The scene then transitions to a black screen with white text that reads "THE BLENDER FOUNDATION '
+            'presents." This indicates that the video is likely a production by Blender Foundation, a non-profit '
+            "organization known for its contributions to open-source software and animation projects. The transition "
+            "from the outdoor scene to the black screen with text serves as a clear demarcation between different "
+            "segments of the video, possibly signaling the end of one part and the beginning of another.\n"
             "\n"
-            "The scene then shifts to a television screen, where the same character from the tablet is now shown in a "
-            'different context. The character is depicted in a fiery environment, with the words "FOR BIGGER BLAZES" '
-            "prominently displayed in bold blue letters across the screen. This text suggests that the content being "
-            "viewed is enhanced for larger screens, likely referring to the high-definition quality of the TV "
-            "display.\n"
+            "Following the text screen, the video shifts to an indoor setting where a character with a distinctive "
+            "appearance is shown. This character has a long beard and mustache, adorned with various accessories such "
+            "as earrings and a headband. The character's attire includes a textured garment, suggesting a historical "
+            "or fantasy context. The background features intricate designs, adding to the rich and detailed "
+            "environment. The lighting in this scene is warm and focused, highlighting the character's facial features "
+            "and the texture of their clothing. The overall mood of this segment is more intimate and personal, "
+            "contrasting with the earlier outdoor scene's sense of adventure and survival.\n"
             "\n"
-            "The video continues with a shot of a person's hand plugging in a Chromecast device into an HDMI port on a "
-            "television. This action indicates the process of streaming content from a device (like a smartphone or "
-            "tablet) to a larger screen, such as a TV. The Chromecast device is a small, rectangular device designed "
-            "to connect digital media devices to a television via HDMI.\n"
-            "\n"
-            'Following this, the video transitions to a white screen with the HBO GO logo and the text "right on your '
-            'TV." This message emphasizes the availability of HBO GO content on television screens, highlighting the '
-            "convenience of watching premium content on a larger display.\n"
-            "\n"
-            'The final frames show a white screen with the Google Chrome logo and the text "For $35. For everyone." '
-            "This suggests a promotional offer related to the Google Chromecast service, indicating that it can be "
-            "purchased for $35 and is accessible to all users. The video concludes with the Google logo and the "
-            'website address "google.com/chromecast," directing viewers to learn more about the product.\n'
-            "\n"
-            "Overall, the video effectively showcases the integration of digital content with traditional television "
-            "viewing, emphasizing the benefits of using a Chromecast device to enhance the viewing experience."
+            "In summary, the video starts with a character navigating a snowy, mountainous landscape, emphasizing "
+            "themes of survival and resilience. It then transitions to a title card by the Blender Foundation, marking "
+            "a shift in content. Finally, the video moves indoors, focusing on a character with a detailed and ornate "
+            "appearance, set against a backdrop of intricate designs, creating a more intimate and detailed narrative."
         ),
     ],
     "cosmos_r1": [
         (
-            "### Detailed Description and Analysis of the Video\n"
+            "The video unfolds through a series of distinct yet interconnected scenes, each rich in visual and "
+            "narrative detail:\n"
             "\n"
-            "#### Opening Scene\n"
-            "- **Setting**: A wooden table with a tablet displaying a woman in a blue outfit (likely from a fantasy "
-            "series, hinted by the HBO GO watermark). A green coffee mug is visible nearby, suggesting a relaxed, "
-            "everyday environment.\n"
+            "### **Visual Elements**  \n"
+            "1. **Opening Scene: Snowy Mountains**  \n"
+            "   - **Cool Tones & Harsh Environment**: The icy blue and white palette dominates, evoking isolation "
+            "and danger. Jagged mountain peaks and swirling fog amplify the sense of vastness and "
+            "unpredictability.  \n"
+            "   - **Character Design**: The young woman's rugged attire (fur-lined jacket, utility belt) and staff "
+            "suggest preparedness for survival or adventure. Her determined expression and steady posture contrast "
+            "with the chaotic backdrop, emphasizing her resolve.  \n"
+            "   - **Camera Work**: A slow zoom-in and upward pedestal movement track toward her, heightening "
+            "tension and focus on her as the central figure.  \n"
             "\n"
-            "#### Tablet Interaction\n"
-            "- **Action**: A finger taps the tablet screen twice, triggering a transition. This gesture implies user "
-            "engagement with digital content.\n"
-            "- **Result**: The tablet exits the frame, replaced by a larger TV screen showing a high-intensity scene "
-            "of a dragon breathing fire, scaling up the viewing experience.\n"
+            "2. **Transition to Dark Environment**  \n"
+            "   - **Lighting Shift**: Daylight fades to artificial, dim lighting, creating a sudden tone shift from "
+            "hope to uncertainty. Tribal accessories and staff on the second character introduce mystique or "
+            "cultural significance.  \n"
+            "   - **Mood & Symbolism**: The darkened setting and close-up on the second character's concerned "
+            "expression suggest impending conflict or revelation, deepening the narrative's emotional stakes.  \n"
             "\n"
-            "#### Dragon Scene\n"
-            "- **Symbolism**: The dragon (from *Game of Thrones*-inspired visuals) represents epic fantasy content, "
-            "aligning with HBO GO's branding. The fiery backdrop emphasizes drama and excitement.\n"
-            '- **Text Overlay**: "FOR BIGGER BLAZES" doubles as a pun ("blazes" vs. "fires"), teasing bigger, '
-            "more thrilling content available on the platform.\n"
+            "3. **Dimly Lit Room Scene**  \n"
+            "   - **Warm, Intimate Lighting**: Contrasting cool tones with golden hues, the room's shadows and "
+            "sword hint at danger or hidden history. The red-haired woman's tattoos and warrior-like appearance "
+            "signal combat readiness or a protective role.  \n"
+            "   - **Close-Up Dynamics**: Subtle facial expressions and the camera's focus on her eyes convey inner "
+            "turmoil or resolve, while the ornate background adds layers of world-building.  \n"
             "\n"
-            "#### Return to Woman\n"
-            "- **Focus**: The tablet reappears, zooming in on the woman's serious expression against a fiery "
-            "background. Her role as a central character or spokesperson for the service is highlighted.\n"
+            "### **Narrative Progression**  \n"
+            "- **Character Development**: Each scene introduces a protagonist with distinct traits (determination, "
+            "wisdom, combat readiness), suggesting a collective journey or shared mission.  \n"
+            "- **Environmental Storytelling**: The snowy wilderness, tribal artifacts, and mysterious room imply a "
+            "fantasy or survival narrative, possibly involving magic, survival, or hidden knowledge.  \n"
+            "- **Tension & Pacing**: Slow transitions and deliberate framing build suspense, guiding the viewer "
+            "through a character-driven story with high stakes.  \n"
             "\n"
-            "#### Chromecast Setup\n"
-            "- **Instructional Segment**: A hand plugs a Chromecast device into a TV port, demonstrating how users "
-            "can stream content to their TVs. Close-ups of the port and hand movements emphasize simplicity and "
-            "accessibility.\n"
-            '- **Text Overlays**: Clear subscription details ("Everything you love, now on your TV." "$35/mo.") '
-            "and a note about required broadband appear, clarifying costs and technical requirements.\n"
+            "### **Symbolism & Themes**  \n"
+            "- **Staffs & Accessories**: Tools of guidance or power, tying the characters to a larger mythic or "
+            "cultural narrative.  \n"
+            "- **Light vs. Shadow**: Represents clarity versus mystery, danger versus safety, reflecting the "
+            "characters' psychological and physical challenges.  \n"
             "\n"
-            "#### Branding and Conclusion\n"
-            '- **White Screens**: HBO GO and Google logos reappear, followed by a tagline ("Everything you love, now '
-            'on your TV.") and a promotional price.\n'
-            '- **Final Shot**: The Chromecast logo and website URL ("google.com/chromecast") encourage viewer '
-            "action, ending with a clean, minimalist design.\n"
-            "\n"
-            "#### Narrative and Symbolic Elements\n"
-            "1. **Transition from Casual to Immersive**: The shift from tablet to TV underscores HBO GO's value "
-            "proposition-translating personalized content into a larger, shared viewing experience.\n"
-            '2. **Symbolic Dragons and Excitement**: The dragon scene visually reinforces the idea of "big, bold '
-            'entertainment," while the pun on "blazes" ties HBO GO to iconic fantasy tropes.\n'
-            "3. **User-Centric Instruction**: The Chromecast demo emphasizes ease of use, appealing to tech-savvy and "
-            "casual users alike.\n"
-            "4. **Branding Consistency**: Repeated logos and taglines ensure brand recognition, while the final white "
-            "screens maintain a polished, professional tone.\n"
-            "\n"
-            "**Overall Purpose**: The video promotes HBO GO as a platform for high-quality, immersive content, "
-            "leveraging both emotional appeal (excitement, drama) and practical guidance (setup instructions, pricing "
-            "clarity) to attract subscribers."
+            "In sum, the video crafts a rich, atmospheric tale centered on resilience and mystery, using visual "
+            "storytelling to draw viewers into a world where survival, wisdom, and inner strength converge."
         ),
     ],
     "cosmos_r2": [
         (
-            "The video showcases a seamless streaming experience using a Chromecast device. It starts with a tablet on "
-            "a wooden surface, displaying a scene from a fantasy series. A hand taps the screen, transitioning to a "
-            'fiery dragon scene on a larger TV, emphasizing immersive content. The text "FOR BIGGER BLAZES" appears, '
-            "highlighting the scale of the visuals. The focus returns to the tablet as another hand connects it via "
-            "HDMI, demonstrating easy casting. The video concludes with pricing, availability details, and a call to "
-            'action directing viewers to "google.com/chromecast," reinforcing the service\'s accessibility and '
-            "branding."
+            "The video opens with a character traversing a harsh, snowy mountainous landscape under a thick fog. "
+            "Dressed in rugged outdoor gear and gripping a long wooden staff, the individual navigates the desolate "
+            "terrain, conveying a sense of determination and resilience against the unforgiving environment. As the "
+            "camera zooms in, the character's focused expression and partially covered face (via a scarf) highlight "
+            "their preparedness for the extreme conditions. The misty backdrop of snow-capped peaks reinforces the "
+            "isolation and challenge of the setting.\n"
+            "\n"
+            'The scene transitions to a black screen displaying the text "THE BLENDER FOUNDATION presents," '
+            "signaling a connection to the organization known for its open-source 3D software. This interlude "
+            "serves as a title card, likely introducing a project or animation created using Blender.\n"
+            "\n"
+            "Next, the video shifts to an older man with a distinctive appearance\u2014long beard, facial piercings, "
+            "and traditional attire. He appears to be speaking or reacting, possibly narrating a story or offering "
+            "commentary. His expressive demeanor adds depth to the narrative, suggesting a cultural or historical "
+            "context tied to the preceding snowy scene.\n"
+            "\n"
+            "Finally, the focus narrows to a woman with red hair, shown in close-up. Her intense gaze and detailed "
+            "clothing imply she is deeply engaged in the unfolding events, perhaps as a listener or participant in "
+            "the broader story. The sequence collectively builds a narrative of exploration, discovery, and cultural "
+            "richness within a visually immersive world crafted with meticulous attention to detail."
         ),
     ],
 }
@@ -206,9 +208,9 @@ def cosine_similarity(s1: str, s2: str) -> float:
 def sample_captioning_task(sample_clip_data: bytes) -> SplitPipeTask:
     """Fixture to create a sample captioning task."""
     clip = Clip(
-        uuid=uuid.uuid5(uuid.NAMESPACE_URL, "sample_clip.mp4#0.0-15.0"),
+        uuid=uuid.uuid5(uuid.NAMESPACE_URL, "sample_clip.mp4#0.0-10.0"),
         source_video="sample_clip.mp4",
-        span=(0.0, 15.0),
+        span=(0.0, 10.0),
         encoded_data=sample_clip_data,
     )
 

@@ -98,11 +98,11 @@ def test_fixed_stride_extraction_default_parameters(
     """
     # Expected clip extraction results for regression testing
     # These values are based on the sample video metadata:
-    # - Duration: ~47 seconds (WeAreGoingOnBullrun.mp4)
+    # - Duration: 30 seconds (test_video_30s.mp4)
     # - With default parameters (10s clips, 10s stride, min_clip_length_s=10),
-    # - we expect clips: 0-10s, 10-20s, 20-30s, 30-40s (last clip 40-47s is filtered out as it's < 10s)
-    expected_clips_default = 4
-    expected_clip_spans_default = [(0.0, 10.0), (10.0, 20.0), (20.0, 30.0), (30.0, 40.0)]
+    # - we expect clips: 0-10s, 10-20s, 20-30s
+    expected_clips_default = 3
+    expected_clip_spans_default = [(0.0, 10.0), (10.0, 20.0), (20.0, 30.0)]
 
     stage = FixedStrideExtractorStage(log_stats=True)
 
@@ -142,9 +142,8 @@ def test_fixed_stride_extraction_5s_stride(
         sequential_runner: Runner for sequential test execution
 
     """
-    # With 5s clips and 5s stride, we expect clips every 5 seconds: 0-5s, 5-10s, ..., 40-45s
-    # (last clip 45-47s is filtered out as it's < 5s)
-    expected_clips_5s_stride = 9
+    # With 5s clips and 5s stride, we expect clips every 5 seconds: 0-5s, 5-10s, ..., 25-30s
+    expected_clips_5s_stride = 6
     expected_clip_spans_5s_stride = [
         (0.0, 5.0),
         (5.0, 10.0),
@@ -152,9 +151,6 @@ def test_fixed_stride_extraction_5s_stride(
         (15.0, 20.0),
         (20.0, 25.0),
         (25.0, 30.0),
-        (30.0, 35.0),
-        (35.0, 40.0),
-        (40.0, 45.0),
     ]
 
     stage = FixedStrideExtractorStage(
@@ -190,8 +186,9 @@ def test_fixed_stride_extraction_overlapping_clips(
         sequential_runner: Runner for sequential test execution
 
     """
-    # With 3s clips and 2s stride, we expect many overlapping clips
-    expected_clips_3s_2s_stride = 23
+    # With 3s clips and 2s stride, we expect overlapping clips
+    # Last clip starting at 28s would be 28-30s = 2s < min 3s, so filtered out
+    expected_clips_3s_2s_stride = 14
     expected_clip_spans_3s_2s_stride = [
         (0.0, 3.0),
         (2.0, 5.0),
@@ -207,15 +204,6 @@ def test_fixed_stride_extraction_overlapping_clips(
         (22.0, 25.0),
         (24.0, 27.0),
         (26.0, 29.0),
-        (28.0, 31.0),
-        (30.0, 33.0),
-        (32.0, 35.0),
-        (34.0, 37.0),
-        (36.0, 39.0),
-        (38.0, 41.0),
-        (40.0, 43.0),
-        (42.0, 45.0),
-        (44.0, 47.0),
     ]
 
     stage = FixedStrideExtractorStage(
@@ -294,8 +282,8 @@ def test_fixed_stride_extraction_min_clip_length(
         sequential_runner: Runner for sequential test execution
 
     """
-    # Should extract clips: 0-2s, 10-12s, 20-22s, 30-32s, 40-42s (5 clips total for 47s video)
-    expected_clips_with_large_stride = 5
+    # Should extract clips: 0-2s, 10-12s, 20-22s (3 clips total for 30s video)
+    expected_clips_with_large_stride = 3
 
     stage = FixedStrideExtractorStage(
         clip_len_s=2.0,
@@ -309,7 +297,7 @@ def test_fixed_stride_extraction_min_clip_length(
     result_task = result_tasks[0]
     video = result_task.video
 
-    # Should extract clips: 0-2s, 10-12s, 20-22s, 30-32s, 40-42s (5 clips total for 47s video)
+    # Should extract clips: 0-2s, 10-12s, 20-22s (3 clips total for 30s video)
     assert len(video.clips) == expected_clips_with_large_stride
 
     # Verify all clips meet minimum length requirement
