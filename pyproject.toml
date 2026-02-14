@@ -146,7 +146,7 @@ exclude = [
 # Ignore FIX002 Line contains TODO and related TD002, TD003
 # Later C901, PLR0912, PLR0913, PLR0915
 ignore = ["D203", "D213", "FIX002", "S101", "TD002", "TD003", "N806",
-          "COM812", "TRY003", "RUF200"]
+          "COM812", "TRY003", "RUF200", "TC001"]
 select = ["ALL"]
 extend-select = ["I"]
 
@@ -198,6 +198,17 @@ module = [
     "raft_dask.*",
 ]
 follow_imports = "skip"
+
+[[tool.mypy.overrides]]
+module = [
+    "lance",
+    "lance.fragment",
+    "ngcbase.errors",
+    "ngcsdk",
+    "registry.api.image",
+    "registry.api.models",
+]
+ignore_missing_imports = true
 
 [tool.poetry.group.dev.dependencies]
 mypy = "1.19.0"

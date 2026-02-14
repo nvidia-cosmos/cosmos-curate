@@ -14,23 +14,19 @@
 # limitations under the License.
 """vLLM plugin for Cosmos-Reason1 vision-language model."""
 
-from __future__ import annotations
-
 import re
 import secrets
 from typing import TYPE_CHECKING, Any, cast
 
+import torch
 from transformers import AutoProcessor
 from vllm import LLM, RequestOutput
 
 from cosmos_curate.models.vllm_plugin import VllmPlugin
-from cosmos_curate.pipelines.video.utils.data_model import VllmCaptionRequest
+from cosmos_curate.pipelines.video.utils.data_model import VllmCaptionRequest, VllmConfig
 
 if TYPE_CHECKING:
-    import torch
     from vllm.model_executor.layers.quantization import QuantizationMethods
-
-    from cosmos_curate.pipelines.video.utils.data_model import VllmConfig
 
 
 # Constants tuned similarly to existing plugins

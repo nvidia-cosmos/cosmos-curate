@@ -11,7 +11,6 @@
 
 import pathlib
 import subprocess
-from typing import TYPE_CHECKING
 
 import numpy as np
 import nvtx  # type: ignore[import-untyped]
@@ -23,6 +22,7 @@ from cosmos_curate.core.utils.config.operation_context import (
 )
 from cosmos_curate.core.utils.infra.performance_utils import StageTimer
 from cosmos_curate.core.utils.storage import s3_client
+from cosmos_curate.core.utils.storage.storage_client import StorageClient
 from cosmos_curate.core.utils.storage.storage_utils import (
     get_files_relative,
     get_full_path,
@@ -46,9 +46,6 @@ from cosmos_curate.pipelines.av.utils.av_pipe_input import (
     is_sqlite_file,
     is_video_file,
 )
-
-if TYPE_CHECKING:
-    from cosmos_curate.core.utils.storage.storage_client import StorageClient
 
 
 def is_h264_file(file_name: str) -> bool:

@@ -31,25 +31,17 @@ in favour of a more explicit name indicating that it handles presigned **S3**
 URLs specifically. Imports using the old name should be updated accordingly.
 """
 
-from __future__ import annotations
-
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:  # pragma: no cover
-    import argparse
+import argparse
 import contextlib
 import os
 import shutil
 import tempfile
 import uuid
 import zipfile
+from collections.abc import Iterator
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
-
-if TYPE_CHECKING:
-    from collections.abc import Iterator
-    from typing import BinaryIO
+from typing import Any, BinaryIO
 
 import ray
 import requests

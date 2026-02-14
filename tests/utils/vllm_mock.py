@@ -5,18 +5,13 @@ This module provides lightweight stand-ins for the vLLM types used by
 pulling heavy dependencies or models.
 """
 
-from __future__ import annotations
+from typing import cast
 
-from typing import TYPE_CHECKING, cast
-
+from transformers import AutoProcessor
 from vllm import CompletionOutput, RequestOutput
 
 from cosmos_curate.models.vllm_plugin import VllmPlugin
 from cosmos_curate.pipelines.video.utils.data_model import VllmCaptionRequest, VllmConfig
-
-if TYPE_CHECKING:
-    from transformers import AutoProcessor
-
 
 # ruff: noqa: ARG002, D102, D107
 
@@ -137,5 +132,5 @@ class MockVllmPlugin(VllmPlugin):
         return VllmCaptionRequest(request_id=request.request_id, inputs=inputs)
 
     @staticmethod
-    def decode(vllm_output: RequestOutput) -> str:  # type: ignore[override]
+    def decode(vllm_output: RequestOutput) -> str:
         return vllm_output.outputs[0].text

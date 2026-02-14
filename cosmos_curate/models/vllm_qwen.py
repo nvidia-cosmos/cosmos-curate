@@ -14,23 +14,19 @@
 # limitations under the License.
 """Qwen vLLM plugin."""
 
-from __future__ import annotations
-
 import secrets
 from typing import TYPE_CHECKING, Any, TypedDict, cast
 
+import torch
 from transformers import AutoProcessor
-from vllm import LLM
+from vllm import LLM, RequestOutput
 
 from cosmos_curate.models.vllm_plugin import VllmPlugin
-from cosmos_curate.pipelines.video.utils.data_model import VllmCaptionRequest
+from cosmos_curate.pipelines.video.utils.data_model import VllmCaptionRequest, VllmConfig
 
 if TYPE_CHECKING:
-    import torch
-    from vllm import RequestOutput
     from vllm.model_executor.layers.quantization import QuantizationMethods
 
-    from cosmos_curate.pipelines.video.utils.data_model import VllmConfig
 
 MAX_MODEL_LEN = 32768
 GPU_MEMORY_UTILIZATION = 0.85

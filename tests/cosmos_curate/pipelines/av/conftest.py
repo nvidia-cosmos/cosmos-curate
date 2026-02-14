@@ -9,10 +9,9 @@
 # its affiliates is strictly prohibited.
 """Shared fixtures for AV pipeline tests."""
 
-from __future__ import annotations
-
 import uuid
-from typing import TYPE_CHECKING, Any, cast
+from collections.abc import Callable
+from typing import Any, cast
 
 import numpy as np
 import numpy.typing as npt
@@ -24,9 +23,6 @@ from cosmos_curate.pipelines.av.utils.av_data_model import (
     ClipForTranscode,
     VideoMetadata,
 )
-
-if TYPE_CHECKING:
-    from collections.abc import Callable
 
 
 class RecordingSession:

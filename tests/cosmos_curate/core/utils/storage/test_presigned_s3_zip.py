@@ -14,8 +14,6 @@
 # limitations under the License.
 """Tests for cosmos_curate.core.utils.storage.presigned_s3_zip."""
 
-from __future__ import annotations
-
 import contextlib
 import io
 import math
@@ -23,9 +21,10 @@ import os
 import socketserver
 import threading
 import zipfile
+from collections.abc import Iterator
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
-from typing import TYPE_CHECKING, ClassVar
+from typing import ClassVar
 
 import pytest
 
@@ -37,9 +36,6 @@ from cosmos_curate.core.utils.storage.presigned_s3_zip import (
     zip_and_upload_directory,
     zip_and_upload_directory_multipart,
 )
-
-if TYPE_CHECKING:
-    from collections.abc import Iterator
 
 
 class _ThreadedHTTPServer(socketserver.ThreadingMixIn, HTTPServer):

@@ -15,8 +15,6 @@
 
 """Manage and manipulate NVCF model resources."""
 
-from __future__ import annotations
-
 from threading import RLock
 
 from tqdm import tqdm
@@ -27,6 +25,7 @@ tqdm.set_lock(RLock())
 import asyncio
 import json
 import tempfile
+from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, TypedDict, cast
 
@@ -40,8 +39,8 @@ from huggingface_hub.errors import (
     RepositoryNotFoundError,
     RevisionNotFoundError,
 )
-from ngcbase.errors import ResourceAlreadyExistsException, ResourceNotFoundException  # type: ignore[import-untyped]
-from ngcsdk import Client  # type: ignore[import-untyped]
+from ngcbase.errors import ResourceAlreadyExistsException, ResourceNotFoundException
+from ngcsdk import Client
 from rich.pretty import pprint
 from rich.table import Table
 from typer import Context, Option
@@ -49,9 +48,7 @@ from typer import Context, Option
 from cosmos_curate.client.nvcf_cli.ncf.common import NotFoundError, NvcfBase, base_callback, register_instance
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
-
-    from registry.api.models import ModelAPI  # type: ignore[import-untyped]
+    from registry.api.models import ModelAPI
 
 _MODULE_NAME: str = "Model"
 
@@ -274,7 +271,7 @@ class ModelManager(NvcfBase):
         version: str
 
     async def _download_model_from_hf(
-        self, model: ModelManager._ModelProps, hf_token: str, download_dir: Path, cache_dir: Path | None = None
+        self, model: _ModelProps, hf_token: str, download_dir: Path, cache_dir: Path | None = None
     ) -> None:
         """Asynchronously download an entire model or specific files from HF.
 
@@ -324,7 +321,7 @@ class ModelManager(NvcfBase):
             raise RuntimeError(msg) from e
 
     async def _download_all_models_from_hf(
-        self, models: dict[str, ModelManager._ModelProps], hf_token: str, download_dir: Path, cache_dir: Path | None
+        self, models: dict[str, _ModelProps], hf_token: str, download_dir: Path, cache_dir: Path | None
     ) -> None:
         """Start Asynchronous download tasks.
 
@@ -343,7 +340,7 @@ class ModelManager(NvcfBase):
         self.logger.info("All models downloaded successfully")
 
     def sync_models(
-        self, models: dict[str, ModelManager._ModelProps], hf_token: str, download_dir: Path, cache_dir: Path | None
+        self, models: dict[str, _ModelProps], hf_token: str, download_dir: Path, cache_dir: Path | None
     ) -> None:
         """Synchronize/updates NVCF Model Repository with HF Models.
 

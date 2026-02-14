@@ -14,8 +14,6 @@
 # limitations under the License.
 """vLLM plugin for Cosmos-Reason2 vision-language model."""
 
-from __future__ import annotations
-
 from cosmos_curate.models.vllm_cosmos_reason1_vl import VllmCosmosReason1VL
 
 

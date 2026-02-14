@@ -14,11 +14,9 @@
 # limitations under the License.
 """vLLM plugin for Nemotron Nano 12B v2 model."""
 
-from __future__ import annotations
-
 import os
 import secrets
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any, cast
 
 import numpy as np
 import numpy.typing as npt
@@ -27,11 +25,7 @@ from transformers import AutoProcessor
 from vllm import LLM, RequestOutput
 
 from cosmos_curate.models.vllm_plugin import VllmPlugin
-from cosmos_curate.pipelines.video.utils.data_model import VllmCaptionRequest
-
-if TYPE_CHECKING:
-    from cosmos_curate.pipelines.video.utils.data_model import VllmConfig
-
+from cosmos_curate.pipelines.video.utils.data_model import VllmCaptionRequest, VllmConfig
 
 # Constants tuned similarly to existing plugins
 GPU_MEMORY_UTILIZATION = 0.9

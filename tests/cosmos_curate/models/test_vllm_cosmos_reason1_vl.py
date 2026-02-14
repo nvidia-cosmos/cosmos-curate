@@ -14,8 +14,6 @@
 # limitations under the License.
 """Test vllm_cosmos_reason1_vl.py."""
 
-from __future__ import annotations
-
 import re
 from pathlib import Path
 from unittest.mock import MagicMock

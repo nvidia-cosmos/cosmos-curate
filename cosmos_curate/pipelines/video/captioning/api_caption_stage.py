@@ -14,12 +14,12 @@
 # limitations under the License.
 """Remote API-backed caption preparation and captioning stages (Gemini)."""
 
-from __future__ import annotations
-
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import Any, TypeVar
 
 import nvtx  # type: ignore[import-untyped]
 import tenacity
+from google import genai
+from google.genai import types as genai_types
 from loguru import logger
 
 from cosmos_curate.core.interfaces.stage_interface import CuratorStage, CuratorStageResource, PipelineTask
@@ -27,13 +27,13 @@ from cosmos_curate.core.utils.config.config import load_config
 from cosmos_curate.core.utils.infra.performance_utils import StageTimer
 from cosmos_curate.models.prompts import get_prompt
 from cosmos_curate.pipelines.video.utils import windowing_utils
-from cosmos_curate.pipelines.video.utils.data_model import get_video_from_task
-
-if TYPE_CHECKING:
-    from cosmos_curate.pipelines.video.utils.data_model import SplitPipeTask, Video, Window, WindowConfig
-
-from google import genai
-from google.genai import types as genai_types
+from cosmos_curate.pipelines.video.utils.data_model import (
+    SplitPipeTask,
+    Video,
+    Window,
+    WindowConfig,
+    get_video_from_task,
+)
 
 TTask = TypeVar("TTask", bound=PipelineTask)
 

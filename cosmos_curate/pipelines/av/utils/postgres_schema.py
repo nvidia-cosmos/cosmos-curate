@@ -9,8 +9,6 @@
 # its affiliates is strictly prohibited.
 """Postgres schemas for the video pipeline."""
 
-from __future__ import annotations
-
 import datetime
 import uuid
 from enum import Enum

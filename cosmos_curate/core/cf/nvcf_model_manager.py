@@ -22,10 +22,10 @@ import time
 import typing
 
 from loguru import logger
-from ngcsdk import Client  # type: ignore[import-untyped]
+from ngcsdk import Client
 
 if typing.TYPE_CHECKING:
-    from registry.api.models import ModelAPI  # type: ignore[import-untyped]
+    from registry.api.models import ModelAPI
 
 
 class NvcfModelManager:

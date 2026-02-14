@@ -14,8 +14,6 @@
 # limitations under the License.
 """Test the start_ray module."""
 
-from __future__ import annotations
-
 import builtins
 import os
 import socket

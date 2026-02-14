@@ -18,12 +18,10 @@ This is not meant to store pipeline schemas, but instead data types used to acce
 common types.
 """
 
-from __future__ import annotations
-
 import enum
 import time
 import urllib.parse
-from typing import Any
+from typing import Any, Self
 
 import attrs
 import sqlalchemy
@@ -98,7 +96,7 @@ class PostgresDB:
         return profile_name
 
     @classmethod
-    def make_from_config(cls, env_type: EnvType) -> PostgresDB:
+    def make_from_config(cls, env_type: EnvType) -> Self:
         """Create a PostgresDB instance from configuration.
 
         Args:
@@ -113,7 +111,7 @@ class PostgresDB:
         """
         c = config.load_config()
 
-        profile_name = PostgresDB._make_video_profile_name(env_type)
+        profile_name = cls._make_video_profile_name(env_type)
 
         match env_type:
             case EnvType.LOCAL:
@@ -126,7 +124,7 @@ class PostgresDB:
                 error_msg = f"Unknown env_type: {env_type}"  # type: ignore[unreachable]
                 raise ValueError(error_msg)
         postgres_prof = c.get_postgres_profile(profile_name)
-        return PostgresDB(
+        return cls(
             env_type,
             postgres_prof.endpoint,
             db_name,

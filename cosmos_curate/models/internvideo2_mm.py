@@ -14,8 +14,6 @@
 # limitations under the License.
 """Model Internvideo2."""
 
-from __future__ import annotations
-
 import json
 import pathlib
 from typing import Any, Final

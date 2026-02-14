@@ -46,8 +46,6 @@ node has requested a shutdown. In practice, this can take 20-30 minutes to
 complete.
 """
 
-from __future__ import annotations
-
 import asyncio
 import json
 import logging
@@ -58,7 +56,7 @@ import sys
 import tempfile
 import time
 from pathlib import Path
-from typing import TextIO
+from typing import Self, TextIO
 
 import attrs
 import tenacity
@@ -94,7 +92,7 @@ class SlurmEnv:
         return self.nodename == self.head_node
 
     @classmethod
-    def from_env(cls) -> SlurmEnv:
+    def from_env(cls) -> Self:
         """Extract the environment variables SLURM_NNODES, HEAD_NODE_ADDR, and SLURMD_NODENAME.
 
         Returns:
@@ -189,7 +187,7 @@ class RayConfig:
     system_config: RaySystemConfig = attrs.field(default=RaySystemConfig())
 
     @classmethod
-    def from_env(cls) -> RayConfig:
+    def from_env(cls) -> Self:
         """Create a Ray configuration from environment variables."""
         return cls(
             gcs_server_port=int(os.environ.get("RAY_GCS_SERVER_PORT", str(_RAY_GCS_SERVER_PORT))),

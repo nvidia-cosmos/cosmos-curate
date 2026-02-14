@@ -14,8 +14,6 @@
 - Transcode raw videos into clips
 """
 
-from __future__ import annotations
-
 import argparse
 import time
 import uuid

@@ -9,9 +9,8 @@
 # its affiliates is strictly prohibited.
 """Tests for clip_writer_stage module."""
 
-from __future__ import annotations
-
 import uuid
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
@@ -19,18 +18,18 @@ import pytest
 
 from cosmos_curate.core.utils.db.database_types import EnvType, PostgresDB
 from cosmos_curate.core.utils.storage.s3_client import S3Prefix
-from cosmos_curate.pipelines.av.utils.av_data_model import AvClipAnnotationTask, AvSessionVideoSplitTask
+from cosmos_curate.pipelines.av.utils.av_data_model import (
+    AvClipAnnotationTask,
+    AvSessionVideoSplitTask,
+    AvVideo,
+)
 from cosmos_curate.pipelines.av.utils.postgres_schema import ClippedSession
 from cosmos_curate.pipelines.av.writers import clip_writer_stage
 from cosmos_curate.pipelines.av.writers.clip_writer_stage import ClipWriterStage
 from tests.cosmos_curate.pipelines.av.conftest import RecordingSession
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator
-
     from sqlalchemy.orm import Session
-
-    from cosmos_curate.pipelines.av.utils.av_data_model import AvVideo
 
 
 @pytest.fixture

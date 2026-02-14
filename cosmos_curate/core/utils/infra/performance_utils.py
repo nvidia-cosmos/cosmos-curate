@@ -15,24 +15,19 @@
 
 """Performance Utitilies."""
 
-from __future__ import annotations
-
 import contextlib
 import statistics
 import time
-from typing import TYPE_CHECKING
+from collections.abc import Generator
+from typing import Self
 
 import attrs
 import pandas as pd
 from loguru import logger
 
+from cosmos_curate.core.interfaces.stage_interface import CuratorStage
 from cosmos_curate.core.utils.misc import summarize
 from cosmos_curate.core.utils.storage import storage_utils, writer_utils
-
-if TYPE_CHECKING:
-    from collections.abc import Generator
-
-    from cosmos_curate.core.interfaces.stage_interface import CuratorStage
 
 
 @attrs.define
@@ -50,15 +45,15 @@ class StagePerfStats:
     actor_idle_time: float = 0.0
     input_data_size_mb: float = 0.0
 
-    def __add__(self, other: StagePerfStats) -> StagePerfStats:
+    def __add__(self, other: Self) -> Self:
         """Add two StagePerfStats."""
-        return StagePerfStats(
+        return self.__class__(
             process_time=self.process_time + other.process_time,
             actor_idle_time=self.actor_idle_time + other.actor_idle_time,
             input_data_size_mb=self.input_data_size_mb + other.input_data_size_mb,
         )
 
-    def __radd__(self, other: int | StagePerfStats) -> StagePerfStats:
+    def __radd__(self, other: int | Self) -> Self:
         """Add two StagePerfStats together, if right is 0, returns itself."""
         if other == 0:
             return self

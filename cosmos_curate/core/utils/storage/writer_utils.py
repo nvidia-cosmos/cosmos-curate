@@ -14,26 +14,22 @@
 # limitations under the License.
 """Write metadata for clips to DB."""
 
-from __future__ import annotations
-
 import base64
 import csv
 import io
 import json
 import pathlib
 import uuid
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
+import pandas as pd
+import pyarrow as pa  # type: ignore[import-untyped]
 from lance.fragment import write_fragments
 from loguru import logger
 
 from cosmos_curate.core.utils.misc.retry_utils import do_with_retries
 from cosmos_curate.core.utils.storage import storage_client, storage_utils
 from cosmos_curate.core.utils.storage.storage_utils import backup_file
-
-if TYPE_CHECKING:
-    import pandas as pd
-    import pyarrow as pa  # type: ignore[import-untyped]
 
 
 class JsonEncoderCustom(json.JSONEncoder):

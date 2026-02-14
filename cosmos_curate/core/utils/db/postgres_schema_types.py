@@ -9,8 +9,6 @@
 # its affiliates is strictly prohibited.
 """Postgres schema base class for CLI."""
 
-from __future__ import annotations
-
 from sqlalchemy.orm import DeclarativeBase
 
 

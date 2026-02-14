@@ -14,23 +14,18 @@
 # limitations under the License.
 """Provide utilities for getting operation info."""
 
-from __future__ import annotations
-
 import contextlib
 import os
 import pathlib
 import sys
 import tempfile
-from typing import TYPE_CHECKING
+from collections.abc import Generator
 
 from cosmos_curate.core.utils.environment import (
     LOCAL_DOCKER_ENV_VAR_NAME,
     PIXI_ENVIRONMENT_NAME_VAR_NAME,
     SLURM_RAY_ENV_VAR_NAME,
 )
-
-if TYPE_CHECKING:
-    from collections.abc import Generator
 
 # ANSI escape codes for error highlighting
 _ERROR_COLOR = "\033[1;31m"

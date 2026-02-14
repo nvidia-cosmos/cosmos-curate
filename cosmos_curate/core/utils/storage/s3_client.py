@@ -18,8 +18,6 @@ This module provides a simple S3 client with common operations for interacting
 with S3-compatible object storage systems, including chunked downloads and uploads.
 """
 
-from __future__ import annotations
-
 import configparser
 import io
 import os
@@ -413,7 +411,7 @@ class S3Client(StorageClient):
 
         logger.info(f"\nSync completed: {s3_prefix} -> {local_dir}")
 
-    def make_background_uploader(self, chunk_size_bytes: int = UPLOAD_CHUNK_SIZE_BYTES) -> S3BackgroundUploader:
+    def make_background_uploader(self, chunk_size_bytes: int = UPLOAD_CHUNK_SIZE_BYTES) -> "S3BackgroundUploader":
         """Create and return a BackgroundUploader instance.
 
         Args:

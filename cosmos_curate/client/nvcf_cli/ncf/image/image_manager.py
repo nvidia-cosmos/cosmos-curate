@@ -16,26 +16,25 @@
 """Manage and manipulate NVCF container images."""
 
 import json
-import typing
 from pathlib import Path
-from typing import Annotated, Any, cast
+from typing import TYPE_CHECKING, Annotated, Any, cast
 
 import requests
 import typer
-from ngcbase.errors import (  # type: ignore[import-untyped]
+from ngcbase.errors import (
     AccessDeniedException,
     ResourceAlreadyExistsException,
     ResourceNotFoundException,
 )
-from ngcsdk import Client  # type: ignore[import-untyped]
+from ngcsdk import Client
 from rich.pretty import pprint
 from rich.table import Table
 from typer import Context, Option
 
 from cosmos_curate.client.nvcf_cli.ncf.common import NotFoundError, NvcfBase, base_callback, register_instance
 
-if typing.TYPE_CHECKING:
-    from registry.api.image import ImageAPI  # type: ignore[import-untyped]
+if TYPE_CHECKING:
+    from registry.api.image import ImageAPI
 
 _MODULE_NAME: str = "Image"
 

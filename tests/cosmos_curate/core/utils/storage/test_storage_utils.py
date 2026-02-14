@@ -14,15 +14,14 @@
 # limitations under the License.
 """Tests for cosmos_curate.core.utils.storage.storage_utils."""
 
-from __future__ import annotations
-
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-from cosmos_curate.core.utils.storage import storage_utils
+from cosmos_curate.core.utils.storage import azure_client, s3_client, storage_utils
 from cosmos_curate.core.utils.storage.storage_client import (
+    BackgroundUploader,
     StorageClient,
     StoragePrefix,
 )
@@ -100,15 +99,15 @@ class FakeStorageClient(StorageClient):
         local_dir: Path,
         *,
         delete: bool = False,
-        _chunk_size_bytes: int = 10,
+        chunk_size_bytes: int = 10,
     ) -> None:  # pragma: no cover - unused API surface
         """Unused StorageClient API surface."""
         raise NotImplementedError
 
     def make_background_uploader(
         self,
-        _chunk_size_bytes: int = 100,
-    ) -> None:  # pragma: no cover - unused API surface
+        chunk_size_bytes: int = 100,
+    ) -> BackgroundUploader:  # pragma: no cover - unused API surface
         """Unused StorageClient API surface."""
         raise NotImplementedError
 
@@ -160,8 +159,8 @@ def test_get_storage_client_dispatches_to_implementations(
         azure_args = (target_path, profile_name, can_overwrite, can_delete)
         return azure_stub
 
-    monkeypatch.setattr(storage_utils.s3_client, "create_s3_client", fake_s3_create)
-    monkeypatch.setattr(storage_utils.azure_client, "create_azure_client", fake_azure_create)
+    monkeypatch.setattr(s3_client, "create_s3_client", fake_s3_create)
+    monkeypatch.setattr(azure_client, "create_azure_client", fake_azure_create)
 
     assert (
         storage_utils.get_storage_client(
@@ -223,8 +222,8 @@ def test_get_lance_storage_options_from_profiles(monkeypatch: pytest.MonkeyPatch
         assert can_delete is False
         return DummyAzureConfig()
 
-    monkeypatch.setattr(storage_utils.s3_client, "get_s3_client_config", fake_s3_config)
-    monkeypatch.setattr(storage_utils.azure_client, "get_azure_client_config", fake_azure_config)
+    monkeypatch.setattr(s3_client, "get_s3_client_config", fake_s3_config)
+    monkeypatch.setattr(azure_client, "get_azure_client_config", fake_azure_config)
 
     s3_options = storage_utils.get_lance_storage_options(_remote_path("dataset"), profile_name="profile")
     assert s3_options == {

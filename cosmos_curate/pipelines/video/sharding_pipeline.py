@@ -21,12 +21,11 @@ Which:
   - Pack clips into webdataset
 """
 
-from __future__ import annotations
-
 import argparse
 import collections
+import pathlib
 import time
-import typing
+from collections.abc import Generator, Iterable
 
 from loguru import logger
 
@@ -35,6 +34,7 @@ from cosmos_curate.core.interfaces.stage_interface import CuratorStage, CuratorS
 from cosmos_curate.core.utils.config import args_utils
 from cosmos_curate.core.utils.dataset import dimensions, webdataset_utils
 from cosmos_curate.core.utils.misc import grouping
+from cosmos_curate.core.utils.storage.storage_client import StoragePrefix
 from cosmos_curate.core.utils.storage.storage_utils import (
     create_path,
     get_directories_relative,
@@ -55,12 +55,6 @@ from cosmos_curate.pipelines.video.utils.video_pipe_input import (
     extract_shard_tasks,
     filter_shard_tasks_by_semantic_dedup,
 )
-
-if typing.TYPE_CHECKING:
-    import pathlib
-    from collections.abc import Generator, Iterable
-
-    from cosmos_curate.core.utils.storage.storage_client import StoragePrefix
 
 _MAX_TARS_PER_PART = 100
 _TARGET_TAR_SIZE_BYTES = 500 * 1024 * 1024  # 500 MB

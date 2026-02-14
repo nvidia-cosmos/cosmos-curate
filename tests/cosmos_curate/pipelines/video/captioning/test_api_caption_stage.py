@@ -15,8 +15,6 @@
 
 """Tests for the Gemini-backed API caption stage."""
 
-from __future__ import annotations
-
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -148,7 +146,7 @@ def test_stage_setup_loads_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
     stage = ApiCaptionStage()
     stage.stage_setup()
     assert isinstance(stage._client, _FakeClient)
-    assert stage._client.api_key == "config-key"
+    assert stage._client.api_key == "config-key"  # type: ignore[unreachable]
 
 
 def test_api_caption_stage_logs_error_on_empty_response(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -166,7 +164,7 @@ def test_api_caption_stage_logs_error_on_empty_response(monkeypatch: pytest.Monk
     )
 
     stage = ApiCaptionStage(verbose=True)
-    stage._client = _FakeClient()
+    stage._client = _FakeClient()  # type: ignore[assignment]
     task = _make_task(b"\x00\x01")
     stage.process_data([task])
     clip = task.video.clips[0]
@@ -230,15 +228,14 @@ def test_api_caption_stage_does_not_retry_invalid_api_key(monkeypatch: pytest.Mo
         lambda: ConfigFileData(gemini=Gemini(api_key="dummy-key")),
     )
     monkeypatch.setattr(
-        api_caption_stage.genai,
-        "errors",
+        "cosmos_curate.pipelines.video.captioning.api_caption_stage.genai.errors",
         SimpleNamespace(ClientError=_FakeClientError),
         raising=False,
     )
 
     stage = ApiCaptionStage()
     failing_models = _FailingModels()
-    stage._client = _DummyClient(failing_models)  # type: ignore[assignment]
+    stage._client = _DummyClient(failing_models)  # type: ignore[arg-type,assignment]
 
     task = _make_task(b"\x00\x01")
     stage.process_data([task])

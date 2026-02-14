@@ -14,17 +14,17 @@
 # limitations under the License.
 """Unit tests for cosmos_curate.core.utils.model.model_utils."""
 
-from __future__ import annotations
-
 import importlib
 import pathlib
 import threading
 from types import SimpleNamespace
 
+import huggingface_hub
 import pytest
 
+from cosmos_curate.core.utils import environment
 from cosmos_curate.core.utils.model import model_utils
-from cosmos_curate.core.utils.storage import storage_client
+from cosmos_curate.core.utils.storage import storage_client, storage_utils
 
 
 def _identity(path: str) -> str:
@@ -64,7 +64,7 @@ def test_hack_copydir_to_cloud_storage_uploads_all_files(tmp_path: pathlib.Path)
             return uploader
 
     destination = "s3://bucket/models/"
-    model_utils._hack_copydir_to_cloud_storage(DummyClient(), source, destination)
+    model_utils._hack_copydir_to_cloud_storage(DummyClient(), source, destination)  # type: ignore[arg-type]
 
     expected = {
         (source / "root.txt", destination + "root.txt"),
@@ -84,7 +84,7 @@ def test_upload_model_weights_requires_valid_prefix(tmp_path: pathlib.Path) -> N
             raise AssertionError(error_msg)
 
     with pytest.raises(ValueError, match="must be set to a valid S3 prefix"):
-        model_utils._upload_model_weights_to_cloud_storage(DummyClient(), "model", tmp_path)
+        model_utils._upload_model_weights_to_cloud_storage(DummyClient(), "model", tmp_path)  # type: ignore[arg-type]
 
 
 def test_upload_model_weights_pushes_to_expected_prefix(
@@ -104,7 +104,7 @@ def test_upload_model_weights_pushes_to_expected_prefix(
         """Simple stub client."""
 
     prefix = "s3://alt/"
-    result = model_utils._upload_model_weights_to_cloud_storage(DummyClient(), "gpt", tmp_path, prefix)
+    result = model_utils._upload_model_weights_to_cloud_storage(DummyClient(), "gpt", tmp_path, prefix)  # type: ignore[arg-type]
     assert result == f"{prefix}gpt/"
     assert captured["source"] == tmp_path
     assert captured["destination"] == f"{prefix}gpt/"
@@ -115,8 +115,8 @@ def test_download_model_weights_from_cloud_storage_syncs(
 ) -> None:
     """Ensure remote weights sync to the cache dir and use the storage client."""
     cache_dir = tmp_path / "cache"
-    monkeypatch.setattr(model_utils.environment, "CONTAINER_PATHS_MODEL_WEIGHT_CACHE_DIR", cache_dir)
-    monkeypatch.setattr(model_utils.storage_utils, "path_to_prefix", _identity)
+    monkeypatch.setattr(environment, "CONTAINER_PATHS_MODEL_WEIGHT_CACHE_DIR", cache_dir)
+    monkeypatch.setattr(storage_utils, "path_to_prefix", _identity)
 
     calls: list[tuple[str, pathlib.Path, bool, int]] = []
 
@@ -139,7 +139,7 @@ def test_download_model_weights_from_cloud_storage_syncs(
         assert path == f"{prefix}{weights}/"
         return dummy_client
 
-    monkeypatch.setattr(model_utils.storage_utils, "get_storage_client", fake_get_client)
+    monkeypatch.setattr(storage_utils, "get_storage_client", fake_get_client)
 
     destination = model_utils._download_model_weights_from_cloud_storage_to_workspace(weights, prefix)
     assert destination == cache_dir / weights
@@ -159,9 +159,9 @@ def test_download_model_weights_from_cloud_storage_errors_without_client(
 ) -> None:
     """Ensure a missing storage client triggers cleanup and a ValueError."""
     cache_dir = tmp_path / "cache_missing_client"
-    monkeypatch.setattr(model_utils.environment, "CONTAINER_PATHS_MODEL_WEIGHT_CACHE_DIR", cache_dir)
-    monkeypatch.setattr(model_utils.storage_utils, "path_to_prefix", _identity)
-    monkeypatch.setattr(model_utils.storage_utils, "get_storage_client", _return_none)
+    monkeypatch.setattr(environment, "CONTAINER_PATHS_MODEL_WEIGHT_CACHE_DIR", cache_dir)
+    monkeypatch.setattr(storage_utils, "path_to_prefix", _identity)
+    monkeypatch.setattr(storage_utils, "get_storage_client", _return_none)
 
     with pytest.raises(ValueError, match="Failed to create storage client"):
         model_utils._download_model_weights_from_cloud_storage_to_workspace("model-x", "s3://bucket/")
@@ -173,7 +173,7 @@ def test_download_model_weights_from_cloud_storage_skips_existing(
 ) -> None:
     """Ensure no remote calls are made when weights already exist locally."""
     cache_dir = tmp_path / "cache_existing"
-    monkeypatch.setattr(model_utils.environment, "CONTAINER_PATHS_MODEL_WEIGHT_CACHE_DIR", cache_dir)
+    monkeypatch.setattr(environment, "CONTAINER_PATHS_MODEL_WEIGHT_CACHE_DIR", cache_dir)
     destination = cache_dir / "already"
     destination.mkdir(parents=True, exist_ok=True)
 
@@ -185,8 +185,8 @@ def test_download_model_weights_from_cloud_storage_skips_existing(
         error_msg = "get_storage_client should not be invoked when destination exists"
         raise AssertionError(error_msg)
 
-    monkeypatch.setattr(model_utils.storage_utils, "path_to_prefix", fail_path_to_prefix)
-    monkeypatch.setattr(model_utils.storage_utils, "get_storage_client", fail_get_client)
+    monkeypatch.setattr(storage_utils, "path_to_prefix", fail_path_to_prefix)
+    monkeypatch.setattr(storage_utils, "get_storage_client", fail_get_client)
 
     returned = model_utils._download_model_weights_from_cloud_storage_to_workspace("already", "s3://bucket/")
     assert returned == destination
@@ -211,7 +211,7 @@ def test_download_model_weights_from_local_to_workspace_copies_tree(
 ) -> None:
     """Ensure local weight directories are copied into the cache."""
     cache_dir = tmp_path / "cache_local"
-    monkeypatch.setattr(model_utils.environment, "CONTAINER_PATHS_MODEL_WEIGHT_CACHE_DIR", cache_dir)
+    monkeypatch.setattr(environment, "CONTAINER_PATHS_MODEL_WEIGHT_CACHE_DIR", cache_dir)
 
     local_root = tmp_path / "local_root"
     model_dir = local_root / "model-a"
@@ -271,7 +271,7 @@ def test_download_model_weights_from_huggingface_uses_api_token(
         )
         local_dir.mkdir(parents=True, exist_ok=True)
 
-    monkeypatch.setattr(model_utils.huggingface_hub, "snapshot_download", fake_snapshot_download)
+    monkeypatch.setattr(huggingface_hub, "snapshot_download", fake_snapshot_download)
 
     destination = tmp_path / "hf_dest"
     model_utils._download_model_weights_from_huggingface_to_workspace(
@@ -291,7 +291,7 @@ def test_download_model_weights_from_huggingface_invokes_reduce_for_t5(
     monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
 ) -> None:
     """Ensure only the T5 model triggers the reduction pass."""
-    monkeypatch.setattr(model_utils.environment, "CONTAINER_PATHS_MODEL_WEIGHT_CACHE_DIR", tmp_path)
+    monkeypatch.setattr(environment, "CONTAINER_PATHS_MODEL_WEIGHT_CACHE_DIR", tmp_path)
 
     def fake_download(
         _model_id: str,
@@ -354,7 +354,7 @@ def test_reduce_t5_model_weights_filters_encoder(monkeypatch: pytest.MonkeyPatch
             return fake_torch
         return real_import_module(name)
 
-    monkeypatch.setattr(model_utils.importlib, "import_module", fake_import_module)
+    monkeypatch.setattr(importlib, "import_module", fake_import_module)
 
     model_utils._reduce_t5_model_weights(destination)
     assert fake_torch.saved == (

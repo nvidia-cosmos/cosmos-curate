@@ -18,8 +18,6 @@ This module provides a simple Azure client with common operations for interactin
 with Azure Blob Storage, including chunked downloads and uploads.
 """
 
-from __future__ import annotations
-
 import configparser
 import os
 import pathlib
@@ -127,7 +125,7 @@ class AzurePrefix(StoragePrefix):
 class AzureBackgroundUploader(BackgroundUploader):
     """Handles background uploads to Azure Blob Storage."""
 
-    def __init__(self, client: AzureClient, chunk_size_bytes: int) -> None:
+    def __init__(self, client: "AzureClient", chunk_size_bytes: int) -> None:
         """Initialize the BackgroundUploader with the given Azure client and chunk size.
 
         Args:

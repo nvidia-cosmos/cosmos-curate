@@ -14,8 +14,6 @@
 # limitations under the License.
 """Remote SLURM job submission and management utilities."""
 
-from __future__ import annotations
-
 import logging
 import os
 import pwd
@@ -25,7 +23,7 @@ import socket
 import tempfile
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Any, Protocol, cast
+from typing import Annotated, Any, Protocol, Self, cast
 
 import attrs
 import fabric  # type: ignore[import-untyped]
@@ -33,13 +31,9 @@ import invoke
 import jinja2
 import typer
 from attrs import field, validators
-from typer import Argument, Option
-
-if TYPE_CHECKING:
-    from invoke.runners import Result
-
 from invoke.context import Context
 from invoke.runners import Result as InvokeResult
+from typer import Argument, Option
 
 from cosmos_curate.core.utils import environment
 
@@ -57,7 +51,7 @@ class ConnectionProtocol(Protocol):
 
     host: str
 
-    def run(self, command: str, **kwargs: Any) -> Result:  # noqa: ANN401
+    def run(self, command: str, **kwargs: Any) -> InvokeResult:  # noqa: ANN401
         """Run a command on the target host."""
         ...
 
@@ -79,7 +73,7 @@ class LocalConnection:
         self.user = user
         self._context = Context()
 
-    def run(self, command: str, **kwargs: Any) -> Result:  # noqa: ANN401
+    def run(self, command: str, **kwargs: Any) -> InvokeResult:  # noqa: ANN401
         """Execute a shell command locally."""
         result = self._context.run(command, **kwargs)
         if not isinstance(result, InvokeResult):
@@ -180,8 +174,8 @@ class MountSpec:
     dest: str
     mode: str = field(default="rw", validator=validators.in_(["rw", "ro"]))
 
-    @staticmethod
-    def from_str(mount_str: str) -> MountSpec:
+    @classmethod
+    def from_str(cls, mount_str: str) -> Self:
         """Create a MountSpec instance from a string.
 
         The string must have the format:
@@ -210,7 +204,7 @@ class MountSpec:
         dest = parts[1]
         mode = "rw" if len(parts) == _MIN_PARTS else parts[2]
 
-        return MountSpec(source, dest, mode)
+        return cls(source=source, dest=dest, mode=mode)
 
     def __str__(self) -> str:
         """Return a string representation of the mount suitable for use with Docker or Enroot."""

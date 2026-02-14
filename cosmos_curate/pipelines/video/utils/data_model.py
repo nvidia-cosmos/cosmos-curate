@@ -15,21 +15,25 @@
 
 """Data Model util."""
 
-from __future__ import annotations
-
 import pathlib
 import sys
 from collections import deque
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Self
+from uuid import UUID
 
 import attrs
 import numpy as np
 import numpy.typing as npt
 from loguru import logger
 
+import cosmos_curate.pipelines.video.filtering.motion.motion_vector_backend as motion
 from cosmos_curate.core.interfaces.stage_interface import PipelineTask
+from cosmos_curate.core.utils.infra.performance_utils import StagePerfStats
 from cosmos_curate.core.utils.storage import storage_client
 from cosmos_curate.pipelines.video.utils.decoder_utils import extract_video_metadata
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
 
 try:
     import torch
@@ -37,16 +41,6 @@ try:
     TensorType = getattr(torch, "Tensor", None)
 except ImportError:
     TensorType = None
-
-if TYPE_CHECKING:
-    import pathlib
-    from collections.abc import Iterable
-    from uuid import UUID
-
-    import numpy.typing as npt
-
-    import cosmos_curate.pipelines.video.filtering.motion.motion_vector_backend as motion
-    from cosmos_curate.core.utils.infra.performance_utils import StagePerfStats
 
 
 def _get_object_size(obj: object) -> int:
@@ -280,7 +274,7 @@ class ClipStats:
     total_clip_duration: float = 0.0
     max_clip_duration: float = 0.0
 
-    def combine(self, other: ClipStats) -> None:
+    def combine(self, other: Self) -> None:
         """Combine two ClipStats objects.
 
         Args:

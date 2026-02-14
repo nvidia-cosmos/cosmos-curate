@@ -15,8 +15,6 @@
 
 """Unit tests for cosmos_curate.core.utils.db.database_utils.DbRetrier."""
 
-from __future__ import annotations
-
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 

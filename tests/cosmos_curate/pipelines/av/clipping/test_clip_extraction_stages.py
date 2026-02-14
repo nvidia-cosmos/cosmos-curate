@@ -9,12 +9,11 @@
 # its affiliates is strictly prohibited.
 """Tests for clip extraction stages."""
 
-from __future__ import annotations
-
 import contextlib
 import pathlib
 import subprocess
-from typing import TYPE_CHECKING, Any, cast
+from collections.abc import Callable, Generator
+from typing import Any, cast
 
 import numpy as np
 import pytest
@@ -25,11 +24,11 @@ from cosmos_curate.pipelines.av.clipping.clip_extraction_stages import (
     ClipTranscodingStage,
     FixedStrideExtractorStage,
 )
-
-if TYPE_CHECKING:
-    from collections.abc import Callable, Generator
-
-    from cosmos_curate.pipelines.av.utils.av_data_model import AvSessionVideoSplitTask, AvVideo, ClipForTranscode
+from cosmos_curate.pipelines.av.utils.av_data_model import (
+    AvSessionVideoSplitTask,
+    AvVideo,
+    ClipForTranscode,
+)
 
 
 def _stub_ffmpeg(

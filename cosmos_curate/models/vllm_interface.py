@@ -83,12 +83,10 @@ DEBUG TIP: Set breakpoint in vllm_caption() and step through for complete flow
 ═══════════════════════════════════════════════════════════════════════════════
 """
 
-from __future__ import annotations
-
 import secrets
 from collections import deque
+from pathlib import Path
 from typing import (  # noqa: UP035, remove noqa when we drop support for python 3.10
-    TYPE_CHECKING,
     Any,
     Deque,
     Iterable,
@@ -97,8 +95,10 @@ from typing import (  # noqa: UP035, remove noqa when we drop support for python
 )
 
 import numpy as np
+import torch
 from loguru import logger
 from PIL import Image
+from transformers import AutoProcessor
 from vllm import LLM, PoolingOutput, PoolingRequestOutput, RequestOutput, SamplingParams
 from vllm.sampling_params import RequestOutputKind
 
@@ -107,6 +107,7 @@ from cosmos_curate.models.vllm_cosmos_reason1_vl import VllmCosmosReason1VL
 from cosmos_curate.models.vllm_cosmos_reason2_vl import VllmCosmosReason2VL
 from cosmos_curate.models.vllm_nemotron import VllmNemotronNano12Bv2VL
 from cosmos_curate.models.vllm_phi import VllmPhi4
+from cosmos_curate.models.vllm_plugin import VllmPlugin
 from cosmos_curate.models.vllm_qwen import (
     VllmQwen3VL30B,
     VllmQwen3VL30BFP8,
@@ -114,17 +115,12 @@ from cosmos_curate.models.vllm_qwen import (
     VllmQwen3VL235BFP8,
     VllmQwen7B,
 )
-from cosmos_curate.pipelines.video.utils.data_model import VllmCaptionRequest, WindowConfig
-
-if TYPE_CHECKING:
-    from pathlib import Path
-
-    import torch
-    from transformers import AutoProcessor
-
-    from cosmos_curate.models.vllm_plugin import VllmPlugin
-    from cosmos_curate.pipelines.video.utils.data_model import VllmConfig, VllmSamplingConfig
-
+from cosmos_curate.pipelines.video.utils.data_model import (
+    VllmCaptionRequest,
+    VllmConfig,
+    VllmSamplingConfig,
+    WindowConfig,
+)
 
 # Add new vLLM plugins to _VLLM_PLUGINS
 _VLLM_PLUGINS = {

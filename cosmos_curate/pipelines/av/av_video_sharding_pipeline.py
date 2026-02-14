@@ -9,8 +9,6 @@
 # its affiliates is strictly prohibited.
 """Ray pipeline for sharding video data."""
 
-from __future__ import annotations
-
 import argparse
 import time
 import uuid

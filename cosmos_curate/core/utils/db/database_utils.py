@@ -14,9 +14,8 @@
 # limitations under the License.
 """Utility functions for Postgres SQL database."""
 
-from __future__ import annotations
-
-from typing import TYPE_CHECKING, Any
+from collections.abc import Iterable
+from typing import Any, Self
 
 import psycopg2
 from loguru import logger
@@ -24,9 +23,6 @@ from sqlalchemy import exc
 from sqlalchemy.orm import scoped_session, sessionmaker
 
 from cosmos_curate.core.utils.db.database_types import EnvType, PostgresDB
-
-if TYPE_CHECKING:
-    from collections.abc import Iterable
 
 
 class DbRetrier:
@@ -53,7 +49,7 @@ class DbRetrier:
         self.scoped_session = scoped_session(sessionmaker(bind=self.engine))
 
     @classmethod
-    def make_from_db_name(cls, etype: EnvType, max_retries: int = 5) -> DbRetrier:
+    def make_from_db_name(cls, etype: EnvType, max_retries: int = 5) -> Self:
         """Create a DbRetrier from a database name.
 
         Args:
@@ -62,7 +58,7 @@ class DbRetrier:
 
         """
         db = PostgresDB.make_from_config(env_type=etype)
-        return DbRetrier(db, max_retries)
+        return cls(db, max_retries)
 
     def reset_session(self) -> None:
         """Reset session.

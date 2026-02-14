@@ -14,25 +14,22 @@
 # limitations under the License.
 """Tests for postgres_cli helpers."""
 
-from __future__ import annotations
-
-from typing import TYPE_CHECKING
+from collections.abc import Sequence
+from types import TracebackType
+from typing import Any, cast
 from unittest.mock import MagicMock
 
+import pytest
 import sqlalchemy
+import typer
 from sqlalchemy import Column
 from sqlalchemy.sql.elements import TextClause
-
-if TYPE_CHECKING:
-    from types import TracebackType
-
-    from _pytest.monkeypatch import MonkeyPatch
 
 from cosmos_curate.core.managers import postgres_cli
 from cosmos_curate.core.utils.db import postgres_schema_types
 
 
-def test_get_foreign_keys(monkeypatch: MonkeyPatch) -> None:
+def test_get_foreign_keys(monkeypatch: pytest.MonkeyPatch) -> None:
     """Ensure foreign key metadata is collected and normalized."""
     inspector = MagicMock()
     inspector.get_table_names.return_value = ["first_table", "second_table"]
@@ -47,7 +44,7 @@ def test_get_foreign_keys(monkeypatch: MonkeyPatch) -> None:
         ],
         [],
     ]
-    monkeypatch.setattr(postgres_cli.sqlalchemy, "inspect", lambda _: inspector)
+    monkeypatch.setattr(sqlalchemy, "inspect", lambda _: inspector)
 
     engine = MagicMock()
 
@@ -107,7 +104,7 @@ def test_delete_foreign_keys() -> None:
 def test_column_change_handles_array_types() -> None:
     """Ensure ColumnChange renders native types and PostgreSQL arrays."""
     scalar_column = Column("age", sqlalchemy.Integer)
-    array_column = Column("tags", sqlalchemy.ARRAY(sqlalchemy.String))
+    array_column: Column[Sequence[str]] = Column("tags", sqlalchemy.ARRAY(sqlalchemy.String))
 
     scalar_change = postgres_cli._ColumnChange.from_column(scalar_column)
     array_change = postgres_cli._ColumnChange.from_column(array_column)
@@ -118,7 +115,7 @@ def test_column_change_handles_array_types() -> None:
     assert array_change.type == "VARCHAR[]"
 
 
-def test_calculate_schema_changes_new_table(monkeypatch: MonkeyPatch) -> None:
+def test_calculate_schema_changes_new_table(monkeypatch: pytest.MonkeyPatch) -> None:
     """Detect tables missing from the database."""
 
     class NewTable(postgres_schema_types.Base):
@@ -128,7 +125,7 @@ def test_calculate_schema_changes_new_table(monkeypatch: MonkeyPatch) -> None:
 
     inspector = MagicMock()
     inspector.get_table_names.return_value = ["existing_table_calc"]
-    monkeypatch.setattr(postgres_cli.sqlalchemy, "inspect", lambda _: inspector)
+    monkeypatch.setattr(sqlalchemy, "inspect", lambda _: inspector)
 
     engine = MagicMock()
 
@@ -139,7 +136,7 @@ def test_calculate_schema_changes_new_table(monkeypatch: MonkeyPatch) -> None:
     assert changes.new_columns == {}
 
 
-def test_calculate_schema_changes_new_columns(monkeypatch: MonkeyPatch) -> None:
+def test_calculate_schema_changes_new_columns(monkeypatch: pytest.MonkeyPatch) -> None:
     """Detect columns missing from an existing table."""
 
     class ExistingTable(postgres_schema_types.Base):
@@ -154,7 +151,7 @@ def test_calculate_schema_changes_new_columns(monkeypatch: MonkeyPatch) -> None:
         {"name": "id"},
         {"name": "name"},
     ]
-    monkeypatch.setattr(postgres_cli.sqlalchemy, "inspect", lambda _: inspector)
+    monkeypatch.setattr(sqlalchemy, "inspect", lambda _: inspector)
 
     engine = MagicMock()
 
@@ -167,7 +164,7 @@ def test_calculate_schema_changes_new_columns(monkeypatch: MonkeyPatch) -> None:
     assert new_column.type == "INTEGER"
 
 
-def test_apply_schema_changes_executes_operations(monkeypatch: MonkeyPatch) -> None:
+def test_apply_schema_changes_executes_operations(monkeypatch: pytest.MonkeyPatch) -> None:
     """Apply schema updates when not running in dry mode."""
 
     class NewTable(postgres_schema_types.Base):
@@ -195,7 +192,7 @@ def test_apply_schema_changes_executes_operations(monkeypatch: MonkeyPatch) -> N
     )
 
     mock_create = MagicMock()
-    monkeypatch.setattr(NewTable.__table__, "create", mock_create)  # type: ignore[arg-type]
+    monkeypatch.setattr(NewTable.__table__, "create", mock_create)
 
     conn = MagicMock()
     engine = MagicMock()
@@ -209,7 +206,7 @@ def test_apply_schema_changes_executes_operations(monkeypatch: MonkeyPatch) -> N
     def record_echo(message: str) -> None:
         calls.append(message)
 
-    monkeypatch.setattr(postgres_cli.typer, "echo", record_echo)
+    monkeypatch.setattr(typer, "echo", record_echo)
 
     postgres_cli._apply_schema_changes(
         engine=engine,
@@ -227,15 +224,17 @@ def test_apply_schema_changes_executes_operations(monkeypatch: MonkeyPatch) -> N
     assert len(calls) == 2
 
 
-def test_apply_schema_changes_handles_array_columns(monkeypatch: MonkeyPatch) -> None:
+def test_apply_schema_changes_handles_array_columns(monkeypatch: pytest.MonkeyPatch) -> None:
     """Ensure array-typed columns render with PostgreSQL array syntax."""
 
     class ExistingTable(postgres_schema_types.Base):
         __tablename__ = "existing_table_array"
         id = Column(sqlalchemy.Integer, primary_key=True)
-        tags = Column(sqlalchemy.ARRAY(sqlalchemy.String))
+        tags: Column[Sequence[str]] = Column[Sequence[str]](sqlalchemy.ARRAY(sqlalchemy.String))
 
-    tags_column = postgres_cli._ColumnChange.from_column(ExistingTable.__table__.columns.tags)
+    tags_column: postgres_cli._ColumnChange = postgres_cli._ColumnChange.from_column(
+        cast("Column[Any]", ExistingTable.__table__.columns.tags)
+    )
     schema_changes = postgres_cli._SchemaChanges(
         new_columns={
             "existing_table_array": [tags_column],
@@ -251,7 +250,7 @@ def test_apply_schema_changes_handles_array_columns(monkeypatch: MonkeyPatch) ->
     engine.begin.return_value = context_manager
 
     messages: list[str] = []
-    monkeypatch.setattr(postgres_cli.typer, "echo", lambda message: messages.append(message))
+    monkeypatch.setattr(typer, "echo", lambda message: messages.append(message))
 
     postgres_cli._apply_schema_changes(
         engine=engine,
@@ -268,7 +267,7 @@ def test_apply_schema_changes_handles_array_columns(monkeypatch: MonkeyPatch) ->
     assert messages == ["Added column 'tags' to table 'existing_table_array'"]
 
 
-def test_apply_schema_changes_dry_run(monkeypatch: MonkeyPatch) -> None:
+def test_apply_schema_changes_dry_run(monkeypatch: pytest.MonkeyPatch) -> None:
     """Ensure dry runs only report planned changes."""
 
     class SampleTable(postgres_schema_types.Base):
@@ -290,12 +289,12 @@ def test_apply_schema_changes_dry_run(monkeypatch: MonkeyPatch) -> None:
     )
 
     mock_create = MagicMock()
-    monkeypatch.setattr(SampleTable.__table__, "create", mock_create)  # type: ignore[arg-type]
+    monkeypatch.setattr(SampleTable.__table__, "create", mock_create)
 
     engine = MagicMock()
 
     messages: list[str] = []
-    monkeypatch.setattr(postgres_cli.typer, "echo", lambda message: messages.append(message))
+    monkeypatch.setattr(typer, "echo", lambda message: messages.append(message))
 
     postgres_cli._apply_schema_changes(
         engine=engine,
@@ -309,7 +308,7 @@ def test_apply_schema_changes_dry_run(monkeypatch: MonkeyPatch) -> None:
     assert len(messages) == 2
 
 
-def test_calculate_schema_changes_no_op(monkeypatch: MonkeyPatch) -> None:
+def test_calculate_schema_changes_no_op(monkeypatch: pytest.MonkeyPatch) -> None:
     """Ensure no changes are reported when the schema is up-to-date."""
 
     class ExistingTable(postgres_schema_types.Base):
@@ -323,7 +322,7 @@ def test_calculate_schema_changes_no_op(monkeypatch: MonkeyPatch) -> None:
         {"name": "id"},
         {"name": "name"},
     ]
-    monkeypatch.setattr(postgres_cli.sqlalchemy, "inspect", lambda _: inspector)
+    monkeypatch.setattr(sqlalchemy, "inspect", lambda _: inspector)
 
     engine = MagicMock()
 

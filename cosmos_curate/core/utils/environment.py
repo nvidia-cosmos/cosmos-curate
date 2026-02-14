@@ -17,8 +17,6 @@
 See README.md for more info.
 """
 
-from __future__ import annotations
-
 import os
 import pathlib
 

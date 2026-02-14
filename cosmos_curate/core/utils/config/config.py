@@ -17,9 +17,7 @@
 See README.md for more info on what the config file is.
 """
 
-from __future__ import annotations
-
-from typing import Any
+from typing import Any, Self
 
 import attrs
 import cattrs
@@ -98,7 +96,7 @@ class ConfigFileData:
     postgres: Postgres | None = None
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> ConfigFileData:
+    def from_dict(cls, data: dict[str, Any]) -> Self:
         """Convert a dict to a ConfigFileData object.
 
         Args:
@@ -111,7 +109,7 @@ class ConfigFileData:
         return cattrs.structure(data, cls)
 
     @classmethod
-    def from_file(cls) -> ConfigFileData | None:
+    def from_file(cls) -> Self | None:
         """Load a ConfigFileData object from a file.
 
         Returns:

@@ -54,9 +54,6 @@ from cosmos_curate.pipelines.video.utils.data_model import (
     get_video_from_task,
 )
 
-if TYPE_CHECKING:
-    from vllm import SamplingParams
-
 if conda_utils.is_running_in_env("unified"):
     if TYPE_CHECKING:
         from transformers import AutoProcessor
@@ -230,7 +227,9 @@ class VllmPrepStage(CuratorStage):
             The secondary name of the stage.
 
         """
-        return self._vllm_config.model_variant
+        # mypy is not smart enough to know that self._vllm_config.model_variant is a str
+        # but mypy also thinks that this is a redundant cast
+        return cast("str", self._vllm_config.model_variant)  # type: ignore[redundant-cast]
 
     @property
     def resources(self) -> CuratorStageResource:
@@ -453,7 +452,9 @@ class VllmCaptionStage(CuratorStage):
             The secondary name of the stage.
 
         """
-        return self._vllm_config.model_variant
+        # mypy is not smart enough to know that self._vllm_config.model_variant is a str
+        # but mypy also thinks that this is a redundant cast
+        return cast("str", self._vllm_config.model_variant)  # type: ignore[redundant-cast]
 
     @property
     def conda_env_name(self) -> str:

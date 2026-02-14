@@ -15,8 +15,6 @@ This pipeline:
 - Generate embedding for captions
 """
 
-from __future__ import annotations
-
 import argparse
 import time
 import uuid

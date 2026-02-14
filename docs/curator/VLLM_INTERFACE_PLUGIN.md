@@ -104,22 +104,17 @@ Create `cosmos_curate/models/vllm_mymodel.py`:
 
 """MyModel vLLM plugin."""
 
-from __future__ import annotations
-
 import secrets
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from transformers import AutoProcessor
 from vllm import LLM
 
 from cosmos_curate.models.vllm_plugin import VllmPlugin
-from cosmos_curate.pipelines.video.utils.data_model import VllmCaptionRequest
-
-if TYPE_CHECKING:
-    import torch
-    from vllm import RequestOutput
-
-    from cosmos_curate.pipelines.video.utils.data_model import VllmConfig
+from cosmos_curate.pipelines.video.utils.data_model import (
+    VllmCaptionRequest,
+    VllmConfig,
+)
 
 
 class VllmMyModel(VllmPlugin):
@@ -975,21 +970,18 @@ Use this checklist to ensure your plugin is complete:
 ```python
 """VideoLLaMA vLLM plugin example."""
 
-from __future__ import annotations
-
 import secrets
-from typing import TYPE_CHECKING, Any, TypedDict
+from typing import Any, TypedDict
 
+import torch
 from transformers import AutoProcessor
-from vllm import LLM
+from vllm import LLM, RequestOutput
 
 from cosmos_curate.models.vllm_plugin import VllmPlugin
-from cosmos_curate.pipelines.video.utils.data_model import VllmCaptionRequest
-
-if TYPE_CHECKING:
-    import torch
-    from vllm import RequestOutput
-    from cosmos_curate.pipelines.video.utils.data_model import VllmConfig
+from cosmos_curate.pipelines.video.utils.data_model import (
+    VllmCaptionRequest,
+    VllmConfig,
+)
 
 # VideoLLaMA configuration
 MAX_MODEL_LEN = 8192
