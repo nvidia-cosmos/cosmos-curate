@@ -47,6 +47,7 @@ pytest-asyncio = "*"
 pytest-cov = "*"
 pytest-xdist = "*"
 scipy = "*"
+setuptools = "<81" # prettytable 2.0 (via ngcsdk) requires pkg_resources, removed in setuptools 81
 sqlalchemy = "*"
 tabulate = "*"
 tblib = "*"
@@ -113,6 +114,7 @@ cuml = "==25.12"
 loguru = "*"
 numpy = ">2,<2.3" # vllm requires numpy>=2 via opencv; numba 0.61.x requires <2.3
 raft-dask = "*"
+setuptools = "<81" # prettytable 2.0 (via ngcsdk) requires pkg_resources, removed in setuptools 81
 tqdm = "*"
 
 [feature.cuml.pypi-dependencies]
@@ -129,6 +131,7 @@ pandas = "*"
 numpy = ">2,<2.3" # vllm requires numpy>=2 via opencv; numba 0.61.x requires <2.3
 nvidia-ml-py = "*"
 scipy = "*"
+setuptools = "<81" # prettytable 2.0 (via ngcsdk) requires pkg_resources, removed in setuptools 81
 tabulate = "*"
 
 [feature.model-download.pypi-dependencies]
