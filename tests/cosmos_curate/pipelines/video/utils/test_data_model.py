@@ -14,17 +14,28 @@
 # limitations under the License.
 """Tests for data_model utility functions."""
 
+import pathlib
 import sys
+import uuid
 from collections import deque
 from unittest.mock import MagicMock, patch
 
 import attrs
 import numpy as np
+import pytest
 
 from cosmos_curate.pipelines.video.utils.data_model import (
+    Clip,
+    SplitPipeTask,
+    Video,
+    VideoMetadata,
     _add_children_to_queue,
     _get_object_size,
+    assert_time_alignment,
+    assert_video_clip_alignment,
+    check_clip_time_alignment,
     get_major_size,
+    get_video_from_task,
 )
 
 
@@ -299,3 +310,412 @@ class TestEstimateMajorSize:
         with patch("cosmos_curate.pipelines.video.utils.data_model.TensorType", mock_tensor_type):
             size = get_major_size(mock_tensor)
             assert size == expected_size
+
+
+class TestSplitPipeTask:
+    """Test SplitPipeTask initialization and methods."""
+
+    @pytest.mark.parametrize(
+        ("num_videos", "use_video_param"),
+        [
+            (1, True),  # Single video with video= param
+            (2, False),  # Two videos with videos= param
+            (3, False),  # Three videos with videos= param
+        ],
+    )
+    def test_task_initialization(self, num_videos: int, *, use_video_param: bool) -> None:
+        """Test task initialization with single and multiple videos."""
+        videos = [
+            Video(
+                input_video=pathlib.Path(f"cam{i}.mp4"),
+                metadata=VideoMetadata(duration=100.0, size=1000),
+            )
+            for i in range(num_videos)
+        ]
+
+        task = SplitPipeTask(video=videos[0]) if use_video_param else SplitPipeTask(videos=videos)
+
+        assert len(task.videos) == num_videos
+        assert task.videos[0] is videos[0]
+        assert task.video is videos[0]  # Property should return first video
+        if num_videos > 1:
+            assert task.videos[1] is videos[1]
+
+    @pytest.mark.parametrize(
+        ("num_videos", "expected_weight_multiplier"),
+        [
+            (1, 1.0),  # Single video: weight = video.weight
+            (2, 2.0),  # Two videos: weight = sum of both
+            (3, 3.0),  # Three videos: weight = sum of all three
+        ],
+    )
+    def test_weight_aggregation(self, num_videos: int, expected_weight_multiplier: float) -> None:
+        """Test weight calculation for single and multi-camera tasks."""
+        videos = [
+            Video(
+                input_video=pathlib.Path(f"cam{i}.mp4"),
+                metadata=VideoMetadata(duration=300.0, size=5000),
+            )
+            for i in range(num_videos)
+        ]
+
+        task = SplitPipeTask(video=videos[0]) if num_videos == 1 else SplitPipeTask(videos=videos)
+
+        # Weight should be sum of all video weights
+        expected_weight = videos[0].weight * expected_weight_multiplier
+        assert task.weight == expected_weight
+
+    @pytest.mark.parametrize(
+        "num_videos",
+        [1, 2, 3],
+    )
+    def test_get_major_size_aggregation(self, num_videos: int) -> None:
+        """Test memory size calculation for single and multi-camera tasks."""
+        videos = [
+            Video(
+                input_video=pathlib.Path(f"cam{i}.mp4"),
+                encoded_data=f"camera {i} data".encode(),
+                metadata=VideoMetadata(duration=100.0, size=1000),
+            )
+            for i in range(num_videos)
+        ]
+
+        task = SplitPipeTask(video=videos[0]) if num_videos == 1 else SplitPipeTask(videos=videos)
+
+        # Size should be sum of all video sizes
+        expected_size = sum(v.get_major_size() for v in videos)
+        assert task.get_major_size() == expected_size
+        assert task.get_major_size() > 0
+
+    def test_fraction_property(self) -> None:
+        """Test fraction property returns primary video's fraction."""
+        video1 = Video(
+            input_video=pathlib.Path("cam1.mp4"),
+            metadata=VideoMetadata(duration=100.0, size=1000),
+            clips=[],
+            num_total_clips=10,
+        )
+
+        task = SplitPipeTask(videos=[video1])
+
+        # Fraction should be calculated from all videos (just one in this case)
+        # Same result: sum of clips / sum of total = video1.fraction
+        assert task.fraction == video1.fraction
+
+    @pytest.mark.parametrize(
+        ("video_kwarg", "videos_kwarg", "expected_error"),
+        [
+            (None, None, "Must specify either 'video' or 'videos'"),
+            ("video_obj", ["video_obj"], "Cannot specify both 'video' and 'videos'"),
+        ],
+    )
+    def test_initialization_errors(
+        self, video_kwarg: str | None, videos_kwarg: list[str] | None, expected_error: str
+    ) -> None:
+        """Test that appropriate errors are raised for invalid initialization."""
+        video = Video(
+            input_video=pathlib.Path("test.mp4"),
+            metadata=VideoMetadata(duration=100.0, size=1000),
+        )
+
+        kwargs = {}
+        if video_kwarg is not None:
+            kwargs["video"] = video
+        if videos_kwarg is not None:
+            kwargs["videos"] = [video]
+
+        with pytest.raises(ValueError, match=expected_error):
+            SplitPipeTask(**kwargs)
+
+    def test_get_video_from_task_compatibility(self) -> None:
+        """Test that get_video_from_task utility works with new structure."""
+        video = Video(
+            input_video=pathlib.Path("test.mp4"),
+            metadata=VideoMetadata(duration=100.0, size=1000),
+        )
+
+        task = SplitPipeTask(video=video)
+
+        # get_video_from_task should work with the property accessor
+        retrieved_video = get_video_from_task(task)
+        assert retrieved_video is video
+        assert isinstance(retrieved_video, Video)
+
+    @pytest.mark.parametrize(
+        "stage_perf_value",
+        [
+            None,  # Default initialization
+            {"stage1": "mock"},  # Custom stage_perf
+        ],
+    )
+    def test_stage_perf_initialization(self, stage_perf_value: dict[str, str] | None) -> None:
+        """Test stage_perf property initialization."""
+        video = Video(
+            input_video=pathlib.Path("test.mp4"),
+            metadata=VideoMetadata(duration=100.0, size=1000),
+        )
+
+        if stage_perf_value is None:
+            task = SplitPipeTask(video=video)
+            assert task.stage_perf == {}
+        else:
+            custom_perf = {"stage1": MagicMock()}
+            task = SplitPipeTask(video=video, stage_perf=custom_perf)
+            assert task.stage_perf is custom_perf
+
+    @pytest.mark.parametrize(
+        ("scenario", "video1_config", "video2_config", "expected_error"),
+        [
+            # Aligned: should not raise
+            (
+                "aligned",
+                {"clips": 0, "filtered": 0, "total": 10, "clip_spans": [], "filtered_spans": []},
+                {"clips": 0, "filtered": 0, "total": 10, "clip_spans": [], "filtered_spans": []},
+                None,
+            ),
+            # Check 1: Different total clips
+            (
+                "different_totals",
+                {"clips": 0, "filtered": 0, "total": 10, "clip_spans": [], "filtered_spans": []},
+                {"clips": 0, "filtered": 0, "total": 20, "clip_spans": [], "filtered_spans": []},
+                "different total clip counts",
+            ),
+            # Check 2: Different processed counts
+            (
+                "different_processed",
+                {"clips": 0, "filtered": 0, "total": 10, "clip_spans": [], "filtered_spans": []},
+                {"clips": 1, "filtered": 0, "total": 10, "clip_spans": [(0.0, 10.0)], "filtered_spans": []},
+                "processed different numbers of clips",
+            ),
+            # Check 3: Processed exceeds total
+            (
+                "exceeds_total",
+                {
+                    "clips": 2,
+                    "filtered": 0,
+                    "total": 1,
+                    "clip_spans": [(0.0, 10.0), (10.0, 20.0)],
+                    "filtered_spans": [],
+                },
+                {
+                    "clips": 2,
+                    "filtered": 0,
+                    "total": 1,
+                    "clip_spans": [(0.0, 10.0), (10.0, 20.0)],
+                    "filtered_spans": [],
+                },
+                "processed .* clips but only has .* total clips",
+            ),
+            # Check 4: Misaligned clip spans
+            (
+                "misaligned_spans",
+                {"clips": 1, "filtered": 0, "total": 10, "clip_spans": [(0.0, 10.0)], "filtered_spans": []},
+                {"clips": 1, "filtered": 0, "total": 10, "clip_spans": [(0.0, 15.0)], "filtered_spans": []},
+                "clips at index .* have misaligned spans",
+            ),
+            # Check 4b: Misaligned filtered clip spans
+            (
+                "misaligned_filtered",
+                {"clips": 0, "filtered": 1, "total": 10, "clip_spans": [], "filtered_spans": [(20.0, 30.0)]},
+                {"clips": 0, "filtered": 1, "total": 10, "clip_spans": [], "filtered_spans": [(20.0, 35.0)]},
+                "filtered clips at index .* have misaligned spans",
+            ),
+        ],
+    )
+    def test_time_alignment_validation(
+        self,
+        scenario: str,
+        video1_config: dict[str, int | list],
+        video2_config: dict[str, int | list],
+        expected_error: str | None,
+    ) -> None:
+        """Test assert_time_alignment validates all alignment conditions."""
+
+        def build_video(name: str, config: dict[str, int | list]) -> Video:
+            """Build a video from config."""
+            clips = [Clip(uuid=uuid.uuid4(), source_video=name, span=span) for span in config["clip_spans"]]
+            filtered_clips = [
+                Clip(uuid=uuid.uuid4(), source_video=name, span=span) for span in config["filtered_spans"]
+            ]
+            return Video(
+                input_video=pathlib.Path(name),
+                metadata=VideoMetadata(duration=100.0, size=1000),
+                clips=clips,
+                filtered_clips=filtered_clips,
+                num_total_clips=config["total"],
+            )
+
+        video1 = build_video("cam1.mp4", video1_config)
+        video2 = build_video("cam2.mp4", video2_config)
+        task = SplitPipeTask(videos=[video1, video2])
+
+        if expected_error is None:
+            # Should not raise
+            task.assert_time_alignment()
+            # Also test fraction calculation for aligned case
+            if scenario == "aligned":
+                assert task.fraction == 0.0
+        else:
+            # Should raise with expected error
+            with pytest.raises(ValueError, match=expected_error):
+                task.assert_time_alignment()
+
+            # For different_processed case, also test that fraction calculation still works
+            if scenario == "different_processed":
+                # video1: 0/10, video2: 1/10 → total: 1/20 = 0.05
+                assert abs(task.fraction - 0.05) < 1e-9
+
+    def test_batch_assert_time_alignment(self) -> None:
+        """Test batch validation function for multiple tasks."""
+        # Create aligned tasks
+        task1 = SplitPipeTask(
+            videos=[
+                Video(
+                    input_video=pathlib.Path("cam1.mp4"),
+                    metadata=VideoMetadata(duration=100.0, size=1000),
+                    clips=[],
+                    filtered_clips=[],
+                    num_total_clips=10,
+                ),
+                Video(
+                    input_video=pathlib.Path("cam2.mp4"),
+                    metadata=VideoMetadata(duration=100.0, size=1000),
+                    clips=[],
+                    filtered_clips=[],
+                    num_total_clips=10,
+                ),
+            ]
+        )
+
+        task2 = SplitPipeTask(
+            videos=[
+                Video(
+                    input_video=pathlib.Path("cam3.mp4"),
+                    metadata=VideoMetadata(duration=100.0, size=1000),
+                    clips=[],
+                    filtered_clips=[],
+                    num_total_clips=5,
+                ),
+                Video(
+                    input_video=pathlib.Path("cam4.mp4"),
+                    metadata=VideoMetadata(duration=100.0, size=1000),
+                    clips=[],
+                    filtered_clips=[],
+                    num_total_clips=5,
+                ),
+            ]
+        )
+
+        # Should not raise for aligned tasks
+        assert_time_alignment([task1, task2])
+
+        # Create misaligned task
+        task3 = SplitPipeTask(
+            videos=[
+                Video(
+                    input_video=pathlib.Path("cam5.mp4"),
+                    metadata=VideoMetadata(duration=100.0, size=1000),
+                    clips=[],
+                    filtered_clips=[],
+                    num_total_clips=10,
+                ),
+                Video(
+                    input_video=pathlib.Path("cam6.mp4"),
+                    metadata=VideoMetadata(duration=100.0, size=1000),
+                    clips=[],
+                    filtered_clips=[],
+                    num_total_clips=20,  # Misaligned!
+                ),
+            ]
+        )
+
+        # Should raise when any task is misaligned
+        with pytest.raises(ValueError, match=r".*different total clip counts.*"):
+            assert_time_alignment([task1, task2, task3])
+
+    def test_assert_video_clip_alignment_helper(self) -> None:
+        """Test assert_video_clip_alignment can be used independently."""
+        # Test with aligned videos
+        aligned_videos = [
+            Video(
+                input_video=pathlib.Path("cam1.mp4"),
+                metadata=VideoMetadata(duration=100.0, size=1000),
+                clips=[Clip(uuid=uuid.uuid4(), source_video="cam1.mp4", span=(0.0, 10.0))],
+                filtered_clips=[],
+                num_total_clips=10,
+            ),
+            Video(
+                input_video=pathlib.Path("cam2.mp4"),
+                metadata=VideoMetadata(duration=100.0, size=1000),
+                clips=[Clip(uuid=uuid.uuid4(), source_video="cam2.mp4", span=(0.0, 10.0))],
+                filtered_clips=[],
+                num_total_clips=10,
+            ),
+        ]
+
+        # Should not raise for aligned videos
+        assert_video_clip_alignment(aligned_videos)
+
+        # Test with empty list (should not raise)
+        assert_video_clip_alignment([])
+
+        # Test with misaligned videos
+        misaligned_videos = [
+            Video(
+                input_video=pathlib.Path("cam3.mp4"),
+                metadata=VideoMetadata(duration=100.0, size=1000),
+                clips=[],
+                filtered_clips=[],
+                num_total_clips=10,
+            ),
+            Video(
+                input_video=pathlib.Path("cam4.mp4"),
+                metadata=VideoMetadata(duration=100.0, size=1000),
+                clips=[],
+                filtered_clips=[],
+                num_total_clips=20,
+            ),
+        ]
+
+        # Should raise for misaligned videos
+        with pytest.raises(ValueError, match=r".*different total clip counts.*"):
+            assert_video_clip_alignment(misaligned_videos)
+
+    def test_check_clip_time_alignment_edge_cases(self) -> None:
+        """Test check_clip_time_alignment with edge cases for full coverage."""
+        # Test with empty list
+        assert check_clip_time_alignment([]) == []
+
+        # Test with list of empty clip lists
+        assert check_clip_time_alignment([[], []]) == []
+
+        # Test with different clip counts (should raise)
+        different_counts = [
+            [Clip(uuid=uuid.uuid4(), source_video="cam1.mp4", span=(0.0, 10.0))],
+            [
+                Clip(uuid=uuid.uuid4(), source_video="cam2.mp4", span=(0.0, 10.0)),
+                Clip(uuid=uuid.uuid4(), source_video="cam2.mp4", span=(10.0, 20.0)),
+            ],
+        ]
+        with pytest.raises(ValueError, match=r".*videos have different clip counts.*"):
+            check_clip_time_alignment(different_counts)
+
+        # Test with aligned clips
+        aligned_clips = [
+            [Clip(uuid=uuid.uuid4(), source_video="cam1.mp4", span=(0.0, 10.0))],
+            [Clip(uuid=uuid.uuid4(), source_video="cam2.mp4", span=(0.0, 10.0))],
+        ]
+        assert check_clip_time_alignment(aligned_clips) == []
+
+        # Test with misaligned clips (returns misaligned indices)
+        misaligned_clips = [
+            [
+                Clip(uuid=uuid.uuid4(), source_video="cam1.mp4", span=(0.0, 10.0)),
+                Clip(uuid=uuid.uuid4(), source_video="cam1.mp4", span=(10.0, 20.0)),
+            ],
+            [
+                Clip(uuid=uuid.uuid4(), source_video="cam2.mp4", span=(0.0, 15.0)),  # Misaligned!
+                Clip(uuid=uuid.uuid4(), source_video="cam2.mp4", span=(10.0, 20.0)),
+            ],
+        ]
+        assert check_clip_time_alignment(misaligned_clips) == [0]

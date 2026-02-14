@@ -157,7 +157,7 @@ def build_input_data(
     if args.verbose:
         logger.debug("\n".join(str(x.input_video) for x in input_videos))
 
-    input_tasks = [SplitPipeTask(video) for video in input_videos]
+    input_tasks = [SplitPipeTask(videos=[video]) for video in input_videos]
 
     return input_tasks, input_videos_relative, num_processed
 

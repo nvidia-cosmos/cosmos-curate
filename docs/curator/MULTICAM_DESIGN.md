@@ -1,0 +1,116 @@
+# Multi-Camera Design and Plan
+
+## Scope
+
+### In scope
+
+- Extend the **video** splitting pipeline ([cosmos_curate/pipelines/video/splitting_pipeline.py](cosmos_curate/pipelines/video/splitting_pipeline.py)) to support multi-cam sessions
+- Split clips will be time aligned
+- fixed-stride only for multi-cam
+- session-based input (prefix + configurable session-dir pattern, no DB).
+- Pipeline will continue to be capable of splitting single-camera video, no functionality change planned.
+
+### Out of scope
+
+- AV pipelines remain untouched (no removal, deprecation, or changes).
+
+---
+
+## 1. Data Model: Multi-Cam in SplitPipeTask
+
+**File**: [cosmos_curate/pipelines/video/utils/data_model.py](cosmos_curate/pipelines/video/utils/data_model.py)
+
+- Replace `video: Video` with `videos: list[Video]` as the canonical field on `SplitPipeTask`.
+- **Backward compatibility**: Keep a single-video view for existing code:
+  - Add `@property def video(self) -> Video: return self.videos[0]` so all existing `task.video` and `get_video_from_task(task)` usage continues to work. `self.videos[0]` is considered the `primary` video / camera.
+- Initializer:  `SplitPipeTask(video)` (single-cam) or `SplitPipeTask(videos=[...])`; when building from session-based extraction with `--multi-cam`. Normalize internally to always store `videos` (e.g. if only `video` is passed, set `videos = [video]`).
+- `primary` video / camera. This is used in stages that only operate on one camera, like captioning stages. The `primary` camera will placed into `self.videos[0]`. It left to the pipeline's task building functions to set the primary camera correctly.
+
+No change to `Video` or `Clip` types. For multi-cam, alignment is enforced by creating **one Clip per (video, clip index)** so that all clips in the same column share the same `uuid` and `span`
+
+| video | clip 0 | clip 1 | ... | clip N-1   |
+|-------|--------|--------|-----|------------|
+| 0     | uuid0  | uuid1  | ... | uuid_{N-1} |
+| 1     | uuid0  | uuid1  | ... | uuid_{N-1} |
+| ...   | ...    | ...    | ... | ...        |
+| M-1   | uuid0  | uuid1  | ... | uuid_{N-1} |
+
+Each cell `(i, j)` is `video[i].clips[j]`: one `Clip` with `uuid=uuid_j`, `span=span_j`, and that camera’s `source_video` and (after transcode) `encoded_data`. Compute N time aligned spans and N UUIDs (e.g. `uuid_j` keyed by span; include session or path for stability). For each video index `i`, set `video[i].clips = [ Clip(uuid=uuid_j, span=span_j, source_video=video[i].input_video) for j in range(N) ]`. So there are **M×N Clip instances** in total.
+
+A clip in this context refers to a group of clips that share time aligned boundaries. By sharing the same uuid, they can be grouped together in the ClipWriterStage.
+
+### Time Synchronization Validation
+
+Multi-camera tasks enforce strict time alignment through integer-based validation:
+
+**What**: All cameras must have:
+1. Identical total clip counts (`num_total_clips`)
+2. Identical processed clip counts (`len(clips) + len(filtered_clips)`)
+3. Processed clips ≤ total clips (sanity check)
+4. Identical spans for clips at the same index (both `clips` and `filtered_clips`)
+
+**When**: Multi-camera stages must explicitly call `task.assert_time_alignment()` before returning from `process_data()`.
+
+**How**: The `assert_time_alignment()` method performs four validations:
+1. Validates all `video[i].num_total_clips` are equal
+2. Validates all `len(video[i].clips) + len(video[i].filtered_clips)` are equal
+3. Validates processed ≤ total for each video
+4. Validates `video[i].clips[j].span` are identical across all videos for each clip index `j` (same for filtered clips)
+
+**Error handling**: Raises `ValueError` with specific messages for each validation failure:
+- Different total clips: `"Multi-cam videos have different total clip counts: {counts}..."`
+- Different processed clips: `"Multi-cam videos have processed different numbers of clips: {counts}..."`
+- Exceeds total: `"Video {i} has processed {processed} clips but only has {total} total clips..."`
+- Misaligned clip spans: `"Multi-cam clips at index {j} have misaligned spans: {spans}..."`
+- Misaligned filtered spans: `"Multi-cam filtered clips at index {j} have misaligned spans: {spans}..."`
+
+**Rationale**: Time-aligned clips require synchronized processing across all cameras. Since all cameras in a multi-cam task process the same time spans together, they must have the same total clips, process the same number of clips at each stage, and the clips at the same index must represent the exact same time span. Integer comparison and span equality checks ensure precise alignment without floating-point tolerance issues.
+
+**Processing fraction**: The `SplitPipeTask.fraction` property sums all processed and filtered clips across all videos, divided by total clips. This provides an overall progress metric but does not validate alignment—stages must call `assert_time_alignment()` explicitly.
+
+## 2. Stages with Multi-Cam Support
+
+Not all stages will receive multi-cam support. Some stages, like VllmCaptionStage. This can be revisited in the future.
+
+**Important**: All multi-cam stages must call `task.assert_time_alignment()` at the end of their `process_data()` method to validate that cameras remain synchronized.
+
+| Stage | Multicam behavior |
+| ------- | ------------------- |
+| VideoDownloader | **Updated for multi-cam** — iterate over `task.videos`, download each. |
+| RemuxStage | **Updated for multi-cam** — iterate over `task.videos`, remux each. |
+| FixedStrideExtractorStage | **Updated for multi-cam** — aligned spans, per-cell Clip creation (M×N), max(start)/min(end). Multicam only uses this path. |
+| VideoFrameExtractionStage | **Updated for multi-cam** — when run in a multi-cam context, extract frames for **all** `task.videos` (not only `task.video`). Note: multi-cam currently only uses fixed-stride, so this stage is not in the multi-cam path today; the update ensures correctness if that changes. |
+| ClipTranscodingStage | **Updated for multi-cam** — transcode each `videos[i]` for each span `j`, set `videos[i].clips[j].encoded_data`. |
+| ClipWriterStage | **Updated for multi-cam** — write per clip index `j`: `clips/<uuid_j>/<camera_name_i>.mp4` from `videos[i].clips[j]`; one metadata JSON per logical clip. |
+
+All filtering, captioning, embedding, preview, and T5 stages stay primary-camera-only (use only `task.video` = primary at slot 0).
+
+## 3. Non-stages with Multi-Cam Support
+
+### 1. Task creation
+
+Before the pipeline starts, a list of tasks are created to send to the pipeline. This will need to be updated to handle the session prefix path and extract sessions and related videos into tasks.
+
+### 2. Summary writing
+
+Because a clip now refers to a group of clips, or a multi-cam clip, summary writing will need to be updated to reflect session processed, and video hours based on groups of cameras, and not sum across all sessions and videos.
+
+### 3. Pipeline options
+
+New command line options will need to be added to the pipeline to enable multi-cam processing.
+
+## Implementation Plan
+
+Todo list of merge requests:
+
+✅ Update data model.
+⏳ Task creation multi-cam support
+⏳ VideoDownloader multi-cam support
+⏳ FixedStrideExtractorStage multi-cam support
+⏳ VideoFrameExtractionStage multi-cam support
+⏳ ClipTranscodingStage multi-cam support
+⏳ ClipWriterStage multi-cam support
+⏳ Summary writer multi-cam support
+⏳ Pipeline options
+
+Current single-cam splitting pipeline will continue to function as expected during this development cycle.

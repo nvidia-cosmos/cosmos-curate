@@ -149,3 +149,36 @@ def sample_filtering_task(sample_clip_data: bytes) -> SplitPipeTask:
         video=video,
         stage_perf={},
     )
+
+
+@pytest.fixture
+def sample_multicam_task(sample_video_data: bytes) -> SplitPipeTask:
+    """Fixture to create a sample multi-camera pipeline task for testing.
+
+    This fixture creates a SplitPipeTask with multiple videos representing different camera angles.
+    Each video has extracted metadata. This is suitable for testing multi-camera pipeline features.
+
+    Args:
+        sample_video_data: The video file content (used for both cameras)
+
+    Returns:
+        SplitPipeTask: Multi-camera task with multiple videos for testing
+
+    """
+    # Create two videos representing different camera angles
+    video1 = Video(
+        input_video=pathlib.Path("camera_1.mp4"),
+        encoded_data=sample_video_data,
+    )
+    video1.populate_metadata()
+
+    video2 = Video(
+        input_video=pathlib.Path("camera_2.mp4"),
+        encoded_data=sample_video_data,
+    )
+    video2.populate_metadata()
+
+    return SplitPipeTask(
+        videos=[video1, video2],
+        stage_perf={},
+    )

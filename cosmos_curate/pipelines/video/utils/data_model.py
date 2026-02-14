@@ -478,41 +478,227 @@ class Video:
         return total_size
 
 
+def check_clip_time_alignment(clips_per_video: list[list[Clip]]) -> list[int]:
+    """Check if clips at the same index have identical spans across all videos.
+
+    Arguments:
+        clips_per_video: List of clip lists, one per video. All lists must have the same length.
+
+    Returns:
+        List of clip indices where spans are misaligned. Empty list if all aligned.
+
+    Raises:
+        ValueError: If videos have different numbers of clips.
+
+    """
+    if not clips_per_video:
+        return []
+
+    # All videos must have the same number of clips to check alignment
+    clip_counts = [len(clips) for clips in clips_per_video]
+    if not all(count == clip_counts[0] for count in clip_counts):
+        msg = (
+            f"Cannot check time alignment: videos have different clip counts {clip_counts}. "
+            f"All videos must have the same number of clips."
+        )
+        raise ValueError(msg)
+
+    if clip_counts[0] == 0:
+        return []
+
+    misaligned_indices = []
+    num_clips = len(clips_per_video[0])
+
+    for clip_idx in range(num_clips):
+        spans = [clips[clip_idx].span for clips in clips_per_video]
+        if not all(s == spans[0] for s in spans):
+            misaligned_indices.append(clip_idx)
+
+    return misaligned_indices
+
+
+def assert_video_clip_alignment(videos: list[Video]) -> None:
+    """Validate that all videos have synchronized clips.
+
+    Validates time alignment across multiple videos by checking:
+    1. All videos have the same total number of clips
+    2. All videos have processed the same number of clips
+    3. Processed clips do not exceed total clips
+    4. Clips at the same index have identical time spans across all videos
+
+    Arguments:
+        videos: List of Video instances to validate.
+
+    Raises:
+        ValueError: If videos have misaligned processing or invalid state.
+
+    """
+    if not videos:
+        return
+
+    # Check 1: All videos should have the same total number of clips
+    total_clips_per_video = [v.num_total_clips for v in videos]
+    if not all(t == total_clips_per_video[0] for t in total_clips_per_video):
+        msg = (
+            f"Multi-cam videos have different total clip counts: {total_clips_per_video}. "
+            f"All cameras should have the same number of clips due to time alignment."
+        )
+        raise ValueError(msg)
+
+    # Check 2: All videos should have processed the same number of clips
+    processed_per_video = [len(v.clips) + len(v.filtered_clips) for v in videos]
+    if not all(p == processed_per_video[0] for p in processed_per_video):
+        msg = (
+            f"Multi-cam videos have processed different numbers of clips: {processed_per_video}. "
+            f"All cameras should process clips together to maintain time alignment."
+        )
+        raise ValueError(msg)
+
+    # Check 3: Processed should not exceed total
+    for i, (processed, total) in enumerate(zip(processed_per_video, total_clips_per_video, strict=True)):
+        if processed > total:
+            msg = (
+                f"Video {i} has processed {processed} clips but only has {total} total clips. "
+                f"This indicates an invalid state."
+            )
+            raise ValueError(msg)
+
+    # Check 4: All clips at the same index must have identical spans (time alignment)
+    # Check processed clips
+    clips_per_video = [v.clips for v in videos]
+    misaligned_clip_indices = check_clip_time_alignment(clips_per_video)
+    if misaligned_clip_indices:
+        # Get spans for the first misaligned index to show in error
+        idx = misaligned_clip_indices[0]
+        spans = [v.clips[idx].span for v in videos]
+        msg = (
+            f"Multi-cam clips at index {idx} have misaligned spans: {spans}. "
+            f"All cameras must process the same time spans. "
+            f"Misaligned indices: {misaligned_clip_indices}"
+        )
+        raise ValueError(msg)
+
+    # Check filtered clips
+    filtered_clips_per_video = [v.filtered_clips for v in videos]
+    misaligned_filtered_indices = check_clip_time_alignment(filtered_clips_per_video)
+    if misaligned_filtered_indices:
+        # Get spans for the first misaligned index to show in error
+        idx = misaligned_filtered_indices[0]
+        spans = [v.filtered_clips[idx].span for v in videos]
+        msg = (
+            f"Multi-cam filtered clips at index {idx} have misaligned spans: {spans}. "
+            f"All cameras must filter the same time spans. "
+            f"Misaligned indices: {misaligned_filtered_indices}"
+        )
+        raise ValueError(msg)
+
+
 @attrs.define
 class SplitPipeTask(PipelineTask):
-    """The data we want to pass between stages of split-pipeline."""
+    """The data we want to pass between stages of split-pipeline.
 
-    video: Video
+    This task supports both single-camera and multi-camera video processing:
+    - Single-cam: Initialize with `video=` parameter, stored internally as `videos=[video]`
+    - Multi-cam: Initialize with `videos=` parameter (list of multiple videos)
+
+    The `video` property provides single-camera support by returning `videos[0]` (the primary camera).
+    """
+
+    videos: list[Video] = attrs.field(factory=list)
     stage_perf: dict[str, StagePerfStats] = attrs.Factory(dict)
+    # Hidden field for single-camera support
+    _init_video: Video | None = attrs.field(default=None, init=True, alias="video")
+
+    def __attrs_post_init__(self) -> None:
+        """Handle backward-compatible initialization after attrs initialization.
+
+        This allows initialization with either `video=` or `videos=` parameter.
+        """
+        # If single video was provided via video= parameter, convert to list
+        if self._init_video is not None:
+            if self.videos:
+                msg = "Cannot specify both 'video' and 'videos' parameters"
+                raise ValueError(msg)
+            object.__setattr__(self, "videos", [self._init_video])
+
+        # Validate that we have at least one video
+        if not self.videos:
+            msg = "Must specify either 'video' or 'videos' parameter"
+            raise ValueError(msg)
+
+    @property
+    def video(self) -> Video:
+        """Get the primary video (first video in the list).
+
+        This property provides single camera compatibility for code that accesses `task.video`.
+        For multi-camera tasks, this returns the primary camera at index 0.
+
+        Returns:
+            The primary video.
+
+        Raises:
+            IndexError: If videos list is empty.
+
+        """
+        return self.videos[0]
 
     @property
     def fraction(self) -> float:
         """Calculate fraction of processed video in the task.
 
+        Sums all processed and filtered clips across all videos and divides by total clips.
+
         Returns:
-            Fraction of processed video.
+            Fraction of processed video (0.0 to 1.0).
 
         """
-        return self.video.fraction
+        total_processed = sum(len(v.clips) + len(v.filtered_clips) for v in self.videos)
+        total_clips = sum(v.num_total_clips for v in self.videos)
+        if total_clips == 0:
+            return 1.0
+        return total_processed / total_clips
+
+    def assert_time_alignment(self) -> None:
+        """Validate that all cameras have synchronized processing.
+
+        Multi-camera stages should call this method at the end of process_data()
+        to ensure clips remain time-aligned across all cameras.
+
+        Validates:
+            1. All videos have the same total number of clips
+            2. All videos have processed the same number of clips
+            3. Processed clips do not exceed total clips
+            4. Clips at the same index have identical spans across all videos
+
+        Raises:
+            ValueError: If cameras have misaligned processing or invalid state.
+
+        """
+        assert_video_clip_alignment(self.videos)
 
     @property
     def weight(self) -> float:
         """Calculate weight of video in the task.
 
+        For single-camera tasks, returns the primary video's weight.
+        For multi-camera tasks, sums weights across all videos since all must be processed.
+
         Returns:
-            Weight of video.
+            Weight of video(s).
 
         """
-        return self.video.weight
+        return sum(v.weight for v in self.videos)
 
     def get_major_size(self) -> int:
-        """Calculate memory size of video in the task.
+        """Calculate memory size of video(s) in the task.
+
+        Sums the memory size across all videos in the task.
 
         Returns:
             Total size in bytes.
 
         """
-        return self.video.get_major_size()
+        return sum(v.get_major_size() for v in self.videos)
 
 
 @attrs.define
@@ -571,6 +757,23 @@ class ShardPipeTask(PipelineTask):
         for sample in self.samples:
             total_size += sample.get_major_size()
         return total_size
+
+
+def assert_time_alignment(tasks: list[SplitPipeTask]) -> None:
+    """Validate time alignment for a batch of multi-camera tasks.
+
+    Convenience function for stages to validate all tasks in one call.
+    Calls task.assert_time_alignment() on each task.
+
+    Arguments:
+        tasks: List of SplitPipeTask instances to validate.
+
+    Raises:
+        ValueError: If any task has misaligned cameras.
+
+    """
+    for task in tasks:
+        task.assert_time_alignment()
 
 
 def get_video_from_task(task: PipelineTask) -> Video:
