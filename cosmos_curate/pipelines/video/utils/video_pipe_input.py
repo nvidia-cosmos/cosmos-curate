@@ -17,14 +17,17 @@
 
 import json
 import pathlib
+from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 
 import pandas as pd
 from loguru import logger
 from six import BytesIO
 
+from cosmos_curate.core.utils.misc.uuid_utils import is_uuid
 from cosmos_curate.core.utils.storage.storage_client import StorageClient, StoragePrefix
 from cosmos_curate.core.utils.storage.storage_utils import (
+    get_directories_relative,
     get_files_relative,
     get_full_path,
     get_storage_client,
@@ -33,7 +36,7 @@ from cosmos_curate.core.utils.storage.storage_utils import (
     read_bytes,
     read_json_file,
 )
-from cosmos_curate.pipelines.video.utils.data_model import ClipSample, Video
+from cosmos_curate.pipelines.video.utils.data_model import ClipSample, SplitPipeTask, Video
 
 
 def _check_output_path(output_path: str, client: StorageClient | None) -> None:
@@ -104,7 +107,7 @@ def _read_video_list_json(
     return input_videos
 
 
-def extract_split_tasks(  # noqa: PLR0913
+def extract_single_cam_split_tasks(  # noqa: PLR0913
     input_path: str,
     input_video_list_json_path: str | None,
     output_path: str,
@@ -171,6 +174,208 @@ def extract_split_tasks(  # noqa: PLR0913
         all_videos,
         len(processed_videos),
     )
+
+
+def _order_video_paths(
+    paths: list[str],
+    video_extensions: set[str],
+    primary_camera_keyword: str,
+) -> list[str]:
+    """Return video paths with primary (path containing keyword) first, rest sorted."""
+    video_paths = sorted(p for p in paths if any(p.endswith(ext) for ext in video_extensions))
+
+    # If no video files, return empty list (caller will handle)
+    if not video_paths:
+        return []
+
+    primary = [p for p in video_paths if primary_camera_keyword in p]
+
+    if len(primary) > 1:
+        msg = f"Multiple primary cameras found: {primary=}, need distinct primary camera to run multicam pipeline"
+        raise ValueError(msg)
+
+    if len(primary) == 0:
+        msg = (
+            f"No primary camera found with keyword {primary_camera_keyword}, "
+            "need distinct primary camera to run multicam pipeline"
+        )
+        raise ValueError(msg)
+
+    rest = [p for p in video_paths if p not in primary]
+    return primary + sorted(rest)
+
+
+def _multi_cam_session_to_split_task(  # noqa: PLR0913
+    session_name: str,
+    sessions_prefix: str,
+    client: StorageClient | None,
+    video_extensions: set[str],
+    primary_camera_keyword: str,
+    *,
+    verbose: bool = False,
+) -> SplitPipeTask | None:
+    """Build a SplitPipeTask for one multi-cam session, or None if the session has no video files."""
+    session_prefix = str(get_full_path(sessions_prefix, session_name))
+    session_files = get_files_relative(session_prefix, client)
+    video_paths = _order_video_paths(session_files, video_extensions, primary_camera_keyword)
+    if not video_paths:
+        if verbose:
+            logger.debug(f"Session {session_name} has no video files, skipping")
+        return None
+    videos = [Video(get_full_path(sessions_prefix, session_name, p)) for p in video_paths]
+    if verbose:
+        logger.debug(f"Session {session_name}: {len(videos)} videos (primary first)")
+    return SplitPipeTask(videos=videos)
+
+
+def extract_multi_cam_split_tasks(  # noqa: PLR0913
+    sessions_prefix: str,
+    primary_camera_keyword: str,
+    video_extensions: set[str],
+    input_s3_profile_name: str,
+    limit: int = 0,
+    *,
+    verbose: bool = False,
+) -> list[SplitPipeTask]:
+    """Extract one SplitPipeTask per multi-cam session from a sessions prefix.
+
+    Lists direct children of sessions_prefix that are valid UUIDs (session dirs),
+    discovers video files by extension under each session, orders cameras so the
+    primary (path containing primary_camera_keyword) is first, and returns one
+    task per session
+
+    Args:
+        sessions_prefix: Path (local or S3) under which each UUID-named subdir is a session.
+        primary_camera_keyword: String to identify primary camera; matching path is placed at slot 0.
+        video_extensions: Set of extensions (e.g. {".mp4", ".h264"}) to discover.
+        input_s3_profile_name: S3 profile for remote paths.
+        limit: Max number of sessions to return (0 = no limit).
+        verbose: Log discovered paths.
+
+    Returns:
+        List of SplitPipeTask, one per session, each with videos=[Video(...), ...], is_multi_cam=True.
+
+    """
+    client = get_storage_client(sessions_prefix, profile_name=input_s3_profile_name)
+    session_names = [name for name in get_directories_relative(sessions_prefix, client) if is_uuid(name)]
+
+    tasks: list[SplitPipeTask] = []
+    for session_name in sorted(session_names):
+        task = _multi_cam_session_to_split_task(
+            session_name,
+            sessions_prefix,
+            client,
+            video_extensions,
+            primary_camera_keyword,
+            verbose=verbose,
+        )
+        if task is not None:
+            tasks.append(task)
+        if limit > 0 and len(tasks) >= limit:
+            break
+
+    logger.info(f"Extracted {len(tasks)} session tasks from {sessions_prefix}")
+    return tasks
+
+
+def format_session_videos_tree(
+    tasks: list[SplitPipeTask],
+    input_prefix: str,
+    limit: int = 3,
+) -> str:
+    """Format a tree view of multi-cam session tasks organized by session id.
+
+    Returns a tree-formatted string with the input prefix as the root, with each session
+    task shown as a child node. Videos within each session are organized by subdirectories
+    (e.g., recorder directories).
+
+    This is useful for debugging and visualizing the input data.
+
+    Args:
+        tasks: List of SplitPipeTask instances to display.
+        input_prefix: Base path to display as root (e.g., "s3://bucket/path" or local path).
+        limit: Maximum number of tasks to display, set to 0 to display all tasks.
+
+    Returns:
+        A multi-line string containing the formatted tree view.
+
+    Example output:
+        s3://hyperion8/samples-trimmed/
+        ├── SplitPipeTask(0c99dbb9-646e-44b8-9583-2448310cd6a6)
+        │   ├── recorder-00/
+        │   │   ├── camera_front_tele_30fov.mp4
+        │   │   └── camera_front_wide_120fov.mp4
+        │   └── recorder-10/
+        │       ├── camera_front_fisheye_200fov.mp4
+        │       └── camera_rear_left_70fov.mp4
+        └── SplitPipeTask(a778bacd-6d5e-4401-b060-f4281c28d4c6)
+            ├── recorder-00/
+            │   └── camera_front_wide_120fov.mp4
+            └── recorder-10/
+                ├── camera_rear_fisheye_200fov.mp4
+                └── camera_rear_left_70fov.mp4
+
+    """
+    limit = len(tasks) if limit == 0 else limit
+    lines = []
+
+    # Add root path
+    lines.append("")
+    lines.append(f"{input_prefix}/")
+
+    # Process each task
+    for task_idx, task in enumerate(tasks[:limit]):
+        is_last_task = task_idx == len(tasks[:limit]) - 1
+        task_prefix = "└── " if is_last_task else "├── "
+        subtree_prefix = "    " if is_last_task else "│   "
+
+        # Strip base path and clean up path separators
+        paths = [str(video.input_video).replace(str(input_prefix), "").lstrip("/\\") for video in task.videos]
+
+        # Extract session ID from paths (each path is session_id/{path parts...})
+        session_ids = [path.split("/")[0] for path in paths]
+        paths = [path.replace(session_id + "/", "") for path, session_id in zip(paths, session_ids, strict=True)]
+        session_ids_set = set(session_ids)
+
+        if len(session_ids_set) != 1:
+            msg = f"Multiple session ids found in task: {session_ids_set}"
+            raise ValueError(msg)
+
+        session_id = session_ids_set.pop()
+        lines.append(f"{task_prefix}SplitPipeTask({session_id})")
+
+        # Organize paths by directory for tree display
+        dirs_to_files: dict[str, list[str]] = defaultdict(list)
+        for path in paths:
+            if "/" in path:
+                dir_name, file_name = path.rsplit("/", 1)
+                dirs_to_files[dir_name].append(file_name)
+            else:
+                dirs_to_files[""].append(path)
+
+        # Build tree format for this task's videos
+        sorted_dirs = sorted(dirs_to_files.keys())
+        for i, dir_name in enumerate(sorted_dirs):
+            is_last_dir = i == len(sorted_dirs) - 1
+            dir_prefix = "└── " if is_last_dir else "├── "
+            file_prefix = "    " if is_last_dir else "│   "
+
+            if dir_name:
+                lines.append(f"{subtree_prefix}{dir_prefix}{dir_name}/")
+                files = sorted(dirs_to_files[dir_name])
+                for j, file_name in enumerate(files):
+                    is_last_file = j == len(files) - 1
+                    file_symbol = "└── " if is_last_file else "├── "
+                    lines.append(f"{subtree_prefix}{file_prefix}{file_symbol}{file_name}")
+            else:
+                # Files in root
+                files = sorted(dirs_to_files[dir_name])
+                for j, file_name in enumerate(files):
+                    is_last_file = j == len(files) - 1 and is_last_dir
+                    file_symbol = "└── " if is_last_file else "├── "
+                    lines.append(f"{subtree_prefix}{file_symbol}{file_name}")
+
+    return "\n".join(lines)
 
 
 def _get_clip_metadata_paths_from_summary(

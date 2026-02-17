@@ -44,6 +44,7 @@ A clip in this context refers to a group of clips that share time aligned bounda
 Multi-camera tasks enforce strict time alignment through integer-based validation:
 
 **What**: All cameras must have:
+
 1. Identical total clip counts (`num_total_clips`)
 2. Identical processed clip counts (`len(clips) + len(filtered_clips)`)
 3. Processed clips ≤ total clips (sanity check)
@@ -52,12 +53,14 @@ Multi-camera tasks enforce strict time alignment through integer-based validatio
 **When**: Multi-camera stages must explicitly call `task.assert_time_alignment()` before returning from `process_data()`.
 
 **How**: The `assert_time_alignment()` method performs four validations:
+
 1. Validates all `video[i].num_total_clips` are equal
 2. Validates all `len(video[i].clips) + len(video[i].filtered_clips)` are equal
 3. Validates processed ≤ total for each video
 4. Validates `video[i].clips[j].span` are identical across all videos for each clip index `j` (same for filtered clips)
 
 **Error handling**: Raises `ValueError` with specific messages for each validation failure:
+
 - Different total clips: `"Multi-cam videos have different total clip counts: {counts}..."`
 - Different processed clips: `"Multi-cam videos have processed different numbers of clips: {counts}..."`
 - Exceeds total: `"Video {i} has processed {processed} clips but only has {total} total clips..."`
@@ -95,6 +98,10 @@ Before the pipeline starts, a list of tasks are created to send to the pipeline.
 
 Because a clip now refers to a group of clips, or a multi-cam clip, summary writing will need to be updated to reflect session processed, and video hours based on groups of cameras, and not sum across all sessions and videos.
 
+### 3. Skip processed multi-cam sessions
+
+After full pipeline support for multi-cam has been added, it becomes possible to add support for skipping processed multi-cam sessions.
+
 ### 3. Pipeline options
 
 New command line options will need to be added to the pipeline to enable multi-cam processing.
@@ -104,13 +111,13 @@ New command line options will need to be added to the pipeline to enable multi-c
 Todo list of merge requests:
 
 ✅ Update data model.
-⏳ Task creation multi-cam support
+✅ Task creation multi-cam support
 ⏳ VideoDownloader multi-cam support
 ⏳ FixedStrideExtractorStage multi-cam support
 ⏳ VideoFrameExtractionStage multi-cam support
 ⏳ ClipTranscodingStage multi-cam support
 ⏳ ClipWriterStage multi-cam support
 ⏳ Summary writer multi-cam support
-⏳ Pipeline options
+⏳ Update task creation to skip processed multi-cam sessions
 
 Current single-cam splitting pipeline will continue to function as expected during this development cycle.

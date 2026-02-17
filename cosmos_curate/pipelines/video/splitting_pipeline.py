@@ -104,7 +104,9 @@ from cosmos_curate.pipelines.video.read_write.summary_writers import (
 from cosmos_curate.pipelines.video.utils.data_model import SplitPipeTask, VllmConfig, VllmSamplingConfig, WindowConfig
 from cosmos_curate.pipelines.video.utils.decoder_utils import FrameExtractionPolicy
 from cosmos_curate.pipelines.video.utils.video_pipe_input import (
-    extract_split_tasks,
+    extract_multi_cam_split_tasks,
+    extract_single_cam_split_tasks,
+    format_session_videos_tree,
 )
 
 QWEN2_CAPTION_ALGOS = {"qwen"}
@@ -112,6 +114,7 @@ QWEN3_CAPTION_ALGOS = {"qwen3_vl_30b", "qwen3_vl_30b_fp8", "qwen3_vl_235b", "qwe
 COSMOS_REASON_ALGOS = {"cosmos_r1", "cosmos_r2"}
 VLLM_CAPTION_ALGOS = COSMOS_REASON_ALGOS | {"nemotron", "phi4", "qwen"} | QWEN3_CAPTION_ALGOS
 ALL_CAPTION_ALGOS = VLLM_CAPTION_ALGOS | {"gemini"}
+MULTICAM_VIDEO_EXTENSIONS: set[str] = {".mp4"}
 
 
 def build_input_data(
@@ -139,25 +142,49 @@ def build_input_data(
         error_msg = "Do not make input and output paths nested"
         raise ValueError(error_msg)
 
+    if args.multi_cam and args.splitting_algorithm != "fixed-stride":
+        error_msg = "Multi-cam only supports fixed-stride splitting; set --splitting-algorithm fixed-stride"
+        raise ValueError(error_msg)
+
     # extract input data
-    input_videos, input_videos_relative, num_processed = extract_split_tasks(
-        input_path=args.input_video_path,
-        input_video_list_json_path=args.input_video_list_json_path,
-        output_path=args.output_clip_path,
-        output_video_path=ClipWriterStage.get_output_path_processed_videos(args.output_clip_path),
-        output_clip_chunk_path=ClipWriterStage.get_output_path_processed_clip_chunks(args.output_clip_path),
-        input_s3_profile_name=args.input_s3_profile_name,
-        input_video_list_s3_profile_name=args.input_video_list_s3_profile_name,
-        output_s3_profile_name=args.output_s3_profile_name,
-        limit=args.limit,
-        verbose=args.verbose,
-    )
+    if args.multi_cam:
+        input_tasks = extract_multi_cam_split_tasks(
+            sessions_prefix=args.input_video_path,
+            primary_camera_keyword=args.primary_camera_keyword,
+            video_extensions=MULTICAM_VIDEO_EXTENSIONS,
+            input_s3_profile_name=args.input_s3_profile_name,
+            limit=args.limit,
+            verbose=args.verbose,
+        )
 
-    logger.info(f"About to process {len(input_videos)} raw videos ...")
-    if args.verbose:
-        logger.debug("\n".join(str(x.input_video) for x in input_videos))
+        if args.verbose:
+            tree_output = format_session_videos_tree(input_tasks, args.input_video_path, limit=3)
+            logger.info(tree_output)
 
-    input_tasks = [SplitPipeTask(videos=[video]) for video in input_videos]
+        # TODO(jbowles): input_videos_relative is used for summary writing, which needs to be
+        # updated to support multicam. See docs/curator/MULTICAM_DESIGN.md for the plan for
+        # this update.
+        input_videos_relative: list[str] = []
+        num_processed = 0
+        logger.info(f"About to process {len(input_tasks)} multi-cam session tasks ...")
+    else:
+        input_videos, input_videos_relative, num_processed = extract_single_cam_split_tasks(
+            input_path=args.input_video_path,
+            input_video_list_json_path=args.input_video_list_json_path,
+            output_path=args.output_clip_path,
+            output_video_path=ClipWriterStage.get_output_path_processed_videos(args.output_clip_path),
+            output_clip_chunk_path=ClipWriterStage.get_output_path_processed_clip_chunks(args.output_clip_path),
+            input_s3_profile_name=args.input_s3_profile_name,
+            input_video_list_s3_profile_name=args.input_video_list_s3_profile_name,
+            output_s3_profile_name=args.output_s3_profile_name,
+            limit=args.limit,
+            verbose=args.verbose,
+        )
+        input_tasks = [SplitPipeTask(videos=[video]) for video in input_videos]
+
+        logger.info(f"About to process {len(input_videos)} raw videos ...")
+        if args.verbose:
+            logger.debug("\n".join(str(x.input_video) for x in input_videos))
 
     return input_tasks, input_videos_relative, num_processed
 
@@ -203,9 +230,9 @@ def write_summary(
 
     total_video_length = 0.0
     for task in output_tasks:
-        video = task.video
-        if video.clip_chunk_index == 0:
-            total_video_length += video.metadata.duration / 3600 if video.metadata.duration else 0
+        for video in task.videos:
+            if video.clip_chunk_index == 0:
+                total_video_length += video.metadata.duration / 3600 if video.metadata.duration else 0
 
     return total_video_length
 
@@ -1501,6 +1528,18 @@ def _setup_parser(parser: argparse.ArgumentParser) -> None:  # noqa: PLR0915
             "Save video frames passed to vLLM as PNGs for debugging. "
             "Frames will be saved to {output-clip-path}/frames/{clip_uuid}/"
         ),
+    )
+    parser.add_argument(
+        "--multi-cam",
+        action="store_true",
+        default=False,
+        help="Use session-based multi-camera input; primary camera at slot 0.",
+    )
+    parser.add_argument(
+        "--primary-camera-keyword",
+        type=str,
+        default="front",
+        help="String to identify the primary camera in session discovery; the matching video is placed at slot 0.",
     )
     # add common args applicable to all pipelines
     add_common_args(parser)
