@@ -170,7 +170,7 @@ def extract_single_cam_split_tasks(  # noqa: PLR0913
         raw_videos = raw_videos[:limit]
     # prepare the final list of videos
     return (
-        [Video(get_full_path(input_path, x)) for x in raw_videos],
+        [Video(get_full_path(input_path, x), relative_path=x) for x in raw_videos],
         all_videos,
         len(processed_videos),
     )
@@ -206,7 +206,7 @@ def _order_video_paths(
 
 
 def _multi_cam_session_to_split_task(  # noqa: PLR0913
-    session_name: str,
+    session_id: str,
     sessions_prefix: str,
     client: StorageClient | None,
     video_extensions: set[str],
@@ -215,17 +215,17 @@ def _multi_cam_session_to_split_task(  # noqa: PLR0913
     verbose: bool = False,
 ) -> SplitPipeTask | None:
     """Build a SplitPipeTask for one multi-cam session, or None if the session has no video files."""
-    session_prefix = str(get_full_path(sessions_prefix, session_name))
+    session_prefix = str(get_full_path(sessions_prefix, session_id))
     session_files = get_files_relative(session_prefix, client)
     video_paths = _order_video_paths(session_files, video_extensions, primary_camera_keyword)
     if not video_paths:
         if verbose:
-            logger.debug(f"Session {session_name} has no video files, skipping")
+            logger.debug(f"Session {session_id} has no video files, skipping")
         return None
-    videos = [Video(get_full_path(sessions_prefix, session_name, p)) for p in video_paths]
+    videos = [Video(get_full_path(sessions_prefix, session_id, p), relative_path=p) for p in video_paths]
     if verbose:
-        logger.debug(f"Session {session_name}: {len(videos)} videos (primary first)")
-    return SplitPipeTask(videos=videos)
+        logger.debug(f"Session {session_id}: {len(videos)} videos (primary first)")
+    return SplitPipeTask(videos=videos, session_id=session_id)
 
 
 def extract_multi_cam_split_tasks(  # noqa: PLR0913
@@ -257,12 +257,12 @@ def extract_multi_cam_split_tasks(  # noqa: PLR0913
 
     """
     client = get_storage_client(sessions_prefix, profile_name=input_s3_profile_name)
-    session_names = [name for name in get_directories_relative(sessions_prefix, client) if is_uuid(name)]
+    session_ids = [name for name in get_directories_relative(sessions_prefix, client) if is_uuid(name)]
 
     tasks: list[SplitPipeTask] = []
-    for session_name in sorted(session_names):
+    for session_id in sorted(session_ids):
         task = _multi_cam_session_to_split_task(
-            session_name,
+            session_id,
             sessions_prefix,
             client,
             video_extensions,

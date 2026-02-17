@@ -332,7 +332,7 @@ def test_fixed_stride_extraction_no_clips_short_video(sequential_runner: RunnerI
         },
     )()
 
-    task = SplitPipeTask(video=video, stage_perf={})
+    task = SplitPipeTask(session_id="test-session", video=video, stage_perf={})
 
     stage = FixedStrideExtractorStage(
         clip_len_s=5.0,
@@ -354,7 +354,7 @@ def test_error_handling_no_encoded_data(sequential_runner: RunnerInterface) -> N
         input_video=pathlib.Path("no_bytes_video.mp4"),
         encoded_data=None,  # No encoded_data
     )
-    task = SplitPipeTask(video=video, stage_perf={})
+    task = SplitPipeTask(session_id="test-session", video=video, stage_perf={})
 
     stage = FixedStrideExtractorStage(log_stats=True)
 
@@ -371,7 +371,7 @@ def test_error_handling_incomplete_metadata(sequential_runner: RunnerInterface) 
     )
 
     # Don't extract metadata, leaving it incomplete
-    task = SplitPipeTask(video=video, stage_perf={})
+    task = SplitPipeTask(session_id="test-session", video=video, stage_perf={})
 
     stage = FixedStrideExtractorStage(log_stats=True)
 

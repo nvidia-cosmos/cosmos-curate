@@ -209,7 +209,7 @@ def _stage_with_main_clip(tmp_path: Path) -> tuple[ClipWriterStage, SplitPipeTas
     clip.intern_video_2_embedding = np.array([0.1, 0.2], dtype=np.float32)
 
     video = _build_video(video_path, clip)
-    task = SplitPipeTask(video=video)
+    task = SplitPipeTask(session_id="test-session", video=video)
     return stage, task, clip, main_window, output_dir
 
 
@@ -333,7 +333,7 @@ def test_chunked_metadata_writes_group_jsonl(tmp_path: Path) -> None:
     )
 
     video = _build_video(video_path, clip)
-    task = SplitPipeTask(video=video)
+    task = SplitPipeTask(session_id="test-session", video=video)
 
     stage.process_data([task])
     consolidate_lance_fragments(str(output_dir), "default")
@@ -387,7 +387,7 @@ def test_chunked_metadata_writes_lance_dataset(tmp_path: Path) -> None:
     )
 
     video = _build_video(video_path, clip)
-    task = SplitPipeTask(video=video)
+    task = SplitPipeTask(session_id="test-session", video=video)
 
     stage.process_data([task])
     consolidate_lance_fragments(str(output_dir), "default")
@@ -430,7 +430,7 @@ def test_lance_consolidation_is_idempotent(tmp_path: Path) -> None:
         windows=[window1],
     )
     video1 = _build_video(video_path, clip1, clip_chunk_index=0)
-    task1 = SplitPipeTask(video=video1)
+    task1 = SplitPipeTask(session_id="test-session", video=video1)
     stage.process_data([task1])
     consolidate_lance_fragments(str(output_dir), "default")
 
@@ -454,7 +454,7 @@ def test_lance_consolidation_is_idempotent(tmp_path: Path) -> None:
         windows=[window2],
     )
     video2 = _build_video(video_path, clip2, clip_chunk_index=1)
-    task2 = SplitPipeTask(video=video2)
+    task2 = SplitPipeTask(session_id="test-session", video=video2)
     stage.process_data([task2])
     consolidate_lance_fragments(str(output_dir), "default")
 
@@ -532,7 +532,7 @@ def test_per_window_dataset_assets_written(tmp_path: Path) -> None:
     )
 
     video = _build_video(video_path, clip)
-    task = SplitPipeTask(video=video)
+    task = SplitPipeTask(session_id="test-session", video=video)
 
     stage.process_data([task])
 
@@ -589,7 +589,7 @@ def test_video_errors_written_to_error_path(tmp_path: Path) -> None:
         clip_chunk_index=0,
         errors=errors,
     )
-    task = SplitPipeTask(video=video)
+    task = SplitPipeTask(session_id="test-session", video=video)
 
     stage.process_data([task])
 

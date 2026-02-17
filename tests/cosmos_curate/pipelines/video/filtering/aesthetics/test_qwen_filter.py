@@ -50,6 +50,7 @@ def sample_filtering_task(sample_video_data: bytes) -> SplitPipeTask:
         clips=clips,
     )
     return SplitPipeTask(
+        session_id="test-session",
         video=video,
     )
 

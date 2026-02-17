@@ -162,8 +162,10 @@ class ClipTranscodingStage(CuratorStage):
             )
             for idx in range(len(clip_chunks)):
                 subtask = SplitPipeTask(
+                    session_id=task.session_id,
                     video=Video(
                         input_video=task.video.input_video,
+                        relative_path=task.video.relative_path,
                         metadata=task.video.metadata,
                         clips=clip_chunks[idx],
                         num_total_clips=len(task.video.clips),

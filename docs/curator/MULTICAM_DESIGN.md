@@ -16,7 +16,7 @@
 
 ---
 
-## 1. Data Model: Multi-Cam in SplitPipeTask
+## Data Model: Multi-Cam in SplitPipeTask and Video
 
 **File**: [cosmos_curate/pipelines/video/utils/data_model.py](cosmos_curate/pipelines/video/utils/data_model.py)
 
@@ -25,8 +25,50 @@
   - Add `@property def video(self) -> Video: return self.videos[0]` so all existing `task.video` and `get_video_from_task(task)` usage continues to work. `self.videos[0]` is considered the `primary` video / camera.
 - Initializer:  `SplitPipeTask(video)` (single-cam) or `SplitPipeTask(videos=[...])`; when building from session-based extraction with `--multi-cam`. Normalize internally to always store `videos` (e.g. if only `video` is passed, set `videos = [video]`).
 - `primary` video / camera. This is used in stages that only operate on one camera, like captioning stages. The `primary` camera will placed into `self.videos[0]`. It left to the pipeline's task building functions to set the primary camera correctly.
+- `session_id`. This is a unique identifier for the "session". For single-cam, this is the path to the video. For multi-cam, this is the name of the subdirectory that contains session. This is not the full path to the session, just the name of the subdirectory. This is used in later stages to group the clips by a `session_id`
 
-No change to `Video` or `Clip` types. For multi-cam, alignment is enforced by creating **one Clip per (video, clip index)** so that all clips in the same column share the same `uuid` and `span`
+A `relative_path` attribute will be added to a video. This is used to preserve the directory structure of the clip that is being split in the output clips.
+
+For example, if the input session has the structure:
+
+```text
+0c99dbb9-646e-44b8-9583-2448310cd6a6
+├── subdir-00/
+│   ├── camera_01.mp4
+│   └── camera_02.mp4
+└── subdir-10/
+    ├── camera_03.mp4
+    └── camera_04.mp4
+```
+
+The clips will retain this structure. Let's say this session is split into three clips:
+
+```text
+clips
+├── clid-uuid0
+│   ├── subdir-00/
+│   │   ├── camera_01.mp4
+│   │   └── camera_02.mp4
+│   └── subdir-10/
+│       ├── camera_01.mp4
+│       └── camera_02.mp4
+├── clid-uuid1
+│   ├── subdir-00/
+│   │   ├── camera_01.mp4
+│   │   └── camera_02.mp4
+│   └── subdir-10/
+│       ├── camera_01.mp4
+│       └── camera_02.mp4
+└── clid-uuid2
+    ├── subdir-00/
+    │   ├── camera_01.mp4
+    │   └── camera_02.mp4
+    └── subdir-10/
+        ├── camera_01.mp4
+        └── camera_02.mp4
+```
+
+No change to the `Clip` type. For multi-cam, alignment is enforced by creating **one Clip per (video, clip index)** so that all clips in the same column share the same `uuid` and `span`
 
 | video | clip 0 | clip 1 | ... | clip N-1   |
 |-------|--------|--------|-----|------------|

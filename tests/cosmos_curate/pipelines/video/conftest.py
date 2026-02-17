@@ -79,6 +79,7 @@ def sample_splitting_task(sample_video_data: bytes) -> SplitPipeTask:
     video.populate_metadata()
 
     return SplitPipeTask(
+        session_id="test-session",
         video=video,
         stage_perf={},
     )
@@ -146,6 +147,7 @@ def sample_filtering_task(sample_clip_data: bytes) -> SplitPipeTask:
     )
 
     return SplitPipeTask(
+        session_id="test-session",
         video=video,
         stage_perf={},
     )
@@ -179,6 +181,7 @@ def sample_multicam_task(sample_video_data: bytes) -> SplitPipeTask:
     video2.populate_metadata()
 
     return SplitPipeTask(
+        session_id="test-session",
         videos=[video1, video2],
         stage_perf={},
     )

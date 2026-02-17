@@ -18,6 +18,7 @@ import pathlib
 import sys
 import uuid
 from collections import deque
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import attrs
@@ -333,7 +334,11 @@ class TestSplitPipeTask:
             for i in range(num_videos)
         ]
 
-        task = SplitPipeTask(video=videos[0]) if use_video_param else SplitPipeTask(videos=videos)
+        task = (
+            SplitPipeTask(session_id="test-session", video=videos[0])
+            if use_video_param
+            else SplitPipeTask(session_id="test-session", videos=videos)
+        )
 
         assert len(task.videos) == num_videos
         assert task.videos[0] is videos[0]
@@ -359,7 +364,11 @@ class TestSplitPipeTask:
             for i in range(num_videos)
         ]
 
-        task = SplitPipeTask(video=videos[0]) if num_videos == 1 else SplitPipeTask(videos=videos)
+        task = (
+            SplitPipeTask(session_id="test-session", video=videos[0])
+            if num_videos == 1
+            else SplitPipeTask(session_id="test-session", videos=videos)
+        )
 
         # Weight should be sum of all video weights
         expected_weight = videos[0].weight * expected_weight_multiplier
@@ -380,7 +389,11 @@ class TestSplitPipeTask:
             for i in range(num_videos)
         ]
 
-        task = SplitPipeTask(video=videos[0]) if num_videos == 1 else SplitPipeTask(videos=videos)
+        task = (
+            SplitPipeTask(session_id="test-session", video=videos[0])
+            if num_videos == 1
+            else SplitPipeTask(session_id="test-session", videos=videos)
+        )
 
         # Size should be sum of all video sizes
         expected_size = sum(v.get_major_size() for v in videos)
@@ -396,7 +409,7 @@ class TestSplitPipeTask:
             num_total_clips=10,
         )
 
-        task = SplitPipeTask(videos=[video1])
+        task = SplitPipeTask(session_id="test-session", videos=[video1])
 
         # Fraction should be calculated from all videos (just one in this case)
         # Same result: sum of clips / sum of total = video1.fraction
@@ -418,7 +431,7 @@ class TestSplitPipeTask:
             metadata=VideoMetadata(duration=100.0, size=1000),
         )
 
-        kwargs = {}
+        kwargs: dict[str, Any] = {"session_id": "test-session"}
         if video_kwarg is not None:
             kwargs["video"] = video
         if videos_kwarg is not None:
@@ -434,7 +447,7 @@ class TestSplitPipeTask:
             metadata=VideoMetadata(duration=100.0, size=1000),
         )
 
-        task = SplitPipeTask(video=video)
+        task = SplitPipeTask(session_id="test-session", video=video)
 
         # get_video_from_task should work with the property accessor
         retrieved_video = get_video_from_task(task)
@@ -456,11 +469,11 @@ class TestSplitPipeTask:
         )
 
         if stage_perf_value is None:
-            task = SplitPipeTask(video=video)
+            task = SplitPipeTask(session_id="test-session", video=video)
             assert task.stage_perf == {}
         else:
             custom_perf = {"stage1": MagicMock()}
-            task = SplitPipeTask(video=video, stage_perf=custom_perf)
+            task = SplitPipeTask(session_id="test-session", video=video, stage_perf=custom_perf)
             assert task.stage_perf is custom_perf
 
     @pytest.mark.parametrize(
@@ -547,7 +560,7 @@ class TestSplitPipeTask:
 
         video1 = build_video("cam1.mp4", video1_config)
         video2 = build_video("cam2.mp4", video2_config)
-        task = SplitPipeTask(videos=[video1, video2])
+        task = SplitPipeTask(session_id="test-session", videos=[video1, video2])
 
         if expected_error is None:
             # Should not raise
@@ -569,6 +582,7 @@ class TestSplitPipeTask:
         """Test batch validation function for multiple tasks."""
         # Create aligned tasks
         task1 = SplitPipeTask(
+            session_id="test-session-1",
             videos=[
                 Video(
                     input_video=pathlib.Path("cam1.mp4"),
@@ -584,10 +598,11 @@ class TestSplitPipeTask:
                     filtered_clips=[],
                     num_total_clips=10,
                 ),
-            ]
+            ],
         )
 
         task2 = SplitPipeTask(
+            session_id="test-session-2",
             videos=[
                 Video(
                     input_video=pathlib.Path("cam3.mp4"),
@@ -603,7 +618,7 @@ class TestSplitPipeTask:
                     filtered_clips=[],
                     num_total_clips=5,
                 ),
-            ]
+            ],
         )
 
         # Should not raise for aligned tasks
@@ -611,6 +626,7 @@ class TestSplitPipeTask:
 
         # Create misaligned task
         task3 = SplitPipeTask(
+            session_id="test-session-3",
             videos=[
                 Video(
                     input_video=pathlib.Path("cam5.mp4"),
@@ -626,7 +642,7 @@ class TestSplitPipeTask:
                     filtered_clips=[],
                     num_total_clips=20,  # Misaligned!
                 ),
-            ]
+            ],
         )
 
         # Should raise when any task is misaligned

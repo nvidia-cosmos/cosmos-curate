@@ -322,6 +322,9 @@ class Video:
     """
 
     input_video: storage_client.StoragePrefix | pathlib.Path
+    # Path relative to session/input; when non-empty, output clips preserve this structure under each clip UUID.
+    relative_path: str = ""
+
     # encoded video bytes
     encoded_data: bytes | None = None
     # video metadata
@@ -597,15 +600,21 @@ def assert_video_clip_alignment(videos: list[Video]) -> None:
 class SplitPipeTask(PipelineTask):
     """The data we want to pass between stages of split-pipeline.
 
-    This task supports both single-camera and multi-camera video processing:
-    - Single-cam: Initialize with `video=` parameter, stored internally as `videos=[video]`
-    - Multi-cam: Initialize with `videos=` parameter (list of multiple videos)
+    Attributes:
+        session_id: multi-cam session id for multi-camera tasks and the
+            video path for single-camera tasks.
+        videos: The list of videos in the task.
+        stage_perf: The performance statistics for the task.
+        video: provides single-camera support by returning `videos[0]` (the primary camera).
+        errors: For tracking errors at the task level.
 
-    The `video` property provides single-camera support by returning `videos[0]` (the primary camera).
     """
 
+    session_id: str
     videos: list[Video] = attrs.field(factory=list)
     stage_perf: dict[str, StagePerfStats] = attrs.Factory(dict)
+    errors: dict[str, str] = attrs.Factory(dict)
+
     # Hidden field for single-camera support
     _init_video: Video | None = attrs.field(default=None, init=True, alias="video")
 

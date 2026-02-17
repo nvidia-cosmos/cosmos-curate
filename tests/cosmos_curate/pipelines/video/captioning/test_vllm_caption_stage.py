@@ -62,7 +62,7 @@ UUID_3 = UUID("00000000-0000-0000-0000-000000000003")
 @pytest.mark.env("unified")
 def test_get_video_from_task_success() -> None:
     """Test get_video_from_task."""
-    task = SplitPipeTask(video=Video(input_video=Path("test.mp4")))
+    task = SplitPipeTask(session_id="test-session", video=Video(input_video=Path("test.mp4")))
     video = get_video_from_task(task)
     assert video.input_video == Path("test.mp4")
 
@@ -98,11 +98,12 @@ def test_vllm_model_interface_model_id_names(config_variant: str, raises: Abstra
         # Empty tasks list
         ([], [], nullcontext()),
         # Single task with no clips
-        ([SplitPipeTask(video=Video(input_video=Path("test.mp4")))], [], nullcontext()),
+        ([SplitPipeTask(session_id="test-session", video=Video(input_video=Path("test.mp4")))], [], nullcontext()),
         # Single task with clip but no windows
         (
             [
                 SplitPipeTask(
+                    session_id="test-session",
                     video=Video(
                         input_video=Path("test.mp4"),
                         clips=[
@@ -112,7 +113,7 @@ def test_vllm_model_interface_model_id_names(config_variant: str, raises: Abstra
                                 span=(0.0, 1.0),
                             )
                         ],
-                    )
+                    ),
                 )
             ],
             [],
@@ -122,6 +123,7 @@ def test_vllm_model_interface_model_id_names(config_variant: str, raises: Abstra
         (
             [
                 SplitPipeTask(
+                    session_id="test-session",
                     video=Video(
                         input_video=Path("test.mp4"),
                         clips=[
@@ -141,7 +143,7 @@ def test_vllm_model_interface_model_id_names(config_variant: str, raises: Abstra
                                 ],
                             )
                         ],
-                    )
+                    ),
                 )
             ],
             [
@@ -154,6 +156,7 @@ def test_vllm_model_interface_model_id_names(config_variant: str, raises: Abstra
         (
             [
                 SplitPipeTask(
+                    session_id="test-session",
                     video=Video(
                         input_video=Path("test1.mp4"),
                         clips=[
@@ -169,9 +172,10 @@ def test_vllm_model_interface_model_id_names(config_variant: str, raises: Abstra
                                 ],
                             )
                         ],
-                    )
+                    ),
                 ),
                 SplitPipeTask(
+                    session_id="test-session",
                     video=Video(
                         input_video=Path("test2.mp4"),
                         clips=[
@@ -192,7 +196,7 @@ def test_vllm_model_interface_model_id_names(config_variant: str, raises: Abstra
                                 ],
                             ),
                         ],
-                    )
+                    ),
                 ),
             ],
             [

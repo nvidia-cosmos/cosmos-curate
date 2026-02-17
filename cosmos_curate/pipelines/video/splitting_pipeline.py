@@ -180,7 +180,7 @@ def build_input_data(
             limit=args.limit,
             verbose=args.verbose,
         )
-        input_tasks = [SplitPipeTask(videos=[video]) for video in input_videos]
+        input_tasks = [SplitPipeTask(videos=[video], session_id=str(video.input_video)) for video in input_videos]
 
         logger.info(f"About to process {len(input_videos)} raw videos ...")
         if args.verbose:

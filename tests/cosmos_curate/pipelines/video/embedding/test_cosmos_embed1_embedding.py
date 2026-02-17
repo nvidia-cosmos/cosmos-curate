@@ -58,6 +58,7 @@ def sample_embedding_task(sample_video_data: bytes) -> SplitPipeTask:
         clips=[clip],
     )
     return SplitPipeTask(
+        session_id="test-session",
         video=video,
     )
 

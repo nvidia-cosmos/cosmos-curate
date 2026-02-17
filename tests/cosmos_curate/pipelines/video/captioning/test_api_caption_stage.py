@@ -53,7 +53,7 @@ def _make_task(mp4_bytes: bytes | None) -> SplitPipeTask:
     clip.windows.append(Window(start_frame=0, end_frame=1, mp4_bytes=mp4_bytes))
     video = Video(input_video=Path("source.mp4"))
     video.clips.append(clip)
-    return SplitPipeTask(video=video)
+    return SplitPipeTask(session_id="test-session", video=video)
 
 
 @patch("cosmos_curate.pipelines.video.captioning.api_caption_stage.windowing_utils.make_windows_for_video")

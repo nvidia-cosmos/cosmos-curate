@@ -219,6 +219,7 @@ def sample_captioning_task(sample_clip_data: bytes) -> SplitPipeTask:
         clips=[clip],
     )
     return SplitPipeTask(
+        session_id="test-session",
         video=video,
     )
 

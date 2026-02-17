@@ -64,7 +64,7 @@ def test_enhance_caption_lm_variants(
         clips.append(clip)
 
     video = Video(input_video=pathlib.Path("sample_video.mp4"), clips=clips)
-    task = SplitPipeTask(video=video)
+    task = SplitPipeTask(session_id="test-session", video=video)
 
     if model_variant == "openai":
         monkeypatch.setattr(
