@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1
 # Dockerfile template for cosmos-curate
 #
 # The dockerfile is templated so that we can provide different conda env information.
@@ -139,20 +140,132 @@ ENV HF_HOME="${DEFAULT_WORKSPACE_LOC}/weights/hf_home/" \
     LAION_CACHE_HOME="${DEFAULT_WORKSPACE_LOC}/weights/laion_cache/"
 
 # Set up pixi environments
-COPY pixi.toml pixi.lock {{code_dir_str}}/
+COPY --chown=1000:1000 pixi.toml pixi.lock {{code_dir_str}}/
+
+# ============================================================================
+# NVIDIA CUDA Wheel Pre-download & pixi.lock Patching
+# ============================================================================
+#
+# Problem:
+#   pixi embeds uv as a compiled Rust library that hardcodes a 30-second HTTP
+#   timeout for package downloads. This timeout CANNOT be configured:
+#     - UV_HTTP_TIMEOUT env var is ignored (pixi overrides it internally)
+#     - find-links / extra-index-urls are ignored during --frozen install
+#       (pixi uses the exact download URLs baked into pixi.lock)
+#
+#   Large NVIDIA CUDA wheels (100-800 MB each) hosted on pypi.nvidia.com
+#   regularly exceed 30 seconds to download, causing pixi install to fail.
+#
+# Solution:
+#   1. Parse pixi.lock for all pypi.nvidia.com wheel URLs
+#   2. Pre-download them with wget (5-minute timeout, 5 retries, resume)
+#   3. Patch pixi.lock in-place: replace remote URLs with file:// paths
+#   4. pixi install --frozen reads the patched lockfile and loads wheels locally
+#
+# The pre-downloaded wheels live in a BuildKit cache mount (/pixi-cache/)
+# which persists across builds and does NOT bloat the Docker image layers.
+#
+#   +------------------+       +-------------------+       +---------------------+
+#   |   pixi.lock      | grep  | pypi.nvidia.com   | wget  | /pixi-cache/        |
+#   |   (lockfile)     +------>| wheel URLs        +------>| nvidia-wheels/*.whl |
+#   +------------------+       +-------------------+       +---------------------+
+#                                                                   |
+#   +------------------+   sed replaces remote URLs                 |
+#   |   pixi.lock      |   with file:///pixi-cache/nvidia-wheels/  |
+#   |   (patched)      +<------------------------------------------+
+#   +------------------+
+#          |
+#          |  pixi install --frozen
+#          v
+#   +------------------+
+#   |  local .whl read |  (no network, no timeout)
+#   +------------------+
+# ============================================================================
+RUN --mount=type=cache,target=/pixi-cache \
+    mkdir -p /pixi-cache/nvidia-wheels && \
+    cd {{code_dir_str}} && \
+    grep -oP 'https://pypi\.nvidia\.com/[^\s"]+\.whl' pixi.lock | sort -u | while read -r url; do \
+        if [[ ! "$url" =~ ^https://pypi\.nvidia\.com/[a-zA-Z0-9/_.-]+\.whl$ ]]; then \
+            echo "WARNING: Skipping invalid URL: $url"; \
+            continue; \
+        fi; \
+        filename=$(basename "$url") && \
+        echo "Pre-downloading: $filename" && \
+        wget -q --continue --timeout=300 --tries=5 -P /pixi-cache/nvidia-wheels "$url" || \
+            echo "WARNING: Failed to download $filename (will retry during pixi install)"; \
+    done && \
+    echo "=== Pre-downloaded $(ls -1 /pixi-cache/nvidia-wheels/*.whl 2>/dev/null | wc -l) NVIDIA wheels ===" && \
+    patched=0 && \
+    for whl in /pixi-cache/nvidia-wheels/*.whl; do \
+        [ -f "$whl" ] || continue; \
+        filename=$(basename "$whl") && \
+        if grep -q "$filename" pixi.lock; then \
+            sed -i "s|https://pypi\.nvidia\.com/[^\"]*/${filename}\\b|file:///pixi-cache/nvidia-wheels/${filename}|g" pixi.lock && \
+            patched=$((patched + 1)); \
+        fi; \
+    done && \
+    echo "=== Patched $patched NVIDIA wheel URLs in pixi.lock to use local files ==="
+
 # If we install all the environments in a single layer, it's over 20GB and will cause slurm/NVCF to timeout pulling the
 # layer. Since the cuml environment is large and needs non-overlapping RAPIDS packages, we install it separately.
-RUN cd {{code_dir_str}} && \
+#
+# BuildKit cache mount: The --mount=type=cache,target=/pixi-cache is kept here so that
+# the pre-downloaded NVIDIA wheels (patched into pixi.lock as file:///pixi-cache/nvidia-wheels/...)
+# are accessible during pixi install.
+#
+# Retry logic: pixi install can fail due to transient network errors (connection resets, timeouts).
+# We retry up to 10 times with a 3-second backoff to handle these flakes.
+#
+# IMPORTANT: Do NOT set RATTLER_CACHE_DIR or UV_CACHE_DIR to the BuildKit cache mount.
+# Rattler uses hardlinks from its package cache into each environment directory. When
+# multiple environments share packages (e.g. torch across default, unified, transformers),
+# the hardlinked files share a single inode and Docker stores the data ONCE in the layer tar.
+# Redirecting the cache to a mount (different filesystem) breaks hardlinks -- rattler falls
+# back to full copies, duplicating multi-GB packages across every environment (~8GB -> ~21GB).
+# Instead, let rattler use its default on-disk cache and clean it within the same RUN layer.
+RUN --mount=type=cache,target=/pixi-cache \
+    cd {{code_dir_str}} && \
+{% if verbose %}
+    echo "=== pixi version ===" && pixi --version && \
+{% endif %}
     export CONDA_OVERRIDE_CUDA=12.9.1 && \
-    pixi install -e default -e {{ envs | reject('equalto', 'cuml') | join(' -e ') }} --frozen && \
-    pixi clean cache -y
+{% if verbose %}
+    export RUST_LOG=uv=debug && \
+    export UV_NO_PROGRESS=1 && \
+    export NO_COLOR=1 && \
+{% endif %}
+    export CUDA_PATH="/usr/local/cuda" && \
+    success=false && \
+    for attempt in {1..10}; do \
+        echo "=== pixi install attempt $attempt/10 ===" && \
+        if pixi install {{ '-v' if verbose else '' }} -e default -e {{ envs | reject('equalto', 'cuml') | join(' -e ') }} --frozen 2>&1; then \
+            success=true && break; \
+        fi; \
+        echo "pixi install attempt $attempt/10 failed, retrying in 3s..." && sleep 3; \
+    done && \
+    pixi clean cache -y && \
+    $success
 
 # Install the cuml environment separately if requested.
 {% if 'cuml' in envs %} \
-RUN cd {{code_dir_str}} && \
+RUN --mount=type=cache,target=/pixi-cache \
+    cd {{code_dir_str}} && \
     export CONDA_OVERRIDE_CUDA=12.9.1 && \
-    pixi install -e cuml --frozen && \
-    pixi clean cache -y
+{% if verbose %}
+    export RUST_LOG=uv=debug && \
+    export UV_NO_PROGRESS=1 && \
+    export NO_COLOR=1 && \
+{% endif %}
+    success=false && \
+    for attempt in {1..10}; do \
+        echo "=== pixi install cuml attempt $attempt/10 ===" && \
+        if pixi install {{ '-v' if verbose else '' }} -e cuml --frozen 2>&1; then \
+            success=true && break; \
+        fi; \
+        echo "pixi install attempt $attempt/10 failed, retrying in 3s..." && sleep 3; \
+    done && \
+    pixi clean cache -y && \
+    $success
 {% endif %}
 
 # Run any hacky post-install script for each environment
@@ -175,13 +288,13 @@ RUN cd {{code_dir_str}} && \
 {% endif %}
 
 # Copy the video pipeline code
-COPY cosmos_curate {{code_dir_str}}/cosmos_curate
-COPY tests {{code_dir_str}}/tests
-COPY pytest.ini .coveragerc {{code_dir_str}}/
+COPY --chown=1000:1000 cosmos_curate {{code_dir_str}}/cosmos_curate
+COPY --chown=1000:1000 tests {{code_dir_str}}/tests
+COPY --chown=1000:1000 pytest.ini .coveragerc {{code_dir_str}}/
 
 # Copy additional code paths into the container
 {% for code_path in code_paths %}
-COPY {{code_path}} {{code_dir_str}}/{{code_path}}
+COPY --chown=1000:1000 {{code_path}} {{code_dir_str}}/{{code_path}}
 {% endfor %}
 
 # Debug env vars

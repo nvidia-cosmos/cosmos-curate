@@ -63,12 +63,14 @@ def generate_dockerfile(  # noqa: PLR0913
     # Read and render the Dockerfile template
     with pathlib.Path(dockerfile_template_path).open() as f:
         template = jinja2.Template(f.read())
+
     common_template_params = conda_envs.CommonTemplateParams.make()
     contents = template.render(
         envs=env_list,
         post_install_envs=post_install_env_list,
         use_local_xenna_build=use_local_xenna_build,
         code_paths=code_paths,
+        verbose=verbose,
         **attrs.asdict(common_template_params),
     )
     if verbose:
