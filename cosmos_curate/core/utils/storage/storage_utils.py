@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,11 +15,18 @@
 
 """Storage Utilities."""
 
+import contextlib
+import hashlib
+import io
 import json
+import os
 import pathlib
 import re
-from typing import Any
+import tempfile
+from collections.abc import Generator
+from typing import IO, Any
 
+import attrs
 from loguru import logger
 
 from cosmos_curate.core.utils.misc.retry_utils import do_with_retries
@@ -561,3 +568,551 @@ def extract_parquet_files(
             logger.debug(item)
 
     return [get_full_path(input_path, item) for item in parquet_items]
+
+
+@attrs.define(frozen=True)
+class WritablePath(os.PathLike[str]):
+    """Writable local path returned by :meth:`StorageWriter.resolve_path`.
+
+    Implements ``os.PathLike[str]`` so it can be passed directly to any
+    API that accepts a file path (``open()``, ``str()``, etc.).  Call
+    :meth:`close` when writing is complete to finalize the file.
+
+    For **local** destinations :meth:`close` is a no-op (the file is
+    already at its final location).  For **remote** destinations it
+    uploads the file and removes the local staging copy.
+
+    Attributes:
+        _local: The underlying ``pathlib.Path`` on the local filesystem.
+        _writer: Back-reference to the owning :class:`StorageWriter`.
+        _sub: The relative sub-path used by :meth:`StorageWriter.close`.
+
+    """
+
+    _local: pathlib.Path
+    _writer: "StorageWriter"
+    _sub: str
+
+    # -- os.PathLike protocol --------------------------------------------------
+
+    def __fspath__(self) -> str:
+        """Return the filesystem path as a string."""
+        return os.fspath(self._local)
+
+    def __str__(self) -> str:
+        """Return the string representation of the local path."""
+        return str(self._local)
+
+    # -- Proxied pathlib.Path operations ---------------------------------------
+
+    def open(
+        self,
+        mode: str = "r",
+        buffering: int = -1,
+        encoding: str | None = None,
+        errors: str | None = None,
+        newline: str | None = None,
+    ) -> io.IOBase:
+        """Open the local file (delegates to ``pathlib.Path.open``)."""
+        return self._local.open(mode, buffering, encoding, errors, newline)  # type: ignore[return-value]
+
+    def exists(self) -> bool:
+        """Return ``True`` if the local file exists."""
+        return self._local.exists()
+
+    # -- Lifecycle -------------------------------------------------------------
+
+    def close(self) -> None:
+        """Finalize: upload to remote if needed, no-op for local.
+
+        Delegates to :meth:`StorageWriter.close` with the sub-path
+        that was used to create this ``WritablePath``.
+        """
+        self._writer.close(self._sub)
+
+
+class StorageWriter:
+    """Unified write abstraction for local and remote (S3/Azure) storage.
+
+    Provides a single interface for writing data to local filesystem,
+    S3, or Azure storage.  Resolves the storage backend once at
+    construction time and reuses it for all subsequent writes.
+
+    **When to use StorageWriter:**
+
+    Use ``StorageWriter`` whenever code needs to persist files to a
+    destination path that may be local *or* remote.  The writer is
+    the **abstraction boundary** between your code and the storage
+    backend -- callers should never inspect the destination path to
+    decide how to write.  Pass the path to ``StorageWriter`` and let
+    it resolve the backend transparently.
+
+    ::
+
+        +--------------------+
+        |   Consumer code    |  <-- knows nothing about S3/Azure/local
+        +--------------------+
+                 |
+                 v
+        +--------------------+
+        |   StorageWriter    |  <-- resolves backend once at construction
+        +--------------------+
+           /         |         \
+          v          v          v
+       local       S3        Azure
+
+    **When NOT to use StorageWriter:**
+
+    * When the destination is always a local ``pathlib.Path`` by
+      contract (e.g. a temp staging dir used within a single
+      function).  Use ``pathlib.Path`` directly in that case.
+    * When you need *read* access.  ``StorageWriter`` is write-only;
+      contributions to add read support are welcome!
+
+    **Anti-pattern -- do NOT do this:**
+
+    .. code-block:: python
+
+        # WRONG: consumer inspects the path to branch on local vs remote.
+        # This leaks storage internals into the consumer layer.
+        if is_remote_path(dest):
+            upload_to_s3(dest, data)
+        else:
+            pathlib.Path(dest).write_bytes(data)
+
+        # CORRECT: let StorageWriter handle it.
+        writer = StorageWriter(dest)
+        writer.write(data)
+
+    **Two usage patterns:**
+
+    1. **Single-file** -- *base_path* is the full file path.  Use
+       :meth:`write` / :meth:`write_str` to write directly.
+    2. **Directory** -- *base_path* is a directory.  Use
+       :meth:`write_bytes_to` / :meth:`write_str_to` to write
+       multiple files under that directory, each identified by a
+       *sub_path*.
+
+    The ``_to`` suffix signals "a destination sub_path follows" so
+    the two patterns are visually distinct at every call site.
+
+    **Which method to use:**
+
+    * :meth:`write` -- single-file pattern, payload as ``bytes``.
+    * :meth:`write_str` -- single-file pattern, payload as ``str``.
+    * :meth:`write_bytes_to` -- directory pattern, payload as ``bytes``,
+      written to ``<base_path>/<sub_path>``.
+    * :meth:`write_str_to` -- directory pattern, payload as ``str``,
+      written to ``<base_path>/<sub_path>``.
+    * :meth:`open_writer` -- a library accepts a **writable file-like
+      object** (e.g. an ``outfile`` parameter).  Streams to disk and
+      closes on context exit.
+    * :meth:`resolve_path` -- consumer code requires a **local file
+      path** (e.g. a library, module, or API that writes to disk).
+      Returns a :class:`WritablePath` (``os.PathLike[str]``) that can
+      be used like a regular path.  Call ``path.close()`` when done.
+
+    Example -- single-file pattern::
+
+        writer = StorageWriter("s3://bucket/output/report.bin")
+        writer.write(raw_bytes)
+        writer.write_str(json_text)
+
+    Example -- directory pattern::
+
+        writer = StorageWriter("s3://bucket/output/profiles")
+
+        # You have bytes/str in memory:
+        writer.write_bytes_to("cpu/stage_1.html", html_bytes)
+        writer.write_str_to("timeline/trace.json", json_text)
+
+        # A renderer accepts a file-like outfile:
+        with writer.open_writer("memory/stage_1.html") as buf:
+            reporter.render(outfile=buf, ...)  # closed automatically
+
+        # Consumer code requires a local file path:
+        path = writer.resolve_path("memory/stage.bin")
+        tracker.start(str(path))
+        ...  # write spans start/stop lifecycle
+        path.close()  # uploads if remote, no-op if local
+
+    Args:
+        base_path: Root directory (local path, ``s3://...``, or ``az://...``).
+        profile_name: Named credential profile for S3/Azure access.
+        tmp_dir: Staging directory for local files when *base_path* is
+            remote.  When *None* (default) the system temp directory is
+            used.  Set explicitly to a volume with enough space for very
+            large files (1 TB+) that may exceed ``/tmp`` capacity.
+            Ignored when *base_path* is a local path.
+
+    """
+
+    _UPLOAD_MAX_ATTEMPTS: int = 3
+    _UPLOAD_BACKOFF_FACTOR: float = 16.0
+    _UPLOAD_MAX_WAIT_S: float = 256.0
+
+    def __init__(
+        self,
+        base_path: str,
+        *,
+        profile_name: str = "default",
+        tmp_dir: str | pathlib.Path | None = None,
+    ) -> None:
+        """Initialize the writer, resolving the storage backend once.
+
+        Args:
+            base_path: Root directory (local, ``s3://...``, or ``az://...``).
+            profile_name: Named credential profile for remote access.
+            tmp_dir: Staging directory for local files when *base_path*
+                is remote.  When *None* the system temp directory is
+                used.  Ignored for local *base_path* values.
+
+        """
+        self._base_path = base_path
+        self._client: StorageClient | None = get_storage_client(
+            base_path,
+            profile_name=profile_name,
+            can_overwrite=True,
+        )
+
+        # Staging directory for remote destinations.  For local
+        # destinations we write directly to the final path, so no
+        # staging is needed.
+        self._tmp_dir: pathlib.Path | None = pathlib.Path(tmp_dir) if tmp_dir is not None else None
+
+    @property
+    def base_path(self) -> str:
+        """Return the base path this writer was constructed with."""
+        return self._base_path
+
+    @property
+    def is_remote(self) -> bool:
+        """Return True when writing to a remote backend (S3 / Azure)."""
+        return self._client is not None
+
+    def _resolve_local(self, sub_path: str | None = None) -> pathlib.Path:
+        """Resolve to a local ``pathlib.Path`` and ensure parents exist.
+
+        Only valid when :pyattr:`is_remote` is False.  Creates parent
+        directories as needed so the caller can write directly.
+
+        Args:
+            sub_path: Relative path under *base_path*.  When *None*,
+                resolves to *base_path* itself (single-file pattern).
+
+        """
+        base = pathlib.Path(self._base_path)
+        dest = base / sub_path if sub_path is not None else base
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        return dest
+
+    def _resolve_remote(self, sub_path: str | None = None) -> StoragePrefix:
+        """Resolve to a ``StoragePrefix``.
+
+        Only valid when :pyattr:`is_remote` is True.  Narrows the
+        return type for mypy so callers can pass the result directly
+        to ``StorageClient`` methods without casting.
+
+        Args:
+            sub_path: Relative path under *base_path*.  When *None*,
+                resolves to *base_path* itself (single-file pattern).
+
+        """
+        dest = get_full_path(self._base_path, sub_path) if sub_path is not None else get_full_path(self._base_path)
+        if not isinstance(dest, StoragePrefix):
+            msg = f"Expected remote path, got {type(dest)}: {dest}"
+            raise TypeError(msg)
+        return dest
+
+    def _upload_file(self, sub_path: str, local_path: pathlib.Path) -> None:
+        """Upload a local file to the remote ``<base_path>/<sub_path>``.
+
+        Private helper used by :meth:`close`.  Streams via
+        ``StorageClient.upload_file()`` which performs multipart upload
+        on S3 and streaming blob on Azure, so arbitrarily large files
+        (1 TB+) are handled without loading the full content into
+        memory.
+
+        Args:
+            sub_path: Relative path under *base_path*.
+            local_path: Local file to upload.
+
+        """
+        dest = self._resolve_remote(sub_path)
+
+        def _upload() -> None:
+            self._client.upload_file(str(local_path), dest)  # type: ignore[union-attr]
+
+        do_with_retries(
+            _upload,
+            max_attempts=self._UPLOAD_MAX_ATTEMPTS,
+            backoff_factor=self._UPLOAD_BACKOFF_FACTOR,
+            max_wait_time_s=self._UPLOAD_MAX_WAIT_S,
+        )
+
+    def _upload_bytes(self, dest: StoragePrefix, data: bytes) -> None:
+        """Upload *data* to a remote *dest* with automatic retries.
+
+        Private helper that wraps ``StorageClient.upload_bytes`` in
+        ``do_with_retries``.  Used by :meth:`write` and
+        :meth:`write_bytes_to` to avoid duplicating the retry closure.
+        """
+
+        def _upload() -> None:
+            self._client.upload_bytes(dest, data)  # type: ignore[union-attr]
+
+        do_with_retries(
+            _upload,
+            max_attempts=self._UPLOAD_MAX_ATTEMPTS,
+            backoff_factor=self._UPLOAD_BACKOFF_FACTOR,
+            max_wait_time_s=self._UPLOAD_MAX_WAIT_S,
+        )
+
+    def write(self, data: bytes) -> None:
+        """Write raw bytes directly to *base_path*.
+
+        Use when the writer was constructed with a full file path
+        (single-file pattern)::
+
+            writer = StorageWriter("s3://bucket/output/report.bin")
+            writer.write(raw_bytes)
+
+        For writing multiple files under a shared directory, use
+        :meth:`write_bytes_to` instead.
+
+        For remote destinations the upload is retried automatically.
+        For local destinations parent directories are created as needed.
+
+        Args:
+            data: Raw bytes to write.
+
+        """
+        if not self.is_remote:
+            self._resolve_local().write_bytes(data)
+            return
+        self._upload_bytes(self._resolve_remote(), data)
+
+    def write_str(self, text: str, encoding: str = "utf-8") -> None:
+        """Write a string directly to *base_path*.
+
+        Use when the writer was constructed with a full file path
+        (single-file pattern)::
+
+            writer = StorageWriter("s3://bucket/output/report.json")
+            writer.write_str(json_text)
+
+        Convenience wrapper: encodes *text* with *encoding* and
+        delegates to :meth:`write`.
+
+        For writing multiple files under a shared directory, use
+        :meth:`write_str_to` instead.
+
+        Args:
+            text: Text content to write.
+            encoding: Character encoding (default ``"utf-8"``).
+
+        """
+        self.write(text.encode(encoding))
+
+    def write_bytes_to(self, sub_path: str, data: bytes) -> None:
+        """Write raw bytes to ``<base_path>/<sub_path>``.
+
+        Use when writing multiple files under a shared *base_path*
+        directory and you already have the complete payload as ``bytes``
+        in memory.  The entire *data* buffer is held in memory for the
+        duration of the upload.  For large files prefer
+        :meth:`resolve_path` which streams without full buffering.
+
+        For a single-file write (no *sub_path*), use :meth:`write`
+        instead.
+
+        For remote destinations the upload is retried automatically.
+        For local destinations parent directories are created as needed.
+
+        Args:
+            sub_path: Relative path under *base_path* (e.g. ``"cpu/stage_1.html"``).
+            data: Raw bytes to write.
+
+        """
+        if not self.is_remote:
+            self._resolve_local(sub_path).write_bytes(data)
+            return
+        self._upload_bytes(self._resolve_remote(sub_path), data)
+
+    def write_str_to(self, sub_path: str, text: str, encoding: str = "utf-8") -> None:
+        """Write a string to ``<base_path>/<sub_path>``.
+
+        Use when writing multiple files under a shared *base_path*
+        directory and you already have the complete payload as a
+        ``str`` (e.g. JSON, HTML, CSV that is already serialized).
+        Convenience wrapper: encodes *text* with *encoding* and
+        delegates to :meth:`write_bytes_to`.
+
+        For a single-file write (no *sub_path*), use :meth:`write_str`
+        instead.
+
+        Args:
+            sub_path: Relative path under *base_path*.
+            text: Text content to write.
+            encoding: Character encoding (default ``"utf-8"``).
+
+        """
+        self.write_bytes_to(sub_path, text.encode(encoding))
+
+    @contextlib.contextmanager
+    def open_writer(
+        self,
+        sub_path: str,
+        *,
+        mode: str = "w",
+        encoding: str | None = "utf-8",
+    ) -> Generator[IO[Any], None, None]:
+        """Context manager: write to a file-like object, close on exit.
+
+        Resolves a local path via :meth:`resolve_path`, opens it for
+        writing, and yields the file handle.  On normal context exit
+        the file is closed and uploaded via :meth:`close` (no-op for
+        local destinations).
+
+        On exception the file handle is closed but the remote upload
+        is skipped.  The staging file is intentionally **not** deleted
+        so it remains available for debugging or retry.  The next
+        :meth:`resolve_path` call for the same *sub_path* will unlink
+        it automatically, so there is no permanent leak.
+
+        Use when a library accepts a writable file-like object (e.g.
+        an ``outfile`` parameter) rather than returning a string.
+
+        Example -- text mode (default)::
+
+            with writer.open_writer("memory/stage_1.html") as f:
+                reporter.render(outfile=f, ...)
+
+        Example -- binary mode::
+
+            with writer.open_writer("data/chunk.bin", mode="wb") as f:
+                f.write(raw_bytes)
+
+        Args:
+            sub_path: Relative path under *base_path*.
+            mode: File open mode (default ``"w"``).  Use ``"wb"`` for
+                binary writes.  Must be a write mode (e.g. ``"w"``,
+                ``"wb"``, ``"wt"``).
+            encoding: Character encoding (default ``"utf-8"``).
+                Ignored when *mode* is binary (contains ``"b"``).
+
+        Yields:
+            A writable file handle (:class:`typing.TextIO` for text
+            modes, :class:`typing.BinaryIO` for binary modes).
+
+        """
+        wpath = self.resolve_path(sub_path)
+        open_kwargs: dict[str, Any] = {}
+        if "b" not in mode:
+            open_kwargs["encoding"] = encoding
+        with wpath._local.open(mode, **open_kwargs) as f:  # noqa: SLF001
+            yield f
+        # Intentionally outside try/finally: on exception the upload
+        # is skipped and the staging file is preserved for
+        # debugging/retry.
+        wpath.close()
+
+    def _staging_root(self) -> pathlib.Path:
+        """Return the staging root directory for remote destinations.
+
+        Uses *tmp_dir* (if provided at construction) or falls back to
+        the system temp directory.  A short hash of *base_path* is
+        appended so that two writers targeting different remote
+        destinations never collide on the same staging file when they
+        share a *sub_path*.
+        """
+        root = self._tmp_dir if self._tmp_dir is not None else pathlib.Path(tempfile.gettempdir())
+        tag = hashlib.sha256(self._base_path.encode()).hexdigest()[:12]
+        return root / f"cosmos_staging_{tag}"
+
+    def resolve_path(self, sub_path: str) -> WritablePath:
+        """Return a writable :class:`WritablePath` for *sub_path*.
+
+        Use when consumer code requires a **local file path** up front
+        and the write may span multiple method calls (e.g. a library
+        that is opened once and written to across start/stop calls, or
+        a streaming file that is appended to over time).
+
+        The returned :class:`WritablePath` implements
+        ``os.PathLike[str]`` so it can be passed directly to any API
+        accepting a file path.  Call :meth:`WritablePath.close` when
+        done writing to finalize the file (uploads to remote if
+        needed, no-op for local).
+
+        For **local** destinations the underlying path is the final
+        destination (``<base_path>/<sub_path>``).  For **remote**
+        destinations it is a staging path under the staging directory
+        (``<staging_root>/<sub_path>``), preserving the directory
+        structure for easy inspection.
+
+        Parent directories are created as needed.  Any pre-existing
+        file at the path is removed to guarantee a **fresh** path
+        (safe for tools that refuse to overwrite existing files).
+
+        Example::
+
+            path = writer.resolve_path("data/output.bin")
+            tracker.start(str(path))
+            ...
+            path.close()
+
+        Args:
+            sub_path: Relative path under *base_path*.
+
+        Returns:
+            A :class:`WritablePath` wrapping a local ``pathlib.Path``.
+
+        """
+        logger.debug(f"StorageWriter.resolve_path: sub_path={sub_path!r}, remote={self.is_remote}")
+
+        if not self.is_remote:
+            dest = self._resolve_local(sub_path)
+            # Guarantee a fresh (non-existing) file so tools that
+            # refuse to overwrite existing files work without
+            # pre-cleanup from the caller.
+            dest.unlink(missing_ok=True)
+            return WritablePath(local=dest, writer=self, sub=sub_path)
+
+        # Remote destination -- stage under the staging directory,
+        # mirroring the sub_path structure for easy debugging.
+        staging = self._staging_root() / sub_path
+        staging.parent.mkdir(parents=True, exist_ok=True)
+        staging.unlink(missing_ok=True)
+        return WritablePath(local=staging, writer=self, sub=sub_path)
+
+    def close(self, sub_path: str) -> None:
+        """Close (finalize) the file at *sub_path*.
+
+        For **local** destinations this is a no-op (the file is
+        already at its final path).  For **remote** destinations the
+        staging file (produced by :meth:`resolve_path`) is uploaded
+        via ``StorageClient.upload_file()`` with automatic retries,
+        then the local staging copy is deleted to reclaim disk space.
+
+        If the staging file does not exist (e.g. the write was never
+        started or already cleaned up), the call is silently skipped.
+
+        Consumers typically call :meth:`WritablePath.close` instead
+        of this method directly.
+
+        Args:
+            sub_path: Relative path under *base_path* (must match
+                the value passed to :meth:`resolve_path`).
+
+        """
+        if not self.is_remote:
+            return
+
+        staging = self._staging_root() / sub_path
+        if not staging.exists():
+            logger.debug(f"StorageWriter.close: no file at {staging}, skipping")
+            return
+
+        logger.debug(f"StorageWriter.close: uploading {staging} -> {self._base_path}/{sub_path}")
+        self._upload_file(sub_path, staging)
+        staging.unlink(missing_ok=True)

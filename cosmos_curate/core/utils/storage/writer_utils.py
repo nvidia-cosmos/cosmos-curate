@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -70,6 +70,12 @@ def write_bytes(  # noqa: C901, PLR0912, PLR0913
 ) -> None:
     """Write bytes to S3 or local path.
 
+    .. deprecated::
+        Prefer :class:`~cosmos_curate.core.utils.storage.storage_utils.StorageWriter`
+        for new code.  ``StorageWriter.write()`` or
+        ``StorageWriter.write_bytes_to()`` provides a simpler API
+        without domain-specific parameters.
+
     Args:
         buffer: Bytes to write.
         dest: Destination to write.
@@ -132,6 +138,11 @@ def write_parquet(  # noqa: PLR0913
     overwrite: bool = False,
 ) -> None:
     """Write parquet to S3 or local path.
+
+    .. deprecated::
+        Prefer :class:`~cosmos_curate.core.utils.storage.storage_utils.StorageWriter`
+        for new code.  Serialize the DataFrame to Parquet bytes in memory
+        and use ``StorageWriter.write()`` or ``StorageWriter.write_bytes_to()``.
 
     Args:
         pdf: Data to write.
@@ -201,6 +212,11 @@ def write_json(  # noqa: PLR0913
 ) -> None:
     """Write json to S3 or local path.
 
+    .. deprecated::
+        Prefer :class:`~cosmos_curate.core.utils.storage.storage_utils.StorageWriter`
+        for new code.  Serialize to JSON and use ``StorageWriter.write_str()`` or
+        ``StorageWriter.write_str_to()``.
+
     Args:
         data: Data to write.
         dest: Destination to write.
@@ -238,6 +254,11 @@ def write_jsonl(  # noqa: PLR0913
     overwrite: bool = False,
 ) -> None:
     """Write jsonl to S3 or local path.
+
+    .. deprecated::
+        Prefer :class:`~cosmos_curate.core.utils.storage.storage_utils.StorageWriter`
+        for new code.  Serialize to JSONL and use ``StorageWriter.write_str()`` or
+        ``StorageWriter.write_str_to()``.
 
     Args:
         data: Data to write.
@@ -277,6 +298,11 @@ def write_text(  # noqa: PLR0913
 ) -> None:
     """Write text to S3 or local path.
 
+    .. deprecated::
+        Prefer :class:`~cosmos_curate.core.utils.storage.storage_utils.StorageWriter`
+        for new code.  Use ``StorageWriter.write_str()`` or
+        ``StorageWriter.write_str_to()`` directly.
+
     Args:
         data: Data to write.
         dest: Destination to write.
@@ -312,6 +338,11 @@ def write_csv(  # noqa: PLR0913
     backup_and_overwrite: bool = False,
 ) -> None:
     """Write csv to S3 or local path.
+
+    .. deprecated::
+        Prefer :class:`~cosmos_curate.core.utils.storage.storage_utils.StorageWriter`
+        for new code.  Serialize to CSV bytes and use ``StorageWriter.write()`` or
+        ``StorageWriter.write_bytes_to()``.
 
     Args:
         dest: Destination to write.
