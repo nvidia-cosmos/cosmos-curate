@@ -18,7 +18,10 @@ import copy
 import pathlib
 import subprocess
 import uuid
+from uuid import UUID
 
+import numpy as np
+import numpy.typing as npt
 import nvtx  # type: ignore[import-untyped]
 from loguru import logger
 
@@ -31,7 +34,10 @@ from cosmos_curate.pipelines.video.utils.data_model import (
     SplitPipeTask,
     Video,
 )
-from cosmos_curate.pipelines.video.utils.decoder_utils import DEFAULT_TRANSCODE_BITRATE_M
+from cosmos_curate.pipelines.video.utils.decoder_utils import (
+    DEFAULT_TRANSCODE_BITRATE_M,
+    get_video_timestamps,
+)
 
 
 class ClipTranscodingStage(CuratorStage):
@@ -315,6 +321,225 @@ class ClipTranscodingStage(CuratorStage):
                 clip.encoded_data = None
 
 
+def _validate_video_timestamps(video_timestamps: list[npt.NDArray[np.float32]]) -> None:
+    """Validate the timestamps for each video.
+
+    Args:
+        video_timestamps: The timestamps for each video.
+
+    Raises:
+        ValueError: If any video has no timestamps.
+
+    """
+    if len(video_timestamps) == 0:
+        msg = "No timestamps found for videos"
+        raise ValueError(msg)
+
+    if any(len(ts) == 0 for ts in video_timestamps):
+        msg = "Some videos have no timestamps"
+        raise ValueError(msg)
+
+
+def _get_videos_timestamps(videos: list[Video]) -> list[npt.NDArray[np.float32]]:
+    """Get timestamps for each video in seconds.
+
+    Args:
+        videos: The videos to get timestamps for.
+
+    Returns:
+        List of timestamp arrays (in seconds) for each video.
+
+    Raises:
+        ValueError: If any video has no encoded_data.
+
+    """
+    video_timestamps = []
+    for video in videos:
+        if video.encoded_data is None:
+            error_msg = f"Video {video.input_video} has no encoded_data"
+            raise ValueError(error_msg)
+        timestamps = get_video_timestamps(video.encoded_data)
+        video_timestamps.append(timestamps)
+    return video_timestamps
+
+
+def _get_videos_durations(videos: list[Video]) -> list[float]:
+    """Get the duration of a videos in seconds.
+
+    Args:
+        videos: The videos to get the durations of.
+
+    Returns:
+        The durations of the videos in seconds.
+
+    """
+
+    # Note: this is technically not correct, see CVC-690 for more details.
+    # The correct duration is the difference between the last and first
+    # timestamps. However, this decision was made early in development, and
+    # correcting the behavior may be more complicated than expected.
+    def _video_duration(video: Video) -> float:
+        num_frames = video.metadata.num_frames
+        framerate = video.metadata.framerate
+        if num_frames is None or framerate is None or framerate <= 0:
+            return -1.0
+        return float(num_frames / framerate)
+
+    return [_video_duration(video) for video in videos]
+
+
+def _make_spans_fixed_stride(
+    start_s: float,
+    end_s: float,
+    clip_len_s: float,
+    clip_stride_s: float,
+    min_clip_length_s: float,
+) -> list[tuple[float, float]]:
+    """Make a single set of spans for a list of videos.
+
+    Each span represents a temporal window for clip extraction. Because videos
+    share spans, this allows for easy grouping of clips by video when writing
+    to disk.
+
+    Assumes there is a shared temporal overlap across all sets of timestamps
+    and that timestamps are sorted in ascending order.
+
+    The caller of this helper function is expected to send in a non-empty list
+    of video timestamps, using _validate_video_timestamps.
+
+    Args:
+        start_s: The start time in seconds.
+        end_s: The end time in seconds.
+        clip_len_s: The clip length.
+        clip_stride_s: The clip stride.
+        min_clip_length_s: The minimum clip length.
+
+    Returns:
+        List of (start_time, end_time) tuples in seconds.
+
+    """
+    spans: list[tuple[float, float]] = []
+    start_span_s = start_s
+
+    while start_span_s < end_s:
+        end_span_s = min(start_span_s + clip_len_s, end_s)
+        if (end_span_s - start_span_s) >= min_clip_length_s:
+            spans.append((start_span_s, end_span_s))
+        start_span_s += clip_stride_s
+
+    return spans
+
+
+def _make_clip_uuids(session_id: str, spans: list[tuple[float, float]]) -> list[UUID]:
+    """Make deterministic clip uuids for session and a list of spans.
+
+    Args:
+        session_id: The session id for the group of videos
+        spans: The spans to make clip uuids for.
+
+    Returns:
+        The clip uuids.
+
+    """
+    return [uuid.uuid5(uuid.NAMESPACE_URL, f"{session_id}_{span[0]}_{span[1]}") for span in spans]
+
+
+def _populate_clips_fixed_stride(  # noqa: PLR0913
+    videos: list[Video],
+    session_id: str,
+    clip_len_s: float,
+    clip_stride_s: float,
+    min_clip_length_s: float,
+    *,
+    limit_clips: int = 0,
+) -> None:
+    """Extract and populate clips for a list of videos using fixed stride.
+
+    This mutates the videos in place and populates the clips list.
+
+    Args:
+        videos: The videos to populate clips for.
+        session_id: The session id for the group of videos
+        clip_len_s: The clip length in seconds.
+        clip_stride_s: The clip stride in seconds.
+        min_clip_length_s: The minimum clip length in seconds.
+        limit_clips: If positive, only the first limit_clips spans are used. 0 means no limit.
+
+    Notes:
+    Previously, this logic resided inside the FixedStrideExtractorStage class.
+    The original logic treated all videos as starting at timestamp 0 and
+    ending at the "duration".
+
+    The correct behavior is to use the actual start and end timestamps of the
+    videos.
+
+    However, correcting this behavior is not as straightforward as it seems.
+    Using the actual start and end timestamps of the videos changes the output of
+    the pipeline, and adds additional complexity, and it isn't clear how to handle
+    that complexity and remain backwards compatible.
+
+    The problem is the last clip in the video. It is likely that the last clip
+    will be shorter than the clip length, and this will cause the pipeline to
+    drop the last clip of each video, which is not the desired behavior.
+
+    """
+    durations = _get_videos_durations(videos)
+    positive_durations = [d for d in durations if d > 0]
+    if len(positive_durations) < len(videos):
+        msg = "Some videos have invalid (zero or negative) duration"
+        raise ValueError(msg)
+
+    end_s = min(positive_durations)
+
+    video_timestamps = _get_videos_timestamps(videos)
+    _validate_video_timestamps(video_timestamps)
+
+    starts_s = [float(ts[0]) for ts in video_timestamps]
+    ends_s = [t + duration for t, duration in zip(starts_s, durations, strict=True)]
+
+    # See note above. This preserves the original behavior of the pipeline.
+    # When this specific version was added, the goal was to add multi-cam
+    # support, not to change behavior.
+    start_s = max(t for t in starts_s)
+
+    # Log warning if videos don't start near zero, as end_s assumes start=0
+    if start_s > 0.1:  # noqa: PLR2004
+        logger.warning(
+            f"Videos start at {start_s:.2f}s (not 0), but duration-based end_s "
+            f"assumes start=0. This may cause unexpected span boundaries."
+        )
+
+    # Original version assumed start=0.0. See note above.
+    end_s = min(t for t in ends_s) - start_s
+    start_s = 0.0
+
+    # Generate spans
+    spans = _make_spans_fixed_stride(
+        start_s,
+        end_s,
+        clip_len_s,
+        clip_stride_s,
+        min_clip_length_s,
+    )
+
+    # Apply clip limit before creating clips
+    if limit_clips > 0:
+        spans = spans[:limit_clips]
+
+    # Generate deterministic UUIDs for a session and its spans
+    clip_uuids = _make_clip_uuids(session_id, spans)
+
+    # Populate clips for each video
+    for span, clip_uuid in zip(spans, clip_uuids, strict=True):
+        for video in videos:
+            clip = Clip(
+                uuid=clip_uuid,
+                source_video=str(video.input_video),
+                span=span,
+            )
+            video.clips.append(clip)
+
+
 class FixedStrideExtractorStage(CuratorStage):
     """Stage that extracts video clips using fixed-length intervals.
 
@@ -362,50 +587,40 @@ class FixedStrideExtractorStage(CuratorStage):
             The processed tasks.
 
         """
-        for task in tasks:
-            self._timer.reinit(self, task.get_major_size())
-            video = task.video
-            if video.encoded_data is None:
-                error_msg = "Please load video bytes!"
+
+        def _require_video_bytes(v: Video) -> None:
+            if v.encoded_data is None:
+                v.errors["encoded_data"] = "missing"
+                error_msg = f"Please load video bytes for {v.input_video}!"
                 raise ValueError(error_msg)
 
-            if not video.has_metadata():
-                logger.warning(f"Incomplete metadata for {video.input_video}. Skipping...")
-                video.errors["metadata"] = "incomplete"
-                continue
+        def _require_metadata(v: Video) -> None:
+            if not v.has_metadata():
+                v.errors["metadata"] = "incomplete"
+                error_msg = f"Incomplete metadata for {v.input_video}. Skipping"
+                raise ValueError(error_msg)
 
+        def _validate_videos(videos: list[Video]) -> None:
+            for video in videos:
+                _require_video_bytes(video)
+                _require_metadata(video)
+
+        for task in tasks:
+            self._timer.reinit(self, task.get_major_size())
             with self._timer.time_process():
-                s3_file = video.input_video
-                assert video.metadata.num_frames  # silence mypy
-                assert video.metadata.framerate  # silence mypy
-                duration = video.metadata.num_frames / video.metadata.framerate if video.metadata.framerate > 0 else -1
-
-                clip_start = 0.0
-                clip_bounds: list[tuple[float, float]] = []
-                while clip_start < duration:
-                    clip_end = min(clip_start + self.clip_len_s, duration)
-                    if (clip_end - clip_start) >= self.min_clip_length_s:
-                        clip_bounds.append((clip_start, clip_end))
-                    clip_start += self.clip_stride_s
-
-                # assign information to task data struct
-                for span in clip_bounds:
-                    start_event = int(span[0] * video.metadata.framerate)
-                    end_event = int(span[1] * video.metadata.framerate)
-                    clip = Clip(
-                        uuid=uuid.uuid5(
-                            uuid.NAMESPACE_URL,
-                            f"{s3_file}_{start_event}_{end_event}",
-                        ),
-                        source_video=str(s3_file),
-                        span=span,
+                try:
+                    _validate_videos(task.videos)
+                    _populate_clips_fixed_stride(
+                        task.videos,
+                        task.session_id,
+                        self.clip_len_s,
+                        self.clip_stride_s,
+                        self.min_clip_length_s,
+                        limit_clips=self._limit_clips,
                     )
-                    video.clips.append(clip)
-                    if self._limit_clips > 0 and len(video.clips) >= self._limit_clips:
-                        break
-
-            if not video.clips:
-                logger.warning(f"No clips extracted for {s3_file} with duration {duration}")
+                except Exception as e:  # noqa: BLE001
+                    logger.exception(f"Failed to populate clips for {task.session_id}")
+                    task.errors["FixedStrideExtractorStage"] = f"failed to populate clips: {e}"
 
             if self._log_stats:
                 stage_name, stage_perf_stats = self._timer.log_stats()

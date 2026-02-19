@@ -264,7 +264,7 @@ def test_remux_stage_integration(synthetic_mpegts_video: io.BytesIO) -> None:
     video.populate_metadata()
 
     task = Mock(spec=SplitPipeTask)
-    task.video = video
+    task.videos = [video]
     task.get_major_size.return_value = len(original_data)
     task.stage_perf = {}
 
@@ -320,11 +320,13 @@ class TestRemuxStage:
         # Create mock tasks
         task1 = Mock(spec=SplitPipeTask)
         task1.video = Mock(spec=Video)
+        task1.videos = [task1.video]
         task1.get_major_size.return_value = 1000
         task1.stage_perf = {}
 
         task2 = Mock(spec=SplitPipeTask)
         task2.video = Mock(spec=Video)
+        task2.videos = [task2.video]
         task2.get_major_size.return_value = 2000
         task2.stage_perf = {}
 
@@ -346,6 +348,7 @@ class TestRemuxStage:
         # Create mock task
         task = Mock(spec=SplitPipeTask)
         task.video = Mock(spec=Video)
+        task.videos = [task.video]
         task.get_major_size.return_value = 1000
         task.stage_perf = {}
 
@@ -383,7 +386,7 @@ class TestRemuxStage:
 
         # Create mock tasks - one that will fail, one that will succeed
         failing_task = Mock(spec=SplitPipeTask)
-        failing_task.video = Mock(spec=Video)
+        failing_task.videos = [failing_task.video]
         failing_task.video.input_video = "failing_video.ts"
         failing_task.video.encoded_data = b"failing_video_data"
         failing_task.video.metadata = Mock()
@@ -393,7 +396,7 @@ class TestRemuxStage:
         failing_task.stage_perf = {}
 
         succeeding_task = Mock(spec=SplitPipeTask)
-        succeeding_task.video = Mock(spec=Video)
+        succeeding_task.videos = [succeeding_task.video]
         succeeding_task.video.input_video = "good_video.mp4"
         succeeding_task.video.encoded_data = b"good_video_data"
         succeeding_task.video.metadata = Mock()

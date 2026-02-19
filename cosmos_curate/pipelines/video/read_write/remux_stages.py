@@ -159,11 +159,12 @@ class RemuxStage(CuratorStage):
             self._timer.reinit(self, task.get_major_size())
 
             with self._timer.time_process():
-                try:
-                    remux_if_needed(task.video, threads=ceil(self.resources.cpus))
-                except Exception as e:  # noqa: BLE001
-                    task.video.errors["remux"] = str(e)
-                    logger.exception(f"Failed to remux video {task.video.input_video}")
+                for video in task.videos:
+                    try:
+                        remux_if_needed(video, threads=ceil(self.resources.cpus))
+                    except Exception as e:  # noqa: BLE001
+                        video.errors["remux"] = str(e)
+                        logger.exception(f"Failed to remux video {video.input_video}")
 
             if self._log_stats:
                 stage_name, stage_perf_stats = self._timer.log_stats()

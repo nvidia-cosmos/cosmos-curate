@@ -23,15 +23,25 @@ maintains consistency across code changes.
 
 import copy
 import pathlib
+from contextlib import AbstractContextManager, nullcontext
+from typing import Any
 
+import numpy as np
 import pytest
 
-from cosmos_curate.core.interfaces.pipeline_interface import PipelineExecutionError, run_pipeline
+from cosmos_curate.core.interfaces.pipeline_interface import run_pipeline
 from cosmos_curate.core.interfaces.runner_interface import RunnerInterface
+from cosmos_curate.pipelines.video.clipping import clip_extraction_stages
 from cosmos_curate.pipelines.video.clipping.clip_extraction_stages import (
     FixedStrideExtractorStage,
+    _get_videos_durations,
+    _get_videos_timestamps,
+    _make_clip_uuids,
+    _make_spans_fixed_stride,
+    _populate_clips_fixed_stride,
+    _validate_video_timestamps,
 )
-from cosmos_curate.pipelines.video.utils.data_model import SplitPipeTask, Video
+from cosmos_curate.pipelines.video.utils.data_model import SplitPipeTask, Video, VideoMetadata
 
 
 def test_fixed_stride_extractor_setup() -> None:
@@ -358,9 +368,10 @@ def test_error_handling_no_encoded_data(sequential_runner: RunnerInterface) -> N
 
     stage = FixedStrideExtractorStage(log_stats=True)
 
-    # Should raise PipelineExecutionError (wrapping ValueError) for missing encoded_data
-    with pytest.raises(PipelineExecutionError, match="Please load video bytes!"):
-        run_pipeline([task], [stage], runner=sequential_runner)
+    run_pipeline([task], [stage], runner=sequential_runner)
+
+    assert "FixedStrideExtractorStage" in task.errors
+    assert video.errors["encoded_data"] == "missing"
 
 
 def test_error_handling_incomplete_metadata(sequential_runner: RunnerInterface) -> None:
@@ -489,3 +500,516 @@ def test_verbose_logging(
     # Verify that some logging occurred (exact messages may vary)
     # The stage itself doesn't have explicit verbose logging, but this tests the parameter
     assert len(result_tasks) == 1
+
+
+@pytest.mark.parametrize(
+    ("videos", "raises"),
+    [
+        pytest.param(
+            [
+                Video(input_video=pathlib.Path("video1.mp4"), encoded_data=b"fake_video_data"),
+            ],
+            nullcontext(),
+            id="single_video_valid",
+        ),
+        pytest.param(
+            [
+                Video(input_video=pathlib.Path("video1.mp4"), encoded_data=b"fake_video_data"),
+                Video(input_video=pathlib.Path("video2.mp4"), encoded_data=b"fake_video_data"),
+            ],
+            nullcontext(),
+            id="multicam_two_videos_valid",
+        ),
+        pytest.param(
+            [
+                Video(input_video=pathlib.Path("video1.mp4"), encoded_data=b"fake_video_data"),
+                Video(input_video=pathlib.Path("video2.mp4"), encoded_data=b"fake_video_data"),
+                Video(input_video=pathlib.Path("video3.mp4"), encoded_data=b"fake_video_data"),
+            ],
+            nullcontext(),
+            id="multicam_three_videos_valid",
+        ),
+        pytest.param(
+            [
+                Video(input_video=pathlib.Path("video1.mp4"), encoded_data=None),
+            ],
+            pytest.raises(ValueError, match=r"Video .* has no encoded_data"),
+            id="single_video_no_encoded_data",
+        ),
+        pytest.param(
+            [
+                Video(input_video=pathlib.Path("video1.mp4"), encoded_data=None),
+                Video(input_video=pathlib.Path("video2.mp4"), encoded_data=b"fake_video_data"),
+            ],
+            pytest.raises(ValueError, match=r"Video .* has no encoded_data"),
+            id="multicam_first_video_no_encoded_data",
+        ),
+        pytest.param(
+            [
+                Video(input_video=pathlib.Path("video1.mp4"), encoded_data=b"fake_video_data"),
+                Video(input_video=pathlib.Path("video2.mp4"), encoded_data=None),
+            ],
+            pytest.raises(ValueError, match=r"Video .* has no encoded_data"),
+            id="multicam_second_video_no_encoded_data",
+        ),
+    ],
+)
+def test_get_videos_timestamps(
+    videos: list[Video],
+    raises: AbstractContextManager[Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test _get_videos_timestamps validation and error handling.
+
+    Args:
+        videos: List of videos to test
+        raises: Expected exception context manager
+        monkeypatch: Pytest monkeypatch fixture
+
+    """
+    EXPECTED_TIMESTAMPS = np.array([0.0, 0.033, 0.066, 0.1], dtype=np.float32)
+
+    # Mock get_video_timestamps to return fake timestamps
+    def _mock_get_video_timestamps(_data: bytes) -> np.ndarray[tuple[int], np.dtype[np.float32]]:
+        return EXPECTED_TIMESTAMPS
+
+    monkeypatch.setattr(
+        "cosmos_curate.pipelines.video.clipping.clip_extraction_stages.get_video_timestamps",
+        _mock_get_video_timestamps,
+    )
+
+    with raises:
+        result = _get_videos_timestamps(videos)
+        # For success cases, verify the result
+        assert len(result) == len(videos)
+        for timestamps in result:
+            assert isinstance(timestamps, np.ndarray)
+            assert timestamps.dtype == np.float32
+            assert len(timestamps) == len(EXPECTED_TIMESTAMPS)
+            assert np.array_equal(timestamps, EXPECTED_TIMESTAMPS)
+
+
+def test_validate_video_timestamps_empty_list() -> None:
+    """Test _validate_video_timestamps raises when video_timestamps is empty."""
+    with pytest.raises(ValueError, match=r"No timestamps found for videos"):
+        _validate_video_timestamps([])
+
+
+def test_validate_video_timestamps_some_empty_arrays() -> None:
+    """Test _validate_video_timestamps raises when any video has no timestamps."""
+    ts = np.array([0.0, 1.0], dtype=np.float32)
+    empty = np.array([], dtype=np.float32)
+    with pytest.raises(ValueError, match=r"Some videos have no timestamps"):
+        _validate_video_timestamps([ts, empty])
+    with pytest.raises(ValueError, match=r"Some videos have no timestamps"):
+        _validate_video_timestamps([empty, ts])
+    with pytest.raises(ValueError, match=r"Some videos have no timestamps"):
+        _validate_video_timestamps([empty])
+
+
+def test_validate_video_timestamps_valid() -> None:
+    """Test _validate_video_timestamps passes when all videos have timestamps."""
+    ts1 = np.array([0.0, 0.033, 0.1], dtype=np.float32)
+    ts2 = np.array([0.0, 1.0], dtype=np.float32)
+    _validate_video_timestamps([ts1])
+    _validate_video_timestamps([ts1, ts2])
+
+
+def test_get_videos_durations_empty_list() -> None:
+    """Test _get_videos_durations returns empty list for no videos."""
+    assert _get_videos_durations([]) == []
+
+
+def test_get_videos_durations_single_video() -> None:
+    """Test _get_videos_durations with one video: duration = num_frames / framerate."""
+    video = Video(
+        input_video=pathlib.Path("v.mp4"),
+        encoded_data=b"x",
+        metadata=VideoMetadata(num_frames=900, framerate=30.0),
+    )
+    assert _get_videos_durations([video]) == [30.0]
+
+
+def test_get_videos_durations_zero_framerate_returns_minus_one() -> None:
+    """Test _get_videos_durations returns -1 when framerate is 0."""
+    video = Video(
+        input_video=pathlib.Path("v.mp4"),
+        encoded_data=b"x",
+        metadata=VideoMetadata(num_frames=100, framerate=0.0),
+    )
+    assert _get_videos_durations([video]) == [-1]
+
+
+def test_get_videos_durations_multiple_videos() -> None:
+    """Test _get_videos_durations with multiple videos returns one duration per video."""
+    v1 = Video(
+        input_video=pathlib.Path("a.mp4"),
+        encoded_data=b"x",
+        metadata=VideoMetadata(num_frames=300, framerate=30.0),
+    )
+    v2 = Video(
+        input_video=pathlib.Path("b.mp4"),
+        encoded_data=b"y",
+        metadata=VideoMetadata(num_frames=60, framerate=24.0),
+    )
+    durations = _get_videos_durations([v1, v2])
+    assert durations == [10.0, 2.5]
+
+
+def test_get_videos_durations_mixed_valid_and_zero_framerate() -> None:
+    """Test _get_videos_durations when some videos have zero framerate."""
+    v1 = Video(
+        input_video=pathlib.Path("a.mp4"),
+        encoded_data=b"x",
+        metadata=VideoMetadata(num_frames=90, framerate=30.0),
+    )
+    v2 = Video(
+        input_video=pathlib.Path("b.mp4"),
+        encoded_data=b"y",
+        metadata=VideoMetadata(num_frames=100, framerate=0.0),
+    )
+    durations = _get_videos_durations([v1, v2])
+    assert durations == [3.0, -1]
+
+
+def test_make_spans_fixed_stride_basic() -> None:
+    """Test _make_spans_fixed_stride with basic scenarios."""
+    # Create fake timestamps for 2 videos: 30 seconds at 30fps
+    timestamps1 = np.linspace(0.0, 30.0, 900, dtype=np.float32)
+    timestamps2 = np.linspace(0.0, 30.0, 900, dtype=np.float32)
+    video_timestamps = [timestamps1, timestamps2]
+    start_s = float(np.max([ts[0] for ts in video_timestamps]))
+    end_s = float(np.min([ts[-1] for ts in video_timestamps]))
+    duration_s = end_s - start_s
+
+    # Test with 10s clips, 10s stride (non-overlapping)
+    spans = _make_spans_fixed_stride(
+        start_s=start_s,
+        end_s=duration_s,
+        clip_len_s=10.0,
+        clip_stride_s=10.0,
+        min_clip_length_s=5.0,
+    )
+
+    # Should get 3 clips: 0-10, 10-20, 20-30
+    assert len(spans) == 3
+    assert spans[0] == (0.0, 10.0)
+    assert spans[1] == (10.0, 20.0)
+    assert spans[2] == (20.0, 30.0)
+
+
+def test_make_spans_fixed_stride_overlapping() -> None:
+    """Test _make_spans_fixed_stride with overlapping clips."""
+    # Create fake timestamps for 1 video: 30 seconds
+    timestamps = np.linspace(0.0, 30.0, 900, dtype=np.float32)
+    video_timestamps = [timestamps]
+    start_s = float(np.max([ts[0] for ts in video_timestamps]))
+    end_s = float(np.min([ts[-1] for ts in video_timestamps]))
+    duration_s = end_s - start_s
+
+    # Test with 10s clips, 5s stride (50% overlap)
+    spans = _make_spans_fixed_stride(
+        start_s=start_s,
+        end_s=duration_s,
+        clip_len_s=10.0,
+        clip_stride_s=5.0,
+        min_clip_length_s=5.0,
+    )
+
+    # Should get 6 clips: 0-10, 5-15, 10-20, 15-25, 20-30, 25-30 (last one is 5s)
+    assert len(spans) == 6
+    assert spans[0] == (0.0, 10.0)
+    assert spans[1] == (5.0, 15.0)
+    assert spans[2] == (10.0, 20.0)
+    assert spans[3] == (15.0, 25.0)
+    assert spans[4] == (20.0, 30.0)
+    assert spans[5] == (25.0, 30.0)  # Last clip is only 5s but meets min_clip_length
+
+
+def test_make_spans_fixed_stride_min_clip_length() -> None:
+    """Test _make_spans_fixed_stride respects minimum clip length."""
+    # Create fake timestamps: 12 seconds
+    timestamps = np.linspace(0.0, 12.0, 360, dtype=np.float32)
+    video_timestamps = [timestamps]
+    start_s = float(np.max([ts[0] for ts in video_timestamps]))
+    end_s = float(np.min([ts[-1] for ts in video_timestamps]))
+    duration_s = end_s - start_s
+
+    # Test with 10s clips, 10s stride, min 8s
+    # Should get: 0-10 (10s ✓), 10-12 (2s ✗ too short)
+    spans = _make_spans_fixed_stride(
+        start_s=start_s,
+        end_s=duration_s,
+        clip_len_s=10.0,
+        clip_stride_s=10.0,
+        min_clip_length_s=8.0,
+    )
+
+    # Last clip should be filtered out
+    assert len(spans) == 1
+    assert spans[0] == (0.0, 10.0)
+
+
+def test_make_spans_fixed_stride_shared_overlap() -> None:
+    """Test _make_spans_fixed_stride finds shared temporal overlap across cameras."""
+    # Camera 1: starts at 0s, ends at 30s
+    timestamps1 = np.linspace(0.0, 30.0, 900, dtype=np.float32)
+    # Camera 2: starts at 5s, ends at 25s (different range!)
+    timestamps2 = np.linspace(5.0, 25.0, 600, dtype=np.float32)
+    video_timestamps = [timestamps1, timestamps2]
+    start_s = float(np.max([ts[0] for ts in video_timestamps]))
+    end_s = float(np.min([ts[-1] for ts in video_timestamps]))
+
+    # Should only create clips in the shared range: 5-25s
+    spans = _make_spans_fixed_stride(
+        start_s=start_s,
+        end_s=end_s,
+        clip_len_s=10.0,
+        clip_stride_s=10.0,
+        min_clip_length_s=10.0,
+    )
+
+    # Clips: 5-15, 15-25 (only 2 clips in shared overlap)
+    assert len(spans) == 2
+    assert spans[0] == (5.0, 15.0)
+    assert spans[1] == (15.0, 25.0)
+
+
+def test_make_clip_uuids_deterministic() -> None:
+    """Test _make_clip_uuids creates deterministic UUIDs."""
+    session_id = "test_session_123"
+    spans = [(0.0, 10.0), (10.0, 20.0), (20.0, 30.0)]
+
+    # Generate UUIDs twice
+    uuids1 = _make_clip_uuids(session_id, spans)
+    uuids2 = _make_clip_uuids(session_id, spans)
+
+    # Should be identical (deterministic)
+    assert len(uuids1) == 3
+    assert len(uuids2) == 3
+    assert uuids1 == uuids2
+
+    # Each UUID should be unique
+    assert len(set(uuids1)) == 3
+
+
+def test_make_clip_uuids_different_sessions() -> None:
+    """Test _make_clip_uuids creates different UUIDs for different sessions."""
+    spans = [(0.0, 10.0), (10.0, 20.0)]
+
+    uuids_session1 = _make_clip_uuids("session_1", spans)
+    uuids_session2 = _make_clip_uuids("session_2", spans)
+
+    # Different sessions should produce different UUIDs
+    assert uuids_session1 != uuids_session2
+
+
+def test_make_clip_uuids_different_spans() -> None:
+    """Test _make_clip_uuids creates different UUIDs for different spans."""
+    session_id = "test_session"
+    spans1 = [(0.0, 10.0), (10.0, 20.0)]
+    spans2 = [(5.0, 15.0), (15.0, 25.0)]
+
+    uuids1 = _make_clip_uuids(session_id, spans1)
+    uuids2 = _make_clip_uuids(session_id, spans2)
+
+    # Different spans should produce different UUIDs
+    assert uuids1 != uuids2
+
+
+def test_populate_clips_fixed_stride() -> None:
+    """Test _populate_clips_fixed_stride populates clips correctly."""
+    # Create test videos with encoded data and timestamps
+    # 30 second video at 30fps = 900 frames
+    timestamps = np.linspace(0.0, 30.0, 900, dtype=np.float32)
+
+    video1 = Video(
+        input_video=pathlib.Path("cam_front.mp4"),
+        encoded_data=b"dummy_data",
+        metadata=VideoMetadata(
+            height=720,
+            width=1280,
+            framerate=30.0,
+            num_frames=900,
+            duration=30.0,
+            video_codec="h264",
+            pixel_format="yuv420p",
+        ),
+    )
+    video2 = Video(
+        input_video=pathlib.Path("cam_rear.mp4"),
+        encoded_data=b"dummy_data_2",
+        metadata=VideoMetadata(
+            height=720,
+            width=1280,
+            framerate=30.0,
+            num_frames=900,
+            duration=30.0,
+            video_codec="h264",
+            pixel_format="yuv420p",
+        ),
+    )
+
+    videos = [video1, video2]
+
+    # Mock get_video_timestamps to return our test timestamps
+    def _mock_get_timestamps(_data: bytes) -> np.ndarray:
+        return timestamps
+
+    original_fn = clip_extraction_stages.get_video_timestamps
+    clip_extraction_stages.get_video_timestamps = _mock_get_timestamps
+
+    try:
+        # Populate clips: 10s clips, 10s stride (non-overlapping)
+        _populate_clips_fixed_stride(
+            videos=videos,
+            session_id="test_session_123",
+            clip_len_s=10.0,
+            clip_stride_s=10.0,
+            min_clip_length_s=5.0,
+        )
+
+        # Both videos should have 3 clips (0-10, 10-20, 20-30)
+        assert len(video1.clips) == 3
+        assert len(video2.clips) == 3
+
+        # Verify clips have correct spans
+        assert video1.clips[0].span == (0.0, 10.0)
+        assert video1.clips[1].span == (10.0, 20.0)
+        assert video1.clips[2].span == (20.0, 30.0)
+
+        # Verify both videos have matching UUIDs for corresponding clips
+        for i in range(3):
+            assert video1.clips[i].uuid == video2.clips[i].uuid
+            assert video1.clips[i].span == video2.clips[i].span
+
+        # Verify source_video is set correctly
+        assert video1.clips[0].source_video == "cam_front.mp4"
+        assert video2.clips[0].source_video == "cam_rear.mp4"
+
+        # Test limit_clips: clear and repopulate with limit
+        video1.clips.clear()
+        video2.clips.clear()
+        _populate_clips_fixed_stride(
+            videos=videos,
+            session_id="test_session_123",
+            clip_len_s=10.0,
+            clip_stride_s=10.0,
+            min_clip_length_s=5.0,
+            limit_clips=2,
+        )
+
+        # Both videos should have only 2 clips (first two spans)
+        assert len(video1.clips) == 2
+        assert len(video2.clips) == 2
+        assert video1.clips[0].span == (0.0, 10.0)
+        assert video1.clips[1].span == (10.0, 20.0)
+        assert video2.clips[0].span == (0.0, 10.0)
+        assert video2.clips[1].span == (10.0, 20.0)
+        for i in range(2):
+            assert video1.clips[i].uuid == video2.clips[i].uuid
+
+    finally:
+        # Restore original function
+        clip_extraction_stages.get_video_timestamps = original_fn
+
+
+def _make_multicam_task_two_cameras() -> SplitPipeTask:
+    """Build a multicam task with two videos (synthetic metadata, no network)."""
+    meta = VideoMetadata(
+        height=720,
+        width=1280,
+        framerate=30.0,
+        num_frames=900,
+        duration=30.0,
+        video_codec="h264",
+        pixel_format="yuv420p",
+        audio_codec=None,
+        size=1000,
+    )
+    v1 = Video(
+        input_video=pathlib.Path("cam_front.mp4"),
+        encoded_data=b"dummy",
+        metadata=meta,
+    )
+    v2 = Video(
+        input_video=pathlib.Path("cam_rear.mp4"),
+        encoded_data=b"dummy",
+        metadata=VideoMetadata(
+            height=meta.height,
+            width=meta.width,
+            framerate=meta.framerate,
+            num_frames=meta.num_frames,
+            duration=meta.duration,
+            video_codec=meta.video_codec,
+            pixel_format=meta.pixel_format,
+            audio_codec=meta.audio_codec,
+            size=meta.size,
+        ),
+    )
+    return SplitPipeTask(session_id="test-multicam-session", videos=[v1, v2])
+
+
+def test_fixed_stride_multicam_aligned_clips(
+    sequential_runner: RunnerInterface,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Multi-cam task gets aligned clips: same count, uuid, and span per column across cameras."""
+    task = _make_multicam_task_two_cameras()
+
+    # Deterministic timestamps for 30s at 30fps; matches clip_len_s=5, clip_stride_s=5 -> 6 spans
+    timestamps_30s = np.linspace(0.0, 30.0, 900, dtype=np.float32)
+
+    def _mock_get_video_timestamps(_data: bytes) -> np.ndarray:
+        return timestamps_30s
+
+    monkeypatch.setattr(
+        "cosmos_curate.pipelines.video.clipping.clip_extraction_stages.get_video_timestamps",
+        _mock_get_video_timestamps,
+    )
+
+    stage = FixedStrideExtractorStage(
+        clip_len_s=5.0,
+        clip_stride_s=5.0,
+        min_clip_length_s=5.0,
+    )
+    result_tasks = run_pipeline([task], [stage], runner=sequential_runner)
+    assert len(result_tasks) == 1
+    result = result_tasks[0]
+    # Multi-cam task should have multiple videos
+    assert len(result.videos) == 2
+
+    clips0 = result.videos[0].clips
+    clips1 = result.videos[1].clips
+    assert len(clips0) == len(clips1), "Both cameras must have same number of clips"
+    for j in range(len(clips0)):
+        assert clips0[j].uuid == clips1[j].uuid, f"Clip index {j}: uuid must match across cameras"
+        assert clips0[j].span == clips1[j].span, f"Clip index {j}: span must match across cameras"
+
+
+def test_make_spans() -> None:
+    """Test that the spans cover the entire duration of the video."""
+    expected_clip_spans_5s_stride = [
+        (0.0, 5.0),
+        (5.0, 10.0),
+        (10.0, 15.0),
+        (15.0, 20.0),
+        (20.0, 25.0),
+        (25.0, 30.0),
+    ]
+
+    start_s = expected_clip_spans_5s_stride[0][0]
+    end_s = expected_clip_spans_5s_stride[-1][1]
+
+    spans = _make_spans_fixed_stride(
+        start_s=start_s,
+        end_s=end_s,
+        clip_len_s=5.0,
+        clip_stride_s=5.0,
+        min_clip_length_s=5.0,
+    )
+
+    assert len(spans) == len(expected_clip_spans_5s_stride)
+    for (start, end), (exp_start, exp_end) in zip(spans, expected_clip_spans_5s_stride, strict=True):
+        assert start == pytest.approx(exp_start, abs=0.01)
+        assert end == pytest.approx(exp_end, abs=0.01)

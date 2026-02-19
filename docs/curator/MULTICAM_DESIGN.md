@@ -154,8 +154,9 @@ Todo list of merge requests:
 
 ✅ Update data model.
 ✅ Task creation multi-cam support
-⏳ VideoDownloader multi-cam support
-⏳ FixedStrideExtractorStage multi-cam support
+✅ VideoDownloader multi-cam support
+✅ RemuxStage multi-cam support
+✅ FixedStrideExtractorStage multi-cam support
 ⏳ VideoFrameExtractionStage multi-cam support
 ⏳ ClipTranscodingStage multi-cam support
 ⏳ ClipWriterStage multi-cam support

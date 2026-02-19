@@ -178,22 +178,21 @@ class VideoDownloader(CuratorStage):
 
     @nvtx.annotate("VideoDownloader")  # type: ignore[untyped-decorator]
     def process_data(self, tasks: list[SplitPipeTask]) -> list[SplitPipeTask] | None:
-        """Read video specified in URI to task buffer."""
+        """Read video(s) specified in URI to task buffer."""
         for task in tasks:
             self._timer.reinit(self, task.get_major_size())
-            video = task.video
+            for video in task.videos:
+                with self._timer.time_process():
+                    # Download video bytes
+                    if not self._download_video_bytes(video):
+                        continue
 
-            with self._timer.time_process():
-                # Download video bytes
-                if not self._download_video_bytes(video):
-                    continue
+                    # Extract and validate metadata
+                    if not self._extract_and_validate_metadata(video):
+                        continue
 
-                # Extract and validate metadata
-                if not self._extract_and_validate_metadata(video):
-                    continue
-
-                # Log video information
-                self._log_video_info(video)
+                    # Log video information
+                    self._log_video_info(video)
 
             if self._log_stats:
                 stage_name, stage_perf_stats = self._timer.log_stats()
