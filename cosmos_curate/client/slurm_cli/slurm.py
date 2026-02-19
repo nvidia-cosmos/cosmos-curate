@@ -480,11 +480,27 @@ def curator_submit(slurm_job_spec: SlurmJobSpec) -> str:
 
     Raises:
         ValueError: If the job ID cannot be parsed from the submission
-            output.
+            output, or if required mount source paths do not exist on the cluster.
 
     """
     connection = connect(slurm_job_spec.login_node, slurm_job_spec.username)
     create_remote_job_path(connection, slurm_job_spec)
+
+    # Validate that all mount source paths exist on the remote cluster
+    missing_mounts = [
+        mount.source
+        for mount in slurm_job_spec.container.mounts
+        if not remote_path_exists(connection, Path(mount.source))
+    ]
+
+    if missing_mounts:
+        error_message = (
+            f"The following mount source paths do not exist on the cluster:\n"
+            f"{chr(10).join(f'  - {path}' for path in missing_mounts)}\n"
+            f"Cannot submit job due to missing mount paths."
+        )
+
+        raise ValueError(error_message)
 
     slurm_job_spec.container.mounts += [MountSpec(source=str(slurm_job_spec.remote_job_path), dest="/remote_files")]
     logger.debug("Container mounts: %s", slurm_job_spec.container.mounts)
