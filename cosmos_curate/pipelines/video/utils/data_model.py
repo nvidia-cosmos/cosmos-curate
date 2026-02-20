@@ -334,7 +334,7 @@ class Video:
     # clips
     clips: list[Clip] = attrs.Factory(list)
     filtered_clips: list[Clip] = attrs.Factory(list)
-    # for cracking
+    # for chunking clips that have one set of source videos across multiple tasks.
     num_total_clips: int = 0
     num_clip_chunks: int = 0
     clip_chunk_index: int = 0
@@ -524,10 +524,8 @@ def assert_video_clip_alignment(videos: list[Video]) -> None:
     """Validate that all videos have synchronized clips.
 
     Validates time alignment across multiple videos by checking:
-    1. All videos have the same total number of clips
-    2. All videos have processed the same number of clips
-    3. Processed clips do not exceed total clips
-    4. Clips at the same index have identical time spans across all videos
+    1. All videos have processed the same number of clips
+    2. Clips at the same index have identical time spans across all videos
 
     Arguments:
         videos: List of Video instances to validate.
@@ -539,16 +537,7 @@ def assert_video_clip_alignment(videos: list[Video]) -> None:
     if not videos:
         return
 
-    # Check 1: All videos should have the same total number of clips
-    total_clips_per_video = [v.num_total_clips for v in videos]
-    if not all(t == total_clips_per_video[0] for t in total_clips_per_video):
-        msg = (
-            f"Multi-cam videos have different total clip counts: {total_clips_per_video}. "
-            f"All cameras should have the same number of clips due to time alignment."
-        )
-        raise ValueError(msg)
-
-    # Check 2: All videos should have processed the same number of clips
+    # Check 1: All videos should have processed the same number of clips
     processed_per_video = [len(v.clips) + len(v.filtered_clips) for v in videos]
     if not all(p == processed_per_video[0] for p in processed_per_video):
         msg = (
@@ -557,16 +546,7 @@ def assert_video_clip_alignment(videos: list[Video]) -> None:
         )
         raise ValueError(msg)
 
-    # Check 3: Processed should not exceed total
-    for i, (processed, total) in enumerate(zip(processed_per_video, total_clips_per_video, strict=True)):
-        if processed > total:
-            msg = (
-                f"Video {i} has processed {processed} clips but only has {total} total clips. "
-                f"This indicates an invalid state."
-            )
-            raise ValueError(msg)
-
-    # Check 4: All clips at the same index must have identical spans (time alignment)
+    # Check 2: All clips at the same index must have identical spans (time alignment)
     # Check processed clips
     clips_per_video = [v.clips for v in videos]
     misaligned_clip_indices = check_clip_time_alignment(clips_per_video)

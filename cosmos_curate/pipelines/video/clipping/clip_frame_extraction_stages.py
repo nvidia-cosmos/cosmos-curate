@@ -24,7 +24,7 @@ from loguru import logger
 
 from cosmos_curate.core.interfaces.stage_interface import CuratorStage, CuratorStageResource
 from cosmos_curate.core.utils.infra.performance_utils import StageTimer
-from cosmos_curate.pipelines.video.utils.data_model import SplitPipeTask
+from cosmos_curate.pipelines.video.utils.data_model import SplitPipeTask, Video
 from cosmos_curate.pipelines.video.utils.decoder_utils import (
     FrameExtractionPolicy,
     FrameExtractionSignature,
@@ -91,8 +91,66 @@ class ClipFrameExtractionStage(CuratorStage):
 
         return reduce(lcm, fps)
 
+    def _process_video(self, video: Video) -> None:
+        if self._verbose:
+            logger.info(f"Processing video {video.input_video} with {len(video.clips)} clips")
+
+        for clip in video.clips:
+            if clip.encoded_data is None:
+                logger.warning(f"Clip {clip.uuid} has no encoded_data.")
+                clip.errors["encoded_data"] = "empty"
+                continue
+
+            try:
+                for policy in self._extraction_policies:
+                    # To save on decode costs, calculate the least-common-multiple(LCM) of fps
+                    # targets and apply decord.get_batch on this LCM fps
+                    use_lcm_fps = len(self._target_fps) > 1 and all(
+                        (fps.is_integer() if isinstance(fps, float) else isinstance(fps, int))
+                        for fps in self._target_fps
+                    )
+                    if use_lcm_fps:
+                        lcm = self.lcm_multiple(self._target_fps)
+                        with io.BytesIO(clip.encoded_data) as fp:
+                            frames = extract_frames(
+                                fp,
+                                extraction_policy=policy,
+                                sample_rate_fps=lcm,
+                                target_res=self._target_res,
+                                num_threads=self._num_threads,
+                            )
+                            for fps in self._target_fps:
+                                signature = FrameExtractionSignature(
+                                    extraction_policy=policy,
+                                    target_fps=fps,
+                                ).to_str()
+                                clip.extracted_frames[signature] = frames[:: int(lcm / fps)]
+                    else:
+                        for fps in self._target_fps:
+                            with io.BytesIO(clip.encoded_data) as fp:
+                                frames = extract_frames(
+                                    fp,
+                                    extraction_policy=policy,
+                                    sample_rate_fps=fps,
+                                    target_res=self._target_res,
+                                    num_threads=self._num_threads,
+                                )
+                                signature = FrameExtractionSignature(
+                                    extraction_policy=policy,
+                                    target_fps=fps,
+                                ).to_str()
+                                clip.extracted_frames[signature] = frames
+                                if self._verbose:
+                                    logger.info(f"Extracted {len(frames)} frames from clip {clip.uuid} at {fps=}")
+            except Exception as e:  # noqa: BLE001
+                logger.exception(f"Error extracting frames from clip {clip.uuid}: {e}")
+                clip.errors["frame_extraction"] = "video_decode_failed"
+                # reset the buffer to disable further operations on this clip
+                clip.encoded_data = None
+                continue
+
     @nvtx.annotate("ClipFrameExtractionStage")  # type: ignore[untyped-decorator]
-    def process_data(self, tasks: list[SplitPipeTask]) -> list[SplitPipeTask] | None:  # noqa: C901
+    def process_data(self, tasks: list[SplitPipeTask]) -> list[SplitPipeTask] | None:
         """Process the data for the clip frame extraction stage.
 
         Args:
@@ -104,64 +162,13 @@ class ClipFrameExtractionStage(CuratorStage):
         """
         for task in tasks:
             self._timer.reinit(self, task.get_major_size())
-            video = task.video
-            for clip in video.clips:
-                if clip.encoded_data is None:
-                    logger.warning(f"Clip {clip.uuid} has no encoded_data.")
-                    clip.errors["encoded_data"] = "empty"
-                    continue
+            for video in task.videos:
                 with self._timer.time_process():
                     try:
-                        for policy in self._extraction_policies:
-                            """
-                            To save on decode costs, calculate the least-common-multiple(LCM) of fps
-                            targets and apply decord.get_batch on this LCM fps
-                            """
-                            use_lcm_fps = len(self._target_fps) > 1 and all(
-                                (fps.is_integer() if isinstance(fps, float) else isinstance(fps, int))
-                                for fps in self._target_fps
-                            )
-                            if use_lcm_fps:
-                                lcm = self.lcm_multiple(self._target_fps)
-                                with io.BytesIO(clip.encoded_data) as fp:
-                                    frames = extract_frames(
-                                        fp,
-                                        extraction_policy=policy,
-                                        sample_rate_fps=lcm,
-                                        target_res=self._target_res,
-                                        num_threads=self._num_threads,
-                                    )
-                                    for fps in self._target_fps:
-                                        signature = FrameExtractionSignature(
-                                            extraction_policy=policy,
-                                            target_fps=fps,
-                                        ).to_str()
-                                        clip.extracted_frames[signature] = frames[:: int(lcm / fps)]
-                            else:
-                                for fps in self._target_fps:
-                                    with io.BytesIO(clip.encoded_data) as fp:
-                                        frames = extract_frames(
-                                            fp,
-                                            extraction_policy=policy,
-                                            sample_rate_fps=fps,
-                                            target_res=self._target_res,
-                                            num_threads=self._num_threads,
-                                        )
-                                        signature = FrameExtractionSignature(
-                                            extraction_policy=policy,
-                                            target_fps=fps,
-                                        ).to_str()
-                                        clip.extracted_frames[signature] = frames
-                                        if self._verbose:
-                                            logger.info(
-                                                f"Extracted {len(frames)} frames from clip {clip.uuid} at {fps=}"
-                                            )
+                        self._process_video(video)
                     except Exception as e:  # noqa: BLE001
-                        logger.exception(f"Error extracting frames from clip {clip.uuid}: {e}")
-                        clip.errors["frame_extraction"] = "video_decode_failed"
-                        # reset the buffer to disable further operations on this clip
-                        clip.encoded_data = None
-                        continue
+                        logger.exception(f"Error processing video {video.input_video}")
+                        video.errors[self.__class__.__name__] = str(e)
 
             if self._log_stats:
                 stage_name, stage_perf_stats = self._timer.log_stats()

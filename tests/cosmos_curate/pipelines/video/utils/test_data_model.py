@@ -486,47 +486,21 @@ class TestSplitPipeTask:
                 {"clips": 0, "filtered": 0, "total": 10, "clip_spans": [], "filtered_spans": []},
                 None,
             ),
-            # Check 1: Different total clips
-            (
-                "different_totals",
-                {"clips": 0, "filtered": 0, "total": 10, "clip_spans": [], "filtered_spans": []},
-                {"clips": 0, "filtered": 0, "total": 20, "clip_spans": [], "filtered_spans": []},
-                "different total clip counts",
-            ),
-            # Check 2: Different processed counts
+            # Check 1: Different processed counts
             (
                 "different_processed",
                 {"clips": 0, "filtered": 0, "total": 10, "clip_spans": [], "filtered_spans": []},
                 {"clips": 1, "filtered": 0, "total": 10, "clip_spans": [(0.0, 10.0)], "filtered_spans": []},
                 "processed different numbers of clips",
             ),
-            # Check 3: Processed exceeds total
-            (
-                "exceeds_total",
-                {
-                    "clips": 2,
-                    "filtered": 0,
-                    "total": 1,
-                    "clip_spans": [(0.0, 10.0), (10.0, 20.0)],
-                    "filtered_spans": [],
-                },
-                {
-                    "clips": 2,
-                    "filtered": 0,
-                    "total": 1,
-                    "clip_spans": [(0.0, 10.0), (10.0, 20.0)],
-                    "filtered_spans": [],
-                },
-                "processed .* clips but only has .* total clips",
-            ),
-            # Check 4: Misaligned clip spans
+            # Check 2: Misaligned clip spans
             (
                 "misaligned_spans",
                 {"clips": 1, "filtered": 0, "total": 10, "clip_spans": [(0.0, 10.0)], "filtered_spans": []},
                 {"clips": 1, "filtered": 0, "total": 10, "clip_spans": [(0.0, 15.0)], "filtered_spans": []},
                 "clips at index .* have misaligned spans",
             ),
-            # Check 4b: Misaligned filtered clip spans
+            # Misaligned filtered clip spans
             (
                 "misaligned_filtered",
                 {"clips": 0, "filtered": 1, "total": 10, "clip_spans": [], "filtered_spans": [(20.0, 30.0)]},
@@ -538,18 +512,20 @@ class TestSplitPipeTask:
     def test_time_alignment_validation(
         self,
         scenario: str,
-        video1_config: dict[str, int | list],
-        video2_config: dict[str, int | list],
+        video1_config: dict[str, int | list[tuple[float, float]]],
+        video2_config: dict[str, int | list[tuple[float, float]]],
         expected_error: str | None,
     ) -> None:
         """Test assert_time_alignment validates all alignment conditions."""
 
-        def build_video(name: str, config: dict[str, int | list]) -> Video:
+        def build_video(name: str, config: dict[str, int | list[tuple[float, float]]]) -> Video:
             """Build a video from config."""
-            clips = [Clip(uuid=uuid.uuid4(), source_video=name, span=span) for span in config["clip_spans"]]
-            filtered_clips = [
-                Clip(uuid=uuid.uuid4(), source_video=name, span=span) for span in config["filtered_spans"]
-            ]
+            clip_spans = config["clip_spans"]
+            filtered_spans = config["filtered_spans"]
+            assert isinstance(clip_spans, list)
+            assert isinstance(filtered_spans, list)
+            clips = [Clip(uuid=uuid.uuid4(), source_video=name, span=span) for span in clip_spans]
+            filtered_clips = [Clip(uuid=uuid.uuid4(), source_video=name, span=span) for span in filtered_spans]
             return Video(
                 input_video=pathlib.Path(name),
                 metadata=VideoMetadata(duration=100.0, size=1000),
@@ -624,7 +600,7 @@ class TestSplitPipeTask:
         # Should not raise for aligned tasks
         assert_time_alignment([task1, task2])
 
-        # Create misaligned task
+        # Create misaligned task (different processed counts)
         task3 = SplitPipeTask(
             session_id="test-session-3",
             videos=[
@@ -638,15 +614,15 @@ class TestSplitPipeTask:
                 Video(
                     input_video=pathlib.Path("cam6.mp4"),
                     metadata=VideoMetadata(duration=100.0, size=1000),
-                    clips=[],
+                    clips=[Clip(uuid=uuid.uuid4(), source_video="cam6.mp4", span=(0.0, 10.0))],
                     filtered_clips=[],
-                    num_total_clips=20,  # Misaligned!
+                    num_total_clips=10,
                 ),
             ],
         )
 
         # Should raise when any task is misaligned
-        with pytest.raises(ValueError, match=r".*different total clip counts.*"):
+        with pytest.raises(ValueError, match=r".*processed different numbers of clips.*"):
             assert_time_alignment([task1, task2, task3])
 
     def test_assert_video_clip_alignment_helper(self) -> None:
@@ -675,7 +651,7 @@ class TestSplitPipeTask:
         # Test with empty list (should not raise)
         assert_video_clip_alignment([])
 
-        # Test with misaligned videos
+        # Test with misaligned videos (different processed counts)
         misaligned_videos = [
             Video(
                 input_video=pathlib.Path("cam3.mp4"),
@@ -687,14 +663,14 @@ class TestSplitPipeTask:
             Video(
                 input_video=pathlib.Path("cam4.mp4"),
                 metadata=VideoMetadata(duration=100.0, size=1000),
-                clips=[],
+                clips=[Clip(uuid=uuid.uuid4(), source_video="cam4.mp4", span=(0.0, 10.0))],
                 filtered_clips=[],
-                num_total_clips=20,
+                num_total_clips=10,
             ),
         ]
 
         # Should raise for misaligned videos
-        with pytest.raises(ValueError, match=r".*different total clip counts.*"):
+        with pytest.raises(ValueError, match=r".*processed different numbers of clips.*"):
             assert_video_clip_alignment(misaligned_videos)
 
     def test_check_clip_time_alignment_edge_cases(self) -> None:

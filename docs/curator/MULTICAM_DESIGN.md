@@ -87,19 +87,15 @@ Multi-camera tasks enforce strict time alignment through integer-based validatio
 
 **What**: All cameras must have:
 
-1. Identical total clip counts (`num_total_clips`)
-2. Identical processed clip counts (`len(clips) + len(filtered_clips)`)
-3. Processed clips ≤ total clips (sanity check)
-4. Identical spans for clips at the same index (both `clips` and `filtered_clips`)
+1. Identical processed clip counts (`len(clips) + len(filtered_clips)`)
+2. Identical spans for clips at the same index (both `clips` and `filtered_clips`)
 
 **When**: Multi-camera stages must explicitly call `task.assert_time_alignment()` before returning from `process_data()`.
 
 **How**: The `assert_time_alignment()` method performs four validations:
 
-1. Validates all `video[i].num_total_clips` are equal
-2. Validates all `len(video[i].clips) + len(video[i].filtered_clips)` are equal
-3. Validates processed ≤ total for each video
-4. Validates `video[i].clips[j].span` are identical across all videos for each clip index `j` (same for filtered clips)
+1. Validates all `len(video[i].clips) + len(video[i].filtered_clips)` are equal
+2. Validates `video[i].clips[j].span` are identical across all videos for each clip index `j` (same for filtered clips)
 
 **Error handling**: Raises `ValueError` with specific messages for each validation failure:
 
@@ -121,11 +117,11 @@ Not all stages will receive multi-cam support. Some stages, like VllmCaptionStag
 
 | Stage | Multicam behavior |
 | ------- | ------------------- |
-| VideoDownloader | **Updated for multi-cam** — iterate over `task.videos`, download each. |
-| RemuxStage | **Updated for multi-cam** — iterate over `task.videos`, remux each. |
-| FixedStrideExtractorStage | **Updated for multi-cam** — aligned spans, per-cell Clip creation (M×N), max(start)/min(end). Multicam only uses this path. |
-| VideoFrameExtractionStage | **Updated for multi-cam** — when run in a multi-cam context, extract frames for **all** `task.videos` (not only `task.video`). Note: multi-cam currently only uses fixed-stride, so this stage is not in the multi-cam path today; the update ensures correctness if that changes. |
-| ClipTranscodingStage | **Updated for multi-cam** — transcode each `videos[i]` for each span `j`, set `videos[i].clips[j].encoded_data`. |
+| VideoDownloader | iterate over `task.videos`, download each. |
+| RemuxStage | iterate over `task.videos`, remux each. |
+| FixedStrideExtractorStage | aligned spans, per-cell Clip creation (M×N), max(start)/min(end). Multicam only uses this path. |
+| ClipFrameExtractionStage | iterate over `task.videos`, process clips for each video. |
+| ClipTranscodingStage | transcode each `videos[i]` for each span `j`, set `videos[i].clips[j].encoded_data`. |
 | ClipWriterStage | **Updated for multi-cam** — write per clip index `j`: `clips/<uuid_j>/<camera_name_i>.mp4` from `videos[i].clips[j]`; one metadata JSON per logical clip. |
 
 All filtering, captioning, embedding, preview, and T5 stages stay primary-camera-only (use only `task.video` = primary at slot 0).
@@ -157,8 +153,8 @@ Todo list of merge requests:
 ✅ VideoDownloader multi-cam support
 ✅ RemuxStage multi-cam support
 ✅ FixedStrideExtractorStage multi-cam support
-⏳ VideoFrameExtractionStage multi-cam support
-⏳ ClipTranscodingStage multi-cam support
+✅ ClipFrameExtractionStage multi-cam support
+✅ ClipTranscodingStage multi-cam support
 ⏳ ClipWriterStage multi-cam support
 ⏳ Summary writer multi-cam support
 ⏳ Update task creation to skip processed multi-cam sessions
