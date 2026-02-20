@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-NvidiaProprietary
 #
 # NVIDIA CORPORATION, its affiliates and licensors retain all intellectual
@@ -68,7 +68,7 @@ def ingest(args: argparse.Namespace) -> None:
     ]
 
     if not args.dry_run:
-        run_pipeline(input_tasks, stages=stages)
+        run_pipeline(input_tasks, stages=stages, args=args)
 
 
 def _setup_parser(parser: argparse.ArgumentParser) -> None:

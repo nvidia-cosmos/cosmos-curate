@@ -8,6 +8,7 @@
     - [Conda Environment Management](#conda-environment-management)
     - [Run the Pipeline](#run-the-pipeline)
       - [StageSpec Customization](#stagespec-customization)
+    - [Writing Artifacts in Multi-Node Clusters](#writing-artifacts-in-multi-node-clusters)
   - [Quiz: Adding WordCount Stage to Hello-World Pipeline](#quiz-adding-wordcount-stage-to-hello-world-pipeline)
   - [Pipeline Performance](#pipeline-performance)
     - [Extract CPU Processing to Separate Stages](#extract-cpu-processing-to-separate-stages)
@@ -181,7 +182,27 @@ Once we have
 - a list of input pipeline tasks
 - a list of pipeline stages
 
-We can call `run_pipeline(input_tasks: list[PipelineTaks], stages: list[CuratorStage | CuratorStageSpec])` defined in [cosmos_curate/core/interfaces/pipeline_interface.py](../../cosmos_curate/core/interfaces/pipeline_interface.py).
+We can call `run_pipeline()` defined in [cosmos_curate/core/interfaces/pipeline_interface.py](../../cosmos_curate/core/interfaces/pipeline_interface.py).
+
+```python
+run_pipeline(
+    input_tasks: list[PipelineTask],
+    stages: Sequence[CuratorStage | CuratorStageSpec],
+    model_weights_prefix: str = MODEL_WEIGHTS_PREFIX,
+    runner: RunnerInterface | None = None,
+    stage_save_config: StageSaveConfig | None = None,
+    args: argparse.Namespace | None = None,
+) -> list[T]
+```
+
+When `args` is provided and contains any `--profile-*` flags, `run_pipeline`
+automatically builds a `ProfilingConfig` and wraps every stage with profiling
+instrumentation -- no changes to stage code are needed.  Profiling artifacts
+are written to `<output-path>/profile` (a static subdirectory derived from
+the pipeline output path).  See the
+[Observability Guide](OBSERVABILITY_GUIDE.md#profiling-and-instrumentation)
+for CLI flags and the [Profiling Guide](PROFILING_GUIDE.md) for
+full details on backend internals, file naming, and artifact delivery.
 
 In hello-world pipeline, 
 
@@ -208,6 +229,50 @@ To override these properties, we can wrap the stage class directly before sendin
 Two commonly used properties are:
 - `num_workers_per_node: int = None`: set a fixed number of workers per node and disable auto-scaling, typically for IO workers.
 - `num_run_attempts_python: int = 1`: set number of retry attempts, if randomly failures are expected.
+
+### Writing Artifacts in Multi-Node Clusters
+
+In multi-node Ray or Slurm deployments, each stage worker runs on a
+different node and may need to write artifacts (intermediate files,
+profiling captures, reports) to a shared destination that could be a
+local directory, an S3 bucket, or an Azure blob container.
+
+The framework provides `StorageWriter`
+(see `cosmos_curate/core/utils/storage/storage_utils.py`) so that stage
+code never needs to know the underlying storage backend.
+
+**Quick start** -- create a `StorageWriter` once and use its methods
+inside `process_data()`:
+
+```python
+from cosmos_curate.core.utils.storage.storage_utils import StorageWriter
+
+# Construct from a local or remote path (S3/Azure).
+writer = StorageWriter(output_dir)
+
+# --- fire-and-forget writes ------------------------------------------------
+writer.write_str_to("report.txt", "Pipeline complete.\n")
+writer.write_bytes_to("summary.bin", raw_bytes)
+
+# --- tools that require a local file path ----------------------------------
+# resolve_path() returns a WritablePath (os.PathLike[str]); call
+# path.close() to finalize (uploads to remote if needed, no-op for local).
+path = writer.resolve_path("data.bin")
+expensive_tool.write(path)
+path.close()
+```
+
+For a detailed explanation of the storage abstractions and multi-node
+behavior, see [Architecture Guide - Multi-Node Storage I/O](ARCHITECTURE_GUIDE.md#multi-node-storage-io).
+
+> **Note**: `StorageWriter` is the right tool for **stage-level artifacts**
+> (pipeline outputs, intermediate files, reports).  **Profiling artifacts**
+> (CPU/memory/GPU profiles, OTel traces) are handled automatically by the
+> framework through a separate staging + collection mechanism
+> (`ArtifactDelivery` + `RayFileTransport`) -- stage authors do not need
+> to manage profiling output.  See the
+> [Profiling Guide - Artifact Delivery Flow](PROFILING_GUIDE.md#artifact-delivery-flow)
+> for details.
 
 ## Quiz: Adding WordCount Stage to Hello-World Pipeline
 

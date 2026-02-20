@@ -8,6 +8,9 @@
     - [How does stage worker hide data movement and deserialization latency?](#how-does-stage-worker-hide-data-movement-and-deserialization-latency)
     - [How does auto-scaling balance the pipeline stages?](#how-does-auto-scaling-balance-the-pipeline-stages)
     - [How to handle large variation in input data?](#how-to-handle-large-variation-in-input-data)
+  - [Multi-Node Storage I/O](#multi-node-storage-io)
+  - [Artifact Transport](#artifact-transport)
+  - [Profiling Instrumentation](#profiling-instrumentation)
   - [Reference](#reference)
 
 This guide explains the core architecture of the Cosmos-Curate framework.
@@ -105,6 +108,81 @@ To address that, the framework supports "dynamic chunking",
 i.e. each pipeline stage can take X pipeline tasks as the input and output Y tasks.
 So the task with that 5-hour video, when finishing up the `ClipTranscoding` stage,
 the 1000 clips can be chunked into 63 16-clip tasks for downstream stages.
+
+## Multi-Node Storage I/O
+
+In multi-node Ray or Slurm clusters, every stage worker (Ray actor) runs
+on a potentially different node.  When a stage needs to persist artifacts
+-- intermediate files, pipeline outputs -- each actor must be able to write
+to the shared destination without knowing whether it is a local directory,
+an S3 bucket, or an Azure blob container.
+
+The framework provides `StorageWriter`
+(defined in `cosmos_curate/core/utils/storage/storage_utils.py`) which
+resolves the storage backend once at construction time and exposes a
+uniform API for writing:
+
+- `write` / `write_str` -- single-file fire-and-forget for in-memory data.
+- `write_bytes_to` / `write_str_to` -- directory-pattern fire-and-forget
+  for in-memory data written to `<base_path>/<sub_path>`.
+- `open_writer` -- yields a writable file descriptor for libraries that
+  accept a file-like object.  Closes on context exit.
+- `resolve_path` -- for writes that require a local file path.
+  Returns a `WritablePath` (`os.PathLike[str]`) that can be used
+  like a regular path.  Call `path.close()` when done to finalize
+  (uploads to remote if needed, no-op for local).
+
+Stage code interacts only with `StorageWriter` and never needs to
+know the physical location of the output.
+
+## Artifact Transport
+
+The `cosmos_curate.core.utils.artifacts` package provides generic,
+consumer-agnostic utilities for moving files between cluster nodes
+and storage destinations.  All classes are decoupled from any
+specific consumer or subsystem.
+
+```
+Fan-in                                Fan-out
+======                                =======
+
+Worker A --+                          Source ---+--> Worker A
+Worker B --+--> ArtifactDelivery                +--> Worker B
+Worker C --+        |                           +--> Worker C
+                    |                 ArtifactDistributor
+               RayFileTransport
+               (low-level)
+```
+
+- **`ArtifactDelivery`** -- high-level fan-in orchestrator for the
+  three-phase artifact lifecycle (staging, cross-node collection,
+  upload).  Routes to direct-from-node S3/Azure upload or
+  `RayFileTransport`-based local collection automatically.
+- **`RayFileTransport`** -- low-level fan-in: streams files from
+  worker nodes to the driver using Ray streaming generators with
+  per-file chunking and double-layer backpressure.
+- **`ArtifactDistributor`** -- fan-out: pushes files from one
+  source to many (or specific) worker nodes using memory-bounded
+  chunked streaming via `ray.put()`.
+
+For a comprehensive deep-dive into the artifact transport subsystem
+including concurrency models, backpressure mechanics, memory
+accounting, environment variables, and error handling flows, see the
+[Artifact Transport Guide](ARTIFACT_TRANSPORT_GUIDE.md).
+
+## Profiling Instrumentation
+
+The profiling subsystem injects automatic instrumentation into every
+stage actor via a dynamic subclass pattern.  Each lifecycle method
+(`stage_setup_on_node`, `stage_setup`, `process_data`) is wrapped
+with pluggable backends (CPU via pyinstrument, memory via memray,
+GPU via torch.profiler) without requiring any changes to stage code.
+Artifacts are written to a local staging directory per node and
+collected post-pipeline by `ArtifactDelivery` instances.
+
+For a full deep-dive -- backend internals, LIFO nesting,
+`profiling_scope` driver setup, file naming, and error handling --
+see the [Profiling Guide](PROFILING_GUIDE.md).
 
 ## Reference
 

@@ -17,11 +17,11 @@
 
 import contextlib
 import hashlib
-import io
 import json
 import os
 import pathlib
 import re
+import shutil
 import tempfile
 from collections.abc import Generator
 from typing import IO, Any
@@ -583,25 +583,25 @@ class WritablePath(os.PathLike[str]):
     uploads the file and removes the local staging copy.
 
     Attributes:
-        _local: The underlying ``pathlib.Path`` on the local filesystem.
-        _writer: Back-reference to the owning :class:`StorageWriter`.
-        _sub: The relative sub-path used by :meth:`StorageWriter.close`.
+        local: The underlying ``pathlib.Path`` on the local filesystem.
+        writer: Back-reference to the owning :class:`StorageWriter`.
+        sub: The relative sub-path used by :meth:`StorageWriter.close`.
 
     """
 
-    _local: pathlib.Path
-    _writer: "StorageWriter"
-    _sub: str
+    local: pathlib.Path
+    writer: "StorageWriter"
+    sub: str
 
     # -- os.PathLike protocol --------------------------------------------------
 
     def __fspath__(self) -> str:
         """Return the filesystem path as a string."""
-        return os.fspath(self._local)
+        return os.fspath(self.local)
 
     def __str__(self) -> str:
         """Return the string representation of the local path."""
-        return str(self._local)
+        return str(self.local)
 
     # -- Proxied pathlib.Path operations ---------------------------------------
 
@@ -612,13 +612,13 @@ class WritablePath(os.PathLike[str]):
         encoding: str | None = None,
         errors: str | None = None,
         newline: str | None = None,
-    ) -> io.IOBase:
+    ) -> IO[Any]:
         """Open the local file (delegates to ``pathlib.Path.open``)."""
-        return self._local.open(mode, buffering, encoding, errors, newline)  # type: ignore[return-value]
+        return self.local.open(mode, buffering, encoding, errors, newline)
 
     def exists(self) -> bool:
         """Return ``True`` if the local file exists."""
-        return self._local.exists()
+        return self.local.exists()
 
     # -- Lifecycle -------------------------------------------------------------
 
@@ -628,7 +628,7 @@ class WritablePath(os.PathLike[str]):
         Delegates to :meth:`StorageWriter.close` with the sub-path
         that was used to create this ``WritablePath``.
         """
-        self._writer.close(self._sub)
+        self.writer.close(self.sub)
 
 
 class StorageWriter:
@@ -704,6 +704,9 @@ class StorageWriter:
       written to ``<base_path>/<sub_path>``.
     * :meth:`write_str_to` -- directory pattern, payload as ``str``,
       written to ``<base_path>/<sub_path>``.
+    * :meth:`upload_file_to` -- directory pattern, data already on
+      disk as a local file.  Streams without loading the full file
+      into memory (handles multi-GB artifacts with constant memory).
     * :meth:`open_writer` -- a library accepts a **writable file-like
       object** (e.g. an ``outfile`` parameter).  Streams to disk and
       closes on context exit.
@@ -959,6 +962,31 @@ class StorageWriter:
         """
         self.write_bytes_to(sub_path, text.encode(encoding))
 
+    def upload_file_to(self, sub_path: str, local_path: pathlib.Path) -> None:
+        """Stream a local file to ``<base_path>/<sub_path>`` without buffering.
+
+        Use when the data already exists as a local file and loading it
+        entirely into memory via :meth:`write_bytes_to` would be
+        prohibitively expensive (multi-GB artifacts).
+
+        For remote destinations this delegates to
+        ``StorageClient.upload_file()`` which performs multipart upload
+        (S3) or streaming blob upload (Azure) with constant memory.
+
+        For local destinations this uses ``shutil.copy2`` to stream
+        file-to-file with a fixed OS buffer.
+
+        Args:
+            sub_path: Relative path under *base_path*.
+            local_path: Path to the local source file.
+
+        """
+        if not self.is_remote:
+            dest = self._resolve_local(sub_path)
+            shutil.copy2(local_path, dest)
+            return
+        self._upload_file(sub_path, local_path)
+
     @contextlib.contextmanager
     def open_writer(
         self,
@@ -1010,7 +1038,7 @@ class StorageWriter:
         open_kwargs: dict[str, Any] = {}
         if "b" not in mode:
             open_kwargs["encoding"] = encoding
-        with wpath._local.open(mode, **open_kwargs) as f:  # noqa: SLF001
+        with wpath.open(mode, **open_kwargs) as f:
             yield f
         # Intentionally outside try/finally: on exception the upload
         # is skipped and the staging file is preserved for

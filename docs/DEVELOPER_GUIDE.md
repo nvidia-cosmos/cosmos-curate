@@ -16,6 +16,7 @@
     - [Model and Stage Tests](#model-and-stage-tests)
     - [End-to-End Pipeline Tests](#end-to-end-pipeline-tests)
   - [Best Practices](#best-practices)
+  - [Environment Variables](#environment-variables)
   - [Contributing](#contributing)
   - [Troubleshooting](#troubleshooting)
   - [Responsible Use of AI Models](#responsible-use-of-ai-models)
@@ -243,6 +244,24 @@ The CI will test more scenarios.
    - Update documentation when adding new features
    - Keep the README files up to date
    - Document any API changes
+
+## Environment Variables
+
+Cosmos-Curate uses several `COSMOS_CURATE_*` environment variables for
+internal communication between the driver process and Ray workers.
+Most are set automatically by the framework; developers rarely need to
+set them manually.
+
+| Variable | Set by | Purpose |
+|---|---|---|
+| `COSMOS_CURATE_ARTIFACTS_STAGING_DIR` | `ArtifactDelivery.create()` | Shared base directory for artifact staging on each node.  Workers inherit this from the driver so all processes agree on the same temp path.  Subdirectories (`profiling/`, `traces/`) isolate different artifact kinds. |
+| `COSMOS_CURATE_TRACE_DIR` | `enable_tracing()` | Per-process directory for OTel span files.  Defaults to `<staging>/traces/` when `COSMOS_CURATE_ARTIFACTS_STAGING_DIR` is set, otherwise `/tmp/cosmos_curate_traces`. |
+| `COSMOS_CURATE_TRACEPARENT` | `propagate_trace_context()` | W3C traceparent header propagated from the driver's root span so all worker spans join a single distributed trace. |
+| `COSMOS_CURATE_LOCAL_WORKSPACE_PREFIX` | User (optional) | Override the home-directory prefix for the local workspace (`~/cosmos_curate_local_workspace`).  See [End User Guide](./client/END_USER_GUIDE.md). |
+| `COSMOS_CURATE_DOCKER_BUILD_ULIMIT` | User (optional) | Custom `nofile` ulimit for Docker image builds (default 65536). |
+
+For details on the artifact delivery mechanism and why env vars are
+used, see the [Artifact Transport Guide](./curator/ARTIFACT_TRANSPORT_GUIDE.md#environment-variables).
 
 ## Contributing
 

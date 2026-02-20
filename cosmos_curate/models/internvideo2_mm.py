@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -384,6 +384,7 @@ class InternVideo2MultiModality(ModelInterface):
             self._model = None
 
     def _normalize(self, data: npt.NDArray[np.uint8]) -> npt.NDArray[np.float32]:
+        """Normalize the data to the range [0, 1]."""
         result: npt.NDArray[np.float32] = ((data / np.float32(255.0) - self._v_mean) / self._v_std).astype(np.float32)
         return result
 

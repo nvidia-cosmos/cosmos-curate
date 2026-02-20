@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-NvidiaProprietary
 #
 # NVIDIA CORPORATION, its affiliates and licensors retain all intellectual
@@ -15,6 +15,7 @@ from cosmos_curate.pipelines.av.captioning.captioning_stages import VRI_PROMPTS
 from cosmos_curate.pipelines.av.utils.av_data_info import (
     get_avail_camera_format_ids,
 )
+from cosmos_curate.pipelines.pipeline_args import add_profiling_args
 
 
 def validate_choices(value: str, valid_choices: set[str], argument_name: str) -> list[str]:
@@ -251,9 +252,5 @@ def add_common_args(parser: argparse.ArgumentParser, pipeline_name: str) -> None
         default=False,
         help="Whether to print verbose logs.",
     )
-    parser.add_argument(
-        "--perf-profile",
-        action="store_true",
-        default=False,
-        help="Whether to enable performance profiling.",
-    )
+
+    add_profiling_args(parser)

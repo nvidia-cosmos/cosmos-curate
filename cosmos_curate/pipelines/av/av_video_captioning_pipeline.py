@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-NvidiaProprietary
 #
 # NVIDIA CORPORATION, its affiliates and licensors retain all intellectual
@@ -130,7 +130,11 @@ def caption(args: argparse.Namespace) -> None:
         )
 
     pipeline_start = time.time()
-    output_tasks = run_pipeline(input_tasks, stages=stages)
+    output_tasks = run_pipeline(
+        input_tasks,
+        stages=stages,
+        args=args,
+    )
 
     # Post-pipeline cache generation (only for cosmos_predict2 format)
     if args.output_format == "cosmos_predict2":

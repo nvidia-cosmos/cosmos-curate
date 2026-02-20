@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -182,7 +182,15 @@ def build_input_data(
         )
         input_tasks = [SplitPipeTask(videos=[video], session_id=str(video.input_video)) for video in input_videos]
 
-        logger.info(f"About to process {len(input_videos)} raw videos ...")
+        if len(input_videos) == 0:
+            logger.warning(
+                "About to process 0 raw videos - all inputs were already processed. "
+                f"Remove the output directory {ClipWriterStage.get_output_path_processed_videos(args.output_clip_path)}"
+                " to reprocess.",
+            )
+        else:
+            logger.info(f"About to process {len(input_videos)} raw videos ...")
+
         if args.verbose:
             logger.debug("\n".join(str(x.input_video) for x in input_videos))
 
@@ -733,6 +741,7 @@ def split(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912, PLR0915
             stages,
             args.model_weights_path,
             stage_save_config=stage_save_config,
+            args=args,
         )
     else:
         # Stage replay

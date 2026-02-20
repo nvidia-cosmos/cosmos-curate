@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -458,7 +458,6 @@ def decode_video_cpu_frame_ids(  # noqa: PLR0913
         next_frame_id, count = next(frame_id_iter)
 
         frames_np_idx = 0
-
         for frame_id, frame in enumerate(frame_iterator):
             if frame_id == next_frame_id:
                 frames_np[frames_np_idx : frames_np_idx + count, :, :, :] = np.broadcast_to(

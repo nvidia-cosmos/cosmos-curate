@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -260,7 +260,11 @@ def shard(args: argparse.Namespace) -> None:
         ),
     ]
 
-    output_packets: list[ShardPipeTask] = run_pipeline(tasks, stages)
+    output_packets: list[ShardPipeTask] = run_pipeline(
+        tasks,
+        stages,
+        args=args,
+    )
     if args.perf_profile:
         total_object_size = 0
         for packet in output_packets:

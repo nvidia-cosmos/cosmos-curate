@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -22,6 +22,8 @@ import time
 import pynvml  # type: ignore[import-untyped]
 import torch
 from loguru import logger
+
+from cosmos_curate.core.utils.infra.tracing import TracedSpan
 
 _START_UP_RETRIES = 3
 _START_UP_RETRY_INTERVAL_S = 120
@@ -61,6 +63,15 @@ def _dump_gpu_info(
                         logger.info(
                             f"{log_line_prefix}: GPU-{idx} pid={proc.pid} "
                             f"used_mem={proc.usedGpuMemory / (1024**3):.0f} GB",
+                        )
+                        TracedSpan.current().add_event(
+                            "gpu_info",
+                            attributes={
+                                "gpu_idx": idx,
+                                "pid": proc.pid,
+                                "used_mem_gb": proc.usedGpuMemory / (1024**3),
+                                "total_mem_gb": total_mem / (1024**3),
+                            },
                         )
                     # check memory usage
                     fraction_free = 1.0 - used_mem / (total_mem + 1e-6)

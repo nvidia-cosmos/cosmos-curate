@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -164,6 +164,10 @@ def extract_single_cam_split_tasks(  # noqa: PLR0913
             logger.debug(video)
 
     # remove already processed videos
+    skipped_videos = [x for x in all_videos if x in processed_videos]
+    if skipped_videos and verbose:
+        logger.info(f"Skipping {len(skipped_videos)} already-processed video(s)")
+
     raw_videos = [x for x in all_videos if x not in processed_videos]
     # apply limit
     if limit > 0:

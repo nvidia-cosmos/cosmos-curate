@@ -43,6 +43,7 @@ from cosmos_curate.core.utils import environment
 from cosmos_curate.core.utils.config import operation_context
 from cosmos_curate.core.utils.config.config import load_config
 from cosmos_curate.core.utils.infra import hardware_info, ray_cluster_utils
+from cosmos_curate.core.utils.infra.tracing import StatusCode, TracedSpan, traced, traced_span
 from cosmos_curate.core.utils.storage import storage_client, storage_utils
 
 CUDA_DEVICE: str = "cuda:0"
@@ -61,6 +62,10 @@ class _ModelWeightsDownloader:
         """Initialize the _ModelWeightsDownloader with the current node name."""
         self._node_name = ray_cluster_utils.get_node_name()
 
+    @traced(
+        "_ModelWeightsDownloader.download_model_weights",
+        attributes={"io.operation": "model_weight_download"},
+    )
     def download_model_weights(self, model_names: list[str], source: str) -> tuple[str, dict[str, str]]:
         """Download model weights from the specified source.
 
@@ -74,9 +79,16 @@ class _ModelWeightsDownloader:
                 - A dictionary of missing models and their paths (if any)
 
         """
+        TracedSpan.current().set_attributes(
+            {
+                "model.source": source,
+                "model.count": len(model_names),
+                "model.node_name": self._node_name,
+            }
+        )
         logger.info(f"Syncing model weights from {source} on {self._node_name}.")
         if source == "nvcf-container":
-            logger.info("Using models auto-downloaed by NVCF")
+            logger.info("Using models auto-downloaded by NVCF")
         elif source == "nvcf-helm":
             download_model_weights_from_nvcf_to_workspace(
                 list(model_names),
@@ -89,8 +101,18 @@ class _ModelWeightsDownloader:
         else:
             download_model_weights_from_local_to_workspace(list(model_names), local_model_weights_path=source)
         logger.complete()
-        # final verification
-        return self._check_missing_model_weights(model_names)
+        node_name, missing_models = self._check_missing_model_weights(model_names)
+        TracedSpan.current().set_attributes(
+            {
+                "model.missing_count": len(missing_models),
+            }
+        )
+        if missing_models:
+            TracedSpan.current().set_status(
+                StatusCode.ERROR,
+                f"Missing {len(missing_models)} model(s) after download on {node_name}",
+            )
+        return node_name, missing_models
 
     def _check_missing_model_weights(self, model_names: list[str]) -> tuple[str, dict[str, str]]:
         """Check which model weights are missing after download attempt.
@@ -119,35 +141,81 @@ def download_model_weights_on_all_nodes(model_names: list[str], model_weight_pre
     environment (NVCF container or NVCF helm) and initiates the download process on all nodes.
     The download process runs in a separate process to isolate Ray's runtime environment.
 
+    ::
+
+        download_model_weights_on_all_nodes(model_names, prefix, N)
+        |
+        +-- determine source (nvcf-container | nvcf-helm | prefix)
+        |
+        +-- create placement group (STRICT_SPREAD, 1 CPU per node)
+        |
+        +-- spawn N _ModelWeightsDownloader actors
+        |     +-- actor[0].download_model_weights.remote(...)
+        |     +-- actor[1].download_model_weights.remote(...)
+        |     +-- ...
+        |
+        +-- ray.get(all futures) -- collect results
+        |
+        +-- report missing models per node
+
     Args:
         model_names: List of model names to download.
         model_weight_prefix: Prefix for the model weights in cloud or local storage.
         num_nodes: Number of nodes in the Ray cluster to download the model weights on.
 
     """
-    zero_start = time.time()
-    source: str | None = None
+    with traced_span(
+        "download_model_weights_on_all_nodes",
+        attributes={
+            "model.count": len(model_names),
+            "model.num_nodes": num_nodes,
+            "model.weight_prefix": model_weight_prefix,
+        },
+    ) as span:
+        zero_start = time.time()
+        source: str | None = None
 
-    if is_nvcf_container_deployment():
-        source = "nvcf-container"
-    elif is_nvcf_helm_deployment():
-        source = "nvcf-helm"
-    else:
-        source = model_weight_prefix
+        if is_nvcf_container_deployment():
+            source = "nvcf-container"
+        elif is_nvcf_helm_deployment():
+            source = "nvcf-helm"
+        else:
+            source = model_weight_prefix
 
-    bundles = [{"CPU": _MODEL_DOWNLOADER_CPU_REQUEST} for _ in range(num_nodes)]
-    pg = ray.util.placement_group(bundles=bundles, strategy="STRICT_SPREAD")
-    ray.get(pg.ready())
+        span.set_attribute("model.source", source)
 
-    executors = [_ModelWeightsDownloader.options(placement_group=pg).remote() for _ in range(num_nodes)]  # type: ignore[attr-defined]
-    results = ray.get([x.download_model_weights.remote(model_names, source=source) for x in executors])
-    for node_name, missing_models in results:
-        if len(missing_models.keys()) > 0:
-            for model_name, model_path in missing_models.items():
-                logger.error(f"Model weights {model_name} not found on node {node_name} at {model_path}.")
-    download_time = (time.time() - zero_start) / 60
+        bundles = [{"CPU": _MODEL_DOWNLOADER_CPU_REQUEST} for _ in range(num_nodes)]
+        pg = ray.util.placement_group(bundles=bundles, strategy="STRICT_SPREAD")
+        ray.get(pg.ready())
 
-    logger.info(f"---- Finished downloading model weights on all nodes in {download_time:.2f} minutes ----")
+        executors = [_ModelWeightsDownloader.options(placement_group=pg).remote() for _ in range(num_nodes)]  # type: ignore[attr-defined]
+        results = ray.get([x.download_model_weights.remote(model_names, source=source) for x in executors])
+
+        total_missing = 0
+        nodes_with_failures: list[str] = []
+        for node_name, missing_models in results:
+            if missing_models:
+                total_missing += len(missing_models)
+                nodes_with_failures.append(node_name)
+                for model_name, model_path in missing_models.items():
+                    logger.error(f"Model weights {model_name} not found on node {node_name} at {model_path}.")
+
+        download_time = (time.time() - zero_start) / 60
+
+        span.set_attributes(
+            {
+                "model.download_duration_min": round(download_time, 2),
+                "model.total_missing": total_missing,
+                "model.failed_node_count": len(nodes_with_failures),
+            }
+        )
+        if total_missing > 0:
+            span.set_status(
+                StatusCode.ERROR,
+                f"{total_missing} model(s) missing across {len(nodes_with_failures)} node(s)",
+            )
+
+        logger.info(f"---- Finished downloading model weights on all nodes in {download_time:.2f} minutes ----")
 
 
 def hash_attrs_object(obj: attrs.AttrsInstance) -> str:
@@ -309,6 +377,10 @@ def _download_model_weights_from_cloud_storage_to_workspace(
     destination = get_local_dir_for_weights_name(weights_name)
     if destination.exists():
         logger.info(f"Model weights {weights_name} already exists at {destination}. Skipping ...")
+        TracedSpan.current().set_status(
+            StatusCode.OK,
+            f"Model weights {weights_name} already exists at {destination}. Skipping ...",
+        )
         return destination
 
     if model_weights_prefix == environment.MODEL_WEIGHTS_PREFIX:

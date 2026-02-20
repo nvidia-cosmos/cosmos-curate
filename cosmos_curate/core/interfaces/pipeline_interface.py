@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,6 +14,7 @@
 # limitations under the License.
 """Entry function to run a pipeline."""
 
+import argparse
 from collections.abc import Sequence
 from concurrent.futures import ProcessPoolExecutor
 from typing import TypeVar
@@ -26,6 +27,7 @@ from cosmos_curate.core.interfaces.stage_interface import CuratorStage, CuratorS
 from cosmos_curate.core.utils.config.operation_context import get_tmp_dir
 from cosmos_curate.core.utils.environment import MODEL_WEIGHTS_PREFIX
 from cosmos_curate.core.utils.infra import hardware_info, ray_cluster_utils
+from cosmos_curate.core.utils.infra.profiling import _apply_profiling_config, profiling_wrapper
 from cosmos_curate.core.utils.misc.stage_replay import StageSaveConfig, should_save_stage, stage_save_wrapper
 from cosmos_curate.core.utils.model.model_utils import download_model_weights_on_all_nodes
 from cosmos_xenna.pipelines.private.specs import (
@@ -168,11 +170,75 @@ def _conditionally_wrap_stage(
     return stage
 
 
+def _fill_stage_spec_defaults(stage_specs: list[CuratorStageSpec]) -> None:
+    """Fill in default lifetime and restart configuration for stage specs.
+
+    Sets ``worker_max_lifetime_m`` and ``worker_restart_interval_m``
+    when they are ``None``, using heuristics based on the stage's
+    resource requirements:
+
+    * GPU stages are more expensive to restart -- longer lifetime,
+      longer restart interval.
+    * Sub-CPU stages (< 1.0 CPUs) are likely I/O stages -- no
+      automatic restart.
+    * CPU stages get moderate defaults.
+
+    Args:
+        stage_specs: Stage specs to mutate in place.
+
+    """
+    for spec in stage_specs:
+        if spec.worker_max_lifetime_m is None:
+            if spec.stage.required_resources.gpus > 0.0:
+                # GPU stage can be more expensive to restart
+                spec.worker_max_lifetime_m = 120
+            elif spec.stage.required_resources.cpus < 1.0:
+                # likely an IO stage, do not restart
+                spec.worker_max_lifetime_m = 0
+            else:
+                spec.worker_max_lifetime_m = 60
+        if spec.worker_restart_interval_m is None:
+            if spec.stage.required_resources.gpus > 0.0:
+                # again GPU stage can be more expensive to restart
+                spec.worker_restart_interval_m = 5
+            else:
+                spec.worker_restart_interval_m = 1
+
+
 def _build_pipeline_stage_specs(
     stages: Sequence[CuratorStage | CuratorStageSpec],
     stage_save_config: StageSaveConfig | None,
+    args: argparse.Namespace | None = None,
 ) -> list[CuratorStageSpec]:
-    """Build a list of pipeline stage specs from the given stages."""
+    """Build a list of pipeline stage specs from the given stages.
+
+    Normalises a mixed sequence of ``CuratorStage`` and
+    ``CuratorStageSpec`` into a uniform ``list[CuratorStageSpec]``,
+    applies optional wrappers (task saving, instrumentation), and
+    fills in default lifetime / restart configuration.
+
+    Args:
+        stages: Heterogeneous sequence of bare stages or fully
+            specified stage specs.  Bare stages are wrapped in a
+            default ``CuratorStageSpec``.
+        stage_save_config: When provided, stages whose names match
+            the config are wrapped with ``stage_save_wrapper()`` so
+            that input tasks are persisted to disk for later replay.
+        args: Parsed CLI namespace.  When provided,
+            ``_apply_profiling_config()`` is called to derive a
+            ``ProfilingConfig`` and every stage is transparently
+            wrapped with the requested instrumentation backends via
+            ``profiling_wrapper()``.  Profiling artifacts are
+            written to ``<output-path>/profile``.
+
+    Returns:
+        A list of ``CuratorStageSpec`` ready for execution.
+
+    Raises:
+        PipelineExecutionError: If any element of *stages* is neither
+            a ``CuratorStage`` nor a ``CuratorStageSpec``.
+
+    """
     # Unify the stage spec and stage
     stage_specs: list[CuratorStageSpec] = []
     for stage in stages:
@@ -185,38 +251,26 @@ def _build_pipeline_stage_specs(
             err_msg = f"Invalid stage type: {type(_stage)}. Expected CuratorStage or CuratorStageSpec."  # type: ignore[unreachable]
             raise PipelineExecutionError(err_msg, original_error=None)
 
-    # Fill in some default pipeline stage spec values
-    for stage_spec in stage_specs:
-        # set default values for worker max lifetime
-        if stage_spec.worker_max_lifetime_m is None:
-            if stage_spec.stage.required_resources.gpus > 0.0:
-                # GPU stage can be more expensive to restart
-                stage_spec.worker_max_lifetime_m = 120
-            elif stage_spec.stage.required_resources.cpus < 1.0:
-                # likely an IO stage, do not restart
-                stage_spec.worker_max_lifetime_m = 0
-            else:
-                stage_spec.worker_max_lifetime_m = 60
-        # set default values for worker restart interval
-        if stage_spec.worker_restart_interval_m is None:
-            if stage_spec.stage.required_resources.gpus > 0.0:
-                # again GPU stage can be more expensive to restart
-                stage_spec.worker_restart_interval_m = 5
-            else:
-                stage_spec.worker_restart_interval_m = 1
+    # Apply instrumentation wrapper to every stage (transparent, automatic).
+    profiling_config = _apply_profiling_config(args) if args is not None else None
+    if profiling_config is not None:
+        for spec in stage_specs:
+            spec.stage = profiling_wrapper(spec.stage, profiling_config)  # type: ignore[arg-type]
 
+    _fill_stage_spec_defaults(stage_specs)
     return stage_specs
 
 
 T = TypeVar("T", bound=PipelineTask)
 
 
-def run_pipeline[T: PipelineTask](
+def run_pipeline[T: PipelineTask](  # noqa: PLR0913
     input_tasks: list[T],
     stages: Sequence[CuratorStage | CuratorStageSpec],
     model_weights_prefix: str = MODEL_WEIGHTS_PREFIX,
     runner: RunnerInterface | None = None,
     stage_save_config: StageSaveConfig | None = None,
+    args: argparse.Namespace | None = None,
 ) -> list[T]:
     """Run the pipeline with the given pipeline spec.
 
@@ -226,6 +280,12 @@ def run_pipeline[T: PipelineTask](
         model_weights_prefix: Prefix for model weights in local or cloud storage.
         runner: Runner implementation for executing the pipeline. Defaults to XennaRunner.
         stage_save_config: Configuration for saving stages for replay.
+        args: Parsed CLI namespace.  When provided,
+            ``_apply_profiling_config(args)`` is called internally
+            and every stage is automatically wrapped with the
+            enabled backends (e.g. pyinstrument, memray,
+            torch.profiler).  Profiling artifacts are written to
+            ``<output-path>/profile``.
 
     Returns:
         A list of pipeline payloads.
@@ -238,7 +298,7 @@ def run_pipeline[T: PipelineTask](
         runner = XennaRunner()
 
     # Build a list of StageSpecs and fill in default config values.
-    stage_specs = _build_pipeline_stage_specs(stages, stage_save_config)
+    stage_specs = _build_pipeline_stage_specs(stages, stage_save_config, args)
 
     # Run the pipeline!
     try:

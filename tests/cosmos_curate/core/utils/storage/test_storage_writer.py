@@ -130,6 +130,17 @@ class TestLocalStorageWriter:
         written = (tmp_path / "output" / "data.bin").read_bytes()
         assert written == b"\x00\x01\x02\x03"
 
+    def test_upload_file_to(self, writer: StorageWriter, tmp_path: Path) -> None:
+        """upload_file_to copies a local file to <base>/<sub_path> without loading into memory."""
+        source = tmp_path / "source.bin"
+        source.write_bytes(b"large-artifact-payload")
+
+        writer.upload_file_to("nested/artifact.bin", source)
+
+        dest = tmp_path / "output" / "nested" / "artifact.bin"
+        assert dest.read_bytes() == b"large-artifact-payload"
+        assert source.read_bytes() == b"large-artifact-payload", "source file should not be modified"
+
 
 class TestRemoteStorageWriter:
     """Tests for StorageWriter in remote-mode (monkeypatched backend)."""
@@ -237,6 +248,22 @@ class TestRemoteStorageWriter:
         staging = writer._staging_root() / sub
         assert staging.exists(), "staging file should be preserved for debugging/retry"
         assert staging.read_text(encoding="utf-8") == "<p>partial</p>"
+
+    def test_upload_file_to(
+        self,
+        writer: StorageWriter,
+        fake_client: FakeStorageClient,
+        tmp_path: Path,
+    ) -> None:
+        """upload_file_to streams a local file to remote without reading into memory."""
+        source = tmp_path / "source_artifact.bin"
+        source.write_bytes(b"streamed-artifact-data")
+
+        writer.upload_file_to("artifacts/large.bin", source)
+
+        expected_key = _remote_path("output", "artifacts/large.bin")
+        assert fake_client.objects[expected_key] == b"streamed-artifact-data"
+        assert source.exists(), "source file should remain untouched"
 
     def test_staging_root_differs_by_base_path(
         self,

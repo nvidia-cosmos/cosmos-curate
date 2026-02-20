@@ -159,11 +159,34 @@ transformers = "==4.55.4" # legacy models (cosmos-embed1, internvideo2) require 
 [feature.legacy-transformers.pypi-dependencies]
 torch = "==2.9.1" # pin PyTorch version for compatibility with legacy models
 
+# Distributed tracing (OpenTelemetry).
+# Lightweight -- pure-Python wheels only.  Included in ALL environments
+# because the Ray tracing hook (tracing_hook.py:setup_tracing) runs on
+# every worker, regardless of which Pixi env it is assigned to.
+[feature.tracing.pypi-dependencies]
+opentelemetry-api = ">=1.20"
+opentelemetry-sdk = ">=1.20"
+opentelemetry-exporter-otlp-proto-http = ">=1.20"
+opentelemetry-instrumentation-botocore = ">=0.44b0"
+opentelemetry-instrumentation-requests = ">=0.44b0"
+opentelemetry-instrumentation-urllib3 = ">=0.44b0"
+opentelemetry-instrumentation-threading = ">=0.44b0"
+opentelemetry-instrumentation-logging = ">=0.44b0"
+opentelemetry-instrumentation-sqlalchemy = ">=0.44b0"
+opentelemetry-instrumentation-fastapi = ">=0.44b0"
+wrapt = ">=1.14"
+
+# Stage instrumentation backends (CPU profiling, memory profiling).
+# Included in environments that run pipeline stages.
+[feature.profiling.pypi-dependencies]
+pyinstrument = ">=5.0"
+memray = ">=1.14"
+
 [environments]
-cuml = ["cuml"]
-default = ["core"]
-legacy-transformers = ["core", "legacy-transformers"]
-model-download = ["model-download"]
-paddle-ocr = ["core"]
-transformers = ["core", "transformers"]
-unified = ["core", "transformers", "unified"]
+cuml = ["cuml", "tracing"]
+default = ["core", "tracing", "profiling"]
+legacy-transformers = ["core", "legacy-transformers", "tracing", "profiling"]
+model-download = ["model-download", "tracing"]
+paddle-ocr = ["core", "tracing", "profiling"]
+transformers = ["core", "transformers", "tracing", "profiling"]
+unified = ["core", "transformers", "unified", "tracing", "profiling"]

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-NvidiaProprietary
 #
 # NVIDIA CORPORATION, its affiliates and licensors retain all intellectual
@@ -165,7 +165,11 @@ def shard(args: argparse.Namespace) -> None:  # noqa: PLR0912, C901
     )
 
     pipeline_start = time.time()
-    output_tasks = run_pipeline(input_tasks, stages=stages)
+    output_tasks = run_pipeline(
+        input_tasks,
+        stages=stages,
+        args=args,
+    )
 
     if args.t5_tar_format_variant == "H":
         if not isinstance(t5_packaging_stage, T5EmbeddingPackagingStageH):

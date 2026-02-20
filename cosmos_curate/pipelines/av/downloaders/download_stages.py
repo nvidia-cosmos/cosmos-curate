@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved
 # SPDX-License-Identifier: LicenseRef-NvidiaProprietary
 #
 # NVIDIA CORPORATION, its affiliates and licensors retain all intellectual
@@ -21,6 +21,7 @@ from cosmos_curate.core.utils.config.operation_context import (
     make_pipeline_named_temporary_file,
 )
 from cosmos_curate.core.utils.infra.performance_utils import StageTimer
+from cosmos_curate.core.utils.infra.tracing import traced_span
 from cosmos_curate.core.utils.storage import s3_client
 from cosmos_curate.core.utils.storage.storage_client import StorageClient
 from cosmos_curate.core.utils.storage.storage_utils import (
@@ -157,14 +158,26 @@ class VideoDownloader(CuratorStage):
         duration = video.metadata.duration if video.metadata.duration is not None else 0
         num_frames = video.metadata.num_frames if video.metadata.num_frames is not None else 0
 
-        logger.info(
-            f"Downloaded {video.source_video} size={size_mb:,.0f}MB "
-            f"height={height} fps={framerate:.1f} "
-            f"duration={duration:.0f}s "
-            f"#-frames={num_frames} "
-            f"#-timestamps={num_timestamps} "
-            f"{video.metadata.video_codec}-{video.metadata.pixel_format}"
-        )
+        with traced_span(
+            "VideoDownloader.video_info",
+            attributes={
+                "source_video": video.source_video,
+                "size_mb": round(size_mb, 1),
+                "height": height,
+                "framerate": round(framerate, 1),
+                "duration_s": round(duration, 1),
+                "num_frames": num_frames,
+                "num_timestamps": num_timestamps,
+            },
+        ):
+            logger.info(
+                f"Downloaded {video.source_video} size={size_mb:,.0f}MB "
+                f"height={height} fps={framerate:.1f} "
+                f"duration={duration:.0f}s "
+                f"#-frames={num_frames} "
+                f"#-timestamps={num_timestamps} "
+                f"{video.metadata.video_codec}-{video.metadata.pixel_format}"
+            )
 
     def _read_timestamps(self, task: AvSessionVideoSplitTask) -> None:
         timestamp_camera_id_mapping: dict[int, int] = self._camera_mapping_entry.get(

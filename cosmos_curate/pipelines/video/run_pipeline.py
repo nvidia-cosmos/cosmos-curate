@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -19,6 +19,7 @@ import argparse
 import importlib
 
 from cosmos_curate.core.utils.config.operation_context import check_if_running_in_pixi_env
+from cosmos_curate.core.utils.infra.profiling import profiling_scope
 
 
 def cli() -> None:
@@ -43,7 +44,12 @@ def cli() -> None:
     if args.command is None:
         parser.print_help()
         return
-    args.func(args)
+
+    # Root-level profile covers the full pipeline lifecycle.
+    # Per-stage profiles (inside Ray actors) are configured by
+    # run_pipeline(args=args) via _apply_profiling_config().
+    with profiling_scope(args):
+        args.func(args)
 
 
 if __name__ == "__main__":
