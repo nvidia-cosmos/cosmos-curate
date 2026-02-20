@@ -34,6 +34,7 @@ from loguru import logger
 from cosmos_curate.core.interfaces.pipeline_interface import run_pipeline
 from cosmos_curate.core.interfaces.stage_interface import CuratorStage, CuratorStageSpec
 from cosmos_curate.core.utils.config import args_utils
+from cosmos_curate.core.utils.infra.hardware_info import get_gpu_infos
 from cosmos_curate.core.utils.misc.stage_replay import (
     StageSaveConfig,
     add_stage_replay_args,
@@ -115,6 +116,25 @@ COSMOS_REASON_ALGOS = {"cosmos_r1", "cosmos_r2"}
 VLLM_CAPTION_ALGOS = COSMOS_REASON_ALGOS | {"nemotron", "phi4", "qwen"} | QWEN3_CAPTION_ALGOS
 ALL_CAPTION_ALGOS = VLLM_CAPTION_ALGOS | {"gemini"}
 MULTICAM_VIDEO_EXTENSIONS: set[str] = {".mp4"}
+QWEN3_VL_235B_HIGH_MEMORY_GPU_THRESHOLD_MB = 128_000
+
+
+def _get_qwen3_vl_235b_min_gpus() -> int:
+    """Determine the minimum number of GPUs required for qwen3_vl_235b based on available hardware.
+
+    High-memory GPUs (e.g. GB200 with ~192 GB per GPU) can fit the model on fewer GPUs,
+    while lower-memory GPUs (e.g. H100 with ~80 GB) need more GPUs for tensor parallelism.
+
+    The threshold is defined by QWEN3_VL_235B_HIGH_MEMORY_GPU_THRESHOLD_MB.
+
+    Returns:
+        4 if per-GPU memory exceeds the threshold, 8 otherwise.
+
+    """
+    gpu_infos = get_gpu_infos()
+    if gpu_infos and gpu_infos[0].memory_total >= QWEN3_VL_235B_HIGH_MEMORY_GPU_THRESHOLD_MB:
+        return 4
+    return 8
 
 
 def build_input_data(
@@ -556,7 +576,7 @@ def split(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912, PLR0915
             window_config.preprocess_dtype = args.qwen_preprocess_dtype
             window_config.model_does_preprocess = args.qwen_model_does_preprocess
 
-            QWEN3_VL_235B_MIN_GPUS = 8
+            QWEN3_VL_235B_MIN_GPUS = _get_qwen3_vl_235b_min_gpus()
             QWEN3_VL_235B_FP8_MIN_GPUS = 4
             if caption_algo == "qwen3_vl_235b" and vllm_config.num_gpus < QWEN3_VL_235B_MIN_GPUS:
                 logger.warning(
