@@ -225,15 +225,15 @@ RUN --mount=type=cache,target=/pixi-cache \
 # Instead, let rattler use its default on-disk cache and clean it within the same RUN layer.
 RUN --mount=type=cache,target=/pixi-cache \
     cd {{code_dir_str}} && \
-{% if verbose %}
+{%- if verbose %}
     echo "=== pixi version ===" && pixi --version && \
-{% endif %}
+{%- endif %}
     export CONDA_OVERRIDE_CUDA=12.9.1 && \
-{% if verbose %}
+{%- if verbose %}
     export RUST_LOG=uv=debug && \
     export UV_NO_PROGRESS=1 && \
     export NO_COLOR=1 && \
-{% endif %}
+{%- endif %}
     export CUDA_PATH="/usr/local/cuda" && \
     success=false && \
     for attempt in {1..10}; do \
@@ -247,15 +247,15 @@ RUN --mount=type=cache,target=/pixi-cache \
     $success
 
 # Install the cuml environment separately if requested.
-{% if 'cuml' in envs %} \
+{% if 'cuml' in envs %}
 RUN --mount=type=cache,target=/pixi-cache \
     cd {{code_dir_str}} && \
     export CONDA_OVERRIDE_CUDA=12.9.1 && \
-{% if verbose %}
+{%- if verbose %}
     export RUST_LOG=uv=debug && \
     export UV_NO_PROGRESS=1 && \
     export NO_COLOR=1 && \
-{% endif %}
+{%- endif %}
     success=false && \
     for attempt in {1..10}; do \
         echo "=== pixi install cuml attempt $attempt/10 ===" && \
