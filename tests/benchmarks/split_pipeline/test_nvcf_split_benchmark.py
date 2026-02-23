@@ -9,11 +9,14 @@
 # its affiliates is strictly prohibited.
 """Test nvcf_split_benchmark."""
 
+from secrets import randbelow
 from typing import Any
 from unittest.mock import MagicMock, mock_open, patch
 
+import pytest
+
 from benchmarks.secrets import KratosSecrets
-from benchmarks.split_pipeline.nvcf_split_benchmark import report_metrics
+from benchmarks.split_pipeline.nvcf_split_benchmark import _summary_counts_are_valid, report_metrics
 
 
 @patch("benchmarks.split_pipeline.nvcf_split_benchmark.push_cloudevent")
@@ -80,3 +83,43 @@ def test_report_metrics_happy_path(  # noqa: PLR0913
     )
     mock_make_cloudevent.assert_called_once_with(test_summary_metrics)
     mock_push_cloudevent.assert_called_once_with(test_cloudevent, test_kratos_metrics_endpoint, test_kratos_secrets)
+
+
+@patch("benchmarks.split_pipeline.nvcf_split_benchmark.json.load")
+@patch("benchmarks.split_pipeline.nvcf_split_benchmark.smart_open.open")
+def test_summary_counts_are_valid_happy_path(
+    mock_smart_open: MagicMock,
+    mock_json_load: MagicMock,
+) -> None:
+    """Test summary count validation for valid counts."""
+    limit = 100 + randbelow(9901)  # gives 100..10000
+    mock_file = mock_open()
+    mock_smart_open.return_value = mock_file.return_value
+    mock_json_load.return_value = {"num_input_videos": limit, "num_processed_videos": limit - 1}
+
+    assert _summary_counts_are_valid("s3://bucket/path/summary.json", transport_params={}, limit=limit)
+
+
+@patch("benchmarks.split_pipeline.nvcf_split_benchmark.json.load")
+@patch("benchmarks.split_pipeline.nvcf_split_benchmark.smart_open.open")
+def test_summary_counts_are_valid_rejects_invalid_cases(
+    mock_smart_open: MagicMock,
+    mock_json_load: MagicMock,
+) -> None:
+    """Test summary count validation rejects invalid count combinations."""
+    mock_file = mock_open()
+    mock_smart_open.return_value = mock_file.return_value
+    limit = 100 + randbelow(9901)  # gives 100..10000
+    invalid_summaries = [
+        {"num_input_videos": limit, "num_processed_videos": limit + 1},
+        {"num_input_videos": limit - 1, "num_processed_videos": limit},
+    ]
+
+    for summary in invalid_summaries:
+        mock_json_load.return_value = summary
+        assert not _summary_counts_are_valid("s3://bucket/path/summary.json", transport_params={}, limit=limit)
+
+
+def test_summary_counts_todo_for_core_listing_limit_semantics() -> None:
+    """Placeholder test: add regression once core S3 listing/summary honors --limit."""
+    pytest.skip("TODO: add explicit regression coverage once core S3 listing/summary semantics honor --limit.")

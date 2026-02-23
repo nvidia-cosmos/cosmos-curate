@@ -17,6 +17,7 @@ from typing import Any
 
 import boto3
 import smart_open  # type: ignore[import-untyped]
+import tenacity
 from loguru import logger
 from rich import print_json
 
@@ -25,6 +26,165 @@ from benchmarks.secrets import KratosSecrets, NvcfSecrets, S3Secrets
 from benchmarks.summary import make_summary_metrics
 from cosmos_curate.client.nvcf_cli.ncf.launcher.nvcf_driver import _get_s3_config_str
 from cosmos_curate.client.nvcf_cli.ncf.launcher.nvcf_function import NvcfFunction, NvcfFunctionAlreadyDeployedError
+
+
+class RetryableBenchmarkAttemptError(RuntimeError):
+    """Retryable benchmark-attempt failure."""
+
+
+def _log_retryable_attempt_failure(retry_state: tenacity.RetryCallState) -> None:
+    """Log retryable attempt failures before the next retry."""
+    if retry_state.outcome is None:
+        return
+    exc = retry_state.outcome.exception()
+    if exc is not None:
+        logger.warning(str(exc))
+
+
+def _read_summary_json(summary_path: str, transport_params: dict[str, Any]) -> dict[str, Any]:
+    """Load and return summary.json content."""
+    with smart_open.open(summary_path, transport_params=transport_params) as f:
+        return json.load(f)
+
+
+def _summary_counts_are_valid(summary_path: str, transport_params: dict[str, Any], limit: int) -> bool:
+    """Validate summary count fields used for benchmark integrity checks."""
+    try:
+        summary_data = _read_summary_json(summary_path, transport_params)
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"Failed to read summary from {summary_path}: {e!s}")
+        return False
+
+    num_input_videos = summary_data.get("num_input_videos")
+    num_processed_videos = summary_data.get("num_processed_videos")
+
+    if not isinstance(num_input_videos, int) or not isinstance(num_processed_videos, int):
+        logger.warning(
+            f"Invalid summary counts in {summary_path}: {num_input_videos=}, {num_processed_videos=}. "
+            "Expected integer values."
+        )
+        return False
+
+    if num_processed_videos > limit:
+        logger.warning(
+            f"Invalid summary counts in {summary_path}: {num_processed_videos=} exceeds configured {limit=}."
+        )
+        return False
+
+    if num_processed_videos > num_input_videos:
+        logger.warning(
+            f"Invalid summary counts in {summary_path}: {num_processed_videos=} exceeds {num_input_videos=}."
+        )
+        return False
+
+    return True
+
+
+def _run_benchmark_attempt(  # noqa: PLR0913
+    attempt: int,
+    max_attempts: int,
+    *,
+    attempt_output_prefix: str,
+    invoke_data: dict[str, Any],
+    invoke_config: Path,
+    nvcf_function: NvcfFunction,
+    backend: str,
+    gpu: str,
+    instance_type: str,
+    deploy_config: Path,
+    num_nodes: int,
+    max_concurrency: int,
+    s3_config_str: str,
+    tmpdir_path: Path,
+    transport_params: dict[str, Any],
+    limit: int,
+) -> str:
+    """Run one benchmark attempt and return summary path when counts are valid."""
+    attempt_summary_path = f"{attempt_output_prefix}/summary.json"
+    invoke_data["args"]["output_clip_path"] = attempt_output_prefix
+    invoke_config.write_text(json.dumps(invoke_data, indent=2))
+    logger.info(f"Invoke data for attempt {attempt}/{max_attempts}:")
+    print_json(json.dumps(invoke_data, indent=2))
+
+    logger.info(f"Attempt {attempt}/{max_attempts} with output: {attempt_output_prefix}")
+    try:
+        with nvcf_function.deploy(backend, gpu, instance_type, deploy_config, num_nodes, max_concurrency):
+            nvcf_function.invoke(invoke_config, s3_config_str, out_dir=tmpdir_path, retry_cnt=1)
+    except NvcfFunctionAlreadyDeployedError as e:
+        msg = "Function is already deployed, this should not happen, previous benchmark may be running."
+        raise RuntimeError(msg) from e
+    except Exception as e:
+        msg = f"Attempt {attempt}/{max_attempts} failed: {e!s}"
+        raise RetryableBenchmarkAttemptError(msg) from e
+
+    if not _summary_counts_are_valid(attempt_summary_path, transport_params, limit):
+        msg = (
+            f"Attempt {attempt}/{max_attempts} produced invalid summary counts at {attempt_summary_path}. "
+            "Trying next attempt."
+        )
+        raise RetryableBenchmarkAttemptError(msg)
+    return attempt_summary_path
+
+
+def _run_benchmark(  # noqa: PLR0913
+    max_attempts: int,
+    *,
+    run_output_prefix: str,
+    invoke_data: dict[str, Any],
+    invoke_config: Path,
+    nvcf_function: NvcfFunction,
+    backend: str,
+    gpu: str,
+    instance_type: str,
+    deploy_config: Path,
+    num_nodes: int,
+    max_concurrency: int,
+    s3_config_str: str,
+    tmpdir_path: Path,
+    transport_params: dict[str, Any],
+    limit: int,
+) -> str:
+    """Run the benchmark with retries and return a validated summary path."""
+    retryer = tenacity.Retrying(
+        stop=tenacity.stop_after_attempt(max_attempts),
+        wait=tenacity.wait_none(),
+        retry=tenacity.retry_if_exception_type(RetryableBenchmarkAttemptError),
+        before_sleep=_log_retryable_attempt_failure,
+        reraise=True,
+    )
+
+    try:
+        for retry_attempt in retryer:
+            with retry_attempt:
+                attempt = retry_attempt.retry_state.attempt_number
+                attempt_output_prefix = f"{run_output_prefix}/attempt_{attempt}"
+                summary_path = _run_benchmark_attempt(
+                    attempt=attempt,
+                    max_attempts=max_attempts,
+                    attempt_output_prefix=attempt_output_prefix,
+                    invoke_data=invoke_data,
+                    invoke_config=invoke_config,
+                    nvcf_function=nvcf_function,
+                    backend=backend,
+                    gpu=gpu,
+                    instance_type=instance_type,
+                    deploy_config=deploy_config,
+                    num_nodes=num_nodes,
+                    max_concurrency=max_concurrency,
+                    s3_config_str=s3_config_str,
+                    tmpdir_path=tmpdir_path,
+                    transport_params=transport_params,
+                    limit=limit,
+                )
+                logger.info(f"Using validated summary at {summary_path}")
+                return summary_path
+    except RetryableBenchmarkAttemptError as e:
+        logger.warning(str(e))
+        msg = f"No valid summary was produced after {max_attempts} attempts."
+        raise RuntimeError(msg) from e
+
+    msg = "Unexpected retry flow: benchmark attempts exhausted without a terminal exception."
+    raise RuntimeError(msg)
 
 
 def report_metrics(  # noqa: PLR0913
@@ -58,9 +218,7 @@ def report_metrics(  # noqa: PLR0913
 
     """
     logger.info(f"Getting summary metrics from {summary_path}")
-
-    with smart_open.open(summary_path, transport_params=transport_params) as f:
-        summary_data = json.load(f)
+    summary_data = _read_summary_json(summary_path, transport_params)
 
     summary_metrics = make_summary_metrics(summary_data, num_nodes, gpus_per_node, caption=caption, env="nvcf")
 
@@ -108,6 +266,7 @@ def nvcf_split_benchmark(  # noqa: PLR0913
     gpus_per_node: int,
     kratos_metrics_endpoint: str,
     metrics_path: str | None,
+    max_attempts: int,
     *,
     clip_re_chunk_size: int,
     qwen_use_fp8_weights: bool,
@@ -141,7 +300,6 @@ def nvcf_split_benchmark(  # noqa: PLR0913
     invoke_data["args"].update(
         {
             "input_video_path": s3_input_prefix,
-            "output_clip_path": s3_output_prefix,
             "captioning_algorithm": captioning_algorithm,
             "qwen_preprocess_dtype": "uint8" if caption == 1 else "float16",
             "generate_captions": caption == 1,
@@ -151,9 +309,6 @@ def nvcf_split_benchmark(  # noqa: PLR0913
             "vllm_use_inflight_batching": vllm_use_inflight_batching,
         }
     )
-
-    logger.info("Invoke data:")
-    print_json(json.dumps(invoke_data, indent=2))
 
     logger.info("Deploy data:")
     print_json(json.dumps(deploy_data, indent=2))
@@ -173,8 +328,6 @@ aws_region = {s3_secrets.aws_region}
             region_name=s3_secrets.aws_region,
         )
     }
-    summary_path = s3_output_prefix + "/summary.json"
-
     if report_metrics_to_kratos:
         # Verify that the kratos secret can be successfully obtained before a long running benchmark.
         KratosSecrets.from_env(
@@ -191,7 +344,6 @@ aws_region = {s3_secrets.aws_region}
         s3_config_file = tmpdir_path / "s3_cred"
 
         deploy_config.write_text(json.dumps(deploy_data, indent=2))
-        invoke_config.write_text(json.dumps(invoke_data, indent=2))
         s3_config_file.write_text(s3_config)
         s3_config_str = _get_s3_config_str(s3_config_file)
 
@@ -199,32 +351,43 @@ aws_region = {s3_secrets.aws_region}
             msg = "Failed to get S3 config string"
             raise ValueError(msg)
 
-        try:
-            # Run benchmark
-            with nvcf_function.deploy(backend, gpu, instance_type, deploy_config, num_nodes, max_concurrency):
-                nvcf_function.invoke(invoke_config, s3_config_str, out_dir=tmpdir_path)
+        run_output_prefix = f"{s3_output_prefix}/run_{tmpdir_path.name}"
+        accepted_summary_path = _run_benchmark(
+            max_attempts=max_attempts,
+            run_output_prefix=run_output_prefix,
+            invoke_data=invoke_data,
+            invoke_config=invoke_config,
+            nvcf_function=nvcf_function,
+            backend=backend,
+            gpu=gpu,
+            instance_type=instance_type,
+            deploy_config=deploy_config,
+            num_nodes=num_nodes,
+            max_concurrency=max_concurrency,
+            s3_config_str=s3_config_str,
+            tmpdir_path=tmpdir_path,
+            transport_params=transport_params,
+            limit=limit,
+        )
 
-            kratos_secrets: KratosSecrets | None = None
-            if report_metrics_to_kratos:
-                # Get secrets immediately before reporting - benchmarking time may exceed the token's expiration date.
-                kratos_secrets = KratosSecrets.from_env(
-                    kratos_metrics_token_env,
-                    kratos_bearer_url,
-                )
-
-            report_metrics(
-                summary_path=summary_path,
-                transport_params=transport_params,
-                num_nodes=num_nodes,
-                gpus_per_node=gpus_per_node,
-                caption=bool(caption),
-                kratos_secrets=kratos_secrets,
-                kratos_metrics_endpoint=kratos_metrics_endpoint,
-                metrics_path=metrics_path,
+        kratos_secrets: KratosSecrets | None = None
+        if report_metrics_to_kratos:
+            # Get secrets immediately before reporting - benchmarking time may exceed the token's expiration date.
+            kratos_secrets = KratosSecrets.from_env(
+                kratos_metrics_token_env,
+                kratos_bearer_url,
             )
 
-        except NvcfFunctionAlreadyDeployedError:
-            logger.error("Function is already deployed, this should not happen, previous benchmark may be running.")
+        report_metrics(
+            summary_path=accepted_summary_path,
+            transport_params=transport_params,
+            num_nodes=num_nodes,
+            gpus_per_node=gpus_per_node,
+            caption=bool(caption),
+            kratos_secrets=kratos_secrets,
+            kratos_metrics_endpoint=kratos_metrics_endpoint,
+            metrics_path=metrics_path,
+        )
 
 
 def _parse_args() -> argparse.Namespace:
@@ -334,6 +497,13 @@ def _parse_args() -> argparse.Namespace:
         default=1,
         help="Whether to use inflight batching with vllm.",
     )
+    parser.add_argument(
+        "--max-attempts",
+        type=int,
+        required=False,
+        default=2,
+        help="Maximum number of benchmark attempts with unique output paths.",
+    )
     return parser.parse_args()
 
 
@@ -353,6 +523,9 @@ def main() -> None:
 
     args.qwen_use_fp8_weights = bool(args.qwen_use_fp8_weights)
     args.vllm_use_inflight_batching = bool(args.vllm_use_inflight_batching)
+    if args.max_attempts < 1:
+        msg = "max-attempts must be at least 1."
+        raise ValueError(msg)
 
     if args.metrics_path:
         logger.info(f"Saving metrics to {args.metrics_path}")
@@ -394,6 +567,7 @@ def main() -> None:
         gpus_per_node=args.gpus_per_node,
         kratos_metrics_endpoint=args.kratos_metrics_endpoint,
         metrics_path=args.metrics_path,
+        max_attempts=args.max_attempts,
         report_metrics_to_kratos=args.report_metrics_to_kratos,
         clip_re_chunk_size=args.clip_re_chunk_size,
         qwen_use_fp8_weights=args.qwen_use_fp8_weights,
