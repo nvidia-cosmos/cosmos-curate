@@ -28,6 +28,7 @@ from cosmos_curate.core.utils.misc import grouping
 from cosmos_curate.core.utils.misc.retry_utils import do_with_retries
 from cosmos_curate.core.utils.storage import storage_client, storage_utils
 from cosmos_curate.core.utils.storage.storage_utils import (
+    get_directories_relative,
     get_files_relative,
     get_full_path,
     path_exists,
@@ -127,6 +128,7 @@ def _write_split_result_summary(  # noqa: PLR0913
     pipeline_run_time: float = 0.0,
     write_all_caption_json: bool = True,
     video_bytes: int = 0,
+    multi_cam: bool = False,
 ) -> None:
     logger.info(f"Starting to summarize data in {output_path} ...")
     client_output = storage_utils.get_storage_client(
@@ -135,8 +137,17 @@ def _write_split_result_summary(  # noqa: PLR0913
         can_overwrite=True,
     )
 
-    processed_videos = get_files_relative(ClipWriterStage.get_output_path_processed_videos(output_path), client_output)
-    logger.info(f"Summarize: found {len(processed_videos)} processed videos")
+    if not multi_cam:
+        processed_sessions = get_files_relative(
+            ClipWriterStage.get_output_path_processed_videos(output_path), client_output
+        )
+        logger.info(f"Summarize: found {len(processed_sessions)} processed videos")
+    else:
+        processed_sessions = get_directories_relative(
+            ClipWriterStage.get_output_path_processed_videos(output_path), client_output
+        )
+        logger.info(f"Summarize: found {len(processed_sessions)} processed sessions")
+
     clip_stats_keys = [
         "num_clips_filtered_by_motion",
         "num_clips_filtered_by_aesthetic",
@@ -148,7 +159,7 @@ def _write_split_result_summary(  # noqa: PLR0913
     ]
     summary_data: dict[str, Any] = {
         "num_input_videos": len(input_videos_relative),
-        "num_processed_videos": len(processed_videos),
+        "num_processed_videos": len(processed_sessions),
         "embedding_algorithm": embedding_algorithm,
         "total_video_duration": 0,
         "total_clip_duration": 0,
@@ -156,6 +167,7 @@ def _write_split_result_summary(  # noqa: PLR0913
         "pipeline_run_time": pipeline_run_time,
         "total_video_bytes": video_bytes,
     }
+
     for key in clip_stats_keys:
         summary_data[f"total_{key}"] = 0
 
@@ -229,6 +241,7 @@ def write_split_summary(  # noqa: PLR0913
     perf_profile: bool = False,
     pipeline_run_time: float = 0.0,
     write_all_caption_json: bool = True,
+    multi_cam: bool = False,
 ) -> None:
     """Write summary of split pipeline results including job stats and performance metrics.
 
@@ -243,10 +256,11 @@ def write_split_summary(  # noqa: PLR0913
         perf_profile: Whether to write performance statistics.
         pipeline_run_time: Total runtime of the pipeline in minutes.
         write_all_caption_json: Whether to write all caption JSON file.
+        multi_cam: Whether the pipeline is running in multi-cam mode.
 
     """
     # dump and write job summary
-    video_bytes = sum(task.video.metadata.size for task in output_tasks if task.video.metadata.size is not None)
+    video_bytes = sum(v.metadata.size for task in output_tasks for v in task.videos if v.metadata.size is not None)
 
     _write_split_result_summary(
         input_path,
@@ -258,6 +272,7 @@ def write_split_summary(  # noqa: PLR0913
         pipeline_run_time=pipeline_run_time,
         write_all_caption_json=write_all_caption_json,
         video_bytes=video_bytes,
+        multi_cam=multi_cam,
     )
     # dump and write performance stats
     if perf_profile:

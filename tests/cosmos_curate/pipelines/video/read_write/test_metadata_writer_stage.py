@@ -152,6 +152,7 @@ def _build_video(
     clip: Clip,
     *,
     clip_chunk_index: int = 0,
+    relative_path: str = "",
 ) -> Video:
     """Assemble Video metadata wrapper used by the stage."""
     metadata = VideoMetadata(
@@ -172,6 +173,7 @@ def _build_video(
         num_total_clips=1,
         num_clip_chunks=1,
         clip_chunk_index=clip_chunk_index,
+        relative_path=relative_path,
     )
 
 
@@ -301,6 +303,107 @@ def test_process_data_writes_expected_local_outputs(tmp_path: Path) -> None:
     assert cds_meta["model_version"] == "v1"
     assert cds_meta["caption"] == "main caption"
     assert cds_meta["clip_location"].endswith(f"clips/{clip.uuid}.mp4")
+
+
+def test_single_cam_clip_path_uses_flat_structure(tmp_path: Path) -> None:
+    """Single-cam must write clips to clips/{uuid}.mp4 (relative_path empty)."""
+    input_dir = tmp_path / "input"
+    output_dir = tmp_path / "output"
+    input_dir.mkdir()
+    video_path = input_dir / "video.mp4"
+    video_path.write_bytes(b"input-video")
+    stage = _create_stage(output_dir, input_dir)
+    clip = Clip(
+        uuid=uuid.uuid4(),
+        source_video=video_path.as_posix(),
+        span=(0.0, 2.0),
+        encoded_data=b"clip-bytes",
+        windows=[Window(start_frame=0, end_frame=30, caption={"qwen": "cap"})],
+    )
+    video = _build_video(video_path, clip, relative_path="")
+    task = SplitPipeTask(session_id="test-session", video=video)
+    stage.process_data([task])
+    flat_path = output_dir / "clips" / f"{clip.uuid}.mp4"
+    assert flat_path.exists(), "single-cam must use flat path clips/{uuid}.mp4"
+    assert flat_path.read_bytes() == b"clip-bytes"
+
+
+def test_multicam_style_clip_path_uses_subdir(tmp_path: Path) -> None:
+    """When relative_path is set, clip MP4 is written to clips/{uuid}/{relative_path}.mp4."""
+    input_dir = tmp_path / "input"
+    output_dir = tmp_path / "output"
+    input_dir.mkdir()
+    video_path = input_dir / "video.mp4"
+    video_path.write_bytes(b"input-video")
+    stage = _create_stage(output_dir, input_dir)
+    clip = Clip(
+        uuid=uuid.uuid4(),
+        source_video=video_path.as_posix(),
+        span=(0.0, 2.0),
+        encoded_data=b"clip-bytes",
+        windows=[Window(start_frame=0, end_frame=30, caption={"qwen": "cap"})],
+    )
+    video = _build_video(video_path, clip, relative_path="video")
+    task = SplitPipeTask(session_id="test-session", video=video)
+    stage.process_data([task])
+    subdir_path = output_dir / "clips" / str(clip.uuid) / "video.mp4"
+    assert subdir_path.exists(), "multi-cam style must use clips/{uuid}/{relative_path}.mp4"
+    assert subdir_path.read_bytes() == b"clip-bytes"
+
+
+def test_multicam_primary_only_metadata_no_overwrite(tmp_path: Path) -> None:
+    """Multi-cam: per-clip metadata and embeddings are primary-only; secondary must not overwrite."""
+    input_dir = tmp_path / "input"
+    output_dir = tmp_path / "output"
+    input_dir.mkdir()
+    primary_path = input_dir / "session" / "cam1.mp4"
+    secondary_path = input_dir / "session" / "cam2.mp4"
+    primary_path.parent.mkdir(parents=True)
+    primary_path.write_bytes(b"primary-video")
+    secondary_path.write_bytes(b"secondary-video")
+
+    stage = _create_stage(output_dir, input_dir)
+    shared_uuid = uuid.uuid4()
+
+    primary_clip = Clip(
+        uuid=shared_uuid,
+        source_video=primary_path.as_posix(),
+        span=(0.0, 2.0),
+        encoded_data=b"primary-clip-bytes",
+        windows=[Window(start_frame=0, end_frame=30, caption={"qwen": "primary caption"})],
+    )
+    primary_clip.intern_video_2_embedding = np.array([1.0, 2.0], dtype=np.float32)
+
+    secondary_clip = Clip(
+        uuid=shared_uuid,
+        source_video=secondary_path.as_posix(),
+        span=(0.0, 2.0),
+        encoded_data=b"secondary-clip-bytes",
+        windows=[Window(start_frame=0, end_frame=30, caption={"qwen": "secondary caption"})],
+    )
+    secondary_clip.intern_video_2_embedding = np.array([9.0, 9.0], dtype=np.float32)
+
+    primary_video = _build_video(primary_path, primary_clip, relative_path="session/cam1")
+    secondary_video = _build_video(secondary_path, secondary_clip, relative_path="session/cam2")
+    task = SplitPipeTask(session_id="test-session", videos=[primary_video, secondary_video])
+
+    stage.process_data([task])
+
+    # Both MP4s written (per-camera paths)
+    assert (output_dir / "clips" / str(shared_uuid) / "session" / "cam1.mp4").read_bytes() == b"primary-clip-bytes"
+    assert (output_dir / "clips" / str(shared_uuid) / "session" / "cam2.mp4").read_bytes() == b"secondary-clip-bytes"
+
+    # Per-clip metadata: primary only; must not be overwritten by secondary
+    meta_path = output_dir / "metas" / "v0" / f"{shared_uuid}.json"
+    meta = _read_json(meta_path)
+    assert meta["windows"][0]["qwen_caption"] == "primary caption", "metadata must come from primary, not secondary"
+    assert meta["source_video"] == primary_path.as_posix()
+
+    # Embedding: primary only
+    emb_path = output_dir / "iv2_embd" / f"{shared_uuid}.pickle"
+    with emb_path.open("rb") as f:
+        emb = pickle.load(f)  # noqa: S301
+    npt.assert_allclose(emb, np.array([1.0, 2.0], dtype=np.float32))
 
 
 def test_chunked_metadata_writes_group_jsonl(tmp_path: Path) -> None:

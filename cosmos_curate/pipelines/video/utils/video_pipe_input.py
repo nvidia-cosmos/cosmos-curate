@@ -172,9 +172,9 @@ def extract_single_cam_split_tasks(  # noqa: PLR0913
     # apply limit
     if limit > 0:
         raw_videos = raw_videos[:limit]
-    # prepare the final list of videos
+    # prepare the final list of videos (single-cam: relative_path="" so clips go to clips/{uuid}.mp4)
     return (
-        [Video(get_full_path(input_path, x), relative_path=x) for x in raw_videos],
+        [Video(get_full_path(input_path, x), relative_path="") for x in raw_videos],
         all_videos,
         len(processed_videos),
     )
@@ -226,7 +226,10 @@ def _multi_cam_session_to_split_task(  # noqa: PLR0913
         if verbose:
             logger.debug(f"Session {session_id} has no video files, skipping")
         return None
-    videos = [Video(get_full_path(sessions_prefix, session_id, p), relative_path=p) for p in video_paths]
+    videos = [
+        Video(get_full_path(sessions_prefix, session_id, p), relative_path=str(pathlib.Path(p).with_suffix("")))
+        for p in video_paths
+    ]
     if verbose:
         logger.debug(f"Session {session_id}: {len(videos)} videos (primary first)")
     return SplitPipeTask(videos=videos, session_id=session_id)

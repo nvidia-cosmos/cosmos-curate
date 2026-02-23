@@ -340,69 +340,90 @@ class ClipWriterStage(CuratorStage):
     ) -> None:
         write_text(text, dest, desc, source_video, verbose=self._verbose, client=self._storage_client)
 
-    def process_data(self, tasks: list[SplitPipeTask]) -> list[SplitPipeTask] | None:  # type: ignore[override]
-        """Save bytes to blobstore and metadata to postgres."""
-        for task in tasks:
-            self._timer.reinit(self, task.get_major_size())
-            video = task.video
-            with ThreadPoolExecutor(max_workers=self._max_workers) as executor:
-                with self._timer.time_process(len(video.clips)):
-                    # collect all embeddings/metadatas for a chunk of clips from a video
-                    for clip in video.clips:
+    def _process_video(self, video: Video, *, is_primary: bool = True) -> None:  # noqa: C901
+        """Process a video and write clips/metadata.
+
+        For multi-cam tasks, per-clip metadata and embedding paths use shared UUIDs
+        across cameras. Only the primary camera (index 0) should write these to
+        avoid secondary cameras overwriting primary metadata. MP4 writes use
+        relative_path and remain per-camera.
+        """
+        with ThreadPoolExecutor(max_workers=self._max_workers) as executor:
+            with self._timer.time_process(len(video.clips)):
+                # collect all embeddings/metadatas for a chunk of clips from a video
+                # (primary-only: metadata/embeddings use shared UUIDs; secondary would overwrite)
+                for clip in video.clips:
+                    if is_primary:
                         self._add_clip_embedding_to_buffer(clip)
                         self._add_clip_metadata_to_buffer(clip, video.metadata)
                         self._add_cds_data_to_buffer(clip)
 
-                    # schedule all clip-level writes for a chunk of clips from a single video and wait
-                    futures_clips = []
-                    futures_clips += [executor.submit(self._write_clip_mp4, clip) for clip in video.clips]
+                # schedule all clip-level writes for a chunk of clips from a single video and wait
+                futures_clips = []
+                futures_clips += [
+                    executor.submit(self._write_clip_mp4, clip, video.relative_path) for clip in video.clips
+                ]
+                if is_primary:
                     futures_clips += [executor.submit(self._write_clip_window_webp, clip) for clip in video.clips]
                     futures_clips += [executor.submit(self._write_clip_embedding, clip) for clip in video.clips]
                     futures_clips += [
                         executor.submit(self._write_clip_metadata, clip, video.metadata) for clip in video.clips
                     ]
 
-                    # filtered clips
-                    futures_clips += [
-                        executor.submit(self._write_clip_mp4, clip, filtered=True) for clip in video.filtered_clips
-                    ]
+                # filtered clips
+                futures_clips += [
+                    executor.submit(self._write_clip_mp4, clip, video.relative_path, filtered=True)
+                    for clip in video.filtered_clips
+                ]
+                if is_primary:
                     futures_clips += [
                         executor.submit(self._write_clip_metadata, clip, video.metadata, filtered=True)
                         for clip in video.filtered_clips
                     ]
 
-                    # wait for all clip-level tasks to finish and gather stats
-                    for future_c in futures_clips:
-                        result = future_c.result()
-                        if result is not None:
-                            video.clip_stats.combine(result)
+                # wait for all clip-level tasks to finish and gather stats
+                for future_c in futures_clips:
+                    result = future_c.result()
+                    if result is not None:
+                        video.clip_stats.combine(result)
 
-                    # for cosmos-predictX
+                # for cosmos-predictX (primary-only: uses shared UUID paths)
+                futures_no_rt = []
+                if is_primary:
                     futures_no_rt = [executor.submit(self._write_per_window_data, clip) for clip in video.clips]
-                    # write video-level metadata after all clip-level tasks are done
-                    futures_no_rt += [executor.submit(self._write_video_metadata, video)]
-                    metadata_rows = list(self._metadata_buffer)
-                    self._metadata_buffer.clear()
-                    # write buffered embeddings and metadata
+                # write video-level metadata after all clip-level tasks are done
+                futures_no_rt += [executor.submit(self._write_video_metadata, video)]
+                metadata_rows = list(self._metadata_buffer)
+                self._metadata_buffer.clear()
+                # write buffered embeddings and metadata (primary-only: shared UUIDs)
+                if is_primary:
                     futures_no_rt += [executor.submit(self._write_grouped_embeddings_to_parquet, video)]
                     futures_no_rt += [executor.submit(self._write_grouped_metadata, video, metadata_rows)]
                     futures_no_rt += [executor.submit(self._write_grouped_cds_data_to_parquet, video)]
 
-                    for future_n in futures_no_rt:
-                        future_n.result()
+                for future_n in futures_no_rt:
+                    future_n.result()
 
-                # clean up intermediate data
-                for clip in video.clips:
-                    clip.encoded_data = None
-                    clip.intern_video_2_embedding = None
-                    clip.cosmos_embed1_embedding = None
-                    for window in clip.windows:
-                        window.mp4_bytes = None
-                        for model_variant in window.model_input:
-                            del window.model_input[model_variant]
-                        window.caption.clear()
-                        window.enhanced_caption.clear()
-                        window.webp_bytes = None
+            # clean up intermediate data
+            for clip in video.clips:
+                clip.encoded_data = None
+                clip.intern_video_2_embedding = None
+                clip.cosmos_embed1_embedding = None
+                for window in clip.windows:
+                    window.mp4_bytes = None
+                    for model_variant in window.model_input:
+                        del window.model_input[model_variant]
+                    window.caption.clear()
+                    window.enhanced_caption.clear()
+                    window.webp_bytes = None
+
+    def process_data(self, tasks: list[SplitPipeTask]) -> list[SplitPipeTask] | None:  # type: ignore[override]
+        """Save bytes to blobstore and metadata to postgres."""
+        for task in tasks:
+            self._timer.reinit(self, task.get_major_size())
+            for video_index, video in enumerate(task.videos):
+                is_primary = video_index == 0
+                self._process_video(video, is_primary=is_primary)
 
             if self._log_stats:
                 stage_name, stage_perf_stats = self._timer.log_stats()
@@ -547,8 +568,12 @@ class ClipWriterStage(CuratorStage):
         video_span_uuid: uuid.UUID,
         path_prefix: str,
         file_type: str,
+        relative_path: str | None = None,
     ) -> storage_client.StoragePrefix | pathlib.Path:
-        output_clip_file = f"{video_span_uuid}.{file_type}"
+        if relative_path:
+            output_clip_file = f"{video_span_uuid}/{relative_path}.{file_type}"
+        else:
+            output_clip_file = f"{video_span_uuid}.{file_type}"
         return get_full_path(path_prefix, output_clip_file)
 
     def _get_video_uri(self, input_video_path: str) -> storage_client.StoragePrefix | pathlib.Path:
@@ -596,13 +621,20 @@ class ClipWriterStage(CuratorStage):
         clip_stats.num_with_webp += 1 if has_webp else 0
         return clip_stats
 
-    def _write_clip_mp4(self, clip: Clip, *, filtered: bool = False) -> ClipStats:
+    def _write_clip_mp4(
+        self,
+        clip: Clip,
+        relative_path: str,
+        *,
+        filtered: bool = False,
+    ) -> ClipStats:
         clip_stats = ClipStats()
         if clip.encoded_data:
             dest = self._get_clip_uri(
                 clip.uuid,
                 self.get_output_path_clips(self._output_path, filtered=filtered),
                 "mp4",
+                relative_path,
             )
             if self._upload_clips and not self._dry_run:
                 self._write_data(clip.encoded_data, dest, f"clip {clip.uuid}", clip.source_video)

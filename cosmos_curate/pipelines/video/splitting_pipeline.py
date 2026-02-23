@@ -248,6 +248,7 @@ def write_summary(
         perf_profile=args.perf_profile,
         pipeline_run_time=pipeline_run_time,
         write_all_caption_json=args.write_all_caption_json,
+        multi_cam=args.multi_cam,
     )
 
     if args.perf_profile:

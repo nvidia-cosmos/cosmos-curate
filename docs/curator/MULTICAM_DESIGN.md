@@ -155,8 +155,7 @@ Todo list of merge requests:
 ✅ FixedStrideExtractorStage multi-cam support
 ✅ ClipFrameExtractionStage multi-cam support
 ✅ ClipTranscodingStage multi-cam support
-⏳ ClipWriterStage multi-cam support
-⏳ Summary writer multi-cam support
-⏳ Update task creation to skip processed multi-cam sessions
+✅ ClipWriterStage multi-cam support
+✅ Summary writer multi-cam support
 
 Current single-cam splitting pipeline will continue to function as expected during this development cycle.
