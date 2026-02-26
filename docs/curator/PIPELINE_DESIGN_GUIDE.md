@@ -230,6 +230,40 @@ Two commonly used properties are:
 - `num_workers_per_node: int = None`: set a fixed number of workers per node and disable auto-scaling, typically for IO workers.
 - `num_run_attempts_python: int = 1`: set number of retry attempts, if randomly failures are expected.
 
+#### Composable Phases (CurationPhase + PipelineBuilder)
+
+For pipelines with multiple logical groups of stages, the `CurationPhase` + `PipelineBuilder` pattern provides validated composition at construction time.
+
+A `CurationPhase` declares:
+- `requires`: field tokens that must already be populated by prior phases
+- `populates`: field tokens this phase will write
+- `build_stages()`: returns the ordered list of stages for this phase
+
+`PipelineBuilder` assembles phases into a flat stage list and validates that each phase's `requires` tokens are satisfied by prior phases — raising immediately at `add_phase()` time if not.
+
+```python
+from cosmos_curate.core.interfaces.phase_interface import PipelineBuilder
+from cosmos_curate.pipelines.video.video_curation_phases import (
+    IngestConfig, IngestPhase,
+    TransNetV2SplitConfig, TransNetV2SplitPhase,
+    TranscodeConfig, TranscodePhase,
+)
+
+builder = (
+    PipelineBuilder()
+    .add_phase(IngestPhase(IngestConfig(input_path=...)))
+    .add_phase(TransNetV2SplitPhase(TransNetV2SplitConfig()))
+    .add_phase(TranscodePhase(TranscodeConfig()))
+)
+stages = builder.build()  # flat list[CuratorStage | CuratorStageSpec]
+
+run_pipeline(input_tasks, stages)
+```
+
+If you add a phase whose `requires` tokens are not satisfied by any prior phase, the builder raises a `ValueError` with a descriptive message before any data flows. The resulting stage list is structurally identical to a manually assembled list — the builder is a construction-time tool only.
+
+See `cosmos_curate/core/interfaces/phase_interface.py` for the base classes and `cosmos_curate/pipelines/video/video_curation_phases.py` for the concrete phase implementations.
+
 ### Writing Artifacts in Multi-Node Clusters
 
 In multi-node Ray or Slurm deployments, each stage worker runs on a

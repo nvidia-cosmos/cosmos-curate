@@ -31,6 +31,7 @@ from typing import Any, cast
 import attrs
 from loguru import logger
 
+from cosmos_curate.core.interfaces.phase_interface import PipelineBuilder
 from cosmos_curate.core.interfaces.pipeline_interface import run_pipeline
 from cosmos_curate.core.interfaces.stage_interface import CuratorStage, CuratorStageSpec
 from cosmos_curate.core.utils.config import args_utils
@@ -47,73 +48,55 @@ from cosmos_curate.core.utils.storage.storage_utils import (
     is_path_nested,
     verify_path,
 )
-from cosmos_curate.models.all_models import get_all_models_by_id
 from cosmos_curate.pipelines.pipeline_args import (
     add_common_args,
 )
-from cosmos_curate.pipelines.video.captioning.api_caption_stage import ApiCaptionStage, ApiPrepStage
-from cosmos_curate.pipelines.video.captioning.captioning_stages import (
-    EnhanceCaptionStage,
-    T5StageForSplit,
-)
-from cosmos_curate.pipelines.video.captioning.vllm_caption_stage import (
-    VllmCaptionStage,
-    VllmPrepStage,
-)
-from cosmos_curate.pipelines.video.clipping.clip_extraction_stages import (
-    ClipTranscodingStage,
-    FixedStrideExtractorStage,
-)
-from cosmos_curate.pipelines.video.clipping.clip_frame_extraction_stages import (
-    ClipFrameExtractionStage,
-)
-from cosmos_curate.pipelines.video.clipping.frame_extraction_stages import (
-    VideoFrameExtractionStage,
-)
-from cosmos_curate.pipelines.video.clipping.transnetv2_extraction_stages import (
-    TransNetV2ClipExtractionStage,
-)
-from cosmos_curate.pipelines.video.embedding.cosmos_embed1_stages import (
-    CosmosEmbed1EmbeddingStage,
-    CosmosEmbed1FrameCreationStage,
-)
-from cosmos_curate.pipelines.video.embedding.internvideo2_stages import (
-    InternVideo2EmbeddingStage,
-    InternVideo2FrameCreationStage,
-)
-from cosmos_curate.pipelines.video.filtering.aesthetics.aesthetic_filter_stages import (
-    AestheticFilterStage,
-)
-from cosmos_curate.pipelines.video.filtering.aesthetics.qwen_filter_stages import (
-    QwenFilteringStage,
-    QwenInputPreparationStageFiltering,
-)
-from cosmos_curate.pipelines.video.filtering.motion.motion_filter_stages import (
-    MotionFilterStage,
-    MotionVectorDecodeStage,
-)
-from cosmos_curate.pipelines.video.preview.preview_stages import PreviewStage
-from cosmos_curate.pipelines.video.read_write.download_stages import VideoDownloader
 from cosmos_curate.pipelines.video.read_write.metadata_writer_stage import (
     ClipWriterStage,
     consolidate_lance_fragments,
 )
-from cosmos_curate.pipelines.video.read_write.remux_stages import RemuxStage
 from cosmos_curate.pipelines.video.read_write.summary_writers import (
     write_split_summary,
 )
 from cosmos_curate.pipelines.video.utils.data_model import SplitPipeTask, VllmConfig, VllmSamplingConfig, WindowConfig
-from cosmos_curate.pipelines.video.utils.decoder_utils import FrameExtractionPolicy
 from cosmos_curate.pipelines.video.utils.video_pipe_input import (
     extract_multi_cam_split_tasks,
     extract_single_cam_split_tasks,
     format_session_videos_tree,
 )
+from cosmos_curate.pipelines.video.video_curation_phases import (
+    VLLM_CAPTION_ALGOS,
+    AestheticFilterConfig,
+    AestheticFilterPhase,
+    CaptioningConfig,
+    CaptioningPhase,
+    EmbeddingConfig,
+    EmbeddingPhase,
+    EnhanceCaptionConfig,
+    FixedStrideSplitConfig,
+    FixedStrideSplitPhase,
+    FrameExtractionConfig,
+    FrameExtractionPhase,
+    GeminiConfig,
+    IngestConfig,
+    IngestPhase,
+    MotionFilterConfig,
+    MotionFilterPhase,
+    OutputConfig,
+    OutputPhase,
+    QwenFilterConfig,
+    QwenFilterPhase,
+    T5Config,
+    T5Phase,
+    TranscodeConfig,
+    TranscodePhase,
+    TransNetV2SplitConfig,
+    TransNetV2SplitPhase,
+)
 
 QWEN2_CAPTION_ALGOS = {"qwen"}
 QWEN3_CAPTION_ALGOS = {"qwen3_vl_30b", "qwen3_vl_30b_fp8", "qwen3_vl_235b", "qwen3_vl_235b_fp8"}
 COSMOS_REASON_ALGOS = {"cosmos_r1", "cosmos_r2"}
-VLLM_CAPTION_ALGOS = COSMOS_REASON_ALGOS | {"nemotron", "phi4", "qwen"} | QWEN3_CAPTION_ALGOS
 ALL_CAPTION_ALGOS = VLLM_CAPTION_ALGOS | {"gemini"}
 MULTICAM_VIDEO_EXTENSIONS: set[str] = {".mp4"}
 QWEN3_VL_235B_HIGH_MEMORY_GPU_THRESHOLD_MB = 128_000
@@ -272,53 +255,6 @@ def write_summary(
     return total_video_length
 
 
-def get_embedding_stages(args: argparse.Namespace) -> list[CuratorStage | CuratorStageSpec]:
-    """Get the embedding stages for the pipeline.
-
-    Args:
-        args: Command line arguments.
-
-    Returns:
-        A list of embedding stages.
-
-    """
-    stages: list[CuratorStage | CuratorStageSpec] = []
-    if args.embedding_algorithm == "internvideo2":
-        stages.extend(
-            [
-                InternVideo2FrameCreationStage(target_fps=2.0, verbose=args.verbose, log_stats=args.perf_profile),
-                InternVideo2EmbeddingStage(
-                    num_gpus_per_worker=args.embedding_gpus_per_worker,
-                    batch_size=args.embedding_batch_size,
-                    verbose=args.verbose,
-                    log_stats=args.perf_profile,
-                ),
-            ]
-        )
-    elif args.embedding_algorithm.startswith("cosmos-embed1-"):
-        variant = args.embedding_algorithm.split("-")[-1]
-        stages.extend(
-            [
-                CosmosEmbed1FrameCreationStage(
-                    variant,
-                    target_fps=2.0,
-                    verbose=args.verbose,
-                    log_stats=args.perf_profile,
-                ),
-                CosmosEmbed1EmbeddingStage(
-                    variant,
-                    num_gpus_per_worker=args.embedding_gpus_per_worker,
-                    verbose=args.verbose,
-                    log_stats=args.perf_profile,
-                ),
-            ]
-        )
-    else:
-        error_msg = f"{args.embedding_algorithm} embedding algorithm not implemented."
-        raise NotImplementedError(error_msg)
-    return stages
-
-
 def _get_vllm_sampling_defaults() -> dict[str, Any]:
     """Get default values from VllmSamplingConfig.
 
@@ -330,202 +266,188 @@ def _get_vllm_sampling_defaults() -> dict[str, Any]:
     return {field.name: getattr(default_config, field.name) for field in attrs.fields(VllmSamplingConfig)}
 
 
-def split(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912, PLR0915
-    """Run the split pipeline.
+def _assemble_stages(  # noqa: C901, PLR0912, PLR0915
+    args: argparse.Namespace,
+) -> list[CuratorStage | CuratorStageSpec]:
+    """Assemble the pipeline stage list via PipelineBuilder.
 
-    This function orchestrates the entire pipeline, from input validation to output generation.
-    It validates input arguments, builds input data, and executes the pipeline stages.
+    Constructs phase config objects from command-line args and adds phases to the
+    builder in dependency order. The builder validates that each phase's requirements
+    are satisfied before accepting it. Returns the flat, ordered stage list.
 
     Args:
         args: Command line arguments.
 
+    Returns:
+        The ordered stage list ready for run_pipeline().
+
     """
-    validate_stage_replay_args(args)
+    builder = PipelineBuilder()
 
-    zero_start = time.time()
-    input_tasks, input_videos_relative, _, num_input_videos_selected = build_input_data(args)
-
-    stages: list[CuratorStage | CuratorStageSpec] = [
-        CuratorStageSpec(
-            VideoDownloader(
+    # --- Ingest (always) ---
+    builder.add_phase(
+        IngestPhase(
+            IngestConfig(
                 input_path=args.input_video_path,
+                num_workers_per_node=args.num_download_workers_per_node,
                 input_s3_profile_name=args.input_s3_profile_name,
                 verbose=args.verbose,
-                log_stats=args.perf_profile,
-            ),
-            num_workers_per_node=args.num_download_workers_per_node,
-            num_run_attempts_python=5,
-        ),
-        RemuxStage(
-            verbose=args.verbose,
-            log_stats=args.perf_profile,
-        ),
-    ]
+                perf_profile=args.perf_profile,
+            )
+        )
+    )
 
+    # --- Split (always) ---
     if args.splitting_algorithm == "fixed-stride":
-        stages.append(
-            CuratorStageSpec(
-                FixedStrideExtractorStage(
+        builder.add_phase(
+            FixedStrideSplitPhase(
+                FixedStrideSplitConfig(
                     clip_len_s=args.fixed_stride_split_duration,
                     clip_stride_s=args.fixed_stride_split_duration,
                     min_clip_length_s=args.fixed_stride_min_clip_length_s,
                     limit_clips=args.limit_clips,
                     verbose=args.verbose,
-                    log_stats=args.perf_profile,
-                ),
-                num_workers_per_node=1,
-            ),
+                    perf_profile=args.perf_profile,
+                )
+            )
         )
     elif args.splitting_algorithm == "transnetv2":
         # TransNetV2 is a neural-network based shot-detection algorithm
         # that takes strided windows of ~100 frames and detects whether
         # a given frame is a scene transition or not.
         # See https://arxiv.org/abs/2008.04838 for more details.
-        stages.extend(
-            [
-                CuratorStageSpec(
-                    VideoFrameExtractionStage(
-                        decoder_mode=args.transnetv2_frame_decoder_mode,
-                        num_cpus_per_worker=args.transnetv2_frame_decode_cpus_per_worker,
-                        raise_on_pynvc_error_without_cpu_fallback=args.transnetv2_frame_decode_raise_on_pynvc_error,
-                        verbose=args.verbose,
-                        log_stats=args.perf_profile,
-                    ),
-                ),
-                CuratorStageSpec(
-                    TransNetV2ClipExtractionStage(
-                        threshold=args.transnetv2_threshold,
-                        min_length_s=args.transnetv2_min_length_s,
-                        min_length_frames=args.transnetv2_min_length_frames,
-                        max_length_s=args.transnetv2_max_length_s,
-                        max_length_mode=args.transnetv2_max_length_mode,
-                        crop_s=args.transnetv2_crop_s,
-                        num_gpus_per_worker=args.transnetv2_gpus_per_worker,
-                        limit_clips=args.limit_clips,
-                        verbose=args.verbose,
-                        log_stats=args.perf_profile,
-                    ),
-                    over_provision_factor=2.0,
-                ),
-                # TransNetV2ClipExtraction stage is generally so fast that it will be
-                # scaled down to 1 worker total even in a multi-node run.
-                # But because it operates on videos, which can vary from 30MB to 10GB,
-                # the single worker can stuck on a long video and not produce tasks
-                # for downstream stages for a while and cause starvation.
-                # One better solution is to support specifying a minimum number of
-                # workers, but I did not find an easy way to implement that.
-                # But, if we are not running captioning, this will scale up.
-            ],
+        builder.add_phase(
+            TransNetV2SplitPhase(
+                TransNetV2SplitConfig(
+                    threshold=args.transnetv2_threshold,
+                    min_length_s=args.transnetv2_min_length_s,
+                    min_length_frames=args.transnetv2_min_length_frames,
+                    max_length_s=args.transnetv2_max_length_s,
+                    max_length_mode=args.transnetv2_max_length_mode,
+                    crop_s=args.transnetv2_crop_s,
+                    num_gpus_per_worker=args.transnetv2_gpus_per_worker,
+                    decoder_mode=args.transnetv2_frame_decoder_mode,
+                    num_decode_cpus_per_worker=args.transnetv2_frame_decode_cpus_per_worker,
+                    raise_on_pynvc_error=args.transnetv2_frame_decode_raise_on_pynvc_error,
+                    limit_clips=args.limit_clips,
+                    verbose=args.verbose,
+                    perf_profile=args.perf_profile,
+                )
+            )
         )
     else:
         error_msg = f"{args.splitting_algorithm} algorithm type not implemented."
         raise NotImplementedError(error_msg)
 
-    stages.append(
-        ClipTranscodingStage(
-            num_cpus_per_worker=args.transcode_cpus_per_worker,
-            encoder=args.transcode_encoder,
-            encoder_threads=args.transcode_encoder_threads,
-            encode_batch_size=args.transcode_ffmpeg_batch_size,
-            use_hwaccel=args.transcode_use_hwaccel,
-            use_input_bit_rate=args.transcode_use_input_video_bit_rate,
-            num_clips_per_chunk=args.clip_re_chunk_size,
-            verbose=args.verbose,
-            log_stats=args.perf_profile,
-        ),
+    # --- Transcode (always) ---
+    builder.add_phase(
+        TranscodePhase(
+            TranscodeConfig(
+                num_cpus_per_worker=args.transcode_cpus_per_worker,
+                encoder=args.transcode_encoder,
+                encoder_threads=args.transcode_encoder_threads,
+                encode_batch_size=args.transcode_ffmpeg_batch_size,
+                use_hwaccel=args.transcode_use_hwaccel,
+                use_input_bit_rate=args.transcode_use_input_video_bit_rate,
+                num_clips_per_chunk=args.clip_re_chunk_size,
+                verbose=args.verbose,
+                perf_profile=args.perf_profile,
+            )
+        )
     )
 
+    # --- Motion filter (optional) ---
     if args.motion_filter != "disable":
-        stages += [
-            MotionVectorDecodeStage(
-                num_cpus_per_worker=args.motion_decode_cpus_per_worker,
-                verbose=args.verbose,
-                log_stats=args.perf_profile,
-                target_fps=args.motion_decode_target_fps,
-                target_duration_ratio=args.motion_decode_target_duration_ratio,
-            ),
-            MotionFilterStage(
-                score_only=args.motion_filter == "score-only",
-                global_mean_threshold=args.motion_global_mean_threshold,
-                per_patch_min_256_threshold=args.motion_per_patch_min_256_threshold,
-                num_gpus_per_worker=args.motion_score_gpus_per_worker,
-                batch_size=args.motion_score_batch_size,
-                verbose=args.verbose,
-                log_stats=args.perf_profile,
-            ),
-        ]
+        builder.add_phase(
+            MotionFilterPhase(
+                MotionFilterConfig(
+                    score_only=args.motion_filter == "score-only",
+                    global_mean_threshold=args.motion_global_mean_threshold,
+                    per_patch_min_256_threshold=args.motion_per_patch_min_256_threshold,
+                    decode_cpus_per_worker=args.motion_decode_cpus_per_worker,
+                    decode_target_fps=args.motion_decode_target_fps,
+                    decode_target_duration_ratio=args.motion_decode_target_duration_ratio,
+                    score_gpus_per_worker=args.motion_score_gpus_per_worker,
+                    score_batch_size=args.motion_score_batch_size,
+                    verbose=args.verbose,
+                    perf_profile=args.perf_profile,
+                )
+            )
+        )
 
-    has_embeddings = args.generate_embeddings
+    # --- Frame extraction (shared prerequisite for aesthetics and embedding) ---
     has_aesthetics = args.aesthetic_threshold is not None
-    target_fps: list[float | int] = (
-        [1, 2] if has_aesthetics and has_embeddings else [1] if has_aesthetics else [2] if has_embeddings else []
-    )
-    if target_fps:
-        stages += [
-            ClipFrameExtractionStage(
-                extraction_policies=(FrameExtractionPolicy.sequence,),
-                target_fps=target_fps,
-                target_res=(
-                    args.clip_extraction_target_res,
-                    args.clip_extraction_target_res,
-                ),
-                num_cpus_per_worker=args.clip_extraction_cpus_per_worker,
-                log_stats=args.perf_profile,
-            ),
-        ]
+    has_embeddings = args.generate_embeddings
+    if has_aesthetics or has_embeddings:
+        target_fps: list[float | int] = [1, 2] if has_aesthetics and has_embeddings else [1] if has_aesthetics else [2]
+        builder.add_phase(
+            FrameExtractionPhase(
+                FrameExtractionConfig(
+                    target_fps=target_fps,
+                    target_res=args.clip_extraction_target_res,
+                    cpus_per_worker=args.clip_extraction_cpus_per_worker,
+                    perf_profile=args.perf_profile,
+                )
+            )
+        )
 
-    if args.aesthetic_threshold is not None:
-        stages += [
-            AestheticFilterStage(
-                score_threshold=args.aesthetic_threshold,
-                reduction=args.aesthetic_reduction,
-                num_gpus_per_worker=args.aesthetic_gpus_per_worker,
-                verbose=args.verbose,
-                log_stats=args.perf_profile,
-            ),
-        ]
+    # --- Aesthetic filter (optional) ---
+    if has_aesthetics:
+        builder.add_phase(
+            AestheticFilterPhase(
+                AestheticFilterConfig(
+                    score_threshold=args.aesthetic_threshold,
+                    reduction=args.aesthetic_reduction,
+                    gpus_per_worker=args.aesthetic_gpus_per_worker,
+                    verbose=args.verbose,
+                    perf_profile=args.perf_profile,
+                )
+            )
+        )
 
+    # --- Qwen content filter (optional) ---
     if args.qwen_filter != "disable":
-        stages += [
-            QwenInputPreparationStageFiltering(
-                model_variant=args.qwen_filter_model_variant,
-                filter_categories=args.qwen_filter_categories,
-                prompt_variant=args.qwen_filter_prompt_variant,
-                sampling_fps=args.captioning_sampling_fps,
-                window_size=args.captioning_window_size,
-                remainder_threshold=args.captioning_remainder_threshold,
-                preprocess_dtype=args.qwen_preprocess_dtype,
-                model_does_preprocess=args.qwen_model_does_preprocess,
-                generate_previews=args.generate_previews,
-                verbose=args.verbose,
-                log_stats=args.perf_profile,
-            ),
-            CuratorStageSpec(
-                QwenFilteringStage(
+        builder.add_phase(
+            QwenFilterPhase(
+                QwenFilterConfig(
+                    score_only=args.qwen_filter == "score-only",
                     model_variant=args.qwen_filter_model_variant,
-                    filter_variant=args.qwen_filter_prompt_variant,
+                    filter_categories=args.qwen_filter_categories,
+                    prompt_variant=args.qwen_filter_prompt_variant,
                     rejection_threshold=args.qwen_filter_rejection_threshold,
-                    user_prompt=args.qwen_filter_categories,
                     batch_size=args.qwen_filter_batch_size,
                     fp8_enable=args.qwen_filter_fp8_enable,
                     max_output_tokens=args.qwen_filter_max_output_tokens,
-                    disable_mmcache=not args.qwen_use_vllm_mmcache,
-                    score_only=args.qwen_filter == "score-only",
+                    use_mmcache=args.qwen_use_vllm_mmcache,
+                    sampling_fps=args.captioning_sampling_fps,
+                    window_size=args.captioning_window_size,
+                    remainder_threshold=args.captioning_remainder_threshold,
+                    preprocess_dtype=args.qwen_preprocess_dtype,
+                    model_does_preprocess=args.qwen_model_does_preprocess,
+                    generate_previews=args.generate_previews,
                     verbose=args.verbose,
-                    log_stats=args.perf_profile,
-                ),
-            ),
-        ]
+                    perf_profile=args.perf_profile,
+                )
+            )
+        )
 
+    # --- Embedding (optional) ---
     embedding_model_version: str = "unspecified"
-    if args.generate_embeddings:
-        stages += get_embedding_stages(args)
-        embedding_stage: CuratorStage = stages[-1].stage if isinstance(stages[-1], CuratorStageSpec) else stages[-1]  # type: ignore[assignment]
-        assert embedding_stage.model is not None, "Embedding stage model should be set"
-        embedding_model_id = embedding_stage.model.model_id_names[0]
-        embedding_model_version = get_all_models_by_id().get(embedding_model_id, {}).get("version", "unspecified")  # type: ignore[assignment]
-        logger.debug(f"Embedding model id={embedding_model_id} version={embedding_model_version}")
+    if has_embeddings:
+        embedding_phase = EmbeddingPhase(
+            EmbeddingConfig(
+                algorithm=args.embedding_algorithm,
+                gpus_per_worker=args.embedding_gpus_per_worker,
+                batch_size=args.embedding_batch_size,
+                verbose=args.verbose,
+                perf_profile=args.perf_profile,
+            )
+        )
+        embedding_model_version = embedding_phase.model_version
+        logger.debug(f"Embedding algorithm={args.embedding_algorithm} version={embedding_model_version}")
+        builder.add_phase(embedding_phase)
 
+    # --- Captioning (optional) ---
     caption_algo = args.captioning_algorithm.lower()
     keep_mp4 = args.generate_previews or (args.generate_cosmos_predict_dataset != "disable") or caption_algo == "gemini"
 
@@ -540,7 +462,6 @@ def split(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912, PLR0915
             if args.vllm_sampling_max_tokens is not None
             else args.captioning_max_output_tokens
         )
-
         if max_tokens < 0:
             max_tokens = None
 
@@ -632,102 +553,68 @@ def split(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912, PLR0915
             vllm_config.debug_frames_output_dir = pathlib.Path(args.output_clip_path) / "frames"
             logger.info(f"Debug frame saving enabled: output_dir={vllm_config.debug_frames_output_dir}")
 
+        gemini_config: GeminiConfig | None = None
         if caption_algo == "gemini":
-            stages += [
-                ApiPrepStage(
-                    window_config=window_config,
-                    model_variant=args.captioning_algorithm,
-                    num_cpus_for_prepare=args.vllm_prepare_num_cpus_per_worker,
-                    verbose=args.verbose,
-                    log_stats=args.perf_profile,
-                ),
-            ]
-        else:
-            assert vllm_config is not None
-            # Intentionally disable VllmPrepStage's involvement in copying weights business
-            vllm_config_prepare = attrs.evolve(vllm_config, copy_weights_to=None)
-            stages += [
-                VllmPrepStage(
-                    vllm_config=vllm_config_prepare,
-                    window_config=window_config,
-                    keep_mp4=keep_mp4,
-                    verbose=args.verbose,
-                    log_stats=args.perf_profile,
-                ),
-            ]
+            gemini_config = GeminiConfig(
+                model_name=args.gemini_model_name,
+                max_output_tokens=args.captioning_max_output_tokens,
+                prompt_variant=args.captioning_prompt_variant,
+                prompt_text=args.captioning_prompt_text,
+                caption_retries=args.gemini_caption_retries,
+                retry_delay_seconds=args.gemini_retry_delay_seconds,
+                max_inline_video_bytes=int(args.gemini_max_inline_mb * 1024 * 1024),
+                num_cpus_for_prepare=args.vllm_prepare_num_cpus_per_worker,
+            )
 
-        # preview
-        if args.generate_previews:
-            stages += [
-                PreviewStage(
-                    target_fps=args.preview_target_fps,
-                    target_height=args.preview_target_height,
-                    verbose=args.verbose,
-                    log_stats=args.perf_profile,
-                ),
-            ]
-
-        # captioning
-        if caption_algo in VLLM_CAPTION_ALGOS:
-            stages += [
-                CuratorStageSpec(
-                    VllmCaptionStage(
-                        vllm_config=vllm_config,
-                        verbose=args.verbose,
-                        keep_mp4=keep_mp4,
-                        log_stats=args.perf_profile,
-                        inflight_batching=args.vllm_use_inflight_batching,
-                    ),
-                    num_setup_attempts_python=None,
-                ),
-            ]
-        elif caption_algo == "gemini":
-            stages += [
-                ApiCaptionStage(
-                    model_variant=args.captioning_algorithm,
-                    model_name=args.gemini_model_name,
-                    prompt_variant=args.captioning_prompt_variant,
-                    prompt_text=args.captioning_prompt_text,
-                    max_output_tokens=args.captioning_max_output_tokens,
-                    max_caption_retries=args.gemini_caption_retries,
-                    retry_delay_seconds=args.gemini_retry_delay_seconds,
-                    max_video_size_bytes=int(args.gemini_max_inline_mb * 1024 * 1024),
-                    verbose=args.verbose,
-                    log_stats=args.perf_profile,
-                )
-            ]
-
-        # enhance caption
+        enhance_config: EnhanceCaptionConfig | None = None
         if args.enhance_captions:
-            stages += [
-                EnhanceCaptionStage(
-                    model_variant=args.enhance_captions_lm_variant,
-                    batch_size=args.enhance_captions_batch_size,
-                    openai_model=args.enhance_captions_openai_model,
-                    fp8_enable=args.qwen_lm_use_fp8_weights,
-                    max_output_tokens=args.enhance_captions_max_output_tokens,
-                    prompt_variant=args.enhance_captions_prompt_variant,
-                    prompt_text=args.enhance_captions_prompt_text,
-                    verbose=args.verbose,
-                    log_stats=args.perf_profile,
-                ),
-            ]
+            enhance_config = EnhanceCaptionConfig(
+                model_variant=args.enhance_captions_lm_variant,
+                batch_size=args.enhance_captions_batch_size,
+                openai_model=args.enhance_captions_openai_model,
+                fp8_enable=args.qwen_lm_use_fp8_weights,
+                max_output_tokens=args.enhance_captions_max_output_tokens,
+                prompt_variant=args.enhance_captions_prompt_variant,
+                prompt_text=args.enhance_captions_prompt_text,
+                verbose=args.verbose,
+                perf_profile=args.perf_profile,
+            )
 
+        builder.add_phase(
+            CaptioningPhase(
+                CaptioningConfig(
+                    caption_algo=caption_algo,
+                    window_config=window_config,
+                    vllm_config=vllm_config if caption_algo != "gemini" else None,
+                    gemini_config=gemini_config,
+                    keep_mp4=keep_mp4,
+                    generate_previews=args.generate_previews,
+                    preview_target_fps=args.preview_target_fps,
+                    preview_target_height=args.preview_target_height,
+                    inflight_batching=args.vllm_use_inflight_batching,
+                    enhance_config=enhance_config,
+                    verbose=args.verbose,
+                    perf_profile=args.perf_profile,
+                )
+            )
+        )
+
+    # --- T5 encoding (optional) ---
     if args.generate_cosmos_predict_dataset != "disable":
-        # run T5 embedding on captions
-        stages += [
-            CuratorStageSpec(
-                T5StageForSplit(
+        builder.add_phase(
+            T5Phase(
+                T5Config(
                     caption_fields=[args.captioning_algorithm],
                     verbose=args.verbose,
-                    log_stats=args.perf_profile,
-                ),
-            ),
-        ]
+                    perf_profile=args.perf_profile,
+                )
+            )
+        )
 
-    stages.append(
-        CuratorStageSpec(
-            ClipWriterStage(
+    # --- Output (always) ---
+    builder.add_phase(
+        OutputPhase(
+            OutputConfig(
                 output_path=args.output_clip_path,
                 input_path=args.input_video_path,
                 output_s3_profile_name=args.output_s3_profile_name,
@@ -736,20 +623,39 @@ def split(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912, PLR0915
                 upload_clip_info_in_lance=args.upload_clip_info_in_lance,
                 upload_cds_parquet=args.upload_cds_parquet,
                 dry_run=args.dry_run,
-                generate_embeddings=args.generate_embeddings,
+                generate_embeddings=has_embeddings,
                 embedding_algorithm=args.embedding_algorithm,
                 embedding_model_version=embedding_model_version,
                 generate_previews=args.generate_previews,
                 caption_models=[args.captioning_algorithm],
                 enhanced_caption_models=[args.enhance_captions_lm_variant],
                 generate_cosmos_predict_dataset=args.generate_cosmos_predict_dataset,
+                num_workers_per_node=args.num_clip_writer_workers_per_node,
                 verbose=args.verbose,
-                log_stats=args.perf_profile,
-            ),
-            num_workers_per_node=args.num_clip_writer_workers_per_node,
-            num_run_attempts_python=5,
-        ),
+                perf_profile=args.perf_profile,
+            )
+        )
     )
+
+    return builder.build()
+
+
+def split(args: argparse.Namespace) -> None:
+    """Run the split pipeline.
+
+    This function orchestrates the entire pipeline, from input validation to output generation.
+    It validates input arguments, builds input data, and executes the pipeline stages.
+
+    Args:
+        args: Command line arguments.
+
+    """
+    validate_stage_replay_args(args)
+
+    zero_start = time.time()
+    input_tasks, input_videos_relative, _, num_input_videos_selected = build_input_data(args)
+
+    stages = _assemble_stages(args)
 
     pipeline_start = time.time()
 
@@ -1389,8 +1295,8 @@ def _setup_parser(parser: argparse.ArgumentParser) -> None:  # noqa: PLR0915
     )
     parser.add_argument(
         "--vllm-use-inflight-batching",
-        type=int,
-        default=1,
+        action=argparse.BooleanOptionalAction,
+        default=True,
         help="Whether to use inflight batching for vLLM captioning stage.",
     )
     parser.add_argument(
