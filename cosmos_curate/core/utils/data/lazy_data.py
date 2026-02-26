@@ -367,20 +367,21 @@ class LazyData[T]:
         self.value = None
 
     def drop(self) -> None:
-        """Drop both local copy and Plasma ref.
+        """Drop both local copy and Plasma ref, reset size metadata.
 
-        After this call, ``.resolve()`` returns None.  The Plasma object
-        is freed when all remaining ObjectRef references are garbage
-        collected (reference counting).
+        After this call, ``.resolve()`` returns None and ``nbytes == 0``.
+        The Plasma object is freed when all remaining ObjectRef references
+        are garbage collected (reference counting).
 
         ::
 
-            Before:  value = <mmap>    ref = ObjectRef
-            After:   value = None      ref = None
+            Before:  value = <mmap>    ref = ObjectRef   nbytes = N
+            After:   value = None      ref = None        nbytes = 0
 
         """
         self.value = None
         self.ref = None
+        self.nbytes = 0
 
     def __bool__(self) -> bool:
         """Return True if data is available (inline or via ref)."""

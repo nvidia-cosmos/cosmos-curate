@@ -134,15 +134,16 @@ class TestDrop:
     """Tests for LazyData.drop()."""
 
     def test_drop_clears_both(self) -> None:
-        """Drop clears both value and ref."""
+        """Drop clears value, ref, and resets nbytes to zero."""
         mock_ref = MagicMock()
         arr = np.array([1], dtype=np.uint8)
-        lazy: LazyData[npt.NDArray[np.uint8]] = LazyData(value=arr, ref=mock_ref)
+        lazy: LazyData[npt.NDArray[np.uint8]] = LazyData(value=arr, ref=mock_ref, nbytes=1024)
 
         lazy.drop()
 
         assert lazy.value is None
         assert lazy.ref is None
+        assert lazy.nbytes == 0
 
 
 class TestBool:

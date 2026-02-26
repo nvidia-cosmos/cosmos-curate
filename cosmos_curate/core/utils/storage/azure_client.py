@@ -19,11 +19,16 @@ with Azure Blob Storage, including chunked downloads and uploads.
 """
 
 import configparser
+import io
 import os
 import pathlib
 import re
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    import numpy as np
+    import numpy.typing as npt
 
 import attrs
 from azure.core.exceptions import ResourceNotFoundError
@@ -232,12 +237,16 @@ class AzureClient(StorageClient):
         else:
             return True
 
-    def upload_bytes(self, dest: StoragePrefix, data: bytes) -> None:
-        """Upload bytes data to the specified Azure prefix.
+    def upload_bytes(self, dest: StoragePrefix, data: "bytes | npt.NDArray[np.uint8]") -> None:
+        """Upload binary data to the specified Azure prefix.
+
+        Accepts ``bytes`` or ``numpy.ndarray[uint8]``.  Non-bytes data
+        is wrapped in ``io.BytesIO`` because Azure SDK's ``upload_blob``
+        only accepts bytes, str, Iterable[bytes], or IO[bytes].
 
         Args:
-            dest (AzurePrefix): The Azure prefix where the object will be stored.
-            data (bytes): The bytes data to upload.
+            dest: The Azure prefix where the object will be stored.
+            data: Binary data to upload (bytes or uint8 numpy array).
 
         Raises:
             ValueError: If the object already exists and overwriting is not allowed.
@@ -251,7 +260,8 @@ class AzureClient(StorageClient):
             raise ValueError(error_msg)
 
         blob_client = self._get_blob_client(dest.container, dest.blob)
-        blob_client.upload_blob(data, overwrite=self.can_overwrite)
+        upload_data: bytes | io.BytesIO = data if isinstance(data, bytes) else io.BytesIO(data)
+        blob_client.upload_blob(upload_data, overwrite=self.can_overwrite)
 
     def upload_bytes_uri(self, uri: str, data: bytes, chunk_size_bytes: int = UPLOAD_CHUNK_SIZE_BYTES) -> None:  # noqa: ARG002
         """Upload bytes data to the specified Azure URI.

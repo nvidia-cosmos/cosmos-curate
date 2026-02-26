@@ -22,9 +22,13 @@ with cloud storage systems.
 import abc
 import concurrent.futures
 import pathlib
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import attrs
+
+if TYPE_CHECKING:
+    import numpy as np
+    import numpy.typing as npt
 
 # Constants for chunk sizes
 DOWNLOAD_CHUNK_SIZE_BYTES = 10 * 1024 * 1024  # 10 MB
@@ -139,12 +143,17 @@ class StorageClient(abc.ABC):
         """
 
     @abc.abstractmethod
-    def upload_bytes(self, dest: StoragePrefix, data: bytes) -> None:
-        """Upload bytes data to the specified storage path.
+    def upload_bytes(self, dest: StoragePrefix, data: "bytes | npt.NDArray[np.uint8]") -> None:
+        """Upload binary data to the specified storage path.
+
+        Accepts ``bytes`` or ``numpy.ndarray[uint8]``.  Implementations
+        wrap the data in ``io.BytesIO`` for streaming upload, reading
+        directly from the buffer protocol - no separate ``.tobytes()``
+        allocation needed.
 
         Args:
             dest: The storage prefix where the object will be stored.
-            data: The bytes data to upload.
+            data: Binary data to upload (bytes or uint8 numpy array).
 
         Raises:
             ValueError: If the object already exists and overwriting is not allowed.

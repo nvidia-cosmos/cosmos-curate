@@ -25,7 +25,11 @@ import pathlib
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    import numpy as np
+    import numpy.typing as npt
 
 import attrs
 import boto3
@@ -191,12 +195,16 @@ class S3Client(StorageClient):
         else:
             return True
 
-    def upload_bytes(self, dest: StoragePrefix, data: bytes) -> None:
-        """Upload bytes data to the specified S3 prefix.
+    def upload_bytes(self, dest: StoragePrefix, data: "bytes | npt.NDArray[np.uint8]") -> None:
+        """Upload binary data to the specified S3 prefix.
+
+        Accepts ``bytes`` or ``numpy.ndarray[uint8]``.
+        ``io.BytesIO`` reads the data via the buffer protocol,
+        avoiding a separate ``.tobytes()`` allocation.
 
         Args:
-            dest (S3Prefix): The S3 prefix where the object will be stored.
-            data (bytes): The bytes data to upload.
+            dest: The S3 prefix where the object will be stored.
+            data: Binary data to upload (bytes or uint8 numpy array).
 
         Raises:
             ValueError: If the object already exists and overwriting is not allowed.
