@@ -52,6 +52,7 @@ def test_make_summary_metrics(mock_video_calc: MagicMock, mock_datetime: MagicMo
     # Arrange
     test_summary = {
         "num_input_videos": 100,
+        "num_input_videos_selected": 95,
         "num_processed_videos": 95,
         "total_video_duration": 3600,
         "total_clip_duration": 1800,
@@ -123,6 +124,7 @@ def test_make_summary_metrics_specific_missing_key(missing_key: str) -> None:
     # Arrange
     complete_summary = {
         "num_input_videos": 100,
+        "num_input_videos_selected": 95,
         "num_processed_videos": 95,
         "total_video_duration": 3600,
         "total_clip_duration": 1800,

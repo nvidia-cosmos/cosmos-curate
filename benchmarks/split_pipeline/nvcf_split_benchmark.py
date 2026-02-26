@@ -56,28 +56,42 @@ def _summary_counts_are_valid(summary_path: str, transport_params: dict[str, Any
         return False
 
     num_input_videos = summary_data.get("num_input_videos")
+    has_explicit_selected_count = "num_input_videos_selected" in summary_data
+    num_input_videos_selected = summary_data.get("num_input_videos_selected", num_input_videos)
     num_processed_videos = summary_data.get("num_processed_videos")
+    is_valid = True
 
-    if not isinstance(num_input_videos, int) or not isinstance(num_processed_videos, int):
+    if not isinstance(num_input_videos_selected, int) or not isinstance(num_processed_videos, int):
         logger.warning(
-            f"Invalid summary counts in {summary_path}: {num_input_videos=}, {num_processed_videos=}. "
+            f"Invalid summary counts in {summary_path}: {num_input_videos_selected=}, {num_processed_videos=}. "
             "Expected integer values."
         )
-        return False
-
-    if num_processed_videos > limit:
+        is_valid = False
+    elif num_input_videos is not None and not isinstance(num_input_videos, int):
+        logger.warning(f"Invalid summary counts in {summary_path}: {num_input_videos=}. Expected integer value.")
+        is_valid = False
+    elif isinstance(num_input_videos, int) and num_input_videos_selected > num_input_videos:
+        logger.warning(
+            f"Invalid summary counts in {summary_path}: {num_input_videos_selected=} exceeds {num_input_videos=}."
+        )
+        is_valid = False
+    elif has_explicit_selected_count and num_input_videos_selected > limit:
+        logger.warning(
+            f"Invalid summary counts in {summary_path}: {num_input_videos_selected=} exceeds configured {limit=}."
+        )
+        is_valid = False
+    elif num_processed_videos > limit:
         logger.warning(
             f"Invalid summary counts in {summary_path}: {num_processed_videos=} exceeds configured {limit=}."
         )
-        return False
-
-    if num_processed_videos > num_input_videos:
+        is_valid = False
+    elif num_processed_videos > num_input_videos_selected:
         logger.warning(
-            f"Invalid summary counts in {summary_path}: {num_processed_videos=} exceeds {num_input_videos=}."
+            f"Invalid summary counts in {summary_path}: {num_processed_videos=} exceeds {num_input_videos_selected=}."
         )
-        return False
+        is_valid = False
 
-    return True
+    return is_valid
 
 
 def _run_benchmark_attempt(  # noqa: PLR0913

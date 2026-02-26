@@ -120,6 +120,7 @@ def _worker_read_video_metadata(  # noqa: C901
 def _write_split_result_summary(  # noqa: PLR0913
     input_path: str,
     input_videos_relative: list[str],
+    num_input_videos_selected: int,
     output_path: str,
     output_s3_profile_name: str,
     *,
@@ -159,6 +160,7 @@ def _write_split_result_summary(  # noqa: PLR0913
     ]
     summary_data: dict[str, Any] = {
         "num_input_videos": len(input_videos_relative),
+        "num_input_videos_selected": num_input_videos_selected,
         "num_processed_videos": len(processed_sessions),
         "embedding_algorithm": embedding_algorithm,
         "total_video_duration": 0,
@@ -232,6 +234,7 @@ def _write_split_result_summary(  # noqa: PLR0913
 def write_split_summary(  # noqa: PLR0913
     input_path: str,
     input_videos_relative: list[str],
+    num_input_videos_selected: int,
     output_path: str,
     output_s3_profile_name: str,
     output_tasks: list[SplitPipeTask],
@@ -248,6 +251,7 @@ def write_split_summary(  # noqa: PLR0913
     Args:
         input_path: Path to input videos.
         input_videos_relative: List of relative paths to input videos.
+        num_input_videos_selected: Number of input videos selected for this run after applying skip/limit semantics.
         output_path: Path to write output files.
         output_s3_profile_name: S3 profile name for output.
         output_tasks: List of completed split pipeline tasks.
@@ -265,6 +269,7 @@ def write_split_summary(  # noqa: PLR0913
     _write_split_result_summary(
         input_path,
         input_videos_relative,
+        num_input_videos_selected,
         output_path,
         output_s3_profile_name,
         embedding_algorithm=embedding_algorithm,

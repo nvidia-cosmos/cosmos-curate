@@ -305,6 +305,7 @@ class S3Client(StorageClient):
                 objects.extend(page["Contents"])
             if limit > 0 and len(objects) >= limit:
                 logger.info(f"Truncated list of objects in S3 prefix to {len(objects)} as limit={limit}")
+                objects = objects[:limit]
                 break
         return objects
 

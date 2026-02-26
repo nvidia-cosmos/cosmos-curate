@@ -396,20 +396,29 @@ def _get_objects_from_storage_prefix_relative(
             logger.warning(f"Skipping empty prefix {x}")
             continue
         objects_relative.append(str(x).replace(prefix_path, ""))
-    return sorted(objects_relative)
+    objects_relative = sorted(objects_relative)
+    # Defensive clamp: some storage clients may over-return despite a limit.
+    # Keep caller-visible semantics stable by enforcing the cap here as well.
+    if limit > 0:
+        objects_relative = objects_relative[:limit]
+    return objects_relative
 
 
-def _get_files_from_localpath_relative(localpath: pathlib.Path) -> list[str]:
+def _get_files_from_localpath_relative(localpath: pathlib.Path, limit: int = 0) -> list[str]:
     """Get a list of files from a local path, with paths relative to the local path.
 
     Args:
         localpath: The local path to list files from.
+        limit: Max numbers to iterate; 0 means no limit.
 
     Returns:
         A list of file paths relative to the local path.
 
     """
-    return sorted([str(x.relative_to(localpath)) for x in localpath.rglob("*") if x.is_file()])
+    files = sorted([str(x.relative_to(localpath)) for x in localpath.rglob("*") if x.is_file()])
+    if limit > 0:
+        files = files[:limit]
+    return files
 
 
 def get_files_relative(path: str, client: StorageClient | None = None, limit: int = 0) -> list[str]:
@@ -430,7 +439,7 @@ def get_files_relative(path: str, client: StorageClient | None = None, limit: in
             client = get_storage_client(path)
         assert client is not None
         return _get_objects_from_storage_prefix_relative(prefix, client, limit)
-    return _get_files_from_localpath_relative(pathlib.Path(path))
+    return _get_files_from_localpath_relative(pathlib.Path(path), limit)
 
 
 def get_directories_relative(path: str, client: StorageClient | None = None) -> list[str]:

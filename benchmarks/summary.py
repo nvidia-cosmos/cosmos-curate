@@ -75,6 +75,11 @@ def make_summary_metrics(
         raise ValueError(msg)
 
     data = {key: summary[key] for key in keys_from_json}
+    # num_input_videos_selected is handled as an optional compatibility field.
+    # It should stay out of keys_from_json so older summary.json files remain valid,
+    # and be conditionally added to data only when present.
+    if "num_input_videos_selected" in summary:
+        data["num_input_videos_selected"] = summary["num_input_videos_selected"]
 
     # TODO: should summary data metrics use the same units for all measurements?
     video_seconds = data["total_video_duration"]

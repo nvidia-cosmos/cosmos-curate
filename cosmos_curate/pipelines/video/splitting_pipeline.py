@@ -139,7 +139,7 @@ def _get_qwen3_vl_235b_min_gpus() -> int:
 
 def build_input_data(
     args: argparse.Namespace,
-) -> tuple[list[SplitPipeTask], list[str], int]:
+) -> tuple[list[SplitPipeTask], list[str], int, int]:
     """Build input data for the pipeline.
 
     This function validates input arguments, extracts input data, and returns a list of tasks and relative paths.
@@ -152,6 +152,7 @@ def build_input_data(
         - A list of SplitPipeTask objects.
         - A list of relative paths to the input videos.
         - The number of processed videos.
+        - The number of input videos selected for this run after applying skip/limit semantics.
 
     """
     # validate input arguments
@@ -186,6 +187,7 @@ def build_input_data(
         # this update.
         input_videos_relative: list[str] = []
         num_processed = 0
+        num_input_videos_selected = len(input_tasks)
         logger.info(f"About to process {len(input_tasks)} multi-cam session tasks ...")
     else:
         input_videos, input_videos_relative, num_processed = extract_single_cam_split_tasks(
@@ -213,13 +215,15 @@ def build_input_data(
 
         if args.verbose:
             logger.debug("\n".join(str(x.input_video) for x in input_videos))
+        num_input_videos_selected = len(input_videos)
 
-    return input_tasks, input_videos_relative, num_processed
+    return input_tasks, input_videos_relative, num_processed, num_input_videos_selected
 
 
 def write_summary(
     args: argparse.Namespace,
     input_videos: list[str],
+    num_input_videos_selected: int,
     output_tasks: list[SplitPipeTask],
     pipeline_run_time: float,
 ) -> float:
@@ -230,6 +234,7 @@ def write_summary(
     Args:
         args: Command line arguments.
         input_videos: List of input video paths.
+        num_input_videos_selected: Number of input videos selected for this run after applying skip/limit semantics.
         output_tasks: List of output tasks.
         pipeline_run_time: Total runtime of the pipeline in minutes.
 
@@ -240,6 +245,7 @@ def write_summary(
     write_split_summary(
         args.input_video_path,
         input_videos,
+        num_input_videos_selected,
         args.output_clip_path,
         args.output_s3_profile_name,
         output_tasks,
@@ -337,7 +343,7 @@ def split(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912, PLR0915
     validate_stage_replay_args(args)
 
     zero_start = time.time()
-    input_tasks, input_videos_relative, _ = build_input_data(args)
+    input_tasks, input_videos_relative, _, num_input_videos_selected = build_input_data(args)
 
     stages: list[CuratorStage | CuratorStageSpec] = [
         CuratorStageSpec(
@@ -785,7 +791,13 @@ def split(args: argparse.Namespace) -> None:  # noqa: C901, PLR0912, PLR0915
     pipeline_run_time = (summary_start - pipeline_start) / 60
     input_build_time = (pipeline_start - zero_start) / 60
 
-    total_video_length = write_summary(args, input_videos_relative, output_tasks, pipeline_run_time)
+    total_video_length = write_summary(
+        args,
+        input_videos_relative,
+        num_input_videos_selected,
+        output_tasks,
+        pipeline_run_time,
+    )
 
     summary_run_time = (time.time() - summary_start) / 60
 

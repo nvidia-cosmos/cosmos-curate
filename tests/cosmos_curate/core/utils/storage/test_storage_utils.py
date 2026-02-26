@@ -249,10 +249,43 @@ def test_get_files_relative_from_local_tree(tmp_path: Path) -> None:
     assert files == ["dir/one.txt", "two.txt"]
 
 
+def test_get_files_relative_from_local_tree_with_limit(tmp_path: Path) -> None:
+    """Apply the provided limit for local directory listings."""
+    base = tmp_path / "dataset"
+    (base / "dir").mkdir(parents=True)
+    (base / "dir" / "one.txt").write_text("1", encoding="utf-8")
+    (base / "two.txt").write_text("2", encoding="utf-8")
+
+    files = storage_utils.get_files_relative(str(base), limit=1)
+    assert files == ["dir/one.txt"]
+
+
 def test_get_files_relative_from_remote_prefix() -> None:
     """Filter remote objects based on the provided limit."""
     remote_root = _remote_path("root")
     fake_client = FakeStorageClient(
+        {
+            f"{remote_root}/alpha.txt": b"",
+            f"{remote_root}/nested/beta.txt": b"",
+            f"{remote_root}/nested/gamma.txt": b"",
+        },
+    )
+    files = storage_utils.get_files_relative(remote_root, client=fake_client, limit=2)
+    assert files == ["alpha.txt", "nested/beta.txt"]
+    assert fake_client.last_list_limit == 2
+
+
+def test_get_files_relative_from_remote_prefix_defensively_truncates_limit() -> None:
+    """Apply a final limit even if a backend over-returns listing results."""
+    remote_root = _remote_path("root")
+
+    class OverReturningClient(FakeStorageClient):
+        def list_recursive_directory(self, uri: StoragePrefix, limit: int = 0) -> list[StoragePrefix]:
+            self.last_list_limit = limit
+            prefix = str(uri).rstrip("/") + "/"
+            return [storage_utils.path_to_prefix(path) for path in sorted(self.objects) if path.startswith(prefix)]
+
+    fake_client = OverReturningClient(
         {
             f"{remote_root}/alpha.txt": b"",
             f"{remote_root}/nested/beta.txt": b"",
