@@ -24,6 +24,7 @@ from loguru import logger
 
 from cosmos_curate.core.interfaces.model_interface import ModelInterface
 from cosmos_curate.core.interfaces.stage_interface import CuratorStage, CuratorStageResource
+from cosmos_curate.core.utils.data.ref_resolver import prefetch, resolve_as_ready
 from cosmos_curate.core.utils.infra.gpu_start_helper import (
     gpu_stage_cleanup,
     gpu_stage_startup,
@@ -243,15 +244,16 @@ class QwenInputPreparationStageFiltering(CuratorStage):
         for task in tasks:
             self._timer.reinit(self, task.get_major_size())
             video = task.video
-            for clip in video.clips:
-                if clip.encoded_data is None:
+            prefetch([clip.encoded_data for clip in video.clips])
+            for clip, data in resolve_as_ready([(clip, clip.encoded_data) for clip in video.clips]):
+                if data is None:
                     logger.warning(f"Clip {clip.uuid} has no encoded_data.")
                     clip.errors["encoded_data"] = "empty"
                     continue
                 with self._timer.time_process():
                     for window_bytes, window_frames, window_frame_info in zip_longest(
                         *windowing_utils.split_video_into_windows(
-                            clip.encoded_data,
+                            data,
                             window_size=self._window_size,
                             remainder_threshold=self._remainder_threshold,
                             sampling_fps=self._sampling_fps,

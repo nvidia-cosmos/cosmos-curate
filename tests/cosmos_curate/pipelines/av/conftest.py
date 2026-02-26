@@ -17,6 +17,7 @@ import numpy as np
 import numpy.typing as npt
 import pytest
 
+from cosmos_curate.core.utils.data.bytes_transport import bytes_to_numpy
 from cosmos_curate.pipelines.av.utils.av_data_model import (
     AvSessionVideoSplitTask,
     AvVideo,
@@ -55,7 +56,8 @@ def clip_factory() -> Callable[..., ClipForTranscode]:
         span_end: float | None = None,
         timestamps_ms: npt.NDArray[np.int64] | None = None,
     ) -> ClipForTranscode:
-        data = cast("bytes | None", f"clip-{span_index}".encode() if payload is _sentinel else payload)
+        raw = cast("bytes | None", f"clip-{span_index}".encode() if payload is _sentinel else payload)
+        data = bytes_to_numpy(raw) if raw is not None else None
         timestamps = timestamps_ms if timestamps_ms is not None else np.array([0, 33, 66], dtype=np.int64)
         return ClipForTranscode(
             uuid=uuid.uuid4(),
@@ -64,7 +66,7 @@ def clip_factory() -> Callable[..., ClipForTranscode]:
             span_start=span_start if span_start is not None else float(span_index),
             span_end=span_end if span_end is not None else float(span_index + 1),
             timestamps_ms=timestamps,
-            encoded_data=data,
+            encoded_data=data,  # type: ignore[assignment]
         )
 
     return _make
@@ -80,7 +82,7 @@ def video_factory(clip_factory: Callable[..., ClipForTranscode]) -> Callable[...
         camera_id: int = 0,
         metadata: VideoMetadata | None = None,
         source_video: str | None = None,
-        encoded_data: bytes | None = None,
+        encoded_data: npt.NDArray[np.uint8] | None = None,
         timestamps_ms: npt.NDArray[np.int64] | None = None,
         framerate: float | None = None,
         num_frames: int | None = None,

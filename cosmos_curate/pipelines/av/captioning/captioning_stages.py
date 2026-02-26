@@ -19,6 +19,7 @@ from nvtx import nvtx  # type: ignore[import-untyped]
 from cosmos_curate.core.interfaces.model_interface import ModelInterface
 from cosmos_curate.core.interfaces.stage_interface import CuratorStage, CuratorStageResource
 from cosmos_curate.core.utils.config.operation_context import is_running_on_the_cloud
+from cosmos_curate.core.utils.data.ref_resolver import prefetch, resolve_as_ready
 from cosmos_curate.core.utils.infra.performance_utils import StageTimer
 from cosmos_curate.models import (
     qwen_vl,
@@ -338,8 +339,9 @@ class QwenInputPreparationStage(CuratorStage):
         return [self._process_data(task) for task in tasks]
 
     def _process_data(self, task: AvClipAnnotationTask) -> AvClipAnnotationTask:
-        for clip in task.clips:
-            if clip.encoded_data is None:
+        prefetch([clip.encoded_data for clip in task.clips])
+        for clip, data in resolve_as_ready([(clip, clip.encoded_data) for clip in task.clips]):
+            if data is None:
                 logger.warning(f"Clip {clip.uuid} has no buffer.")
                 continue
             with self._timer.time_process():
@@ -354,7 +356,7 @@ class QwenInputPreparationStage(CuratorStage):
                 # Cache decoded video for reuse
                 video_frames = {
                     frame_count: windowing_utils.split_video_into_windows(
-                        clip.encoded_data,
+                        data,
                         sampling_fps=self._sampling_fps,
                         model_does_preprocess=self._model_does_preprocess,
                         preprocess_dtype=self._preprocess_dtype,
@@ -396,7 +398,7 @@ class QwenInputPreparationStage(CuratorStage):
 
                 # Only clear encoded_data if not keeping it for dataset generation
                 if not self._keep_mp4:
-                    clip.encoded_data = None
+                    clip.encoded_data.drop()
 
         if self._log_stats:
             stage_name, stage_perf_stats = self._timer.log_stats()

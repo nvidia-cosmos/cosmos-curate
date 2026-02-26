@@ -28,6 +28,7 @@ from loguru import logger
 
 import cosmos_curate.pipelines.video.filtering.motion.motion_vector_backend as motion
 from cosmos_curate.core.interfaces.stage_interface import PipelineTask
+from cosmos_curate.core.utils.data.lazy_data import LazyData
 from cosmos_curate.core.utils.infra.performance_utils import StagePerfStats
 from cosmos_curate.core.utils.storage import storage_client
 from cosmos_curate.pipelines.video.utils.decoder_utils import extract_video_metadata
@@ -128,6 +129,9 @@ class Window:
     # End frame number of this window
     end_frame: int
     # MP4 bytes for this window
+    # LazyData candidate: raw bytes use in-band pickle (2 copies); wrapping in
+    # LazyData would give split-field transport + auto-conversion to numpy for
+    # zero-copy PickleBuffer serialization.
     mp4_bytes: bytes | None = None
     # Model input for this window: model_variant -> llm_input
     model_input: dict[str, dict[str, Any]] = attrs.Factory(dict)
@@ -162,7 +166,9 @@ class Clip:
     uuid: UUID
     source_video: str
     span: tuple[float, float]
-    encoded_data: bytes | None = None
+    encoded_data: LazyData[npt.NDArray[np.uint8]] = attrs.field(factory=LazyData, converter=LazyData.coerce)  # type: ignore[misc]
+    # LazyData candidate: decoded frames can reach tens of MB; read only by
+    # embedding/captioning stages, pass-through for motion/aesthetic/filtering.
     extracted_frames: dict[str, npt.NDArray[np.uint8]] = attrs.Factory(dict)
     # motion
     decoded_motion_data: motion.DecodedData | None = None
@@ -207,10 +213,11 @@ class Clip:
             Exception: Any exception from extract_video_metadata is propagated.
 
         """
-        if self.encoded_data is None:
+        data = self.encoded_data.resolve()
+        if data is None:
             return None
 
-        metadata = extract_video_metadata(self.encoded_data)
+        metadata = extract_video_metadata(data)
 
         return {
             "width": metadata.width,
@@ -218,7 +225,7 @@ class Clip:
             "framerate": metadata.fps,
             "num_frames": metadata.num_frames,
             "video_codec": metadata.video_codec,
-            "num_bytes": len(self.encoded_data),
+            "num_bytes": data.nbytes,
         }
 
     @property
@@ -239,8 +246,7 @@ class Clip:
 
         """
         total_size = len(self.uuid.bytes)
-        if self.encoded_data:
-            total_size += len(self.encoded_data)
+        total_size += self.encoded_data.nbytes
         if self.extracted_frames:
             for x in self.extracted_frames.values():
                 total_size += x.nbytes
@@ -325,12 +331,12 @@ class Video:
     # Path relative to session/input; when non-empty, output clips preserve this structure under each clip UUID.
     relative_path: str = ""
 
-    # encoded video bytes
-    encoded_data: bytes | None = None
+    # encoded video data (numpy for zero-copy Ray transport via PEP 574 PickleBuffer)
+    encoded_data: LazyData[npt.NDArray[np.uint8]] = attrs.field(factory=LazyData, converter=LazyData.coerce)  # type: ignore[misc]
     # video metadata
     metadata: VideoMetadata = attrs.Factory(VideoMetadata)
-    # decoded video frames
-    frame_array: npt.NDArray[np.uint8] | None = None
+    # decoded video frames (numpy for zero-copy Ray transport via PEP 574 PickleBuffer)
+    frame_array: LazyData[npt.NDArray[np.uint8]] = attrs.field(factory=LazyData, converter=LazyData.coerce)  # type: ignore[misc]
     # clips
     clips: list[Clip] = attrs.Factory(list)
     filtered_clips: list[Clip] = attrs.Factory(list)
@@ -354,15 +360,16 @@ class Video:
             Exception: Any exception from extract_video_metadata is propagated.
 
         """
-        if self.encoded_data is None:
+        data = self.encoded_data.resolve()
+        if data is None:
             error_msg = "No video data available: encoded_data is None"
             raise ValueError(error_msg)
 
         # Extract metadata using the existing function
-        extracted_metadata = extract_video_metadata(self.encoded_data)
+        extracted_metadata = extract_video_metadata(data)
 
         # Set the size from encoded_data
-        self.metadata.size = len(self.encoded_data)
+        self.metadata.size = data.nbytes
 
         # Map the extracted metadata to our metadata object
         self.metadata.height = extracted_metadata.height
@@ -473,11 +480,10 @@ class Video:
 
         """
         total_size = 0
-        total_size += len(self.encoded_data) if self.encoded_data else 0
-        total_size += sys.getsizeof(self.frame_array)
+        total_size += self.encoded_data.nbytes
+        total_size += self.frame_array.nbytes
         for clip in self.clips:
             total_size += clip.get_major_size()
-        total_size += self.frame_array.nbytes if self.frame_array is not None else 0
         return total_size
 
 
@@ -706,7 +712,7 @@ class ClipSample:
     num_bytes: int
     clip_location: storage_client.StoragePrefix | pathlib.Path
     clip_metadata: dict[str, Any] = attrs.Factory(dict)
-    encoded_data: bytes | None = None
+    encoded_data: LazyData[npt.NDArray[np.uint8]] = attrs.field(factory=LazyData, converter=LazyData.coerce)  # type: ignore[misc]
     t5_xxl_embeddings: list[npt.NDArray[np.int32]] = attrs.Factory(list)
 
     def get_major_size(self) -> int:
@@ -717,7 +723,7 @@ class ClipSample:
 
         """
         total_size = sys.getsizeof(self.clip_metadata)
-        total_size += len(self.encoded_data) if self.encoded_data else 0
+        total_size += self.encoded_data.nbytes
         total_size += sum(x.nbytes for x in self.t5_xxl_embeddings)
         return total_size
 

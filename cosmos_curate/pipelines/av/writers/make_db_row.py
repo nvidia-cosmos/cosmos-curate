@@ -17,8 +17,11 @@ import hashlib
 import uuid
 from collections.abc import Generator
 
+import numpy as np
+import numpy.typing as npt
 from loguru import logger
 
+from cosmos_curate.core.utils.data.ref_resolver import prefetch, resolve_as_ready
 from cosmos_curate.pipelines.av.utils.av_data_model import (
     AvSessionTrajectoryTask,
     AvSessionVideoSplitTask,
@@ -87,7 +90,7 @@ def make_clipped_session(
     )
 
 
-def _calculate_sha256(buffer: bytes) -> str:
+def _calculate_sha256(buffer: bytes | npt.NDArray[np.uint8]) -> str:
     """Calculate SHA-256 hash of a byte buffer.
 
     Args:
@@ -117,12 +120,13 @@ def make_video_spans(
 
     """
     for video in task.videos:
-        for clip in video.clips:
+        prefetch([clip.encoded_data for clip in video.clips])
+        for clip, data in resolve_as_ready([(clip, clip.encoded_data) for clip in video.clips]):
             if clip.timestamps_ms is None:
                 error = f"Clip {clip.uuid} has no timestamps"
                 raise ValueError(error)
 
-            if clip.encoded_data is None:
+            if data is None:
                 error = f"Clip {clip.uuid} has no encoded_data"
                 raise ValueError(error)
 
@@ -140,13 +144,13 @@ def make_video_spans(
                 timestamps=clip.timestamps_ms.tobytes(),
                 encoder=task.encoder,
                 url=clip.url,
-                byte_size=len(clip.encoded_data) if clip.encoded_data else 0,
+                byte_size=clip.encoded_data.nbytes,
                 duration=clip.span_end - clip.span_start,
                 framerate=video.metadata.framerate,
-                num_frames=get_frame_count(clip.encoded_data),
+                num_frames=get_frame_count(data),
                 height=video.metadata.height,
                 width=video.metadata.width,
-                sha256=_calculate_sha256(clip.encoded_data),
+                sha256=_calculate_sha256(data),
                 run_uuid=run_uuid,
             )
 

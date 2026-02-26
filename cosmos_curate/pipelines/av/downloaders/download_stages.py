@@ -20,6 +20,7 @@ from cosmos_curate.core.interfaces.stage_interface import CuratorStage, CuratorS
 from cosmos_curate.core.utils.config.operation_context import (
     make_pipeline_named_temporary_file,
 )
+from cosmos_curate.core.utils.data.bytes_transport import bytes_to_numpy
 from cosmos_curate.core.utils.infra.performance_utils import StageTimer
 from cosmos_curate.core.utils.infra.tracing import traced_span
 from cosmos_curate.core.utils.storage import s3_client
@@ -243,8 +244,11 @@ class VideoDownloader(CuratorStage):
                         self._convert_h264_to_mp4(mp4_file, encoded_data)
                     else:
                         mp4_file.write_bytes(encoded_data)
-                    video.encoded_data = mp4_file.read_bytes()
+                    video.encoded_data = bytes_to_numpy(mp4_file.read_bytes())  # type: ignore[assignment]
                     video.populate_metadata()
+                    # TODO(LazyData): re-enable when batch-mode ObjectRef ownership is
+                    # resolved.  In batch mode, pool.stop() kills actor -> OwnerDiedError.
+                    # video.encoded_data.store()  # noqa: ERA001
             except Exception as e:  # noqa: BLE001
                 logger.error(f"Got an exception {e!s} when trying to read {video_url}")
                 continue
@@ -408,7 +412,10 @@ class ClipDownloader(CuratorStage):
 
         def download_clip(clip: ClipForAnnotation) -> int:
             try:
-                clip.encoded_data = read_bytes(clip.url, self._client)
+                clip.encoded_data = bytes_to_numpy(read_bytes(clip.url, self._client))  # type: ignore[assignment]
+                # TODO(LazyData): re-enable when batch-mode ObjectRef ownership is
+                # resolved.  In batch mode, pool.stop() kills actor -> OwnerDiedError.
+                # clip.encoded_data.store()  # noqa: ERA001
             except Exception as e:  # noqa: BLE001
                 logger.error(f"Error downloading {clip.url}: {e!s}")
                 return 0

@@ -10,6 +10,7 @@ import numpy as np
 import pytest
 
 from cosmos_curate.core.utils.config import operation_context
+from cosmos_curate.core.utils.data.bytes_transport import bytes_to_numpy
 from cosmos_curate.pipelines.av.downloaders import download_stages
 from cosmos_curate.pipelines.av.downloaders.download_stages import (
     ClipDownloader,
@@ -119,7 +120,7 @@ def test_process_data_collects_expected_videos_and_timestamps(
     camera_ids = sorted(video.camera_id for video in task.videos)
     assert camera_ids == [2, 4, 5, 6, 7, 8]
     for video in task.videos:
-        assert video.encoded_data == video_payloads[video.camera_id]
+        assert np.array_equal(video.encoded_data.resolve(), bytes_to_numpy(video_payloads[video.camera_id]))
         expected_timestamp = video.camera_id * 100
         assert video.timestamps_ms is not None
         assert np.array_equal(video.timestamps_ms, np.array([expected_timestamp], dtype=np.int64))
@@ -218,7 +219,7 @@ def test_process_data_converts_h264_and_keeps_only_vri_camera(
     assert len(task.videos) == 1
     video = task.videos[0]
     assert video.camera_id == 2
-    assert video.encoded_data == b"converted-mp4"
+    assert np.array_equal(video.encoded_data.resolve(), bytes_to_numpy(b"converted-mp4"))
     assert video.timestamps_ms is not None
     assert np.array_equal(video.timestamps_ms, np.array([1234], dtype=np.int64))
 
@@ -394,5 +395,6 @@ def test_clip_downloader_populates_clip_bytes(monkeypatch: pytest.MonkeyPatch) -
     downloader.stage_setup()
     result = downloader.process_data([task])
     assert result == [task]
-    encoded_payloads = [clip.encoded_data for clip in task.clips]
-    assert encoded_payloads == [b"bytes-clip-2.mp4", b"bytes-clip-4.mp4"]
+    encoded_payloads = [clip.encoded_data.resolve() for clip in task.clips]
+    expected = [bytes_to_numpy(b"bytes-clip-2.mp4"), bytes_to_numpy(b"bytes-clip-4.mp4")]
+    assert all(np.array_equal(a, b) for a, b in zip(encoded_payloads, expected, strict=True))

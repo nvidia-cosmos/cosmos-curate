@@ -160,12 +160,15 @@ class TransNetV2ClipExtractionStage(CuratorStage):
                 logger.warning(f"Incomplete metadata for {video.input_video}. Skipping...")
                 continue
             assert video.metadata.framerate  # silence mypy
-            if video.frame_array is None:
+            if not video.frame_array:
                 logger.warning(f"No frame array for {video.input_video}. Skipping...")
                 continue
 
             with self._timer.time_process():
-                frames = video.frame_array
+                frames = video.frame_array.resolve()
+                if frames is None:
+                    msg = f"frame_array resolved to None for {video.input_video}"
+                    raise ValueError(msg)
                 if tuple(frames.shape[1:4]) != (27, 48, 3):
                     error_msg = f"Expected frames of shape 27x48x3, got {frames.shape[1:4]}."
                     raise ValueError(error_msg)
@@ -198,7 +201,7 @@ class TransNetV2ClipExtractionStage(CuratorStage):
                     if self._limit_clips > 0 and len(video.clips) >= self._limit_clips:
                         break
 
-                video.frame_array = None  # no longer needed
+                video.frame_array.drop()  # no longer needed
                 if not video.clips:
                     logger.warning(f"No scene cut predicted for {s3_file}.")
 

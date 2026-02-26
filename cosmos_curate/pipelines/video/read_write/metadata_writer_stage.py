@@ -33,6 +33,7 @@ from botocore.exceptions import ClientError
 from loguru import logger
 
 from cosmos_curate.core.interfaces.stage_interface import CuratorStage, CuratorStageResource
+from cosmos_curate.core.utils.data.ref_resolver import batch_resolve
 from cosmos_curate.core.utils.infra.performance_utils import StageTimer
 from cosmos_curate.core.utils.storage import storage_client, storage_utils
 from cosmos_curate.core.utils.storage.storage_utils import (
@@ -315,7 +316,7 @@ class ClipWriterStage(CuratorStage):
 
     def _write_data(
         self,
-        buffer: bytes,
+        buffer: bytes | npt.NDArray[np.uint8],
         dest: storage_client.StoragePrefix | pathlib.Path,
         desc: str,
         source_video: str,
@@ -348,6 +349,9 @@ class ClipWriterStage(CuratorStage):
         avoid secondary cameras overwriting primary metadata. MP4 writes use
         relative_path and remain per-camera.
         """
+        batch_resolve(
+            [clip.encoded_data for clip in video.clips] + [clip.encoded_data for clip in video.filtered_clips]
+        )
         with ThreadPoolExecutor(max_workers=self._max_workers) as executor:
             with self._timer.time_process(len(video.clips)):
                 # collect all embeddings/metadatas for a chunk of clips from a video
@@ -406,7 +410,7 @@ class ClipWriterStage(CuratorStage):
 
             # clean up intermediate data
             for clip in video.clips:
-                clip.encoded_data = None
+                clip.encoded_data.drop()
                 clip.intern_video_2_embedding = None
                 clip.cosmos_embed1_embedding = None
                 for window in clip.windows:
@@ -629,7 +633,8 @@ class ClipWriterStage(CuratorStage):
         filtered: bool = False,
     ) -> ClipStats:
         clip_stats = ClipStats()
-        if clip.encoded_data:
+        data = clip.encoded_data.resolve()
+        if data is not None:
             dest = self._get_clip_uri(
                 clip.uuid,
                 self.get_output_path_clips(self._output_path, filtered=filtered),
@@ -637,7 +642,7 @@ class ClipWriterStage(CuratorStage):
                 relative_path,
             )
             if self._upload_clips and not self._dry_run:
-                self._write_data(clip.encoded_data, dest, f"clip {clip.uuid}", clip.source_video)
+                self._write_data(data, dest, f"clip {clip.uuid}", clip.source_video)
             clip_stats.num_transcoded += 1
         else:
             logger.warning(f"Clip {clip.uuid} from {clip.source_video} has no buffer, skip uploading to s3")

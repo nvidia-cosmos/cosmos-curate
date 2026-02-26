@@ -335,7 +335,7 @@ def write_cosmos_predict2_dataset(  # noqa: PLR0913, C901
         clip_valid = True
 
         # Check for video encoded_data
-        if clip.encoded_data is None:
+        if not clip.encoded_data:
             clip.errors["encoded_data"] = "no video encoded_data present"
             clip_valid = False
 
@@ -431,12 +431,13 @@ def write_video_clip(
         Exception: If storage write operation fails
 
     """
-    if clip.encoded_data is None:
+    data = clip.encoded_data.resolve()
+    if data is None:
         error_msg = f"Clip {clip.uuid} has no encoded_data data"
         raise ValueError(error_msg)
 
     write_bytes(
-        clip.encoded_data,
+        data,
         dest_url,
         f"clip-{clip.clip_session_uuid}",
         "video_clip",

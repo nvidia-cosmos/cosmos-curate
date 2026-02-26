@@ -19,10 +19,13 @@ import tempfile
 from math import ceil
 from pathlib import Path
 
+import numpy as np
+import numpy.typing as npt
 import nvtx  # type: ignore[import-untyped]
 from loguru import logger
 
 from cosmos_curate.core.interfaces.stage_interface import CuratorStage, CuratorStageResource
+from cosmos_curate.core.utils.data.bytes_transport import bytes_to_numpy
 from cosmos_curate.core.utils.infra.performance_utils import StageTimer
 from cosmos_curate.pipelines.video.utils.data_model import (
     SplitPipeTask,
@@ -32,7 +35,7 @@ from cosmos_curate.pipelines.video.utils.data_model import (
 REMUX_FORMATS = {"mpegts"}
 
 
-def remux_to_mp4(encoded_data: bytes, threads: int = 1) -> bytes:
+def remux_to_mp4(encoded_data: bytes | npt.NDArray[np.uint8], threads: int = 1) -> npt.NDArray[np.uint8]:
     """Remux a video to a MP4 container using ffmpeg.
 
     Notes:
@@ -83,8 +86,9 @@ def remux_to_mp4(encoded_data: bytes, threads: int = 1) -> bytes:
         ]
 
         logger.debug(f"ffmpeg cmd: {' '.join(cmd)}")
+        stdin_data = encoded_data if isinstance(encoded_data, bytes) else encoded_data.tobytes()
         proc = subprocess.run(  # noqa: S603
-            cmd, input=encoded_data, capture_output=True, check=False
+            cmd, input=stdin_data, capture_output=True, check=False
         )
 
         if proc.returncode != 0:
@@ -93,7 +97,7 @@ def remux_to_mp4(encoded_data: bytes, threads: int = 1) -> bytes:
 
         stderr_output = proc.stderr.decode("utf-8", errors="replace")
         logger.debug(f"ffmpeg stderr:\n{stderr_output}")
-        return Path(output_file.name).read_bytes()
+        return bytes_to_numpy(Path(output_file.name).read_bytes())
 
 
 def remux_if_needed(video: Video, threads: int) -> None:
@@ -104,20 +108,32 @@ def remux_if_needed(video: Video, threads: int) -> None:
         threads: The number of threads to use for ffmpeg.
 
     """
-    if video.encoded_data is None:
+    data = video.encoded_data.resolve()
+    if data is None:
         msg = "Video source bytes are not set"
         raise ValueError(msg)
 
     if not video.metadata:
         logger.warning(f"Video {video.input_video} has no metadata, skipping remux")
+        # TODO(LazyData): re-enable .release() when .store() is active.
+        # Without .store(), .release() clears the only copy -> ValueError downstream.
+        # video.encoded_data.release()  # noqa: ERA001
         return
 
     format_name = video.metadata.format_name.lower() if video.metadata.format_name else "unknown"
 
     if any(remux_format in format_name for remux_format in REMUX_FORMATS):
         logger.info(f"Video {video.input_video} is in `{format_name}` format, remuxing to mp4")
-        video.encoded_data = remux_to_mp4(video.encoded_data, threads=threads)
+        video.encoded_data = remux_to_mp4(data, threads=threads)  # type: ignore[assignment]
         video.populate_metadata()
+        # TODO(LazyData): re-enable when batch-mode ObjectRef ownership is
+        # resolved.  In batch mode, pool.stop() kills actor -> OwnerDiedError.
+        # video.encoded_data.store()  # noqa: ERA001
+    else:
+        # TODO(LazyData): re-enable .release() when .store() is active.
+        # Without .store(), .release() clears the only copy -> ValueError downstream.
+        # video.encoded_data.release()  # noqa: ERA001
+        pass
 
 
 class RemuxStage(CuratorStage):

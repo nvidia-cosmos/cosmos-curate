@@ -17,6 +17,8 @@
 import subprocess
 
 import attrs
+import numpy as np
+import numpy.typing as npt
 import torch
 from loguru import logger
 
@@ -87,7 +89,7 @@ def compute_windows(total_frames: int, window_size: int = 128, remainder_thresho
 
 
 def split_video_into_windows(  # noqa: PLR0913
-    mp4_bytes: bytes,
+    mp4_bytes: bytes | npt.NDArray[np.uint8],
     window_size: int = 256,
     remainder_threshold: int = 128,
     sampling_fps: float = 2.0,
@@ -128,7 +130,8 @@ def split_video_into_windows(  # noqa: PLR0913
 
     """
     with make_pipeline_named_temporary_file(sub_dir="windowing") as input_file:
-        input_file.write_bytes(mp4_bytes)
+        with input_file.open("wb") as f:
+            f.write(mp4_bytes)
         total_frames = get_frame_count(mp4_bytes)
         windows = compute_windows(total_frames, window_size, remainder_threshold)
         video_frames: list[torch.Tensor | None] = []
@@ -155,7 +158,8 @@ def split_video_into_windows(  # noqa: PLR0913
 
         if return_bytes:
             if len(windows) == 1:
-                return [mp4_bytes], video_frames, windows
+                raw = mp4_bytes.tobytes() if not isinstance(mp4_bytes, bytes) else mp4_bytes
+                return [raw], video_frames, windows
 
             for window in windows:
                 with make_pipeline_named_temporary_file(sub_dir="windowing") as tmp_file:
@@ -211,13 +215,14 @@ def _make_windows_for_clip(  # noqa: PLR0913
     windows: list[Window] = []
     frames: list[torch.Tensor] = []
 
-    if clip.encoded_data is None:
+    data = clip.encoded_data.resolve()
+    if data is None:
         logger.error(f"clip {clip.uuid} does not have a encoded_data")
         clip.errors["clip_windowing"] = "clip.encoded_data is None"
         return windows, frames
 
     window_mp4_bytes, window_frames, window_infos = split_video_into_windows(
-        clip.encoded_data,
+        data,
         window_size=config.window_size,
         remainder_threshold=config.remainder_threshold,
         sampling_fps=config.sampling_fps,
@@ -282,7 +287,7 @@ def make_windows_for_video(
     frames: list[torch.Tensor] = []
 
     for clip in video.clips:
-        if clip.encoded_data is None:
+        if not clip.encoded_data:
             logger.warning(f"Clip {clip.uuid} has no encoded_data.")
             clip.errors["encoded_data"] = "empty"
             continue

@@ -167,7 +167,8 @@ class VideoFrameExtractionStage(CuratorStage):
         height, width = self.output_hw
         for task in tasks:
             video = task.video
-            if video.encoded_data is None:
+            data = video.encoded_data.resolve()
+            if data is None:
                 error_msg = "Please load video bytes!"
                 raise ValueError(error_msg)
             if not video.has_metadata():
@@ -179,14 +180,14 @@ class VideoFrameExtractionStage(CuratorStage):
                 make_pipeline_named_temporary_file(sub_dir="video_frame_extraction") as video_path,
             ):
                 with video_path.open("wb") as fp:
-                    fp.write(video.encoded_data)
+                    fp.write(data)
                 if self.decoder_mode == "pynvc":
                     try:
                         video.frame_array = self.pynvc_frame_extractor(video_path).cpu().numpy().astype(np.uint8)
                     except Exception as e:
                         if not self._raise_on_pynvc_error_without_cpu_fallback:
                             logger.warning(f"Got exception {e} with PyNvVideoCodec decode, trying ffmpeg CPU fallback")
-                            video.frame_array = get_frames_from_ffmpeg(
+                            video.frame_array = get_frames_from_ffmpeg(  # type: ignore[assignment]
                                 video_path,
                                 width=width,
                                 height=height,
@@ -198,18 +199,20 @@ class VideoFrameExtractionStage(CuratorStage):
                             msg = f"PyNvCodec decode failed for {video.input_path}. "
                             raise RuntimeError(msg) from e
                 else:
-                    video.frame_array = get_frames_from_ffmpeg(
+                    video.frame_array = get_frames_from_ffmpeg(  # type: ignore[assignment]
                         video_path,
                         width=width,
                         height=height,
                         use_gpu=self.decoder_mode == "ffmpeg_gpu",
                     )
-                if video.frame_array is None:
+
+                if not video.frame_array:
                     logger.error(f"Video frame extraction failed on {video.input_video}, skipping ...")
                     video.errors["frame_extraction"] = "null"
                     continue
-                if self._verbose:
-                    logger.info(f"Loaded video as numpy uint8 array with shape {video.frame_array.shape}")
+
+                if self._verbose and video.frame_array.value is not None:
+                    logger.info(f"Loaded video as numpy uint8 array with shape {video.frame_array.value.shape}")
 
         if self._log_stats:
             stage_name, stage_perf_stats = self._timer.log_stats()

@@ -22,6 +22,7 @@ from unittest.mock import patch
 
 import pytest
 
+from cosmos_curate.core.utils.data.bytes_transport import bytes_to_numpy
 from cosmos_curate.pipelines.video.utils.data_model import Clip, SplitPipeTask, Video
 from cosmos_curate.pipelines.video.utils.decoder_utils import (
     FrameExtractionPolicy,
@@ -74,7 +75,7 @@ def sample_splitting_task(sample_video_data: bytes) -> SplitPipeTask:
     """
     video = Video(
         input_video=pathlib.Path("sample_video.mp4"),
-        encoded_data=sample_video_data,
+        encoded_data=bytes_to_numpy(sample_video_data),
     )
     video.populate_metadata()
 
@@ -124,7 +125,7 @@ def sample_filtering_task(sample_clip_data: bytes) -> SplitPipeTask:
         uuid=uuid.UUID("12345678-1234-5678-1234-567812345678"),
         source_video="sample_video.mp4",
         span=(0.0, 10.0),
-        encoded_data=sample_clip_data,
+        encoded_data=bytes_to_numpy(sample_clip_data),
     )
 
     # Always extract frames at 1.0 fps for simplicity in tests
@@ -170,13 +171,13 @@ def sample_multicam_task(sample_video_data: bytes) -> SplitPipeTask:
     # Create two videos representing different camera angles
     video1 = Video(
         input_video=pathlib.Path("camera_1.mp4"),
-        encoded_data=sample_video_data,
+        encoded_data=bytes_to_numpy(sample_video_data),
     )
     video1.populate_metadata()
 
     video2 = Video(
         input_video=pathlib.Path("camera_2.mp4"),
-        encoded_data=sample_video_data,
+        encoded_data=bytes_to_numpy(sample_video_data),
     )
     video2.populate_metadata()
 

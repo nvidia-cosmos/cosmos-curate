@@ -117,11 +117,12 @@ class FrameExtractionSignature:
         return f"{self.extraction_policy!s}-{int(self.target_fps * 1000)}"
 
 
-def extract_video_metadata(video: str | bytes) -> VideoMetadata:
+def extract_video_metadata(video: str | bytes | npt.NDArray[np.uint8]) -> VideoMetadata:
     """Extract metadata from a video file using ffprobe.
 
     Args:
-        video: Path to video file or video data as bytes.
+        video: Path to video file, video data as bytes, or as a NumPy
+            uint8 array (zero-copy Ray transport format).
 
     Returns:
         VideoMetadata object containing video properties.
@@ -138,8 +139,9 @@ def extract_video_metadata(video: str | bytes) -> VideoMetadata:
         "json",
     ]
     with make_pipeline_named_temporary_file(sub_dir="extract_video_metadata") as video_path:
-        if isinstance(video, bytes):
-            video_path.write_bytes(video)
+        if isinstance(video, (bytes, np.ndarray)):
+            with video_path.open("wb") as f:
+                f.write(video)
             real_video_path = video_path
         else:
             real_video_path = Path(str(video))
@@ -195,7 +197,9 @@ def extract_video_metadata(video: str | bytes) -> VideoMetadata:
     )
 
 
-def _make_video_stream(data: Path | str | BinaryIO | bytes | io.BytesIO | io.BufferedReader) -> BinaryIO:
+def _make_video_stream(
+    data: Path | str | BinaryIO | bytes | npt.NDArray[np.uint8] | io.BytesIO | io.BufferedReader,
+) -> BinaryIO:
     """Convert various input types into a binary stream for video processing.
 
     This function handles different input types that could represent video
@@ -206,6 +210,7 @@ def _make_video_stream(data: Path | str | BinaryIO | bytes | io.BytesIO | io.Buf
         data: The input video data, which can be one of:
             - Path: A path to a video file
             - bytes: Raw video data in bytes
+            - npt.NDArray[np.uint8]: NumPy array (zero-copy Ray transport)
             - io.BytesIO: An in-memory binary stream
             - io.BufferedReader: A buffered binary file reader
             - BinaryIO: Any binary stream
@@ -222,7 +227,7 @@ def _make_video_stream(data: Path | str | BinaryIO | bytes | io.BytesIO | io.Buf
 
     if isinstance(data, Path):
         return data.open("rb")
-    if isinstance(data, bytes):
+    if isinstance(data, (bytes, np.ndarray)):
         return io.BytesIO(data)
     if isinstance(data, (io.BytesIO, io.BufferedReader, BinaryIO)):
         return data
@@ -242,7 +247,7 @@ def save_stream_position(stream: BinaryIO) -> Generator[BinaryIO, None, None]:
 
 
 def get_video_timestamps(
-    data: Path | str | BinaryIO | bytes,
+    data: Path | str | BinaryIO | bytes | npt.NDArray[np.uint8],
     stream_idx: int = 0,
     video_format: str | None = None,
 ) -> npt.NDArray[np.float32]:
@@ -589,7 +594,11 @@ def decode_video_cpu(  # noqa: PLR0913
         )
 
 
-def get_frame_count(data: Path | str | BinaryIO | bytes, stream_idx: int = 0, video_format: str | None = None) -> int:
+def get_frame_count(
+    data: Path | str | BinaryIO | bytes | npt.NDArray[np.uint8],
+    stream_idx: int = 0,
+    video_format: str | None = None,
+) -> int:
     """Get the total number of frames in a video file or stream.
 
     Args:

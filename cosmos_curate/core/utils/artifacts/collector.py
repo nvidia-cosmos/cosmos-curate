@@ -218,9 +218,12 @@ from collections.abc import Generator
 from typing import IO
 
 import attrs
+import numpy as np
+import numpy.typing as npt
 import ray
 from loguru import logger
 
+from cosmos_curate.core.utils.data.bytes_transport import bytes_to_numpy
 from cosmos_curate.core.utils.infra import ray_cluster_utils
 from cosmos_curate.core.utils.infra.tracing import TracedSpan, traced_span
 
@@ -342,7 +345,7 @@ class _FileChunk:
     """
 
     arcname: str
-    data: bytes
+    data: npt.NDArray[np.uint8]
     is_last: bool
 
 
@@ -441,20 +444,20 @@ class _NodeCollector:
                 # Small file: single chunk with all bytes.
                 yield _FileChunk(
                     arcname=arcname,
-                    data=file_path.read_bytes(),
+                    data=np.fromfile(file_path, dtype=np.uint8),
                     is_last=True,
                 )
             else:
                 # Large file: stream in chunk_bytes-sized reads.
                 with file_path.open("rb") as fh:
                     while True:
-                        data = fh.read(chunk_bytes)
-                        if not data:
+                        raw = fh.read(chunk_bytes)
+                        if not raw:
                             break
                         is_last = fh.tell() >= file_size
                         yield _FileChunk(
                             arcname=arcname,
-                            data=data,
+                            data=bytes_to_numpy(raw),
                             is_last=is_last,
                         )
 

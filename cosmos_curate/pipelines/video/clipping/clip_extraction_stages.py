@@ -27,6 +27,8 @@ from loguru import logger
 
 from cosmos_curate.core.interfaces.stage_interface import CuratorStage, CuratorStageResource
 from cosmos_curate.core.utils.config.operation_context import make_pipeline_temporary_dir
+from cosmos_curate.core.utils.data.bytes_transport import bytes_to_numpy
+from cosmos_curate.core.utils.data.ref_resolver import prefetch
 from cosmos_curate.core.utils.infra.performance_utils import StageTimer
 from cosmos_curate.core.utils.misc import grouping
 from cosmos_curate.pipelines.video.utils.data_model import (
@@ -220,13 +222,13 @@ class ClipTranscodingStage(CuratorStage):
             raise ValueError(error_msg)
 
     def _process_video(self, video: Video) -> None:
-        if video.encoded_data is None:
+        if not video.encoded_data:
             error_msg = "Please load video!"
             raise ValueError(error_msg)
 
         if not video.clips:
             logger.warning(f"No clips to transcode for {video.input_video}. Skipping...")
-            video.encoded_data = None
+            video.encoded_data.drop()
             return
 
         if self._verbose:
@@ -235,7 +237,12 @@ class ClipTranscodingStage(CuratorStage):
         with make_pipeline_temporary_dir(sub_dir="transcode") as tmp_dir:
             # write video to file
             video_file = tmp_dir / "input.mp4"
-            video_file.write_bytes(video.encoded_data)
+            video_data = video.encoded_data.resolve()
+            if video_data is None:
+                msg = f"Video {video.input_video} has no encoded_data after resolve"
+                raise ValueError(msg)
+            with video_file.open("wb") as f:
+                f.write(video_data)
             force_pix_fmt = video.is_10_bit_color() or False
 
             # use input video bit-rate
@@ -279,7 +286,7 @@ class ClipTranscodingStage(CuratorStage):
                         logger.exception(f"Error processing video {video.input_video}")
                         video.errors[self.__class__.__name__] = str(e)
 
-                video.encoded_data = None
+                video.encoded_data.drop()
 
             if self._log_stats:
                 stage_name, stage_perf_stats = self._timer.log_stats()
@@ -407,13 +414,17 @@ class ClipTranscodingStage(CuratorStage):
 
         # read clips back into memory
         for clip in clips:
-            clip.encoded_data = (working_dir / f"{clip.uuid}.mp4").read_bytes()
+            clip.encoded_data = bytes_to_numpy((working_dir / f"{clip.uuid}.mp4").read_bytes())  # type: ignore[assignment]
             try:
                 clip.extract_metadata()
             except Exception as e:  # noqa: BLE001
                 logger.exception(f"Failed to extract metadata for {clip.source_video=} {clip.uuid=} {clip.span=}")
                 clip.errors["extract_metadata"] = str(e)
-                clip.encoded_data = None
+                clip.encoded_data.drop()
+                continue
+            # TODO(LazyData): re-enable when batch-mode ObjectRef ownership is
+            # resolved.  In batch mode, pool.stop() kills actor -> OwnerDiedError.
+            # clip.encoded_data.store()  # noqa: ERA001
 
 
 def _validate_video_timestamps(video_timestamps: list[npt.NDArray[np.float32]]) -> None:
@@ -448,12 +459,17 @@ def _get_videos_timestamps(videos: list[Video]) -> list[npt.NDArray[np.float32]]
         ValueError: If any video has no encoded_data.
 
     """
+    prefetch([video.encoded_data for video in videos])
     video_timestamps = []
     for video in videos:
-        if video.encoded_data is None:
+        if not video.encoded_data:
             error_msg = f"Video {video.input_video} has no encoded_data"
             raise ValueError(error_msg)
-        timestamps = get_video_timestamps(video.encoded_data)
+        data = video.encoded_data.resolve()
+        if data is None:
+            error_msg = f"Video {video.input_video} has no encoded_data after resolve"
+            raise ValueError(error_msg)
+        timestamps = get_video_timestamps(data)
         video_timestamps.append(timestamps)
     return video_timestamps
 
@@ -684,7 +700,7 @@ class FixedStrideExtractorStage(CuratorStage):
         """
 
         def _require_video_bytes(v: Video) -> None:
-            if v.encoded_data is None:
+            if not v.encoded_data:
                 v.errors["encoded_data"] = "missing"
                 error_msg = f"Please load video bytes for {v.input_video}!"
                 raise ValueError(error_msg)

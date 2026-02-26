@@ -76,7 +76,7 @@ def test_generate_embedding(sample_embedding_task: SplitPipeTask, sequential_run
     result_task = tasks[0]
     clip = result_task.video.clips[0]
 
-    assert clip.encoded_data is not None, "Expected clip.encoded_data to be not None, but it is None."
+    assert clip.encoded_data.resolve() is not None, "Expected clip.encoded_data to be not None, but it is None."
     assert clip.cosmos_embed1_embedding is not None, "Expected Cosmos-Embed1 embedding to be not None, but it is None."
 
     text_match = clip.cosmos_embed1_text_match

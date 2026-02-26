@@ -19,6 +19,7 @@ import numpy as np
 import pytest
 from loguru import logger
 
+from cosmos_curate.core.utils.data.bytes_transport import bytes_to_numpy
 from cosmos_curate.pipelines.av.clipping import clip_extraction_stages as clip_module
 from cosmos_curate.pipelines.av.clipping.clip_extraction_stages import (
     ClipTranscodingStage,
@@ -114,7 +115,7 @@ def test_extract_clips_populates_encoded_data(
     assert ["-threads", str(encoder_threads)] in [ffmpeg_cmd[i : i + 2] for i in range(len(ffmpeg_cmd) - 1)]
     for clip in clips:
         assert f"{clip.uuid}.mp4" in ffmpeg_cmd
-        assert clip.encoded_data == f"encoded-{clip.span_index}".encode()
+        assert np.array_equal(clip.encoded_data.resolve(), bytes_to_numpy(f"encoded-{clip.span_index}".encode()))
 
 
 def test_extract_clips_nvenc_uses_hwaccel(
@@ -163,7 +164,7 @@ def test_extract_clips_nvenc_uses_hwaccel(
     assert ["-pix_fmt", "yuv420p"] in [ffmpeg_cmd[i : i + 2] for i in range(len(ffmpeg_cmd) - 1)]
     assert "-rc:v" in ffmpeg_cmd
     assert "vbr" in ffmpeg_cmd
-    assert clips[0].encoded_data == b"encoded"
+    assert np.array_equal(clips[0].encoded_data.resolve(), bytes_to_numpy(b"encoded"))
 
 
 def test_extract_clips_handles_ffmpeg_failure(
@@ -187,7 +188,7 @@ def test_extract_clips_handles_ffmpeg_failure(
         input_video="camera.mp4",
     )
 
-    assert clip.encoded_data is None
+    assert clip.encoded_data.resolve() is None
     generated = [p for p in tmp_path.glob("*.mp4") if p.name != "input.mp4"]
     assert generated == []
 
@@ -210,7 +211,7 @@ def test_process_data_clears_source_video(
     video = video_factory(
         num_clips=0,
         camera_id=2,
-        encoded_data=b"video-bytes",
+        encoded_data=bytes_to_numpy(b"video-bytes"),
         framerate=10.0,
         num_frames=10,
         height=1080,
@@ -234,9 +235,9 @@ def test_process_data_clears_source_video(
 
     output_tasks = stage.process_data([task])
     assert output_tasks[0].encoder == "libopenh264"
-    assert video.encoded_data is None
+    assert video.encoded_data.resolve() is None
     for clip in clips:
-        assert clip.encoded_data == f"encoded-{clip.span_index}".encode()
+        assert np.array_equal(clip.encoded_data.resolve(), bytes_to_numpy(f"encoded-{clip.span_index}".encode()))
 
 
 def test_fixed_stride_extractor_creates_aligned_clips(
@@ -256,7 +257,7 @@ def test_fixed_stride_extractor_creates_aligned_clips(
         camera_id=2,
         framerate=10.0,
         num_frames=10,
-        encoded_data=b"video-bytes",
+        encoded_data=bytes_to_numpy(b"video-bytes"),
         height=1080,
         width=1920,
         size=1024,
@@ -292,7 +293,7 @@ def test_fixed_stride_extractor_respects_limit_clips(
         camera_id=2,
         framerate=10.0,
         num_frames=10,
-        encoded_data=b"video-bytes",
+        encoded_data=bytes_to_numpy(b"video-bytes"),
         height=1080,
         width=1920,
         size=1024,
@@ -340,7 +341,7 @@ def test_fixed_stride_extractor_skips_on_timestamp_verification_failure(
         timestamps_ms=timestamps_ms,
         num_frames=8,
         framerate=10.0,
-        encoded_data=b"video-bytes",
+        encoded_data=bytes_to_numpy(b"video-bytes"),
     )
     task = split_task_factory(session_name="session", session_url="s3://session", videos=[video])
 
@@ -372,7 +373,7 @@ def test_fixed_stride_extractor_handles_short_timestamp_list(
         timestamps_ms=timestamps_ms,
         num_frames=10,
         framerate=10.0,
-        encoded_data=b"video-bytes",
+        encoded_data=bytes_to_numpy(b"video-bytes"),
     )
     task = split_task_factory(session_name="session", session_url="s3://session", videos=[video])
 

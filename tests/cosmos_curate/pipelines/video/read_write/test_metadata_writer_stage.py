@@ -27,6 +27,7 @@ import numpy.testing as npt
 import pandas as pd
 import pytest
 
+from cosmos_curate.core.utils.data.bytes_transport import bytes_to_numpy
 from cosmos_curate.core.utils.storage import storage_client, storage_utils
 from cosmos_curate.pipelines.video.read_write.metadata_writer_stage import (
     ClipWriterStage,
@@ -204,7 +205,7 @@ def _stage_with_main_clip(tmp_path: Path) -> tuple[ClipWriterStage, SplitPipeTas
         uuid=uuid.uuid4(),
         source_video=video_path.as_posix(),
         span=(0.0, 2.0),
-        encoded_data=b"clip-bytes",
+        encoded_data=bytes_to_numpy(b"clip-bytes"),
         windows=[main_window],
         filter_windows=[filtered_window],
     )
@@ -217,7 +218,7 @@ def _stage_with_main_clip(tmp_path: Path) -> tuple[ClipWriterStage, SplitPipeTas
 
 def _assert_payloads_cleared(clip: Clip, window: Window) -> None:
     """Ensure transient buffers are released after processing."""
-    assert clip.encoded_data is None
+    assert clip.encoded_data.resolve() is None
     assert clip.intern_video_2_embedding is None
     assert window.webp_bytes is None
     assert window.caption == {}
@@ -317,7 +318,7 @@ def test_single_cam_clip_path_uses_flat_structure(tmp_path: Path) -> None:
         uuid=uuid.uuid4(),
         source_video=video_path.as_posix(),
         span=(0.0, 2.0),
-        encoded_data=b"clip-bytes",
+        encoded_data=bytes_to_numpy(b"clip-bytes"),
         windows=[Window(start_frame=0, end_frame=30, caption={"qwen": "cap"})],
     )
     video = _build_video(video_path, clip, relative_path="")
@@ -340,7 +341,7 @@ def test_multicam_style_clip_path_uses_subdir(tmp_path: Path) -> None:
         uuid=uuid.uuid4(),
         source_video=video_path.as_posix(),
         span=(0.0, 2.0),
-        encoded_data=b"clip-bytes",
+        encoded_data=bytes_to_numpy(b"clip-bytes"),
         windows=[Window(start_frame=0, end_frame=30, caption={"qwen": "cap"})],
     )
     video = _build_video(video_path, clip, relative_path="video")
@@ -369,7 +370,7 @@ def test_multicam_primary_only_metadata_no_overwrite(tmp_path: Path) -> None:
         uuid=shared_uuid,
         source_video=primary_path.as_posix(),
         span=(0.0, 2.0),
-        encoded_data=b"primary-clip-bytes",
+        encoded_data=bytes_to_numpy(b"primary-clip-bytes"),
         windows=[Window(start_frame=0, end_frame=30, caption={"qwen": "primary caption"})],
     )
     primary_clip.intern_video_2_embedding = np.array([1.0, 2.0], dtype=np.float32)
@@ -378,7 +379,7 @@ def test_multicam_primary_only_metadata_no_overwrite(tmp_path: Path) -> None:
         uuid=shared_uuid,
         source_video=secondary_path.as_posix(),
         span=(0.0, 2.0),
-        encoded_data=b"secondary-clip-bytes",
+        encoded_data=bytes_to_numpy(b"secondary-clip-bytes"),
         windows=[Window(start_frame=0, end_frame=30, caption={"qwen": "secondary caption"})],
     )
     secondary_clip.intern_video_2_embedding = np.array([9.0, 9.0], dtype=np.float32)
@@ -431,7 +432,7 @@ def test_chunked_metadata_writes_group_jsonl(tmp_path: Path) -> None:
         uuid=uuid.uuid4(),
         source_video=video_path.as_posix(),
         span=(0.0, 1.5),
-        encoded_data=b"data",
+        encoded_data=bytes_to_numpy(b"data"),
         windows=[window],
     )
 
@@ -485,7 +486,7 @@ def test_chunked_metadata_writes_lance_dataset(tmp_path: Path) -> None:
         uuid=uuid.uuid4(),
         source_video=video_path.as_posix(),
         span=(0.0, 2.5),
-        encoded_data=b"data",
+        encoded_data=bytes_to_numpy(b"data"),
         windows=[window],
     )
 
@@ -529,7 +530,7 @@ def test_lance_consolidation_is_idempotent(tmp_path: Path) -> None:
         uuid=uuid.uuid4(),
         source_video=video_path.as_posix(),
         span=(0.0, 1.0),
-        encoded_data=b"data1",
+        encoded_data=bytes_to_numpy(b"data1"),
         windows=[window1],
     )
     video1 = _build_video(video_path, clip1, clip_chunk_index=0)
@@ -553,7 +554,7 @@ def test_lance_consolidation_is_idempotent(tmp_path: Path) -> None:
         uuid=uuid.uuid4(),
         source_video=video_path.as_posix(),
         span=(1.0, 2.0),
-        encoded_data=b"data2",
+        encoded_data=bytes_to_numpy(b"data2"),
         windows=[window2],
     )
     video2 = _build_video(video_path, clip2, clip_chunk_index=1)
@@ -630,7 +631,7 @@ def test_per_window_dataset_assets_written(tmp_path: Path) -> None:
         uuid=uuid.uuid4(),
         source_video=video_path.as_posix(),
         span=(0.0, 2.0),
-        encoded_data=b"clip-bytes",
+        encoded_data=bytes_to_numpy(b"clip-bytes"),
         windows=[window],
     )
 

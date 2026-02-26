@@ -23,6 +23,7 @@ import nvtx  # type: ignore[import-untyped]
 from loguru import logger
 
 from cosmos_curate.core.interfaces.stage_interface import CuratorStage, CuratorStageResource
+from cosmos_curate.core.utils.data.ref_resolver import prefetch, resolve_as_ready
 from cosmos_curate.core.utils.infra.performance_utils import StageTimer
 from cosmos_curate.pipelines.video.utils.data_model import SplitPipeTask, Video
 from cosmos_curate.pipelines.video.utils.decoder_utils import (
@@ -95,8 +96,9 @@ class ClipFrameExtractionStage(CuratorStage):
         if self._verbose:
             logger.info(f"Processing video {video.input_video} with {len(video.clips)} clips")
 
-        for clip in video.clips:
-            if clip.encoded_data is None:
+        prefetch([clip.encoded_data for clip in video.clips])
+        for clip, data in resolve_as_ready([(clip, clip.encoded_data) for clip in video.clips]):
+            if data is None:
                 logger.warning(f"Clip {clip.uuid} has no encoded_data.")
                 clip.errors["encoded_data"] = "empty"
                 continue
@@ -111,7 +113,7 @@ class ClipFrameExtractionStage(CuratorStage):
                     )
                     if use_lcm_fps:
                         lcm = self.lcm_multiple(self._target_fps)
-                        with io.BytesIO(clip.encoded_data) as fp:
+                        with io.BytesIO(data) as fp:
                             frames = extract_frames(
                                 fp,
                                 extraction_policy=policy,
@@ -127,7 +129,7 @@ class ClipFrameExtractionStage(CuratorStage):
                                 clip.extracted_frames[signature] = frames[:: int(lcm / fps)]
                     else:
                         for fps in self._target_fps:
-                            with io.BytesIO(clip.encoded_data) as fp:
+                            with io.BytesIO(data) as fp:
                                 frames = extract_frames(
                                     fp,
                                     extraction_policy=policy,
@@ -146,7 +148,7 @@ class ClipFrameExtractionStage(CuratorStage):
                 logger.exception(f"Error extracting frames from clip {clip.uuid}: {e}")
                 clip.errors["frame_extraction"] = "video_decode_failed"
                 # reset the buffer to disable further operations on this clip
-                clip.encoded_data = None
+                clip.encoded_data.drop()
                 continue
 
     @nvtx.annotate("ClipFrameExtractionStage")  # type: ignore[untyped-decorator]

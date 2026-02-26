@@ -20,6 +20,7 @@ from loguru import logger
 
 from cosmos_curate.core.interfaces.stage_interface import CuratorStage, CuratorStageResource
 from cosmos_curate.core.utils.config.operation_context import make_pipeline_temporary_dir
+from cosmos_curate.core.utils.data.bytes_transport import bytes_to_numpy
 from cosmos_curate.core.utils.infra.performance_utils import StageTimer
 from cosmos_curate.pipelines.av.utils.av_data_info import CAMERA_MAPPING
 from cosmos_curate.pipelines.av.utils.av_data_model import (
@@ -89,7 +90,8 @@ class ClipTranscodingStage(CuratorStage):
         self._timer.reinit(self, task.get_major_size())
         task.encoder = self._encoder
         for video in task.videos:
-            if video.encoded_data is None:
+            data = video.encoded_data.resolve()
+            if data is None:
                 error = "Please load video!"
                 raise ValueError(error)
             with self._timer.time_process(
@@ -98,12 +100,13 @@ class ClipTranscodingStage(CuratorStage):
             ):
                 if not video.clips:
                     logger.warning(f"No clips to transcode for {video.source_video}. Skipping...")
-                    video.encoded_data = None
+                    video.encoded_data.drop()
                     continue
                 with make_pipeline_temporary_dir(sub_dir="transcode") as tmp_dir:
                     # write video to file
                     video_file = tmp_dir / "input.mp4"
-                    video_file.write_bytes(video.encoded_data)
+                    with video_file.open("wb") as f:
+                        f.write(data)
                     force_pix_fmt = video.is_10_bit_color() or False
 
                     # extract clips in batches
@@ -117,8 +120,8 @@ class ClipTranscodingStage(CuratorStage):
                             str(video.source_video),
                         )
                     logger.info(f"Finished transcoding {len(video.clips)} clips from {video.source_video}")
-            # we are done with encoded_data
-            video.encoded_data = None
+            # we are done with encoded_data -- release inline and ObjectRef
+            video.encoded_data.drop()
         if self._log_stats:
             stage_name, stage_perf_stats = self._timer.log_stats()
             task.stage_perf[stage_name] = stage_perf_stats
@@ -273,7 +276,10 @@ class ClipTranscodingStage(CuratorStage):
 
         # read clips back into memory
         for clip in clips:
-            clip.encoded_data = (working_dir / f"{clip.uuid}.mp4").read_bytes()
+            clip.encoded_data = bytes_to_numpy((working_dir / f"{clip.uuid}.mp4").read_bytes())  # type: ignore[assignment]
+            # TODO(LazyData): re-enable when batch-mode ObjectRef ownership is
+            # resolved.  In batch mode, pool.stop() kills actor -> OwnerDiedError.
+            # clip.encoded_data.store()  # noqa: ERA001
 
 
 class FixedStrideExtractorStage(CuratorStage):
@@ -417,7 +423,7 @@ class FixedStrideExtractorStage(CuratorStage):
             True if the video is valid, False otherwise.
 
         """
-        if video.encoded_data is None:
+        if not video.encoded_data:
             logger.warning(f"Empty encoded_data for {video.source_video}. Skipping entire session.")
             return False
         if not video.has_metadata():

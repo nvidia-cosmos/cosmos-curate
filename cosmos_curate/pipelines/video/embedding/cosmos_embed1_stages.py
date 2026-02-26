@@ -23,6 +23,7 @@ from loguru import logger
 
 from cosmos_curate.core.interfaces.model_interface import ModelInterface
 from cosmos_curate.core.interfaces.stage_interface import CuratorStage, CuratorStageResource
+from cosmos_curate.core.utils.data.ref_resolver import prefetch, resolve_as_ready
 from cosmos_curate.core.utils.infra.gpu_start_helper import (
     gpu_stage_cleanup,
     gpu_stage_startup,
@@ -112,8 +113,9 @@ class CosmosEmbed1FrameCreationStage(CuratorStage):
         for task in tasks:
             self._timer.reinit(self, task.get_major_size())
             video = task.video
-            for clip in video.clips:
-                if clip.encoded_data is None:
+            prefetch([clip.encoded_data for clip in video.clips])
+            for clip, data in resolve_as_ready([(clip, clip.encoded_data) for clip in video.clips]):
+                if data is None:
                     clip.errors["encoded_data"] = "empty"
                     continue
                 if self._frame_extraction_signature not in clip.extracted_frames:
@@ -136,7 +138,7 @@ class CosmosEmbed1FrameCreationStage(CuratorStage):
                                 f"Re-extracting with higher target_fps={regen_fps}. "
                                 f"Current # frames={frames.shape[0]}.",
                             )
-                        with io.BytesIO(clip.encoded_data) as fp:
+                        with io.BytesIO(data) as fp:
                             frames = extract_frames(
                                 fp,
                                 extraction_policy=FrameExtractionPolicy.sequence,

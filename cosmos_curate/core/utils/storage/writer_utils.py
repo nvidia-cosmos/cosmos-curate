@@ -22,6 +22,8 @@ import pathlib
 import uuid
 from typing import Any
 
+import numpy as np
+import numpy.typing as npt
 import pandas as pd
 import pyarrow as pa  # type: ignore[import-untyped]
 from lance.fragment import write_fragments
@@ -58,7 +60,7 @@ class JsonEncoderCustom(json.JSONEncoder):
 
 
 def write_bytes(  # noqa: C901, PLR0912, PLR0913
-    buffer: bytes,
+    buffer: bytes | npt.NDArray[np.uint8],
     dest: storage_client.StoragePrefix | pathlib.Path,
     desc: str,
     source_video: str,
@@ -102,8 +104,10 @@ def write_bytes(  # noqa: C901, PLR0912, PLR0913
         if verbose:
             logger.debug(f"Uploading {desc} for {source_video} to {dest.path}")
 
+        upload_data = buffer if isinstance(buffer, bytes) else buffer.tobytes()
+
         def func_to_call() -> None:
-            client.upload_bytes(dest, buffer)
+            client.upload_bytes(dest, upload_data)
 
         do_with_retries(func_to_call, max_attempts=3, backoff_factor=16.0, max_wait_time_s=256.0)
 

@@ -10,7 +10,7 @@
 """Data model for AV pipelines."""
 
 import sys
-from typing import Any, TypeVar
+from typing import Any
 from uuid import UUID
 
 import attrs
@@ -19,10 +19,9 @@ import numpy.typing as npt
 from loguru import logger
 
 from cosmos_curate.core.interfaces.stage_interface import PipelineTask
+from cosmos_curate.core.utils.data.lazy_data import LazyData
 from cosmos_curate.core.utils.infra.performance_utils import StagePerfStats
 from cosmos_curate.pipelines.video.utils.decoder_utils import extract_video_metadata
-
-T = TypeVar("T")
 
 
 @attrs.define
@@ -49,13 +48,13 @@ class ClipForTranscode:
     span_start: float
     span_end: float
     timestamps_ms: npt.NDArray[np.int64] | None = None
-    encoded_data: bytes | None = None
+    encoded_data: LazyData[npt.NDArray[np.uint8]] = attrs.field(factory=LazyData, converter=LazyData.coerce)  # type: ignore[misc]
     url: str | None = None
 
     def get_major_size(self) -> int:
         """Get the major size of the clip."""
         total_size = self.timestamps_ms.nbytes if self.timestamps_ms is not None else 0
-        total_size += len(self.encoded_data) if self.encoded_data else 0
+        total_size += self.encoded_data.nbytes
         return total_size
 
 
@@ -65,7 +64,7 @@ class AvVideo:
 
     source_video: str
     camera_id: int
-    encoded_data: bytes | None = None
+    encoded_data: LazyData[npt.NDArray[np.uint8]] = attrs.field(factory=LazyData, converter=LazyData.coerce)  # type: ignore[misc]
     metadata: VideoMetadata = attrs.field(factory=VideoMetadata)
     timestamps_ms: npt.NDArray[np.int64] | None = None
     clips: list[ClipForTranscode] = attrs.field(factory=list)
@@ -80,15 +79,16 @@ class AvVideo:
             Exception: Any exception from extract_video_metadata is propagated.
 
         """
-        if self.encoded_data is None:
+        data = self.encoded_data.resolve()
+        if data is None:
             error_msg = "No video data available: encoded_data is None"
             raise ValueError(error_msg)
 
         # Extract metadata using the existing function
-        extracted_metadata = extract_video_metadata(self.encoded_data)
+        extracted_metadata = extract_video_metadata(data)
 
         # Set the size from encoded_data
-        self.metadata.size = len(self.encoded_data)
+        self.metadata.size = data.nbytes
 
         # Map the extracted metadata to our metadata object
         self.metadata.height = extracted_metadata.height
@@ -124,7 +124,7 @@ class AvVideo:
 
     def get_major_size(self) -> int:
         """Get the major size of the video."""
-        total_size = len(self.encoded_data) if self.encoded_data else 0
+        total_size = self.encoded_data.nbytes
         total_size += self.timestamps_ms.nbytes if self.timestamps_ms is not None else 0
         for clip in self.clips:
             total_size += clip.get_major_size()
@@ -181,7 +181,7 @@ class AvSessionVideoIngestTask(PipelineTask):
         return sum(x.get_major_size() for x in self.sessions)
 
 
-def _append(key: str, value: T, container: dict[str, list[T]]) -> None:
+def _append[T](key: str, value: T, container: dict[str, list[T]]) -> None:
     if key not in container:
         container[key] = []
     container[key].append(value)
@@ -293,8 +293,8 @@ class ClipForAnnotation:
     camera_id: int
     span_index: int
     url: str
-    # encoded video bytes
-    encoded_data: bytes | None = None
+    # encoded video data (numpy for zero-copy Ray transport via PEP 574 PickleBuffer)
+    encoded_data: LazyData[npt.NDArray[np.uint8]] = attrs.field(factory=LazyData, converter=LazyData.coerce)  # type: ignore[misc]
     # for captioning
     caption_windows: list[CaptionWindow] = attrs.field(factory=list)
     t5_xxl_embedding_urls: dict[str, str] = attrs.field(factory=dict)
@@ -313,7 +313,7 @@ class ClipForAnnotation:
             The major size of the clip.
 
         """
-        total_size = len(self.encoded_data) if self.encoded_data else 0
+        total_size = self.encoded_data.nbytes
         total_size += sum(x.get_major_size() for x in self.caption_windows)
         return total_size
 

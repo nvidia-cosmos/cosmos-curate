@@ -14,6 +14,7 @@ from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
+import numpy as np
 import pytest
 
 from cosmos_curate.core.utils.db.database_types import EnvType, PostgresDB
@@ -105,7 +106,7 @@ def test_upload_clips_writes_files(
         assert clip.url is not None
         clip_path = Path(clip.url)
         assert clip_path.exists()
-        assert clip_path.read_bytes() == clip.encoded_data
+        assert clip_path.read_bytes() == clip.encoded_data.resolve().tobytes()
 
 
 def test_upload_clips_requires_payload(
@@ -123,7 +124,7 @@ def test_upload_clips_requires_payload(
     )
     stage.stage_setup()
     video = video_factory(num_clips=1, camera_id=0)
-    video.clips[0].encoded_data = None
+    video.clips[0].encoded_data.drop()
 
     with pytest.raises(ValueError, match="has no encoded_data"):
         stage._upload_clips(video, encoder="h264")
@@ -179,7 +180,7 @@ def test_process_data_without_captioning_clears_buffers(
     stage.stage_setup()
     task = split_task_factory(clip_counts=(1,))
     clip = task.videos[0].clips[0]
-    original_payload = clip.encoded_data
+    original_payload = clip.encoded_data.resolve()
 
     processed = stage.process_data([task])
 
@@ -187,10 +188,10 @@ def test_process_data_without_captioning_clears_buffers(
     assert all(isinstance(item, AvSessionVideoSplitTask) for item in processed)
     split_tasks = [cast("AvSessionVideoSplitTask", item) for item in processed]
     assert split_tasks[0] is task
-    assert clip.encoded_data is None
+    assert clip.encoded_data.resolve() is None
     assert clip.timestamps_ms is None
     assert clip.url is not None
-    assert Path(clip.url).read_bytes() == original_payload
+    assert Path(clip.url).read_bytes() == original_payload.tobytes()
 
 
 def test_process_data_with_captioning_returns_annotation_tasks(
@@ -208,7 +209,7 @@ def test_process_data_with_captioning_returns_annotation_tasks(
     )
     stage.stage_setup()
     task = split_task_factory(clip_counts=(2,), session_name="session/")
-    original_payloads = [clip.encoded_data for clip in task.videos[0].clips]
+    original_payloads = [clip.encoded_data.resolve() for clip in task.videos[0].clips]
 
     caption_tasks = stage.process_data([task])
 
@@ -222,8 +223,8 @@ def test_process_data_with_captioning_returns_annotation_tasks(
     assert annotation_tasks[0].source_video_duration_s == task.source_video_duration_s
     assert annotation_tasks[1].source_video_duration_s == 0
     assert annotation_tasks[0].clips[0].url == task.videos[0].clips[0].url
-    assert task.videos[0].clips[0].encoded_data == original_payloads[0]
-    assert task.videos[0].clips[1].encoded_data == original_payloads[1]
+    assert np.array_equal(task.videos[0].clips[0].encoded_data.resolve(), original_payloads[0])
+    assert np.array_equal(task.videos[0].clips[1].encoded_data.resolve(), original_payloads[1])
 
 
 def test_write_data_persists_video_spans_and_clipped_session(

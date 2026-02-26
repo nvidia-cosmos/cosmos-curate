@@ -26,6 +26,7 @@ from loguru import logger
 
 import cosmos_curate.pipelines.video.filtering.motion.motion_vector_backend as motion
 from cosmos_curate.core.interfaces.stage_interface import CuratorStage, CuratorStageResource
+from cosmos_curate.core.utils.data.ref_resolver import prefetch, resolve_as_ready
 from cosmos_curate.core.utils.infra.gpu_start_helper import (
     gpu_stage_cleanup,
     gpu_stage_startup,
@@ -86,12 +87,13 @@ class MotionVectorDecodeStage(CuratorStage):
         for task in tasks:
             self._timer.reinit(self, task.get_major_size())
             video = task.video
-            for clip in video.clips:
-                if not clip.encoded_data:
+            prefetch([clip.encoded_data for clip in video.clips])
+            for clip, data in resolve_as_ready([(clip, clip.encoded_data) for clip in video.clips]):
+                if data is None:
                     logger.warning(f"Clip {clip.uuid} has no encoded_data.")
                     clip.errors["encoded_data"] = "empty"
                     continue
-                with self._timer.time_process(), io.BytesIO(clip.encoded_data) as fp:
+                with self._timer.time_process(), io.BytesIO(data) as fp:
                     try:
                         clip.decoded_motion_data = motion.decode_for_motion(
                             fp,

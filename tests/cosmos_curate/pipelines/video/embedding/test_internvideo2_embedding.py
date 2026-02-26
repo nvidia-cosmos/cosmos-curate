@@ -83,7 +83,7 @@ def test_generate_embedding(sample_embedding_task: SplitPipeTask, sequential_run
     )
 
     for clip in result_task.video.clips:
-        assert clip.encoded_data is not None, "Expected clip.encoded_data to be not None, but it is None."
+        assert clip.encoded_data.resolve() is not None, "Expected clip.encoded_data to be not None, but it is None."
         assert clip.intern_video_2_embedding is not None, (
             "Expected InternVideo2 embedding to be not None, but it is None."
         )

@@ -25,6 +25,7 @@ import attrs
 import numpy as np
 import pytest
 
+from cosmos_curate.core.utils.data.bytes_transport import bytes_to_numpy
 from cosmos_curate.pipelines.video.utils.data_model import (
     Clip,
     SplitPipeTask,
@@ -383,7 +384,7 @@ class TestSplitPipeTask:
         videos = [
             Video(
                 input_video=pathlib.Path(f"cam{i}.mp4"),
-                encoded_data=f"camera {i} data".encode(),
+                encoded_data=bytes_to_numpy(f"camera {i} data".encode()),
                 metadata=VideoMetadata(duration=100.0, size=1000),
             )
             for i in range(num_videos)

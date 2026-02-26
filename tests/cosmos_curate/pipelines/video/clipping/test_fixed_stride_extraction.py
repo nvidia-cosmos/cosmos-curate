@@ -31,6 +31,7 @@ import pytest
 
 from cosmos_curate.core.interfaces.pipeline_interface import run_pipeline
 from cosmos_curate.core.interfaces.runner_interface import RunnerInterface
+from cosmos_curate.core.utils.data.bytes_transport import bytes_to_numpy
 from cosmos_curate.pipelines.video.clipping import clip_extraction_stages
 from cosmos_curate.pipelines.video.clipping.clip_extraction_stages import (
     FixedStrideExtractorStage,
@@ -321,7 +322,7 @@ def test_fixed_stride_extraction_no_clips_short_video(sequential_runner: RunnerI
     # Create a task with a very short video duration
     video = Video(
         input_video=pathlib.Path("short_video.mp4"),
-        encoded_data=b"dummy_bytes",  # We'll mock the metadata
+        encoded_data=bytes_to_numpy(b"dummy_bytes"),  # We'll mock the metadata
     )
 
     # Mock metadata for a very short video
@@ -378,7 +379,7 @@ def test_error_handling_incomplete_metadata(sequential_runner: RunnerInterface) 
     """Test error handling when video has incomplete metadata."""
     video = Video(
         input_video=pathlib.Path("incomplete_metadata_video.mp4"),
-        encoded_data=b"dummy_bytes",
+        encoded_data=bytes_to_numpy(b"dummy_bytes"),
     )
 
     # Don't extract metadata, leaving it incomplete
@@ -507,24 +508,24 @@ def test_verbose_logging(
     [
         pytest.param(
             [
-                Video(input_video=pathlib.Path("video1.mp4"), encoded_data=b"fake_video_data"),
+                Video(input_video=pathlib.Path("video1.mp4"), encoded_data=bytes_to_numpy(b"fake_video_data")),
             ],
             nullcontext(),
             id="single_video_valid",
         ),
         pytest.param(
             [
-                Video(input_video=pathlib.Path("video1.mp4"), encoded_data=b"fake_video_data"),
-                Video(input_video=pathlib.Path("video2.mp4"), encoded_data=b"fake_video_data"),
+                Video(input_video=pathlib.Path("video1.mp4"), encoded_data=bytes_to_numpy(b"fake_video_data")),
+                Video(input_video=pathlib.Path("video2.mp4"), encoded_data=bytes_to_numpy(b"fake_video_data")),
             ],
             nullcontext(),
             id="multicam_two_videos_valid",
         ),
         pytest.param(
             [
-                Video(input_video=pathlib.Path("video1.mp4"), encoded_data=b"fake_video_data"),
-                Video(input_video=pathlib.Path("video2.mp4"), encoded_data=b"fake_video_data"),
-                Video(input_video=pathlib.Path("video3.mp4"), encoded_data=b"fake_video_data"),
+                Video(input_video=pathlib.Path("video1.mp4"), encoded_data=bytes_to_numpy(b"fake_video_data")),
+                Video(input_video=pathlib.Path("video2.mp4"), encoded_data=bytes_to_numpy(b"fake_video_data")),
+                Video(input_video=pathlib.Path("video3.mp4"), encoded_data=bytes_to_numpy(b"fake_video_data")),
             ],
             nullcontext(),
             id="multicam_three_videos_valid",
@@ -539,14 +540,14 @@ def test_verbose_logging(
         pytest.param(
             [
                 Video(input_video=pathlib.Path("video1.mp4"), encoded_data=None),
-                Video(input_video=pathlib.Path("video2.mp4"), encoded_data=b"fake_video_data"),
+                Video(input_video=pathlib.Path("video2.mp4"), encoded_data=bytes_to_numpy(b"fake_video_data")),
             ],
             pytest.raises(ValueError, match=r"Video .* has no encoded_data"),
             id="multicam_first_video_no_encoded_data",
         ),
         pytest.param(
             [
-                Video(input_video=pathlib.Path("video1.mp4"), encoded_data=b"fake_video_data"),
+                Video(input_video=pathlib.Path("video1.mp4"), encoded_data=bytes_to_numpy(b"fake_video_data")),
                 Video(input_video=pathlib.Path("video2.mp4"), encoded_data=None),
             ],
             pytest.raises(ValueError, match=r"Video .* has no encoded_data"),
@@ -624,7 +625,7 @@ def test_get_videos_durations_single_video() -> None:
     """Test _get_videos_durations with one video: duration = num_frames / framerate."""
     video = Video(
         input_video=pathlib.Path("v.mp4"),
-        encoded_data=b"x",
+        encoded_data=bytes_to_numpy(b"x"),
         metadata=VideoMetadata(num_frames=900, framerate=30.0),
     )
     assert _get_videos_durations([video]) == [30.0]
@@ -634,7 +635,7 @@ def test_get_videos_durations_zero_framerate_returns_minus_one() -> None:
     """Test _get_videos_durations returns -1 when framerate is 0."""
     video = Video(
         input_video=pathlib.Path("v.mp4"),
-        encoded_data=b"x",
+        encoded_data=bytes_to_numpy(b"x"),
         metadata=VideoMetadata(num_frames=100, framerate=0.0),
     )
     assert _get_videos_durations([video]) == [-1]
@@ -644,12 +645,12 @@ def test_get_videos_durations_multiple_videos() -> None:
     """Test _get_videos_durations with multiple videos returns one duration per video."""
     v1 = Video(
         input_video=pathlib.Path("a.mp4"),
-        encoded_data=b"x",
+        encoded_data=bytes_to_numpy(b"x"),
         metadata=VideoMetadata(num_frames=300, framerate=30.0),
     )
     v2 = Video(
         input_video=pathlib.Path("b.mp4"),
-        encoded_data=b"y",
+        encoded_data=bytes_to_numpy(b"y"),
         metadata=VideoMetadata(num_frames=60, framerate=24.0),
     )
     durations = _get_videos_durations([v1, v2])
@@ -660,12 +661,12 @@ def test_get_videos_durations_mixed_valid_and_zero_framerate() -> None:
     """Test _get_videos_durations when some videos have zero framerate."""
     v1 = Video(
         input_video=pathlib.Path("a.mp4"),
-        encoded_data=b"x",
+        encoded_data=bytes_to_numpy(b"x"),
         metadata=VideoMetadata(num_frames=90, framerate=30.0),
     )
     v2 = Video(
         input_video=pathlib.Path("b.mp4"),
-        encoded_data=b"y",
+        encoded_data=bytes_to_numpy(b"y"),
         metadata=VideoMetadata(num_frames=100, framerate=0.0),
     )
     durations = _get_videos_durations([v1, v2])
@@ -825,7 +826,7 @@ def test_populate_clips_fixed_stride() -> None:
 
     video1 = Video(
         input_video=pathlib.Path("cam_front.mp4"),
-        encoded_data=b"dummy_data",
+        encoded_data=bytes_to_numpy(b"dummy_data"),
         metadata=VideoMetadata(
             height=720,
             width=1280,
@@ -838,7 +839,7 @@ def test_populate_clips_fixed_stride() -> None:
     )
     video2 = Video(
         input_video=pathlib.Path("cam_rear.mp4"),
-        encoded_data=b"dummy_data_2",
+        encoded_data=bytes_to_numpy(b"dummy_data_2"),
         metadata=VideoMetadata(
             height=720,
             width=1280,
@@ -929,12 +930,12 @@ def _make_multicam_task_two_cameras() -> SplitPipeTask:
     )
     v1 = Video(
         input_video=pathlib.Path("cam_front.mp4"),
-        encoded_data=b"dummy",
+        encoded_data=bytes_to_numpy(b"dummy"),
         metadata=meta,
     )
     v2 = Video(
         input_video=pathlib.Path("cam_rear.mp4"),
-        encoded_data=b"dummy",
+        encoded_data=bytes_to_numpy(b"dummy"),
         metadata=VideoMetadata(
             height=meta.height,
             width=meta.width,

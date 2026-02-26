@@ -18,10 +18,12 @@ import json
 import pathlib
 import pickle
 
+import numpy as np
 import nvtx  # type: ignore[import-untyped]
 from loguru import logger
 
 from cosmos_curate.core.interfaces.stage_interface import CuratorStage, CuratorStageResource
+from cosmos_curate.core.utils.data.bytes_transport import bytes_to_numpy
 from cosmos_curate.core.utils.dataset import webdataset_utils
 from cosmos_curate.core.utils.infra.performance_utils import StageTimer
 from cosmos_curate.core.utils.storage import storage_client, storage_utils
@@ -95,9 +97,9 @@ class VideoDownloader(CuratorStage):
         try:
             if isinstance(video.input_video, pathlib.Path):
                 with video.input_video.open("rb") as fp:
-                    video.encoded_data = fp.read()
+                    video.encoded_data = bytes_to_numpy(fp.read())  # type: ignore[assignment]
             elif self._client is not None:
-                video.encoded_data = storage_utils.read_bytes(video.input_video, self._client)
+                video.encoded_data = bytes_to_numpy(storage_utils.read_bytes(video.input_video, self._client))  # type: ignore[assignment]
             else:
                 _value_error("S3 client is required for S3 destination")
         except Exception as e:  # noqa: BLE001
@@ -105,10 +107,10 @@ class VideoDownloader(CuratorStage):
             video.errors["download"] = str(e)
             return False
 
-        if video.encoded_data is None:
+        if not video.encoded_data:
             # should never happen, but log it just in case
             logger.error(f"video.encoded_data is None for {video.input_video} without exceptions ???")
-            video.encoded_data = b""
+            video.encoded_data = np.array([], dtype=np.uint8)  # type: ignore[assignment]
 
         return True
 
@@ -150,7 +152,7 @@ class VideoDownloader(CuratorStage):
 
         # Format each field, using "unknown" for None values
         return {
-            "size": f"{len(video.encoded_data):,}B" if video.encoded_data else "0B",
+            "size": f"{video.encoded_data.nbytes:,}B" if video.encoded_data.nbytes else "0B",
             "res": f"{metadata.width or 'unknown'}x{metadata.height or 'unknown'}",
             "fps": f"{metadata.framerate:.1f}" if metadata.framerate is not None else "unknown",
             "duration": f"{metadata.duration / 60:.0f}m" if metadata.duration is not None else "unknown",
@@ -190,6 +192,10 @@ class VideoDownloader(CuratorStage):
                     # Extract and validate metadata
                     if not self._extract_and_validate_metadata(video):
                         continue
+
+                    # TODO(LazyData): re-enable when batch-mode ObjectRef ownership is
+                    # resolved.  In batch mode, pool.stop() kills actor -> OwnerDiedError.
+                    # video.encoded_data.store()  # noqa: ERA001
 
                     # Log video information
                     self._log_video_info(video)
@@ -256,9 +262,11 @@ class DownloadPackUpload(CuratorStage):
                 try:
                     if isinstance(clip.clip_location, pathlib.Path):
                         with clip.clip_location.open("rb") as fp:
-                            clip.encoded_data = fp.read()
+                            clip.encoded_data = bytes_to_numpy(fp.read())  # type: ignore[assignment]
                     elif self._client_input is not None:
-                        clip.encoded_data = storage_utils.read_bytes(clip.clip_location, self._client_input)
+                        clip.encoded_data = bytes_to_numpy(  # type: ignore[assignment]
+                            storage_utils.read_bytes(clip.clip_location, self._client_input),
+                        )
                     else:
                         _value_error("S3 client is required for S3 destination")
 
@@ -268,8 +276,7 @@ class DownloadPackUpload(CuratorStage):
 
                 else:
                     if self._verbose:
-                        clip_size = len(clip.encoded_data) if clip.encoded_data is not None else 0
-                        logger.info(f"Downloaded {clip.clip_location}: size={clip_size:,}Byte")
+                        logger.info(f"Downloaded {clip.clip_location}: size={clip.encoded_data.nbytes:,}Byte")
 
     def _write_tar(
         self,
@@ -300,7 +307,9 @@ class DownloadPackUpload(CuratorStage):
             samples_to_write_metas: list[webdataset_utils.RawSample] = []
             samples_to_write_t5_xxls: list[webdataset_utils.RawSample] = []
             for clip in task.samples:
-                samples_to_write_mp4.append(webdataset_utils.RawSample(clip.uuid, {"mp4": clip.encoded_data}))
+                clip_mp4_data = clip.encoded_data.resolve()
+                mp4_bytes = clip_mp4_data.tobytes() if clip_mp4_data is not None else b""
+                samples_to_write_mp4.append(webdataset_utils.RawSample(clip.uuid, {"mp4": mp4_bytes}))
                 samples_to_write_t5_xxls.append(
                     webdataset_utils.RawSample(clip.uuid, {"pickle": pickle.dumps(clip.t5_xxl_embeddings)}),
                 )
@@ -318,7 +327,7 @@ class DownloadPackUpload(CuratorStage):
             # clear intermediate buffers
             for clip in task.samples:
                 clip.clip_metadata.clear()
-                clip.encoded_data = None
+                clip.encoded_data.drop()
                 clip.t5_xxl_embeddings.clear()
 
             if self._log_stats:

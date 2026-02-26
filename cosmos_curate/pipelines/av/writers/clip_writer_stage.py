@@ -22,6 +22,7 @@ from typing import cast
 from loguru import logger
 from sqlalchemy.orm import Session
 
+from cosmos_curate.core.utils.data.ref_resolver import prefetch, resolve_as_ready
 from cosmos_curate.core.utils.db.database_types import PostgresDB
 from cosmos_curate.core.utils.infra.performance_utils import StageTimer
 from cosmos_curate.core.utils.misc.grouping import split_by_chunk_size
@@ -233,14 +234,15 @@ class ClipWriterStage(BaseWriterStage):
 
         """
         num_uploaded_clips = 0
-        for clip in video.clips:
-            if not clip.encoded_data:
+        prefetch([clip.encoded_data for clip in video.clips])
+        for clip, data in resolve_as_ready([(clip, clip.encoded_data) for clip in video.clips]):
+            if data is None:
                 error = f"Clip-{clip.span_index} from {video.source_video} has no encoded_data"
                 raise ValueError(error)
             dest = self._get_clip_url(clip.uuid, encoder)
             clip.url = str(dest)
             write_bytes(
-                clip.encoded_data,
+                data,
                 dest,
                 f"clip-{clip.span_index}",
                 video.source_video,
@@ -372,7 +374,7 @@ class ClipWriterStage(BaseWriterStage):
             for video in task.videos:
                 for clip in video.clips:
                     if not self._continue_captioning:
-                        clip.encoded_data = None
+                        clip.encoded_data.drop()
                     clip.timestamps_ms = None
 
         if self._log_stats:
