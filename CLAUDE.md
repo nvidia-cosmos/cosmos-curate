@@ -1,4 +1,4 @@
-# CLAUDE.md
+# Cosmos Curate — Agent Guidelines
 
 ## Project Overview
 
@@ -9,8 +9,6 @@ Cosmos-Curate is a video curation system for AI training data generation, built 
 - `cosmos_curate/core/`: Base interfaces (`PipelineTask`, `CuratorStage`, `ModelInterface`), managers, utilities
 - `cosmos_curate/pipelines/`: Video/AV pipelines + examples (start with `hello_world_pipeline.py`)
 
-**Key concepts**: Ray-based streaming with multi-environment support (Pixi), auto-scaling, dynamic chunking
-
 ## Development
 
 **Setup**: `git submodule update --init --recursive && ./devset.sh`
@@ -20,55 +18,66 @@ Cosmos-Curate is a video curation system for AI training data generation, built 
 ruff format && ruff check --fix && mypy
 ```
 
+Pre-commit hooks run ruff automatically. A submodule-check hook warns before committing cosmos-xenna changes.
+
 **Testing**:
-- CPU tests: `pytest`
+- CPU tests: `pytest` (env-marked tests are excluded by default via `pytest.ini`)
 - GPU tests: `cosmos-curate local launch --curator-path . -- pixi run -e [default|unified] pytest -m env tests/`
-- Use `@pytest.mark.env("unified")` for GPU-required tests
-- Place tests in `tests/` aligned with module names
+- Mark GPU tests with `@pytest.mark.env("unified")` (or other env name)
+- Place tests in `tests/` mirroring module paths. Uses `--import-mode=importlib`.
 
-**Building**: `poetry build` (client wheel) or `cosmos-curate image build` (Docker)
+**Building**: Poetry frontend with setuptools backend. `poetry build` for client wheel, `cosmos-curate image build` for Docker.
 
-**CLI**: `cosmos-curate [local|slurm|nvcf|image] --help` for deployment options
-
-## Pixi Environments
-
-Defined in `pixi.toml`: `default` (core), `unified` (vllm/advanced models), `phi`, `cuml`, `model-download`
-
-Stages specify `conda_env_name` property to run in specific environments, enabling dependency isolation. Commands: `pixi info`, `pixi list -e ENV`, `pixi run -e ENV COMMAND`
-
-## Creating Pipelines
-
-**Tasks**: Inherit from `PipelineTask` (attrs dataclass). Define `weight` property for load balancing.
-
-**Stages**: Inherit from `CuratorStage`. Implement:
-- `resources` property: `CuratorStageResource(cpus=X, gpus=Y)` (fractional GPUs allowed)
-- `conda_env_name` property: Environment name or None for default
-- `process_data()`: Process batch of tasks, can return different count (dynamic chunking)
-- Optional `model` property: Return `ModelInterface` instance
-
-**Models**: Inherit from `ModelInterface`. Implement `model_name`, `load()`, `predict()`. Register in `cosmos_curate/models/all_models.py`.
-
-**Running**: Use `run_pipeline(stages=[CuratorStageSpec(stage=MyStage(), max_actors=N)], input_tasks=[...], execution_mode="streaming")`
-
-See `cosmos_curate/pipelines/examples/hello_world_pipeline.py` and `docs/curator/PIPELINE_DESIGN_GUIDE.md`
+**CLI**: `cosmos-curate [local|slurm|nvcf|image|view] --help`
 
 ## Code Style
 
-PEP 8 (4-space indent, `snake_case`/`CamelCase`), type hints, ruff formatting. Config: `pyproject.toml` (Python 3.12, 120 chars)
+- PEP 8 (4-space indent, `snake_case`/`CamelCase`), type hints, ruff formatting
+- Config: `pyproject.toml` (Python 3.12, 120 chars)
+- Do NOT add `from __future__ import annotations` — use native Python 3.12 type hints instead (PEP 649 is Python 3.13+)
+- `cosmos-xenna/` is excluded from ruff (via exclude list) and mypy (via `files = ["cosmos_curate"]`) — do not lint or fix code there
+
+## Key Imports
+
+Core interfaces have no `__init__.py` re-exports — always use full paths for these imports:
+```python
+from cosmos_curate.core.interfaces.stage_interface import CuratorStage, CuratorStageResource, CuratorStageSpec, PipelineTask
+from cosmos_curate.core.interfaces.pipeline_interface import run_pipeline
+from cosmos_curate.core.interfaces.model_interface import ModelInterface
+```
+
+## Creating Pipelines
+
+**Tasks**: Inherit from `PipelineTask` (`@attrs.define`). Override `weight` property for load balancing.
+
+**Stages**: Inherit from `CuratorStage`. Implement:
+- `resources` property → `CuratorStageResource(cpus=X, gpus=Y)` (fractional GPUs allowed)
+- `conda_env_name` property → environment name or `None` for default
+- `process_data(task)` → process batch, can return different count or `None` to stop
+- Optional `model` property → return `ModelInterface` instance
+
+Stage lifecycle: `stage_setup_on_node()` (once per node) → `stage_setup()` (once per worker, runs in remote actor in target conda env) → `process_data()` (batches of `stage_batch_size`, default 1)
+
+**Models**: Inherit from `ModelInterface`. Implement `conda_env_name`, `model_id_names`, `setup()`. Register in `cosmos_curate/models/all_models.py`.
+
+**Running**: `run_pipeline(input_tasks, stages)` — accepts bare `CuratorStage` or `CuratorStageSpec`. Use `CuratorStageSpec(MyStage(), num_workers_per_node=N)` for tuning.
+
+See `cosmos_curate/pipelines/examples/hello_world_pipeline.py` and `docs/curator/PIPELINE_DESIGN_GUIDE.md`
+
+## Pixi Environments
+
+Defined in `pixi.toml`: `default` (core), `unified` (vllm/advanced models), `transformers`, `legacy-transformers`, `cuml`, `model-download`, `paddle-ocr`
+
+Stages specify `conda_env_name` property to run in specific environments, enabling dependency isolation.
 
 ## Commits & PRs
 
-**Commits**: Conventional Commits with sign-off: `git commit -s -m "fix: description"`
+**Commits**: Conventional Commits: `git commit -m "fix: description"`. MRs squash on merge, so commit early and often as checkpoints — individual commit messages don't need to be perfect.
 
 **Merge Requests**:
 - Create using `glab mr create` targeting branch `nvidia/main`, assign to author, enable "Delete source branch"
-- Set MR title and description properly
 - Summarize intent, list validation commands, note doc/submodule updates, link issues
 - Do NOT include "Generated with Claude Code" in descriptions
 - Use GitLab MCP server (if available) to retrieve CodeRabbit and Greptile review comments
 
 **Submodule updates**: Pre-commit warns before committing. Update via `cd cosmos-xenna && git checkout VERSION && cd .. && git add cosmos-xenna`
-
-## Documentation
-
-See `docs/client/END_USER_GUIDE.md`, `docs/curator/ARCHITECTURE_GUIDE.md`, `docs/curator/PIPELINE_DESIGN_GUIDE.md`, reference pipelines, and NVCF guide
