@@ -524,7 +524,7 @@ class QwenFilteringStage(CuratorStage):
         for clip in video.clips:
             for window in clip.filter_windows:
                 window.model_input.clear()
-                window.mp4_bytes = None
+                window.mp4_bytes.drop()
 
 
 def _clean_json_string(output_text: str) -> dict[str, str] | None:

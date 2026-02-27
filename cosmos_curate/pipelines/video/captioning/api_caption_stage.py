@@ -245,7 +245,12 @@ class ApiCaptionStage(CuratorStage):
             raise RuntimeError(msg)
 
         instruction = self._prompt.strip()
-        inline_data = genai_types.Blob(data=window.mp4_bytes, mime_type="video/mp4")
+        mp4_data = window.mp4_bytes.resolve()
+        if mp4_data is None:
+            msg = "Window missing mp4 bytes; _validate_window must be called before _generate_caption."
+            raise RuntimeError(msg)
+        # Gemini Blob requires bytes; bytes() copies from the zero-copy numpy backing.
+        inline_data = genai_types.Blob(data=bytes(mp4_data), mime_type="video/mp4")
         content = genai_types.Content(
             parts=[
                 genai_types.Part(inline_data=inline_data),
@@ -279,11 +284,12 @@ class ApiCaptionStage(CuratorStage):
 
     def _validate_window(self, window: Window) -> None:
         """Validate that the window contains data suitable for Gemini."""
-        if window.mp4_bytes is None:
+        mp4_data = window.mp4_bytes.resolve()
+        if mp4_data is None:
             msg = "Window missing mp4 bytes; enable keep_mp4 in the prep stage."
             raise RuntimeError(msg)
-        if len(window.mp4_bytes) > self._max_video_size_bytes:
-            size_mb = len(window.mp4_bytes) / (1024 * 1024)
+        if mp4_data.nbytes > self._max_video_size_bytes:
+            size_mb = mp4_data.nbytes / (1024 * 1024)
             max_mb = self._max_video_size_bytes / (1024 * 1024)
             msg = f"Window MP4 ({size_mb:.2f} MB) exceeds Gemini inline limit ({max_mb:.2f} MB)."
             raise RuntimeError(msg)

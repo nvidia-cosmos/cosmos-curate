@@ -79,8 +79,11 @@ class PreviewStage(CuratorStage):
         with make_pipeline_temporary_dir(sub_dir="preview") as tmp_dir:
             input_mp4 = pathlib.Path(tmp_dir, "input.mp4")
 
-            assert window.mp4_bytes is not None
-            input_mp4.write_bytes(window.mp4_bytes)
+            mp4_data = window.mp4_bytes.resolve()
+            if mp4_data is None:
+                msg = f"Window [{window.start_frame}, {window.end_frame}] has no mp4 bytes for preview generation."
+                raise RuntimeError(msg)
+            input_mp4.write_bytes(mp4_data)
             output_webp = pathlib.Path(tmp_dir, "output.webp")
             command = [
                 "ffmpeg",
@@ -119,7 +122,7 @@ class PreviewStage(CuratorStage):
                     logger.warning(f"ffmpeg output: {e.output.decode('utf-8')}")
                 return
 
-            window.webp_bytes = output_webp.read_bytes()
+            window.webp_bytes = output_webp.read_bytes()  # type: ignore[assignment]
 
     @nvtx.annotate("PreviewStage")  # type: ignore[untyped-decorator]
     def process_data(self, tasks: list[SplitPipeTask]) -> list[SplitPipeTask] | None:

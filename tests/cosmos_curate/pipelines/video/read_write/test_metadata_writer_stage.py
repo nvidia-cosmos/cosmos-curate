@@ -220,7 +220,7 @@ def _assert_payloads_cleared(clip: Clip, window: Window) -> None:
     """Ensure transient buffers are released after processing."""
     assert clip.encoded_data.resolve() is None
     assert clip.intern_video_2_embedding is None
-    assert window.webp_bytes is None
+    assert window.webp_bytes.resolve() is None
     assert window.caption == {}
     assert window.enhanced_caption == {}
 
@@ -652,7 +652,7 @@ def test_per_window_dataset_assets_written(tmp_path: Path) -> None:
     assert len(stored_t5) == 1
     npt.assert_array_equal(stored_t5[0], np.array([1, 2], dtype=np.int32))
 
-    assert window.mp4_bytes is None
+    assert window.mp4_bytes.resolve() is None
 
 
 def test_video_errors_written_to_error_path(tmp_path: Path) -> None:

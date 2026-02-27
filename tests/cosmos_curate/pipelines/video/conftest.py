@@ -23,6 +23,7 @@ from unittest.mock import patch
 import pytest
 
 from cosmos_curate.core.utils.data.bytes_transport import bytes_to_numpy
+from cosmos_curate.core.utils.data.lazy_data import LazyData
 from cosmos_curate.pipelines.video.utils.data_model import Clip, SplitPipeTask, Video
 from cosmos_curate.pipelines.video.utils.decoder_utils import (
     FrameExtractionPolicy,
@@ -138,8 +139,8 @@ def sample_filtering_task(sample_clip_data: bytes) -> SplitPipeTask:
         video=sample_clip_data, extraction_policy=FrameExtractionPolicy.sequence, sample_rate_fps=1.0
     )
 
-    # Add the extracted frames to the clip
-    clip.extracted_frames = {frame_extraction_sig: frames}
+    # Add the extracted frames to the clip (wrapped in LazyData for inter-stage transport)
+    clip.extracted_frames = LazyData(value={frame_extraction_sig: frames}, nbytes=frames.nbytes)
 
     video = Video(
         input_video=pathlib.Path("sample_video.mp4"),

@@ -414,12 +414,12 @@ class ClipWriterStage(CuratorStage):
                 clip.intern_video_2_embedding = None
                 clip.cosmos_embed1_embedding = None
                 for window in clip.windows:
-                    window.mp4_bytes = None
+                    window.mp4_bytes.drop()
                     for model_variant in window.model_input:
                         del window.model_input[model_variant]
                     window.caption.clear()
                     window.enhanced_caption.clear()
-                    window.webp_bytes = None
+                    window.webp_bytes.drop()
 
     def process_data(self, tasks: list[SplitPipeTask]) -> list[SplitPipeTask] | None:  # type: ignore[override]
         """Save bytes to blobstore and metadata to postgres."""
@@ -602,7 +602,8 @@ class ClipWriterStage(CuratorStage):
         clip_stats = ClipStats()
         has_webp = False
         for window in clip.windows:
-            if window.webp_bytes:
+            webp_data = window.webp_bytes.resolve()
+            if webp_data is not None:
                 dest = self._get_window_uri(
                     clip.uuid,
                     (window.start_frame, window.end_frame),
@@ -611,7 +612,7 @@ class ClipWriterStage(CuratorStage):
                 )
                 if not self._dry_run:
                     self._write_data(
-                        window.webp_bytes,
+                        webp_data,
                         dest,
                         f"webp {clip.uuid} {window.start_frame}_{window.end_frame}",
                         clip.source_video,
@@ -893,7 +894,8 @@ class ClipWriterStage(CuratorStage):
         if self._generate_cosmos_predict_dataset == "disable":
             return
         for window in clip.windows:
-            if window.mp4_bytes is None:
+            mp4_data = window.mp4_bytes.resolve()
+            if mp4_data is None:
                 logger.error(
                     f"Clip {clip.uuid} window [{window.start_frame}, {window.end_frame}] "
                     f"from {clip.source_video} has no mp4 bytes, skip uploading to dataset",
@@ -919,7 +921,7 @@ class ClipWriterStage(CuratorStage):
                 "mp4",
             )
             self._write_data(
-                window.mp4_bytes,
+                mp4_data,
                 dest_video,
                 "dataset mp4 {clip.uuid} {window.start_frame}_{window.end_frame}",
                 clip.source_video,

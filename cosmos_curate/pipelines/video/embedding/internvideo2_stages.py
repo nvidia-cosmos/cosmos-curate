@@ -96,13 +96,42 @@ class InternVideo2FrameCreationStage(CuratorStage):
 
     @nvtx.annotate("InternVideo2FrameCreationStage")  # type: ignore[untyped-decorator]
     def process_data(self, tasks: list[SplitPipeTask]) -> list[SplitPipeTask] | None:
-        """Process video data to create InternVideo2 input frames.
+        """Resolve extracted frames and formulate InternVideo2 model input.
+
+        For each clip, resolves the shared extracted_frames dict, retrieves
+        frames for this stage's extraction signature, and passes them through
+        the model's ``formulate_input_frames()``. If the clip has fewer frames
+        than the model requires, re-extracts at progressively higher FPS
+        (doubling until ``max_fps=20``) from the raw ``encoded_data``.
+
+        ::
+
+            for each clip:
+              encoded_data missing? --> record error, skip
+              |
+              extracted_frames.resolve()
+              frames missing for signature? --> record error, skip
+              |
+              frames.shape[0] < target?
+                yes --> re-extract at 2x FPS (up to max_fps=20)
+                still too few? --> log error, use what we have
+              |
+              model.formulate_input_frames(frames) --> clip.intern_video_2_frames
+              |
+              extracted_frames.drop()  (last consumer, frees heap)
+
+        Memory lifecycle:
+            ``extracted_frames`` is a ``LazyData`` wrapping a dict keyed by
+            frame extraction signature.  This stage is the sole consumer of
+            its key.  After formulating input frames, ``drop()`` frees the
+            entire ``LazyData`` wrapper since no downstream stage needs the
+            raw frames.
 
         Args:
-            tasks: Tasks containing video to process.
+            tasks: Tasks containing video clips to process.
 
         Returns:
-            Processed task with InternVideo2 input frames.
+            Tasks with ``intern_video_2_frames`` populated on each clip.
 
         """
         max_fps: int = 20
@@ -115,12 +144,15 @@ class InternVideo2FrameCreationStage(CuratorStage):
                 if data is None:
                     clip.errors["encoded_data"] = "empty"
                     continue
-                if self._frame_extraction_signature not in clip.extracted_frames:
+                ef = clip.extracted_frames.resolve()
+                if ef is None or self._frame_extraction_signature not in ef:
                     clip.errors[f"frames-{self._frame_extraction_signature}"] = "missing"
-                    logger.error(f"Clip {clip.uuid} has buffer but no extracted frames for ???")
+                    logger.error(
+                        f"Clip {clip.uuid} has buffer but no extracted frames for {self._frame_extraction_signature}"
+                    )
                     continue
                 with self._timer.time_process():
-                    frames = clip.extracted_frames[self._frame_extraction_signature]
+                    frames = ef[self._frame_extraction_signature]
                     # check if we need re-extract
                     target_num_frames = self._model.get_target_num_frames()
                     regen_fps = self._target_fps
@@ -142,9 +174,8 @@ class InternVideo2FrameCreationStage(CuratorStage):
                                 sample_rate_fps=regen_fps,
                             )
                     # create input frames for InternVideo2 model
-                    clip.intern_video_2_frames = self._model.formulate_input_frames(list(frames))
-                # done with extracted_frames
-                clip.extracted_frames.clear()
+                    clip.intern_video_2_frames = self._model.formulate_input_frames(list(frames))  # type: ignore[assignment]
+                clip.extracted_frames.drop()
 
             if self._log_stats:
                 stage_name, stage_perf_stats = self._timer.log_stats()
@@ -243,14 +274,15 @@ class InternVideo2EmbeddingStage(CuratorStage):
             inputs = []
             with self._timer.time_process(len(video.clips)):
                 for clip_idx, clip in enumerate(video.clips):
-                    if clip.intern_video_2_frames is None:
+                    iv2_frames = clip.intern_video_2_frames.resolve()
+                    if iv2_frames is None:
                         clip.errors["iv2_frames"] = "none"
                         continue
-                    if clip.intern_video_2_frames.size == 0:
+                    if iv2_frames.size == 0:
                         clip.errors["iv2_frames"] = "empty"
                         continue
                     mapping[idx] = clip_idx
-                    inputs.append(clip.intern_video_2_frames)
+                    inputs.append(iv2_frames)
                     idx += 1
 
                 if len(inputs) > 0:
@@ -263,8 +295,7 @@ class InternVideo2EmbeddingStage(CuratorStage):
 
                 for clip in video.clips:
                     self._verify_with_texts(clip)
-                    # done with intern_vidoe_2_frames
-                    clip.intern_video_2_frames = None
+                    clip.intern_video_2_frames.drop()
 
             if self._log_stats:
                 stage_name, stage_perf_stats = self._timer.log_stats()

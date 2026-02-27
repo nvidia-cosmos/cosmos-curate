@@ -162,6 +162,90 @@ class TestBool:
         assert LazyData(ref=MagicMock())
 
 
+class TestEqualityAndIdentity:
+    """Tests for eq=False behavioral contract (identity-based comparison).
+
+    LazyData uses @attrs.define(eq=False) because its ``value`` field can hold
+    numpy arrays.  Attrs-generated __eq__ compares fields as tuples; for numpy
+    arrays ``arr == arr`` returns a boolean *array*, not a scalar, which raises
+    ``ValueError: The truth value of an array is ambiguous`` whenever Python
+    tries to reduce it to a single bool (e.g. in tuple comparison, ``in``,
+    dict lookup).
+
+    With eq=False, Python falls back to object.__eq__ (identity),
+    object.__ne__ (identity), and object.__hash__ (id-based).  These tests
+    lock that guarantee across all comparison-dependent operations.
+    """
+
+    def test_eq_same_instance(self) -> None:
+        """Same instance compares equal to itself (identity reflexivity)."""
+        arr = np.arange(100, dtype=np.uint8)
+        a: LazyData[npt.NDArray[np.uint8]] = LazyData(value=arr)
+
+        assert a == a  # noqa: PLR0124  -- intentional identity-reflexivity test
+
+    def test_eq_different_instances_same_data(self) -> None:
+        """Two instances with identical data are NOT equal (identity, not value)."""
+        data = np.arange(64, dtype=np.uint8)
+        a: LazyData[npt.NDArray[np.uint8]] = LazyData(value=data.copy())
+        b: LazyData[npt.NDArray[np.uint8]] = LazyData(value=data.copy())
+
+        assert a is not b
+        assert a != b
+
+    def test_eq_multi_element_array_no_value_error(self) -> None:
+        """Regression: comparing LazyData with multi-element arrays must not raise.
+
+        Before eq=False, attrs-generated __eq__ would call arr == arr on the
+        value field, producing a boolean array.  Python would then raise
+        ``ValueError: The truth value of an array is ambiguous`` when reducing
+        it to a scalar for the tuple comparison.
+        """
+        arr = np.arange(1024, dtype=np.uint8)
+        a: LazyData[npt.NDArray[np.uint8]] = LazyData(value=arr)
+        b: LazyData[npt.NDArray[np.uint8]] = LazyData(value=arr.copy())
+
+        result = a == b  # must not raise ValueError
+        assert result is False
+
+    def test_ne_uses_identity(self) -> None:
+        """!= uses identity, not element-wise array comparison."""
+        arr = np.arange(256, dtype=np.uint8)
+        a: LazyData[npt.NDArray[np.uint8]] = LazyData(value=arr)
+        b: LazyData[npt.NDArray[np.uint8]] = LazyData(value=arr.copy())
+
+        assert a != b
+        assert a == a  # noqa: PLR0124  -- intentional identity-reflexivity test
+
+    def test_in_operator_uses_identity(self) -> None:
+        """'in' operator on a list calls __eq__ per element -- must not crash."""
+        arr = np.arange(512, dtype=np.uint8)
+        a: LazyData[npt.NDArray[np.uint8]] = LazyData(value=arr)
+        b: LazyData[npt.NDArray[np.uint8]] = LazyData(value=arr.copy())
+
+        assert a in [a, b]
+        assert a not in [b]
+
+    def test_hashable_as_dict_key_and_set_member(self) -> None:
+        """LazyData is hashable via id-based object.__hash__."""
+        arr = np.arange(128, dtype=np.uint8)
+        a: LazyData[npt.NDArray[np.uint8]] = LazyData(value=arr)
+        b: LazyData[npt.NDArray[np.uint8]] = LazyData(value=arr.copy())
+
+        assert {a: 1}[a] == 1
+        assert len({a, b}) == 2
+        assert hash(a) != hash(b)
+
+    def test_repr_large_array_no_crash(self) -> None:
+        """repr() completes without error even for large arrays."""
+        arr = np.arange(10_000, dtype=np.uint8)
+        lazy: LazyData[npt.NDArray[np.uint8]] = LazyData(value=arr, nbytes=arr.nbytes)
+
+        result = repr(lazy)
+
+        assert "LazyData" in result
+
+
 class TestGetstate:
     """Tests for adaptive pickle behavior."""
 

@@ -99,13 +99,42 @@ class CosmosEmbed1FrameCreationStage(CuratorStage):
 
     @nvtx.annotate("CosmosEmbed1FrameCreationStage")  # type: ignore[untyped-decorator]
     def process_data(self, tasks: list[SplitPipeTask]) -> list[SplitPipeTask] | None:
-        """Process video data to create Cosmos-Embed1 input frames.
+        """Resolve extracted frames and formulate Cosmos-Embed1 model input.
+
+        For each clip, resolves the shared extracted_frames dict, retrieves
+        frames for this stage's extraction signature, and passes them through
+        the model's ``formulate_input_frames()``. If the clip has fewer frames
+        than the model requires, re-extracts at progressively higher FPS
+        (doubling until ``max_fps=20``) from the raw ``encoded_data``.
+
+        ::
+
+            for each clip:
+              encoded_data missing? --> record error, skip
+              |
+              extracted_frames.resolve()
+              frames missing for signature? --> record error, skip
+              |
+              frames.shape[0] < target?
+                yes --> re-extract at 2x FPS (up to max_fps=20)
+                still too few? --> log error, use what we have
+              |
+              model.formulate_input_frames(frames) --> clip.cosmos_embed1_frames
+              |
+              extracted_frames.drop()  (last consumer, frees heap)
+
+        Memory lifecycle:
+            ``extracted_frames`` is a ``LazyData`` wrapping a dict keyed by
+            frame extraction signature.  This stage is the sole consumer of
+            its key.  After formulating input frames, ``drop()`` frees the
+            entire ``LazyData`` wrapper since no downstream stage needs the
+            raw frames.
 
         Args:
-            tasks: Tasks containing video to process.
+            tasks: Tasks containing video clips to process.
 
         Returns:
-            Processed task with Cosmos-Embed1 input frames.
+            Tasks with ``cosmos_embed1_frames`` populated on each clip.
 
         """
         max_fps: int = 20
@@ -118,12 +147,15 @@ class CosmosEmbed1FrameCreationStage(CuratorStage):
                 if data is None:
                     clip.errors["encoded_data"] = "empty"
                     continue
-                if self._frame_extraction_signature not in clip.extracted_frames:
+                ef = clip.extracted_frames.resolve()
+                if ef is None or self._frame_extraction_signature not in ef:
                     clip.errors[f"frames-{self._frame_extraction_signature}"] = "missing"
-                    logger.error(f"Clip {clip.uuid} has buffer but no extracted frames for ???")
+                    logger.error(
+                        f"Clip {clip.uuid} has buffer but no extracted frames for {self._frame_extraction_signature}"
+                    )
                     continue
                 with self._timer.time_process():
-                    frames = clip.extracted_frames[self._frame_extraction_signature]
+                    frames = ef[self._frame_extraction_signature]
                     # check if we need re-extract
                     target_num_frames = self._model.get_target_num_frames()
                     regen_fps = self._target_fps
@@ -145,9 +177,8 @@ class CosmosEmbed1FrameCreationStage(CuratorStage):
                                 sample_rate_fps=regen_fps,
                             )
                     # create input frames for Cosmos-Embed1 model
-                    clip.cosmos_embed1_frames = self._model.formulate_input_frames(list(frames))
-                # done with extracted_frames
-                clip.extracted_frames.clear()
+                    clip.cosmos_embed1_frames = self._model.formulate_input_frames(list(frames))  # type: ignore[assignment]
+                clip.extracted_frames.drop()
 
             if self._log_stats:
                 stage_name, stage_perf_stats = self._timer.log_stats()
@@ -237,10 +268,11 @@ class CosmosEmbed1EmbeddingStage(CuratorStage):
             video = task.video
             with self._timer.time_process(len(video.clips)):
                 for clip in video.clips:
-                    if clip.cosmos_embed1_frames is None:
+                    ce1_frames = clip.cosmos_embed1_frames.resolve()
+                    if ce1_frames is None:
                         clip.errors["cosmos_embed1_frames"] = "empty"
                         continue
-                    embedding = self._model.encode_video_frames(clip.cosmos_embed1_frames)
+                    embedding = self._model.encode_video_frames(ce1_frames)
                     if embedding.numel() == 0:
                         logger.error(f"Unable to compute cosmos-embed1 embedding for clip={clip.uuid}")
                         clip.errors["cosmos_embed1_embedding"] = "failed"
@@ -253,8 +285,7 @@ class CosmosEmbed1EmbeddingStage(CuratorStage):
                             self._texts_to_verify[idxs[0]],
                             probs[0],
                         )
-                    # done with cosmos_embed1_frames
-                    clip.cosmos_embed1_frames = None
+                    clip.cosmos_embed1_frames.drop()
             if self._log_stats:
                 stage_name, stage_perf_stats = self._timer.log_stats()
                 task.stage_perf[stage_name] = stage_perf_stats

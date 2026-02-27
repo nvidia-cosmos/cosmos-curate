@@ -128,11 +128,9 @@ class Window:
     start_frame: int
     # End frame number of this window
     end_frame: int
-    # MP4 bytes for this window
-    # LazyData candidate: raw bytes use in-band pickle (2 copies); wrapping in
-    # LazyData would give split-field transport + auto-conversion to numpy for
-    # zero-copy PickleBuffer serialization.
-    mp4_bytes: bytes | None = None
+    # MP4 bytes for this window; wrapped in LazyData for zero-copy inter-stage
+    # transport via PEP 574 (bytes auto-converted to numpy by LazyData.coerce).
+    mp4_bytes: LazyData[npt.NDArray[np.uint8]] = attrs.field(factory=LazyData, converter=LazyData.coerce)  # type: ignore[misc]
     # Model input for this window: model_variant -> llm_input
     model_input: dict[str, dict[str, Any]] = attrs.Factory(dict)
     # `caption: {model_name: caption}`
@@ -140,8 +138,9 @@ class Window:
     enhanced_caption: dict[str, str] = attrs.Factory(dict)
     # t5_xxl embeddings for this window
     t5_xxl_embedding: dict[str, npt.NDArray[np.int32]] = attrs.Factory(dict)
-    # webp preview
-    webp_bytes: bytes | None = None
+    # webp preview; wrapped in LazyData for zero-copy inter-stage transport
+    # via PEP 574 (bytes auto-converted to numpy by LazyData.coerce).
+    webp_bytes: LazyData[npt.NDArray[np.uint8]] = attrs.field(factory=LazyData, converter=LazyData.coerce)  # type: ignore[misc]
     # for debugging
     errors: dict[str, str] = attrs.Factory(dict)
 
@@ -167,19 +166,21 @@ class Clip:
     source_video: str
     span: tuple[float, float]
     encoded_data: LazyData[npt.NDArray[np.uint8]] = attrs.field(factory=LazyData, converter=LazyData.coerce)  # type: ignore[misc]
-    # LazyData candidate: decoded frames can reach tens of MB; read only by
-    # embedding/captioning stages, pass-through for motion/aesthetic/filtering.
-    extracted_frames: dict[str, npt.NDArray[np.uint8]] = attrs.Factory(dict)
+    # decoded frames (dict of numpy arrays keyed by extraction signature);
+    # wrapped in LazyData for zero-copy inter-stage transport via PEP 574.
+    # No converter: producer must compute nbytes explicitly (dict has no .nbytes attr)
+    extracted_frames: LazyData[dict[str, npt.NDArray[np.uint8]]] = attrs.field(factory=LazyData)
     # motion
     decoded_motion_data: motion.DecodedData | None = None
     motion_score_global_mean: float | None = None
     motion_score_per_patch_min_256: float | None = None
     # aesthetic
     aesthetic_score: float | None = None
-    # embedding
-    cosmos_embed1_frames: npt.NDArray[np.float32] | None = None
+    # embedding frames; wrapped in LazyData for API consistency and Phase 2
+    # split-field ObjectRef potential (already numpy, so zero-copy via PEP 574).
+    cosmos_embed1_frames: LazyData[npt.NDArray[np.float32]] = attrs.field(factory=LazyData, converter=LazyData.coerce)  # type: ignore[misc]
     cosmos_embed1_embedding: npt.NDArray[np.float32] | None = None
-    intern_video_2_frames: npt.NDArray[np.float32] | None = None
+    intern_video_2_frames: LazyData[npt.NDArray[np.float32]] = attrs.field(factory=LazyData, converter=LazyData.coerce)  # type: ignore[misc]
     intern_video_2_embedding: npt.NDArray[np.float32] | None = None
     # captioning
     windows: list[Window] = attrs.Factory(list)
@@ -247,15 +248,15 @@ class Clip:
         """
         total_size = len(self.uuid.bytes)
         total_size += self.encoded_data.nbytes
-        if self.extracted_frames:
-            for x in self.extracted_frames.values():
-                total_size += x.nbytes
+        total_size += self.extracted_frames.nbytes
         if self.decoded_motion_data is not None:
             total_size += self.decoded_motion_data.get_major_size()
-        if self.intern_video_2_frames is not None:
-            total_size += self.intern_video_2_frames.nbytes
+        total_size += self.cosmos_embed1_frames.nbytes
+        total_size += self.intern_video_2_frames.nbytes
         if self.intern_video_2_embedding is not None:
             total_size += self.intern_video_2_embedding.nbytes
+        if self.cosmos_embed1_embedding is not None:
+            total_size += self.cosmos_embed1_embedding.nbytes
         for window in self.windows:
             total_size += window.get_major_size()
         return total_size

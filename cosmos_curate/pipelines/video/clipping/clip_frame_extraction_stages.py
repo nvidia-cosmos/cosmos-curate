@@ -18,11 +18,18 @@
 import io
 import math
 from functools import reduce
+from typing import TYPE_CHECKING
 
 import nvtx  # type: ignore[import-untyped]
 from loguru import logger
 
 from cosmos_curate.core.interfaces.stage_interface import CuratorStage, CuratorStageResource
+from cosmos_curate.core.utils.data.lazy_data import LazyData
+
+if TYPE_CHECKING:
+    import numpy as np
+    import numpy.typing as npt
+
 from cosmos_curate.core.utils.data.ref_resolver import prefetch, resolve_as_ready
 from cosmos_curate.core.utils.infra.performance_utils import StageTimer
 from cosmos_curate.pipelines.video.utils.data_model import SplitPipeTask, Video
@@ -104,6 +111,7 @@ class ClipFrameExtractionStage(CuratorStage):
                 continue
 
             try:
+                local_frames: dict[str, npt.NDArray[np.uint8]] = {}
                 for policy in self._extraction_policies:
                     # To save on decode costs, calculate the least-common-multiple(LCM) of fps
                     # targets and apply decord.get_batch on this LCM fps
@@ -126,7 +134,7 @@ class ClipFrameExtractionStage(CuratorStage):
                                     extraction_policy=policy,
                                     target_fps=fps,
                                 ).to_str()
-                                clip.extracted_frames[signature] = frames[:: int(lcm / fps)]
+                                local_frames[signature] = frames[:: int(lcm / fps)]
                     else:
                         for fps in self._target_fps:
                             with io.BytesIO(data) as fp:
@@ -141,9 +149,14 @@ class ClipFrameExtractionStage(CuratorStage):
                                     extraction_policy=policy,
                                     target_fps=fps,
                                 ).to_str()
-                                clip.extracted_frames[signature] = frames
+                                local_frames[signature] = frames
                                 if self._verbose:
                                     logger.info(f"Extracted {len(frames)} frames from clip {clip.uuid} at {fps=}")
+
+                total_nbytes = sum(arr.nbytes for arr in local_frames.values())
+                clip.extracted_frames = LazyData(value=local_frames, nbytes=total_nbytes)
+                # Phase 2: call extracted_frames.store() here to push to Plasma
+                # before the stage boundary for split-field transport
             except Exception as e:  # noqa: BLE001
                 logger.exception(f"Error extracting frames from clip {clip.uuid}: {e}")
                 clip.errors["frame_extraction"] = "video_decode_failed"

@@ -150,7 +150,7 @@ def _free_vllm_inputs(windows: list[Window], model_variant: str, *, keep_mp4: bo
     for window in windows:
         window.model_input.pop(model_variant, None)
         if not keep_mp4:
-            window.mp4_bytes = None
+            window.mp4_bytes.drop()
 
 
 class VllmModelInterface(ModelInterface):

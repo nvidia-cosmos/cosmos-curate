@@ -251,9 +251,9 @@ def test_free_vllm_inputs_clears_inputs_and_optionally_mp4(*, keep_mp4: bool) ->
         assert other_variant in w.model_input
         assert set(w.model_input.keys()) == {other_variant}
         if keep_mp4:
-            assert w.mp4_bytes == original_bytes[idx]
+            assert w.mp4_bytes is original_bytes[idx]
         else:
-            assert w.mp4_bytes is None
+            assert w.mp4_bytes.resolve() is None
 
 
 @pytest.mark.env("unified")

@@ -175,12 +175,6 @@ Current limitations -- split-field pattern disabled:
     3. **Detached named objects**: use ``ray.put()`` with a detached
        owner so the object outlives the creating actor.  Adds complexity
        for naming and cleanup.
-
-    Future candidates for LazyData migration:
-
-    - ``Clip.extracted_frames`` -- dict of decoded numpy frames
-    - ``Window.mp4_bytes`` -- raw MP4 segment bytes
-
 """
 
 from typing import Any
@@ -191,7 +185,7 @@ import ray
 from cosmos_curate.core.utils.data.bytes_transport import bytes_to_numpy
 
 
-@attrs.define
+@attrs.define(eq=False)
 class LazyData[T]:
     """Data that lives inline or in Plasma.  Self-manages transport lifecycle.
 

@@ -117,14 +117,45 @@ class AestheticFilterStage(CuratorStage):
         """
         return self._model
 
-    def process_data(self, tasks: list[SplitPipeTask]) -> list[SplitPipeTask] | None:  # type: ignore[override]  # noqa: C901
-        """Process video data to filter clips based on aesthetic score.
+    def process_data(self, tasks: list[SplitPipeTask]) -> list[SplitPipeTask] | None:  # type: ignore[override]  # noqa: C901, PLR0912
+        """Score each clip's aesthetic quality and filter below threshold.
+
+        Resolves ``extracted_frames``, pops this stage's frame signature from
+        the shared dict, runs the aesthetic model to produce per-frame scores,
+        and reduces them to a single clip score via the configured reduce
+        function (mean or min).  Clips scoring below ``_score_threshold`` are
+        moved to ``video.filtered_clips``.
+
+        ::
+
+            for each clip:
+              no encoded_data? --> score = -1.0, record error
+              |
+              extracted_frames.resolve()
+              frames missing for signature? --> score = -1.0, record error
+              |
+              frames = ef.pop(signature)  (removes key from shared dict)
+              scores = model(frames)
+              clip.aesthetic_score = reduce_fn(scores)
+              |
+              ef empty? --> extracted_frames.drop()  (last consumer)
+              |
+              score < threshold? --> filtered_clips (removed)
+              score >= threshold? --> passed_clips (kept)
+
+        Memory lifecycle:
+            Uses ``ef.pop()`` instead of ``ef[]`` because multiple consumers
+            may share the ``extracted_frames`` dict (keyed by different
+            extraction signatures).  Each consumer pops its own key.  The
+            last consumer to empty the dict triggers ``drop()`` to free the
+            ``LazyData`` wrapper.
 
         Args:
-            tasks: Tasks containing videos to process.
+            tasks: Tasks containing videos with clips to score and filter.
 
         Returns:
-            Processed tasks with filtered clips.
+            Tasks with clips filtered by aesthetic score; rejected clips
+            are moved to ``video.filtered_clips``.
 
         """
         for task in tasks:
@@ -136,17 +167,22 @@ class AestheticFilterStage(CuratorStage):
                     logger.warning(f"Clip {clip.uuid} has no encoded_data.")
                     clip.errors["encoded_data"] = "empty"
                     clip.aesthetic_score = -1.0
-                elif self._frame_extraction_signature not in clip.extracted_frames:
-                    clip.errors[f"frames-{self._frame_extraction_signature}"] = "missing"
-                    error_msg = (
-                        f"Clip {clip.uuid} has buffer but no extracted frames for {self._frame_extraction_signature}"
-                    )
-                    logger.error(error_msg)
-                    clip.aesthetic_score = -1.0
                 else:
-                    frames = clip.extracted_frames.pop(self._frame_extraction_signature)
-                    scores = self._model(frames).cpu().numpy()
-                    clip.aesthetic_score = float(self._reduce_fn(scores))
+                    ef = clip.extracted_frames.resolve()
+                    if ef is None or self._frame_extraction_signature not in ef:
+                        clip.errors[f"frames-{self._frame_extraction_signature}"] = "missing"
+                        error_msg = (
+                            f"Clip {clip.uuid} has buffer but no extracted frames "
+                            f"for {self._frame_extraction_signature}"
+                        )
+                        logger.error(error_msg)
+                        clip.aesthetic_score = -1.0
+                    else:
+                        frames = ef.pop(self._frame_extraction_signature)
+                        scores = self._model(frames).cpu().numpy()
+                        clip.aesthetic_score = float(self._reduce_fn(scores))
+                        if not ef:
+                            clip.extracted_frames.drop()
 
                 if clip.aesthetic_score < self._score_threshold:
                     video.filtered_clips.append(clip)

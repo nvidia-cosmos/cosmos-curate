@@ -39,6 +39,7 @@ unchanged, benefiting from PEP 574 PickleBuffer zero-copy transport.
 
 import numpy as np
 import numpy.typing as npt
+from loguru import logger
 
 
 def bytes_to_numpy(data: bytes, *, copy: bool = True) -> npt.NDArray[np.uint8]:
@@ -74,6 +75,13 @@ def bytes_to_numpy(data: bytes, *, copy: bool = True) -> npt.NDArray[np.uint8]:
         Contiguous uint8 array.  Read-only if ``copy=False``.
 
     """
+    # TODO(perf): ``np.frombuffer()`` returns a zero-cost read-only view --
+    # the ``.copy()`` call is the sole source of the O(n) allocation + memcpy.
+    # Switching callers to ``copy=False`` where the source ``bytes`` object is
+    # guaranteed to outlive the array (e.g., the result is immediately passed
+    # to ``ray.put()`` which serializes synchronously) would eliminate this
+    # copy entirely.  Requires a per-caller lifetime safety audit; track in a
+    # separate PR.
     view = np.frombuffer(data, dtype=np.uint8)
     return view.copy() if copy else view
 
@@ -81,14 +89,32 @@ def bytes_to_numpy(data: bytes, *, copy: bool = True) -> npt.NDArray[np.uint8]:
 def numpy_to_bytes(data: npt.NDArray[np.uint8]) -> bytes:
     """Convert numpy array back to bytes at the CONSUMER boundary.
 
-    Used only by final consumers that require a ``bytes`` object:
-    ``Path.write_bytes()``, HTTP upload APIs with strict type checks,
-    or ``subprocess.run(input=...)`` on older Python builds.
+    Used only by final consumers that strictly require a ``bytes``
+    object -- e.g., external APIs with ``isinstance(data, bytes)``
+    type checks, or protocol serializers that reject buffer objects.
 
     Most I/O APIs accept buffer-protocol objects directly:
     ``io.BytesIO(array)``, ``file.write(array)``,
-    ``subprocess.run(input=array)`` -- prefer passing the array
-    directly over calling this function.
+    ``Path.write_bytes(array)`` -- prefer passing the array directly
+    over calling this function.
+
+    .. warning:: ``subprocess.run(input=array)`` does NOT work
+
+        CPython's ``subprocess._communicate()`` checks ``if not input:``
+        which triggers numpy's ambiguous truth-value error for multi-element
+        arrays.  Convert to ``bytes(array)`` before passing to subprocess.
+
+    .. note:: C-contiguity
+
+        All arrays produced by ``np.frombuffer()`` and ``np.empty()``
+        are C-contiguous, so current callers are safe.  However, arrays
+        received from external code (e.g., model outputs with
+        non-standard strides, transposed views, fancy-indexed results)
+        may be non-contiguous, which causes ``.tobytes()`` to do an
+        element-by-element traversal instead of a single ``memcpy``
+        (10-100x slower).  A defensive guard below auto-corrects
+        non-contiguous input and logs a warning so the caller can be
+        fixed upstream.
 
     Args:
         data: NumPy uint8 array to convert.
@@ -97,4 +123,12 @@ def numpy_to_bytes(data: npt.NDArray[np.uint8]) -> bytes:
         Raw bytes copy of the array data.
 
     """
+    if not data.flags.c_contiguous:
+        logger.warning(
+            f"numpy_to_bytes received non-contiguous array "
+            f"(shape={data.shape}, strides={data.strides}); "
+            f"forcing contiguous copy -- fix the upstream caller "
+            f"to produce C-contiguous arrays for optimal performance",
+        )
+        data = np.ascontiguousarray(data)
     return data.tobytes()
