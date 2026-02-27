@@ -34,9 +34,8 @@ splitting pipeline (Spike 0), they represent logical pipeline states. Starting f
 Spike 1, new phases can additionally refer to optional attrs fields on the Clip data model.
 """
 
-from __future__ import annotations
-
 from abc import ABC, abstractmethod
+from typing import Self
 
 from cosmos_curate.core.interfaces.stage_interface import CuratorStage, CuratorStageSpec
 
@@ -90,7 +89,7 @@ class PipelineBuilder:
         self._phases: list[CurationPhase] = []
         self._available_fields: set[str] = set()
 
-    def add_phase(self, phase: CurationPhase) -> PipelineBuilder:
+    def add_phase(self, phase: CurationPhase) -> Self:
         """Add a phase to the pipeline, validating its requirements first.
 
         Args:
