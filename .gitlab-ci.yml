@@ -25,7 +25,6 @@ default:
 variables:
   # Versions
   PYTHON_VERSION: "3.12.12"
-  RUFF_VERSION: "0.14.9"
 
   # Git config
   GIT_STRATEGY: fetch
@@ -35,6 +34,8 @@ variables:
 
   # GitLab container registry
   CURATOR_IMAGE: ${CI_REGISTRY_IMAGE}/curator
+  CI_BUILDER_IMAGE_REPO: ${CI_REGISTRY_IMAGE}/ci-builder
+  CI_BUILDER_IMAGE: ${CI_BUILDER_IMAGE_REPO}:latest
 
   # Pytest configuration
   PYTEST_XDIST_WORKERS: 4
@@ -84,6 +85,18 @@ variables:
   TEST_END_TO_END:
     description: "Run cosmos-curator end-to-end test pipeline"
     value: "False"
+    options:
+      - "True"
+      - "False"
+  REFRESH_CI_BUILDER_IMAGE:
+    description: "Build and push ci-builder image for Docker-runner jobs"
+    value: "False"
+    options:
+      - "True"
+      - "False"
+  RUN_PROMOTE_TO_PROD:
+    description: "Allow scheduled promote_to_prod job to run"
+    value: "True"
     options:
       - "True"
       - "False"
@@ -182,9 +195,17 @@ stages:
     - if: '$CI_PIPELINE_SOURCE == "web"'
     - when: never
 
-  # Rules for scheduled (cron) jobs
-  schedule_rules: &schedule_rules
-    - if: '$CI_PIPELINE_SOURCE == "schedule"'
+  # Rules for scheduled promote/package jobs
+  schedule_rules_promote: &schedule_rules_promote
+    - if: '$CI_PIPELINE_SOURCE == "schedule" && $RUN_PROMOTE_TO_PROD == "True"'
+    - when: never
+
+  # Rules for ci-builder image refresh jobs
+  ci_builder_refresh_rules: &ci_builder_refresh_rules
+    - if: '$CI_PIPELINE_SOURCE == "schedule" && $REFRESH_CI_BUILDER_IMAGE == "True"'
+    - if: '$CI_PIPELINE_SOURCE == "web" && $REFRESH_CI_BUILDER_IMAGE == "True"'
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+      when: manual
     - when: never
 
   # Compute IMAGE_TAG from target branch (MR) or commit branch (push/web)
@@ -218,6 +239,12 @@ stages:
     micromamba create -n curator python=${PYTHON_VERSION} poetry -y
     micromamba activate curator
 
+  # Activate the prebuilt curator environment from ci-builder image
+  setup_ci_builder_env: &setup_ci_builder_env |
+    export MAMBA_ROOT_PREFIX=/opt/conda
+    eval "$(micromamba shell hook -s posix)"
+    micromamba activate curator
+
   # Activate an existing micromamba environment
   activate_micromamba: &activate_micromamba |
     # Configure micromamba environment
@@ -245,27 +272,27 @@ stages:
 
 ruff:
   stage: lint
-  image: ghcr.io/astral-sh/ruff:${RUFF_VERSION}-alpine
+  image: ${CI_BUILDER_IMAGE}
   tags:
     - build-runner  # Override to Docker executor
   variables:
     GIT_SUBMODULE_STRATEGY: none
   rules: *pre_merge_rules
   script:
+    - *setup_ci_builder_env
     - ruff format --check
     - ruff check
 
 mypy:
   stage: lint
-  image: mambaorg/micromamba:latest
+  image: ${CI_BUILDER_IMAGE}
   tags:
     - build-runner  # Override to Docker executor
   rules: *pre_merge_rules
   script:
-    - *setup_micromamba
+    - *setup_ci_builder_env
     - *setup_curator
     - mypy --pretty
-    - *teardown_micromamba
   retry:
     max: 2
     when: always
@@ -340,6 +367,50 @@ build_deploy_curator_arch:
     - echo "Pushed image ${CURATOR_ARCH_IMAGE} to GitLab registry"
     # Cleanup
     - *teardown_micromamba
+  retry:
+    max: 2
+    when: always
+
+build_ci_builder_image_arch:
+  stage: build
+  parallel:
+    matrix:
+      - PLATFORM: amd64
+        RUNNER_TAG: vm-builder
+      - PLATFORM: arm64
+        RUNNER_TAG: vm-builder-arm64
+  tags:
+    - ${RUNNER_TAG}
+  rules: *ci_builder_refresh_rules
+  script:
+    - export DOCKER_CONFIG="${CI_PROJECT_DIR}/.docker"
+    - mkdir -p "${DOCKER_CONFIG}"
+    - docker login -u gitlab-ci-token -p "${CI_JOB_TOKEN}" "${CI_REGISTRY}"
+    - CI_BUILDER_ARCH_IMAGE="${CI_BUILDER_IMAGE_REPO}:${CI_COMMIT_SHORT_SHA}-${PLATFORM}"
+    - docker build -f Dockerfile.ci -t "${CI_BUILDER_ARCH_IMAGE}" .
+    - docker push "${CI_BUILDER_ARCH_IMAGE}"
+    - echo "Pushed ${CI_BUILDER_ARCH_IMAGE}"
+  retry:
+    max: 2
+    when: always
+
+build_ci_builder_image:
+  stage: build
+  tags:
+    - vm-builder
+  needs:
+    - build_ci_builder_image_arch
+  rules: *ci_builder_refresh_rules
+  script:
+    - export DOCKER_CONFIG="${CI_PROJECT_DIR}/.docker"
+    - mkdir -p "${DOCKER_CONFIG}"
+    - docker login -u gitlab-ci-token -p "${CI_JOB_TOKEN}" "${CI_REGISTRY}"
+    - CI_BUILDER_IMAGE_SHA="${CI_BUILDER_IMAGE_REPO}:${CI_COMMIT_SHORT_SHA}"
+    - CI_BUILDER_AMD64_IMAGE="${CI_BUILDER_IMAGE_REPO}:${CI_COMMIT_SHORT_SHA}-amd64"
+    - CI_BUILDER_ARM64_IMAGE="${CI_BUILDER_IMAGE_REPO}:${CI_COMMIT_SHORT_SHA}-arm64"
+    - docker buildx imagetools create --tag "${CI_BUILDER_IMAGE_SHA}" "${CI_BUILDER_AMD64_IMAGE}" "${CI_BUILDER_ARM64_IMAGE}"
+    - docker buildx imagetools create --tag "${CI_BUILDER_IMAGE}" "${CI_BUILDER_AMD64_IMAGE}" "${CI_BUILDER_ARM64_IMAGE}"
+    - echo "Pushed multi-arch ${CI_BUILDER_IMAGE_SHA} and ${CI_BUILDER_IMAGE}"
   retry:
     max: 2
     when: always
@@ -497,11 +568,11 @@ combine_coverage:
   stage: end-to-end
   needs: ["unit_tests", "gpu_tests"]
   rules: *pre_post_merge_rules
-  image: python:3.12
+  image: ${CI_BUILDER_IMAGE}
   tags:
     - build-runner  # Override to Docker executor
   script:
-    - pip install coverage
+    - *setup_ci_builder_env
     # Combine coverage data from both jobs
     - echo "Combining coverage from unit_tests and gpu_tests..."
     - echo "Available coverage files:"
@@ -541,7 +612,7 @@ nvcf-helm:
   stage: end-to-end
   needs: ["build_deploy_curator"]
   rules: *merge_result_and_web_rules
-  image: mambaorg/micromamba:latest
+  image: ${CI_BUILDER_IMAGE}
   tags:
     - build-runner  # Override to Docker executor
   variables:
@@ -551,19 +622,15 @@ nvcf-helm:
       aud: ${VAULT_ADDR}
   before_script:
     - source .gitlab/vault/vault-auth.sh
-    - *setup_micromamba
+    - *setup_ci_builder_env
     - *setup_curator_cli
-    - |
-      if ! which envsubst; then
-        micromamba install -y -c conda-forge gettext jq
-      fi
     - export HELM_BYO_METRICS_RECEIVER_CLIENT_CRT=$(echo $HELM_BYO_METRICS_RECEIVER_CLIENT_CRT_BASE64 | base64 -d | awk '{printf "%s\\n", $0}')
     - export HELM_BYO_METRICS_RECEIVER_CLIENT_KEY=$(echo $HELM_BYO_METRICS_RECEIVER_CLIENT_KEY_BASE64 | base64 -d | awk '{printf "%s\\n", $0}')
   script:
     - *configure_nvcf_cli
     - .gitlab/scripts/nvcf_helm_deploy.sh
   after_script:
-    - *activate_micromamba
+    - *setup_ci_builder_env
     - *configure_nvcf_cli
     - .gitlab/scripts/nvcf_helm_cleanup.sh
   retry:
@@ -584,7 +651,7 @@ nvcf-helm-validate:
   stage: end-to-end
   needs: [ "nvcf-helm" ]
   rules: *merge_result_and_web_rules
-  image: mambaorg/micromamba:latest
+  image: ${CI_BUILDER_IMAGE}
   tags:
     - build-runner  # Override to Docker executor
   variables:
@@ -595,19 +662,12 @@ nvcf-helm-validate:
     VAULT_JWT_TOKEN:
       aud: ${VAULT_ADDR}
   before_script:
-    - *setup_micromamba
-    - pip3 install awscli --upgrade --user
+    - *setup_ci_builder_env
     - source .gitlab/vault/vault-auth.sh
-    - export PATH="$HOME/.local/bin:$PATH"
-    - hash -r
     - echo -n "$AWS_CONFIG_FILE_CONTENTS" | base64 -d > aws_credentials
     - sed -i '/^endpoint/d' aws_credentials
     - aws --version
     - export AWS_SHARED_CREDENTIALS_FILE="$(pwd)/aws_credentials"
-    - |
-      if ! which jq; then
-        micromamba install -y -c conda-forge jq
-      fi
   script:
     - .gitlab/scripts/nvcf_helm_validate.sh
 
@@ -632,7 +692,7 @@ promote_to_staging:
 # Promote the latest staging image to prod on a nightly schedule
 promote_to_prod:
   stage: post-merge
-  rules: *schedule_rules
+  rules: *schedule_rules_promote
   id_tokens:
     VAULT_JWT_TOKEN:
       aud: ${VAULT_ADDR}
@@ -654,7 +714,7 @@ promote_to_prod:
 
 build-packages:
   stage: post-merge
-  rules: *schedule_rules
+  rules: *schedule_rules_promote
   id_tokens:
     VAULT_JWT_TOKEN:
       aud: ${VAULT_ADDR}
@@ -729,7 +789,7 @@ k8s_helm_test:
   tags:
     - k8s-cpu
   needs: ["build_deploy_curator"]
-  image: ubuntu:22.04
+  image: ${CI_BUILDER_IMAGE}
   timeout: 45 minutes
   allow_failure: true
   variables:
@@ -744,11 +804,7 @@ k8s_helm_test:
       when: manual
     - when: never
   before_script:
-    - apt-get update && apt-get install -y curl unzip
     - source .gitlab/vault/vault-auth.sh
-    - curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
-    - curl -LO "https://dl.k8s.io/release/v1.34.2/bin/linux/amd64/kubectl"
-    - install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl
   script:
     - .gitlab/scripts/k8s_helm_test.sh
   after_script:

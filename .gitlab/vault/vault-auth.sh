@@ -26,25 +26,32 @@ if ! which curl >/dev/null 2>&1 || ! which unzip >/dev/null 2>&1; then
   fi
 fi
 
-# Download vault agent if not available
-
-echo "Downloading Vault agent..."
-rm -f vault_agent.zip vault
-ARCH="$(uname -m)"
-VAULT_AGENT_URL="https://urm.nvidia.com/artifactory/sw-kaizen-data-generic-local/com/nvidia/vault/vault-agent/2.4.4/nvault_agent_v2.4.4_linux_amd64.zip"
-if [ "${ARCH}" = "aarch64" ]; then
-  VAULT_AGENT_URL="https://urm.nvidia.com/artifactory/sw-kaizen-data-generic-local/com/nvidia/vault/vault-agent/2.4.4/nvault_agent_v2.4.4_linux_arm64.zip"
+# Use preinstalled vault when available, otherwise download a local fallback
+DOWNLOADED_VAULT="false"
+if which vault >/dev/null 2>&1; then
+  VAULT_BIN="$(which vault)"
+  echo "Using preinstalled Vault binary: ${VAULT_BIN}"
+else
+  echo "Vault binary not found; downloading Vault agent fallback..."
+  rm -f vault_agent.zip vault
+  ARCH="$(uname -m)"
+  VAULT_AGENT_URL="https://urm.nvidia.com/artifactory/sw-kaizen-data-generic-local/com/nvidia/vault/vault-agent/2.4.4/nvault_agent_v2.4.4_linux_amd64.zip"
+  if [ "${ARCH}" = "aarch64" ]; then
+    VAULT_AGENT_URL="https://urm.nvidia.com/artifactory/sw-kaizen-data-generic-local/com/nvidia/vault/vault-agent/2.4.4/nvault_agent_v2.4.4_linux_arm64.zip"
+  fi
+  curl "${VAULT_AGENT_URL}" -L -o vault_agent.zip
+  unzip vault_agent.zip
+  chmod +x vault
+  VAULT_BIN="./vault"
+  DOWNLOADED_VAULT="true"
 fi
-curl "${VAULT_AGENT_URL}" -L -o vault_agent.zip
-unzip vault_agent.zip
-chmod +x vault
 
 # Verify vault binary
-./vault -version
+"${VAULT_BIN}" -version
 
 # Run vault agent to authenticate and render secrets
 echo "Authenticating with Vault and retrieving secrets..."
-./vault agent -config=.gitlab/vault/vault-agent.config -exit-after-auth
+"${VAULT_BIN}" agent -config=.gitlab/vault/vault-agent.config -exit-after-auth
 
 # Verify secrets file was created
 if [ ! -f "./ci_secrets.env" ]; then
@@ -55,6 +62,11 @@ fi
 # Load secrets into environment
 source ./ci_secrets.env
 echo "Vault secrets retrieved and loaded successfully"
+
+# Clean up downloaded vault artifacts if fallback path was used
+if [ "${DOWNLOADED_VAULT}" = "true" ]; then
+  rm -f vault_agent.zip vault
+fi
 
 # Clean up files now that they're environment variables
 rm -f ./ci_secrets.env

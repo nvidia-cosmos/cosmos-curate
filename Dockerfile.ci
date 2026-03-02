@@ -1,0 +1,57 @@
+FROM mambaorg/micromamba:latest
+
+USER root
+
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV KUBECTL_VERSION=v1.34.2
+ENV MAMBA_ROOT_PREFIX=/opt/conda
+ENV PIP_NO_CACHE_DIR=1
+ENV POETRY_CACHE_DIR=/tmp/pypoetry-cache
+
+LABEL ci-keep="true"
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    curl \
+    gettext-base \
+    jq \
+    unzip \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN ARCH="$(uname -m)" \
+    && if [ "${ARCH}" = "x86_64" ]; then KUBECTL_ARCH="amd64"; \
+       elif [ "${ARCH}" = "aarch64" ] || [ "${ARCH}" = "arm64" ]; then KUBECTL_ARCH="arm64"; \
+       else echo "Unsupported architecture: ${ARCH}" && exit 1; fi \
+    && curl -fsSL "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/${KUBECTL_ARCH}/kubectl" -o /usr/local/bin/kubectl \
+    && chmod +x /usr/local/bin/kubectl
+
+RUN curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+
+RUN ARCH="$(uname -m)" \
+    && if [ "${ARCH}" = "x86_64" ]; then VAULT_ARCH="amd64"; \
+       elif [ "${ARCH}" = "aarch64" ] || [ "${ARCH}" = "arm64" ]; then VAULT_ARCH="arm64"; \
+       else echo "Unsupported architecture: ${ARCH}" && exit 1; fi \
+    && VAULT_AGENT_URL="https://urm.nvidia.com/artifactory/sw-kaizen-data-generic-local/com/nvidia/vault/vault-agent/2.4.4/nvault_agent_v2.4.4_linux_${VAULT_ARCH}.zip" \
+    && curl -fsSL "${VAULT_AGENT_URL}" -o /tmp/vault_agent.zip \
+    && cd /tmp \
+    && unzip -o vault_agent.zip \
+    && install -m 0755 vault /usr/local/bin/vault \
+    && rm -f /tmp/vault_agent.zip /tmp/vault
+
+USER $MAMBA_USER
+
+COPY --chown=mambauser:mambauser pyproject.toml poetry.lock /tmp/cosmos-curate/
+
+RUN micromamba create -n curator python=3.12.12 poetry pip -y \
+    && RUFF_VERSION="$(micromamba run -n curator python -c 'import tomllib; print(tomllib.load(open("/tmp/cosmos-curate/pyproject.toml", "rb"))["tool"]["poetry"]["group"]["dev"]["dependencies"]["ruff"])')" \
+    && micromamba run -n curator pip install --no-cache-dir awscli coverage "ruff==${RUFF_VERSION}" \
+    && micromamba clean --all --yes
+
+RUN cd /tmp/cosmos-curate \
+    && micromamba run -n curator poetry config virtualenvs.create false \
+    && micromamba run -n curator poetry install --extras=local --no-interaction --no-root \
+    && (micromamba run -n curator poetry cache clear pypi --all -n || true) \
+    && rm -rf /home/mambauser/.cache/pypoetry /home/mambauser/.cache/pip /tmp/pypoetry-cache /tmp/cosmos-curate
+
