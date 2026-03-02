@@ -108,7 +108,7 @@ class NonRetryableGeminiError(RuntimeError):
     """Error raised when retrying a Gemini request will not succeed."""
 
 
-class ApiCaptionStage(CuratorStage):
+class GeminiCaptionStage(CuratorStage):
     """Caption video windows using the Google Gemini API.
 
     The Gemini API key must be provided in the cosmos-curate config file under the `gemini` section.
@@ -267,14 +267,14 @@ class ApiCaptionStage(CuratorStage):
         @tenacity.retry(
             stop=tenacity.stop_after_attempt(self._max_caption_retries),
             wait=tenacity.wait_fixed(self._retry_delay_seconds),
-            retry=tenacity.retry_if_exception(ApiCaptionStage._should_retry_exception),
+            retry=tenacity.retry_if_exception(GeminiCaptionStage._should_retry_exception),
             reraise=True,
         )
         def _call() -> str:
             try:
                 response = client.models.generate_content(**generate_kwargs)
             except Exception as exc:
-                new_exc = ApiCaptionStage._handle_client_exception(exc)
+                new_exc = GeminiCaptionStage._handle_client_exception(exc)
                 if new_exc is exc:
                     raise
                 raise new_exc from exc
@@ -312,7 +312,7 @@ class ApiCaptionStage(CuratorStage):
                 if self._verbose:
                     logger.info(f"Gemini caption clip {clip.uuid} window {window_index}: {caption}")
 
-    @nvtx.annotate("ApiCaptionStage")  # type: ignore[untyped-decorator]
+    @nvtx.annotate("GeminiCaptionStage")  # type: ignore[untyped-decorator]
     def process_data(self, tasks: list[SplitPipeTask]) -> list[SplitPipeTask]:
         """Caption each window in the provided tasks using Gemini."""
         for task in tasks:

@@ -82,6 +82,7 @@ from cosmos_curate.pipelines.video.video_curation_phases import (
     IngestPhase,
     MotionFilterConfig,
     MotionFilterPhase,
+    OpenAIConfig,
     OutputConfig,
     OutputPhase,
     QwenFilterConfig,
@@ -97,7 +98,7 @@ from cosmos_curate.pipelines.video.video_curation_phases import (
 QWEN2_CAPTION_ALGOS = {"qwen"}
 QWEN3_CAPTION_ALGOS = {"qwen3_vl_30b", "qwen3_vl_30b_fp8", "qwen3_vl_235b", "qwen3_vl_235b_fp8"}
 COSMOS_REASON_ALGOS = {"cosmos_r1", "cosmos_r2"}
-ALL_CAPTION_ALGOS = VLLM_CAPTION_ALGOS | {"gemini"}
+ALL_CAPTION_ALGOS = VLLM_CAPTION_ALGOS | {"gemini", "openai"}
 MULTICAM_VIDEO_EXTENSIONS: set[str] = {".mp4"}
 QWEN3_VL_235B_HIGH_MEMORY_GPU_THRESHOLD_MB = 128_000
 
@@ -449,7 +450,11 @@ def _assemble_stages(  # noqa: C901, PLR0912, PLR0915
 
     # --- Captioning (optional) ---
     caption_algo = args.captioning_algorithm.lower()
-    keep_mp4 = args.generate_previews or (args.generate_cosmos_predict_dataset != "disable") or caption_algo == "gemini"
+    keep_mp4 = (
+        args.generate_previews
+        or (args.generate_cosmos_predict_dataset != "disable")
+        or caption_algo in {"gemini", "openai"}
+    )
 
     if args.generate_captions:
         if caption_algo not in ALL_CAPTION_ALGOS:
@@ -541,7 +546,7 @@ def _assemble_stages(  # noqa: C901, PLR0912, PLR0915
             if caption_algo == "cosmos_r2":
                 vllm_config.preprocess = True
                 window_config.model_does_preprocess = True
-        elif caption_algo == "gemini":
+        elif caption_algo in {"gemini", "openai"}:
             pass
         elif caption_algo == "nemotron":
             vllm_config.stage2_caption = args.nemotron_stage2_caption
@@ -566,6 +571,18 @@ def _assemble_stages(  # noqa: C901, PLR0912, PLR0915
                 num_cpus_for_prepare=args.vllm_prepare_num_cpus_per_worker,
             )
 
+        openai_config: OpenAIConfig | None = None
+        if caption_algo == "openai":
+            openai_config = OpenAIConfig(
+                model_name=args.openai_model_name,
+                max_output_tokens=args.captioning_max_output_tokens,
+                prompt_variant=args.captioning_prompt_variant,
+                prompt_text=args.captioning_prompt_text,
+                caption_retries=args.openai_caption_retries,
+                retry_delay_seconds=args.openai_retry_delay_seconds,
+                num_cpus_for_prepare=args.vllm_prepare_num_cpus_per_worker,
+            )
+
         enhance_config: EnhanceCaptionConfig | None = None
         if args.enhance_captions:
             enhance_config = EnhanceCaptionConfig(
@@ -585,8 +602,9 @@ def _assemble_stages(  # noqa: C901, PLR0912, PLR0915
                 CaptioningConfig(
                     caption_algo=caption_algo,
                     window_config=window_config,
-                    vllm_config=vllm_config if caption_algo != "gemini" else None,
+                    vllm_config=vllm_config if caption_algo not in {"gemini", "openai"} else None,
                     gemini_config=gemini_config,
+                    openai_config=openai_config,
                     keep_mp4=keep_mp4,
                     generate_previews=args.generate_previews,
                     preview_target_fps=args.preview_target_fps,
@@ -1185,7 +1203,7 @@ def _setup_parser(parser: argparse.ArgumentParser) -> None:  # noqa: PLR0915
     parser.add_argument(
         "--captioning-max-output-tokens",
         type=int,
-        default=512,
+        default=8192,
         help="Max number of output tokens requested from captioning model",
     )
     parser.add_argument(
@@ -1211,6 +1229,24 @@ def _setup_parser(parser: argparse.ArgumentParser) -> None:  # noqa: PLR0915
         type=float,
         default=20.0,
         help="Maximum inline video size accepted by Gemini when captioning (in megabytes).",
+    )
+    parser.add_argument(
+        "--openai-model-name",
+        type=str,
+        default="qwen3.5-397b-a17b-fp8",
+        help="Model name to use with the OpenAI-compatible API.",
+    )
+    parser.add_argument(
+        "--openai-caption-retries",
+        type=int,
+        default=3,
+        help="Max number of retries for OpenAI API caption requests.",
+    )
+    parser.add_argument(
+        "--openai-retry-delay-seconds",
+        type=float,
+        default=1.0,
+        help="Delay between retries for OpenAI API caption requests.",
     )
     parser.add_argument(
         "--qwen-preprocess-dtype",

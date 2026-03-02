@@ -39,11 +39,12 @@ import attrs
 from cosmos_curate.core.interfaces.phase_interface import CurationPhase
 from cosmos_curate.core.interfaces.stage_interface import CuratorStage, CuratorStageSpec
 from cosmos_curate.models.all_models import get_all_models_by_id
-from cosmos_curate.pipelines.video.captioning.api_caption_stage import ApiCaptionStage, ApiPrepStage
 from cosmos_curate.pipelines.video.captioning.captioning_stages import (
     EnhanceCaptionStage,
     T5StageForSplit,
 )
+from cosmos_curate.pipelines.video.captioning.gemini_caption_stage import ApiPrepStage, GeminiCaptionStage
+from cosmos_curate.pipelines.video.captioning.openai_caption_stage import OpenAICaptionStage
 from cosmos_curate.pipelines.video.captioning.vllm_caption_stage import VllmCaptionStage, VllmPrepStage
 from cosmos_curate.pipelines.video.clipping.clip_extraction_stages import (
     ClipTranscodingStage,
@@ -260,6 +261,19 @@ class GeminiConfig:
 
 
 @attrs.define(frozen=True)
+class OpenAIConfig:
+    """Configuration specific to the OpenAI-compatible API captioning path."""
+
+    model_name: str = "qwen3.5-397b-a17b-fp8"
+    max_output_tokens: int = 8192
+    prompt_variant: str = "default"
+    prompt_text: str | None = None
+    caption_retries: int = 3
+    retry_delay_seconds: float = 1.0
+    num_cpus_for_prepare: float = 3.0
+
+
+@attrs.define(frozen=True)
 class CaptioningConfig:
     """Configuration for the captioning phase (prep + caption + optional enhance)."""
 
@@ -267,6 +281,7 @@ class CaptioningConfig:
     window_config: WindowConfig
     vllm_config: VllmConfig | None = None
     gemini_config: GeminiConfig | None = None
+    openai_config: OpenAIConfig | None = None
     keep_mp4: bool = False
     generate_previews: bool = False
     preview_target_fps: int = 1
@@ -761,43 +776,110 @@ class CaptioningPhase(CurationPhase):
         """Return the field tokens populated by this phase."""
         return frozenset({"captioned"})
 
-    def build_stages(self) -> list[CuratorStage | CuratorStageSpec]:
-        """Construct and return the prep, optional preview, caption, and enhance stages."""
+    def _build_prep_stage(self) -> CuratorStage:
+        """Build the prep stage for the configured caption algorithm."""
         cfg = self._cfg
-        stages: list[CuratorStage | CuratorStageSpec] = []
         caption_algo = cfg.caption_algo.lower()
 
-        # Prep stage
+        if caption_algo == "gemini":
+            if cfg.gemini_config is None:
+                msg = "gemini_config required for caption_algo='gemini'"
+                raise ValueError(msg)
+            return ApiPrepStage(
+                window_config=cfg.window_config,
+                model_variant=caption_algo,
+                num_cpus_for_prepare=cfg.gemini_config.num_cpus_for_prepare,
+                verbose=cfg.verbose,
+                log_stats=cfg.perf_profile,
+            )
+
+        if caption_algo == "openai":
+            if cfg.openai_config is None:
+                msg = "openai_config required for caption_algo='openai'"
+                raise ValueError(msg)
+            return ApiPrepStage(
+                window_config=cfg.window_config,
+                model_variant=caption_algo,
+                num_cpus_for_prepare=cfg.openai_config.num_cpus_for_prepare,
+                verbose=cfg.verbose,
+                log_stats=cfg.perf_profile,
+            )
+
+        if cfg.vllm_config is None:
+            msg = "vllm_config required for VLLM captioning"
+            raise ValueError(msg)
+        vllm_cfg_prepare = attrs.evolve(cfg.vllm_config, copy_weights_to=None)
+        return VllmPrepStage(
+            vllm_config=vllm_cfg_prepare,
+            window_config=cfg.window_config,
+            keep_mp4=cfg.keep_mp4,
+            verbose=cfg.verbose,
+            log_stats=cfg.perf_profile,
+        )
+
+    def _build_caption_stage(self) -> CuratorStage | CuratorStageSpec:
+        """Build the caption stage for the configured caption algorithm."""
+        cfg = self._cfg
+        caption_algo = cfg.caption_algo.lower()
+
+        if caption_algo in VLLM_CAPTION_ALGOS:
+            if cfg.vllm_config is None:
+                msg = f"vllm_config required for caption_algo={caption_algo!r}"
+                raise ValueError(msg)
+            return CuratorStageSpec(
+                VllmCaptionStage(
+                    vllm_config=cfg.vllm_config,
+                    verbose=cfg.verbose,
+                    keep_mp4=cfg.keep_mp4,
+                    log_stats=cfg.perf_profile,
+                    inflight_batching=cfg.inflight_batching,
+                ),
+                num_setup_attempts_python=None,
+            )
+
         if caption_algo == "gemini":
             if cfg.gemini_config is None:
                 msg = "gemini_config required for caption_algo='gemini'"
                 raise ValueError(msg)
             gcfg = cfg.gemini_config
-            stages.append(
-                ApiPrepStage(
-                    window_config=cfg.window_config,
-                    model_variant=caption_algo,
-                    num_cpus_for_prepare=gcfg.num_cpus_for_prepare,
-                    verbose=cfg.verbose,
-                    log_stats=cfg.perf_profile,
-                )
-            )
-        else:
-            if cfg.vllm_config is None:
-                msg = "vllm_config required for VLLM captioning"
-                raise ValueError(msg)
-            vllm_cfg_prepare = attrs.evolve(cfg.vllm_config, copy_weights_to=None)
-            stages.append(
-                VllmPrepStage(
-                    vllm_config=vllm_cfg_prepare,
-                    window_config=cfg.window_config,
-                    keep_mp4=cfg.keep_mp4,
-                    verbose=cfg.verbose,
-                    log_stats=cfg.perf_profile,
-                )
+            return GeminiCaptionStage(
+                model_variant=caption_algo,
+                model_name=gcfg.model_name,
+                prompt_variant=gcfg.prompt_variant,
+                prompt_text=gcfg.prompt_text,
+                max_output_tokens=gcfg.max_output_tokens,
+                max_caption_retries=gcfg.caption_retries,
+                retry_delay_seconds=gcfg.retry_delay_seconds,
+                max_video_size_bytes=gcfg.max_inline_video_bytes,
+                verbose=cfg.verbose,
+                log_stats=cfg.perf_profile,
             )
 
-        # Optional preview stage
+        if caption_algo == "openai":
+            if cfg.openai_config is None:
+                msg = "openai_config required for caption_algo='openai'"
+                raise ValueError(msg)
+            ocfg = cfg.openai_config
+            return OpenAICaptionStage(
+                model_name=ocfg.model_name,
+                model_variant=caption_algo,
+                prompt_variant=ocfg.prompt_variant,
+                prompt_text=ocfg.prompt_text,
+                max_output_tokens=ocfg.max_output_tokens,
+                max_caption_retries=ocfg.caption_retries,
+                retry_delay_seconds=ocfg.retry_delay_seconds,
+                verbose=cfg.verbose,
+                log_stats=cfg.perf_profile,
+            )
+
+        msg = f"Unknown caption algorithm: {caption_algo!r}"
+        raise NotImplementedError(msg)
+
+    def build_stages(self) -> list[CuratorStage | CuratorStageSpec]:
+        """Construct and return the prep, optional preview, caption, and enhance stages."""
+        cfg = self._cfg
+        stages: list[CuratorStage | CuratorStageSpec] = [self._build_prep_stage()]
+
         if cfg.generate_previews:
             stages.append(
                 PreviewStage(
@@ -808,47 +890,8 @@ class CaptioningPhase(CurationPhase):
                 )
             )
 
-        # Caption stage
-        if caption_algo in VLLM_CAPTION_ALGOS:
-            if cfg.vllm_config is None:
-                msg = f"vllm_config required for caption_algo={caption_algo!r}"
-                raise ValueError(msg)
-            stages.append(
-                CuratorStageSpec(
-                    VllmCaptionStage(
-                        vllm_config=cfg.vllm_config,
-                        verbose=cfg.verbose,
-                        keep_mp4=cfg.keep_mp4,
-                        log_stats=cfg.perf_profile,
-                        inflight_batching=cfg.inflight_batching,
-                    ),
-                    num_setup_attempts_python=None,
-                )
-            )
-        elif caption_algo == "gemini":
-            if cfg.gemini_config is None:
-                msg = "gemini_config required for caption_algo='gemini'"
-                raise ValueError(msg)
-            gcfg = cfg.gemini_config
-            stages.append(
-                ApiCaptionStage(
-                    model_variant=caption_algo,
-                    model_name=gcfg.model_name,
-                    prompt_variant=gcfg.prompt_variant,
-                    prompt_text=gcfg.prompt_text,
-                    max_output_tokens=gcfg.max_output_tokens,
-                    max_caption_retries=gcfg.caption_retries,
-                    retry_delay_seconds=gcfg.retry_delay_seconds,
-                    max_video_size_bytes=gcfg.max_inline_video_bytes,
-                    verbose=cfg.verbose,
-                    log_stats=cfg.perf_profile,
-                )
-            )
-        else:
-            msg = f"Unknown caption algorithm: {caption_algo!r}"
-            raise NotImplementedError(msg)
+        stages.append(self._build_caption_stage())
 
-        # Optional caption enhancement
         if cfg.enhance_config is not None:
             ecfg = cfg.enhance_config
             stages.append(

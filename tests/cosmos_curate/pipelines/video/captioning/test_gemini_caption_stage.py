@@ -23,8 +23,8 @@ from uuid import uuid4
 import pytest
 
 from cosmos_curate.core.utils.config.config import ConfigFileData, Gemini
-from cosmos_curate.pipelines.video.captioning import api_caption_stage
-from cosmos_curate.pipelines.video.captioning.api_caption_stage import ApiCaptionStage, ApiPrepStage
+from cosmos_curate.pipelines.video.captioning import gemini_caption_stage
+from cosmos_curate.pipelines.video.captioning.gemini_caption_stage import ApiPrepStage, GeminiCaptionStage
 from cosmos_curate.pipelines.video.utils.data_model import Clip, SplitPipeTask, Video, Window, WindowConfig
 
 
@@ -56,7 +56,7 @@ def _make_task(mp4_bytes: bytes | None) -> SplitPipeTask:
     return SplitPipeTask(session_id="test-session", video=video)
 
 
-@patch("cosmos_curate.pipelines.video.captioning.api_caption_stage.windowing_utils.make_windows_for_video")
+@patch("cosmos_curate.pipelines.video.captioning.gemini_caption_stage.windowing_utils.make_windows_for_video")
 def test_api_prep_stage_creates_windows_without_frames(mock_make_windows: MagicMock) -> None:
     """ApiPrepStage should avoid frame decoding while keeping MP4 bytes."""
     window_config = WindowConfig()
@@ -86,14 +86,14 @@ def test_api_prep_stage_processes_each_task(monkeypatch: pytest.MonkeyPatch) -> 
     assert spy.call_count == 2
 
 
-def test_api_caption_stage_generates_captions(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_gemini_caption_stage_generates_captions(monkeypatch: pytest.MonkeyPatch) -> None:
     """Export captions into the window map when the API call succeeds."""
     monkeypatch.setattr(
-        api_caption_stage,
+        gemini_caption_stage,
         "load_config",
         lambda: ConfigFileData(gemini=Gemini(api_key="dummy-key")),
     )
-    stage = ApiCaptionStage(
+    stage = GeminiCaptionStage(
         model_variant="gemini",
         model_name="models/test",
         max_output_tokens=64,
@@ -110,14 +110,14 @@ def test_api_caption_stage_generates_captions(monkeypatch: pytest.MonkeyPatch) -
     assert dummy_models.last_kwargs["model"] == "models/test"
 
 
-def test_api_caption_stage_records_error_for_missing_mp4(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_gemini_caption_stage_records_error_for_missing_mp4(monkeypatch: pytest.MonkeyPatch) -> None:
     """Record an error when mp4 bytes are unavailable for a window."""
     monkeypatch.setattr(
-        api_caption_stage,
+        gemini_caption_stage,
         "load_config",
         lambda: ConfigFileData(gemini=Gemini(api_key="dummy-key")),
     )
-    stage = ApiCaptionStage()
+    stage = GeminiCaptionStage()
     stage._client = _DummyClient(_DummyModels())  # type: ignore[assignment]
 
     task = _make_task(None)
@@ -135,35 +135,35 @@ def test_stage_setup_loads_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
         def __init__(self, api_key: str) -> None:
             self.api_key = api_key
 
-    monkeypatch.setattr(api_caption_stage, "genai", SimpleNamespace(Client=_FakeClient))
-    monkeypatch.setattr(api_caption_stage, "genai_types", object())
+    monkeypatch.setattr(gemini_caption_stage, "genai", SimpleNamespace(Client=_FakeClient))
+    monkeypatch.setattr(gemini_caption_stage, "genai_types", object())
     monkeypatch.setattr(
-        api_caption_stage,
+        gemini_caption_stage,
         "load_config",
         lambda: ConfigFileData(gemini=Gemini(api_key="config-key")),
     )
 
-    stage = ApiCaptionStage()
+    stage = GeminiCaptionStage()
     stage.stage_setup()
     assert isinstance(stage._client, _FakeClient)
     assert stage._client.api_key == "config-key"  # type: ignore[unreachable]
 
 
-def test_api_caption_stage_logs_error_on_empty_response(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_gemini_caption_stage_logs_error_on_empty_response(monkeypatch: pytest.MonkeyPatch) -> None:
     """Capture Gemini runtime errors when the response lacks text."""
 
     class _FakeClient:
         def __init__(self) -> None:
             self.models = _EmptyResponseModels()
 
-    monkeypatch.setattr(api_caption_stage, "genai", SimpleNamespace(Client=_FakeClient))
+    monkeypatch.setattr(gemini_caption_stage, "genai", SimpleNamespace(Client=_FakeClient))
     monkeypatch.setattr(
-        api_caption_stage,
+        gemini_caption_stage,
         "load_config",
         lambda: ConfigFileData(gemini=Gemini(api_key="dummy-key")),
     )
 
-    stage = ApiCaptionStage(verbose=True)
+    stage = GeminiCaptionStage(verbose=True)
     stage._client = _FakeClient()  # type: ignore[assignment]
     task = _make_task(b"\x00\x01")
     stage.process_data([task])
@@ -178,19 +178,19 @@ def test_stage_setup_requires_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
         def __init__(self, api_key: str) -> None:
             self.api_key = api_key
 
-    monkeypatch.setattr(api_caption_stage, "genai", SimpleNamespace(Client=_FakeClient))
-    monkeypatch.setattr(api_caption_stage, "genai_types", object())
-    monkeypatch.setattr(api_caption_stage, "load_config", lambda: ConfigFileData())
+    monkeypatch.setattr(gemini_caption_stage, "genai", SimpleNamespace(Client=_FakeClient))
+    monkeypatch.setattr(gemini_caption_stage, "genai_types", object())
+    monkeypatch.setattr(gemini_caption_stage, "load_config", lambda: ConfigFileData())
 
     with pytest.raises(RuntimeError, match="Gemini API key missing"):
-        ApiCaptionStage()
+        GeminiCaptionStage()
 
 
 def test_extract_text_handles_block_reason() -> None:
     """Report Gemini block reasons in error messages."""
     response = SimpleNamespace(prompt_feedback=SimpleNamespace(block_reason="SAFETY"))
     with pytest.raises(RuntimeError, match="Gemini request blocked: SAFETY"):
-        ApiCaptionStage._extract_text(response)
+        GeminiCaptionStage._extract_text(response)
 
 
 def test_extract_text_reports_finish_reason() -> None:
@@ -204,10 +204,10 @@ def test_extract_text_reports_finish_reason() -> None:
         ]
     )
     with pytest.raises(RuntimeError, match="finish_reasons=\\['MAX_TOKENS'\\]"):
-        ApiCaptionStage._extract_text(response)
+        GeminiCaptionStage._extract_text(response)
 
 
-def test_api_caption_stage_does_not_retry_invalid_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_gemini_caption_stage_does_not_retry_invalid_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
     """Avoid retry loops when the Gemini API rejects the key."""
 
     class _FakeClientError(Exception):
@@ -223,17 +223,17 @@ def test_api_caption_stage_does_not_retry_invalid_api_key(monkeypatch: pytest.Mo
             raise _FakeClientError(msg)
 
     monkeypatch.setattr(
-        api_caption_stage,
+        gemini_caption_stage,
         "load_config",
         lambda: ConfigFileData(gemini=Gemini(api_key="dummy-key")),
     )
     monkeypatch.setattr(
-        "cosmos_curate.pipelines.video.captioning.api_caption_stage.genai.errors",
+        "cosmos_curate.pipelines.video.captioning.gemini_caption_stage.genai.errors",
         SimpleNamespace(ClientError=_FakeClientError),
         raising=False,
     )
 
-    stage = ApiCaptionStage()
+    stage = GeminiCaptionStage()
     failing_models = _FailingModels()
     stage._client = _DummyClient(failing_models)  # type: ignore[arg-type,assignment]
 

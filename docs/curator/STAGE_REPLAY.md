@@ -191,7 +191,7 @@ grep -r "class \w*Stage(CuratorStage)" cosmos_curate/pipelines/
 ```
 
 **Common stage names:**
-- **Captioning**: `VllmPrepStage`, `VllmCaptionStage`, `ApiPrepStage`, `ApiCaptionStage`, `EnhanceCaptionStage`
+- **Captioning**: `VllmPrepStage`, `VllmCaptionStage`, `ApiPrepStage`, `GeminiCaptionStage`, `OpenAICaptionStage`, `EnhanceCaptionStage`
 - **Filtering**: `MotionVectorDecodeStage`, `MotionFilterStage`, `AestheticsFilterStage`
 - **I/O**: `ClipWriterStage`, `RemuxStage`
 - **Processing**: `TranscodeStage`, `SegmentStage`, `NormalizeStage`
