@@ -54,7 +54,7 @@ class GeminiConfig:
     """Configuration specific to the Gemini API captioning path."""
 
     model_name: str = "models/gemini-2.5-pro"
-    max_output_tokens: int = 512
+    max_output_tokens: int = 8192
     prompt_variant: str = "default"
     prompt_text: str | None = None
     caption_retries: int = 3

@@ -264,6 +264,60 @@ def test_caption_no_inflight_batching_raises(mock_process_vllm_output: MagicMock
 
 @pytest.mark.env("unified")
 @pytest.mark.parametrize("stage2", [False, True])
+def test_caption_no_inflight_batching_preserves_order(*, stage2: bool) -> None:
+    """Non-inflight batching must return captions in original input order with mixed stage2 prompts.
+
+    When stage2_prompts contains a mix of None and non-None values, the
+    filter-and-concatenate pattern previously returned all stage1-only results
+    first, then all stage2 results, instead of preserving the original input
+    order.  The mixed-prompts variant is the critical case — when all prompts
+    are the same (all None or all non-None) no split occurs.
+    """
+    vllm_config = VllmConfig(model_variant="mock")
+    model = vllm_model(vllm_config)
+    processor = auto_processor(vllm_config)
+    sp = sampling_params(vllm_config.sampling_config)
+
+    num_inputs = 5
+    model_inputs = [{"idx": i} for i in range(num_inputs)]
+    # Mixed: indices 1 and 3 need stage2, others don't
+    if stage2:
+        stage2_prompts: list[str | None] = [None, "refine", None, "refine", None]
+    else:
+        stage2_prompts = [None] * num_inputs
+
+    captions = _caption_no_inflight_batching(
+        model_inputs=model_inputs,
+        llm=model,
+        processor=processor,
+        sampling_params=sp,
+        vllm_config=vllm_config,
+        stage2_prompts=stage2_prompts,
+    )
+
+    assert len(captions) == num_inputs
+
+    # Extract the integer suffix from each "mock-caption-N" string.
+    caption_indices = [int(c.split("-")[-1]) for c in captions]
+
+    # All captions must be unique (no duplicates from misordering).
+    assert len(set(caption_indices)) == num_inputs
+
+    if stage2:
+        # Stage1 produces captions 0-4 for inputs 0-4.
+        # Inputs 0, 2, 4 (no stage2) keep their stage1 captions.
+        # Inputs 1, 3 (stage2) get new captions from the refinement pass.
+        # Stage1-only captions (indices 0, 2, 4) must appear at positions 0, 2, 4.
+        stage1_only_indices = [caption_indices[i] for i in [0, 2, 4]]
+        assert stage1_only_indices == sorted(stage1_only_indices)
+        # Stage2 captions (positions 1, 3) have higher indices than stage1 captions.
+        stage2_indices = [caption_indices[i] for i in [1, 3]]
+        assert all(s2 > max(stage1_only_indices) for s2 in stage2_indices)
+        assert stage2_indices == sorted(stage2_indices)
+
+
+@pytest.mark.env("unified")
+@pytest.mark.parametrize("stage2", [False, True])
 def test_caption_inflight_batching(*, stage2: bool) -> None:
     """Test _caption_inflight_batching."""
     vllm_config = VllmConfig(model_variant="mock")
@@ -435,3 +489,56 @@ def test_save_frames_as_pngs(
             assert img_array.shape == (height, width)
         elif channels == 3:
             assert img_array.shape == (height, width, channels)
+
+
+@pytest.mark.env("unified")
+@pytest.mark.parametrize("stage2", [False, True])
+def test_caption_inflight_batching_preserves_order(*, stage2: bool) -> None:
+    """Inflight batching must return captions in input order even when the engine finishes requests out of order.
+
+    The mock engine assigns captions as "mock-caption-N" where N is an
+    auto-incrementing counter.  By making input 0 very slow (10 steps) and
+    inputs 1-4 fast (1 step), inputs 1-4 complete before input 0.
+
+    Completion order: input1 (caption-0), input2 (caption-1), input3 (caption-2),
+                      input4 (caption-3), input0 (caption-4).
+
+    Without the ordering fix, results would be returned in completion order.
+    With the fix, results are reordered to match the original input order.
+    """
+    vllm_config = VllmConfig(model_variant="mock")
+    processor = auto_processor(vllm_config)
+    sp = sampling_params(vllm_config.sampling_config)
+
+    num_inputs = 5
+    model_inputs = [{"idx": i} for i in range(num_inputs)]
+    stage2_prompts: list[str | None] = ["refine"] * num_inputs if stage2 else [None] * num_inputs
+
+    # Input 0 is slow (10 steps), inputs 1-4 are fast (1 step).
+    # This guarantees inputs 1-4 complete before input 0.
+    model = MockLLM(steps_to_complete=lambda req_idx: 10 if req_idx == 0 else 1)
+
+    captions = _caption_inflight_batching(
+        model_inputs=model_inputs,
+        llm=model,  # type: ignore[arg-type]
+        processor=processor,
+        sampling_params=sp,
+        vllm_config=vllm_config,
+        stage2_prompts=stage2_prompts,
+        max_inflight_requests=0,
+    )
+
+    assert len(captions) == num_inputs
+
+    # Extract the integer suffix from each "mock-caption-N" string.
+    caption_indices = [int(c.split("-")[-1]) for c in captions]
+
+    # All captions must be unique (no duplicates from misordering).
+    assert len(set(caption_indices)) == num_inputs
+
+    # Input 0 finishes last so it gets the highest caption index.
+    assert caption_indices[0] == max(caption_indices)
+
+    # Inputs 1-4 all complete in submission order (each needs 1 step),
+    # so their caption indices must be consecutive and ascending.
+    assert caption_indices[1:] == sorted(caption_indices[1:])

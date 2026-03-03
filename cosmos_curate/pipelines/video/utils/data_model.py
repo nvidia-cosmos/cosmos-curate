@@ -818,7 +818,7 @@ class VllmSamplingConfig:
     top_p: float = 0.001  # vLLM default is 1.0
     top_k: int = 0
     min_p: float = 0.0
-    max_tokens: int | None = 512  # vLLM default is None
+    max_tokens: int | None = 8192  # vLLM default is None
 
 
 @attrs.define

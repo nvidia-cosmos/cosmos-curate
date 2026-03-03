@@ -472,7 +472,7 @@ class QwenCaptionStage(CuratorStage):
         prompt_variants: list[str] | None = None,
         batch_size: int = 16,
         fp8_enable: bool = False,  # noqa: FBT001, FBT002
-        max_output_tokens: int = 512,
+        max_output_tokens: int = 8192,
         model_does_preprocess: bool = False,  # noqa: FBT001, FBT002
         disable_mmcache: bool = False,  # noqa: FBT001, FBT002
         verbose: bool = False,  # noqa: FBT001, FBT002

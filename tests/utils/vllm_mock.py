@@ -5,6 +5,8 @@ This module provides lightweight stand-ins for the vLLM types used by
 pulling heavy dependencies or models.
 """
 
+import secrets
+from collections.abc import Callable
 from typing import cast
 
 from transformers import AutoProcessor
@@ -40,15 +42,29 @@ def make_request_output(request_id: str, text: str, *, finished: bool = True) ->
 
 
 class MockLLMEngine:
-    """Simple engine with `add_request` and `step` methods."""
+    """Simple engine with `add_request` and `step` methods.
 
-    def __init__(self) -> None:
+    Args:
+        steps_to_complete: Either a fixed int (default 3) applied to all requests,
+            or a callable ``(request_index) -> int`` that returns the number of
+            ``step()`` calls needed before a given request completes.  Use a
+            callable to make requests finish out-of-order.
+
+    """
+
+    def __init__(self, steps_to_complete: int | Callable[[int], int] = 3) -> None:
         self._pending: list[tuple[str, dict[str, object], int]] = []
-        self._steps_to_complete = 3
+        self._steps_to_complete = steps_to_complete
         self._caption_idx = 0
+        self._request_count = 0
 
     def add_request(self, request_id: str, inputs: dict[str, object], _sampling_params: object) -> None:
-        self._pending.append((request_id, inputs, self._steps_to_complete))
+        if callable(self._steps_to_complete):
+            steps = self._steps_to_complete(self._request_count)
+        else:
+            steps = self._steps_to_complete
+        self._request_count += 1
+        self._pending.append((request_id, inputs, steps))
 
     def step(self) -> list[RequestOutput]:
         finished: list[RequestOutput] = []
@@ -69,8 +85,8 @@ class MockLLMEngine:
 class MockLLM:
     """Minimal `LLM` replacement with `generate` and `llm_engine`."""
 
-    def __init__(self) -> None:
-        self.llm_engine = MockLLMEngine()
+    def __init__(self, steps_to_complete: int | Callable[[int], int] = 3) -> None:
+        self.llm_engine = MockLLMEngine(steps_to_complete)
         self._caption_idx = 0
 
     def generate(
@@ -129,7 +145,7 @@ class MockVllmPlugin(VllmPlugin):
             msg = "Request caption is None"
             raise ValueError(msg)
         inputs = MockVllmPlugin.make_refined_llm_input(request.caption, request.inputs, processor, refine_prompt)
-        return VllmCaptionRequest(request_id=request.request_id, inputs=inputs)
+        return VllmCaptionRequest(request_id=secrets.token_hex(8), inputs=inputs)
 
     @staticmethod
     def decode(vllm_output: RequestOutput) -> str:

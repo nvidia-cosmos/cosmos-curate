@@ -159,7 +159,7 @@ class QwenVL(ModelInterface):
         model_variant: str = "qwen",
         *,
         fp8: bool = True,
-        max_output_tokens: int = 512,
+        max_output_tokens: int = 8192,
         model_does_preprocess: bool = False,
         stage2_prompt_text: str | None = None,
         disable_mmcache: bool = False,

@@ -467,6 +467,9 @@ def _caption_no_inflight_batching(  # noqa: PLR0913
         for model_input, stage2_prompt in zip(model_inputs, stage2_prompts, strict=True)
     ]
 
+    # Map request_id -> original input index so we can return captions in input order
+    request_id_to_index = {r.request_id: i for i, r in enumerate(requests)}
+
     def _process_requests(requests: list[VllmCaptionRequest]) -> list[VllmCaptionRequest]:
         in_flight_requests: dict[str, VllmCaptionRequest] = {r.request_id: r for r in requests}
         outputs = vllm_generate(llm, sampling_params, requests, vllm_config.batch_size)
@@ -481,15 +484,24 @@ def _caption_no_inflight_batching(  # noqa: PLR0913
 
     # stage 1 captioning
     finished_s1 = _process_requests(requests)
-    finished = [r for r in finished_s1 if r.stage2_prompt is None]
-    needs_stage2 = [r for r in finished_s1 if r.stage2_prompt is not None]
+
+    results: dict[int, str] = {}
+    needs_stage2 = []
+    for r in finished_s1:
+        if r.stage2_prompt is None:
+            results[request_id_to_index[r.request_id]] = r.caption or "Unknown caption"
+        else:
+            needs_stage2.append(r)
 
     # stage 2 captioning
     refine_requests = [vllm_plugin.make_refined_llm_request(r, processor, r.stage2_prompt) for r in needs_stage2]
+    for orig_req, refined_req in zip(needs_stage2, refine_requests, strict=True):
+        request_id_to_index[refined_req.request_id] = request_id_to_index[orig_req.request_id]
 
-    finished += _process_requests(refine_requests)
+    for r in _process_requests(refine_requests):
+        results[request_id_to_index[r.request_id]] = r.caption or "Unknown caption"
 
-    return [request.caption or "Unknown caption" for request in finished]
+    return [results[i] for i in range(len(requests))]
 
 
 def _caption_inflight_batching(  # noqa: PLR0913
@@ -525,21 +537,26 @@ def _caption_inflight_batching(  # noqa: PLR0913
     vllm_plugin = _get_vllm_plugin(vllm_config.model_variant)
     request_q: Deque[VllmCaptionRequest] = deque()  # noqa: UP006, remove noqa when python 3.10 support is dropped
     in_flight_requests: dict[str, VllmCaptionRequest] = {}
-    captions: list[str] = []
+    results: dict[int, str] = {}
 
-    for model_input, stage2_prompt in zip(model_inputs, stage2_prompts, strict=True):
+    # Map request_id -> original input index so we can return captions in input order
+    request_id_to_index: dict[str, int] = {}
+
+    for idx, (model_input, stage2_prompt) in enumerate(zip(model_inputs, stage2_prompts, strict=True)):
+        request_id = secrets.token_hex(8)
         request_q.append(
             VllmCaptionRequest(
-                request_id=secrets.token_hex(8),
+                request_id=request_id,
                 inputs=model_input,
                 stage2_prompt=stage2_prompt,
             )
         )
+        request_id_to_index[request_id] = idx
 
     total_requests = len(request_q)
     engine = llm.llm_engine
 
-    while len(captions) < total_requests:
+    while len(results) < total_requests:
         if request_q and (max_inflight_requests == 0 or len(in_flight_requests) < max_inflight_requests):
             request = request_q.popleft()
             # engine.add_request can accept a dictionary, but does not advertise this in its type hints
@@ -558,14 +575,21 @@ def _caption_inflight_batching(  # noqa: PLR0913
         for request in finished:
             del in_flight_requests[request.request_id]
 
-        captions += [r.caption or "Unknown caption" for r in finished if r.stage2_prompt is None]
+        for r in finished:
+            if r.stage2_prompt is None:
+                original_idx = request_id_to_index[r.request_id]
+                results[original_idx] = r.caption or "Unknown caption"
+
         needs_stage2 = [r for r in finished if r.stage2_prompt is not None]
 
         for request in needs_stage2:
+            original_idx = request_id_to_index[request.request_id]
             refined_request = vllm_plugin.make_refined_llm_request(request, processor, request.stage2_prompt)
             request_q.append(refined_request)
+            # Propagate the original index to the refined request's new request_id
+            request_id_to_index[refined_request.request_id] = original_idx
 
-    return captions
+    return [results[i] for i in range(total_requests)]
 
 
 def vllm_caption(  # noqa: PLR0913

@@ -65,7 +65,7 @@ _WINDOW_VARIANT_OVERRIDES: dict[str, dict[str, Any]] = {
 
 _BASE_VLLM_CONFIG: dict[str, Any] = {
     "fp8": False,
-    "max_output_tokens": 512,
+    "max_output_tokens": 8192,
     "preprocess": False,
     "disable_mmcache": False,
     "num_cpus_for_prepare": 4.0,

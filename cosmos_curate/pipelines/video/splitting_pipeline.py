@@ -460,13 +460,8 @@ def _assemble_stages(  # noqa: C901, PLR0912, PLR0915
             msg = f"Unsupported captioning algorithm: {caption_algo}"
             raise RuntimeError(msg)
 
-        # Use vllm_sampling_max_tokens if provided, otherwise fall back to captioning_max_output_tokens
-        max_tokens = (
-            args.vllm_sampling_max_tokens
-            if args.vllm_sampling_max_tokens is not None
-            else args.captioning_max_output_tokens
-        )
-        if max_tokens < 0:
+        max_tokens: int | None = args.captioning_max_output_tokens
+        if max_tokens is not None and max_tokens < 0:
             max_tokens = None
 
         sampling_config = VllmSamplingConfig(
@@ -1494,12 +1489,6 @@ def _setup_parser(parser: argparse.ArgumentParser) -> None:  # noqa: PLR0915
         type=float,
         default=sampling_defaults["min_p"],
         help="Minimum probability threshold for vLLM sampling.",
-    )
-    parser.add_argument(
-        "--vllm-sampling-max-tokens",
-        type=int,
-        default=sampling_defaults["max_tokens"],
-        help="Maximum number of tokens to generate (-1 = no limit).",
     )
     # Debug arguments for saving vLLM input frames
     parser.add_argument(
