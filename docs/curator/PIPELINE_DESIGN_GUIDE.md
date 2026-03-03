@@ -243,11 +243,8 @@ A `CurationPhase` declares:
 
 ```python
 from cosmos_curate.core.interfaces.phase_interface import PipelineBuilder
-from cosmos_curate.pipelines.video.video_curation_phases import (
-    IngestConfig, IngestPhase,
-    TransNetV2SplitConfig, TransNetV2SplitPhase,
-    TranscodeConfig, TranscodePhase,
-)
+from cosmos_curate.pipelines.video.clipping.phases import TranscodeConfig, TranscodePhase, TransNetV2SplitConfig, TransNetV2SplitPhase
+from cosmos_curate.pipelines.video.read_write.phases import IngestConfig, IngestPhase
 
 builder = (
     PipelineBuilder()
@@ -262,7 +259,7 @@ run_pipeline(input_tasks, stages)
 
 If you add a phase whose `requires` tokens are not satisfied by any prior phase, the builder raises a `ValueError` with a descriptive message before any data flows. The resulting stage list is structurally identical to a manually assembled list — the builder is a construction-time tool only.
 
-See `cosmos_curate/core/interfaces/phase_interface.py` for the base classes and `cosmos_curate/pipelines/video/video_curation_phases.py` for the concrete phase implementations.
+See `cosmos_curate/core/interfaces/phase_interface.py` for the base classes. Phase configs and implementations live alongside the stages they wrap — for example `cosmos_curate/pipelines/video/captioning/phases.py`, `clipping/phases.py`, `embedding/phases.py`, etc.
 
 ### Writing Artifacts in Multi-Node Clusters
 

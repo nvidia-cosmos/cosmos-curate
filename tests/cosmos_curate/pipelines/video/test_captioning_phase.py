@@ -19,12 +19,12 @@ import pytest
 
 from cosmos_curate.pipelines.video.captioning.gemini_caption_stage import ApiPrepStage
 from cosmos_curate.pipelines.video.captioning.openai_caption_stage import OpenAICaptionStage
-from cosmos_curate.pipelines.video.utils.data_model import WindowConfig
-from cosmos_curate.pipelines.video.video_curation_phases import (
+from cosmos_curate.pipelines.video.captioning.phases import (
     CaptioningConfig,
     CaptioningPhase,
     OpenAIConfig,
 )
+from cosmos_curate.pipelines.video.utils.data_model import WindowConfig
 
 
 def _default_openai_config() -> CaptioningConfig:

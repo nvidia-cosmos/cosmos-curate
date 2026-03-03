@@ -51,10 +51,39 @@ from cosmos_curate.core.utils.storage.storage_utils import (
 from cosmos_curate.pipelines.pipeline_args import (
     add_common_args,
 )
+from cosmos_curate.pipelines.video.captioning.phases import (
+    VLLM_CAPTION_ALGOS,
+    CaptioningConfig,
+    CaptioningPhase,
+    EnhanceCaptionConfig,
+    GeminiConfig,
+    OpenAIConfig,
+    T5Config,
+    T5Phase,
+)
+from cosmos_curate.pipelines.video.clipping.phases import (
+    FixedStrideSplitConfig,
+    FixedStrideSplitPhase,
+    FrameExtractionConfig,
+    FrameExtractionPhase,
+    TranscodeConfig,
+    TranscodePhase,
+    TransNetV2SplitConfig,
+    TransNetV2SplitPhase,
+)
+from cosmos_curate.pipelines.video.embedding.phases import EmbeddingConfig, EmbeddingPhase
+from cosmos_curate.pipelines.video.filtering.aesthetics.phases import (
+    AestheticFilterConfig,
+    AestheticFilterPhase,
+    QwenFilterConfig,
+    QwenFilterPhase,
+)
+from cosmos_curate.pipelines.video.filtering.motion.phases import MotionFilterConfig, MotionFilterPhase
 from cosmos_curate.pipelines.video.read_write.metadata_writer_stage import (
     ClipWriterStage,
     consolidate_lance_fragments,
 )
+from cosmos_curate.pipelines.video.read_write.phases import IngestConfig, IngestPhase, OutputConfig, OutputPhase
 from cosmos_curate.pipelines.video.read_write.summary_writers import (
     write_split_summary,
 )
@@ -63,36 +92,6 @@ from cosmos_curate.pipelines.video.utils.video_pipe_input import (
     extract_multi_cam_split_tasks,
     extract_single_cam_split_tasks,
     format_session_videos_tree,
-)
-from cosmos_curate.pipelines.video.video_curation_phases import (
-    VLLM_CAPTION_ALGOS,
-    AestheticFilterConfig,
-    AestheticFilterPhase,
-    CaptioningConfig,
-    CaptioningPhase,
-    EmbeddingConfig,
-    EmbeddingPhase,
-    EnhanceCaptionConfig,
-    FixedStrideSplitConfig,
-    FixedStrideSplitPhase,
-    FrameExtractionConfig,
-    FrameExtractionPhase,
-    GeminiConfig,
-    IngestConfig,
-    IngestPhase,
-    MotionFilterConfig,
-    MotionFilterPhase,
-    OpenAIConfig,
-    OutputConfig,
-    OutputPhase,
-    QwenFilterConfig,
-    QwenFilterPhase,
-    T5Config,
-    T5Phase,
-    TranscodeConfig,
-    TranscodePhase,
-    TransNetV2SplitConfig,
-    TransNetV2SplitPhase,
 )
 
 QWEN2_CAPTION_ALGOS = {"qwen"}
