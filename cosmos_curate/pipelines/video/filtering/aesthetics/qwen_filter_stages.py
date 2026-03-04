@@ -17,7 +17,6 @@
 import json
 import re
 from collections.abc import Iterable
-from itertools import zip_longest
 
 import nvtx  # type: ignore[import-untyped]
 from loguru import logger
@@ -251,7 +250,7 @@ class QwenInputPreparationStageFiltering(CuratorStage):
                     clip.errors["encoded_data"] = "empty"
                     continue
                 with self._timer.time_process():
-                    for window_bytes, window_frames, window_frame_info in zip_longest(
+                    for window_bytes, window_frames, window_frame_info in zip(
                         *windowing_utils.split_video_into_windows(
                             data,
                             window_size=self._window_size,
@@ -262,6 +261,7 @@ class QwenInputPreparationStageFiltering(CuratorStage):
                             return_bytes=self._generate_previews,
                             num_threads=max(int(self.resources.cpus), 1),
                         ),
+                        strict=True,
                     ):
                         prompt = _get_prompt(
                             self._prompt_variant,

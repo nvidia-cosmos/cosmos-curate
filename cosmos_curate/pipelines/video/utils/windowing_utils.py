@@ -102,11 +102,16 @@ def split_video_into_windows(  # noqa: PLR0913
     target_bit_rate: str = f"{DEFAULT_TRANSCODE_BITRATE_M}M",
     return_video_frames: bool = True,
     num_threads: int = 1,
-) -> tuple[list[bytes], list[torch.Tensor | None], list[WindowFrameInfo]]:
+) -> tuple[list[bytes | None], list[torch.Tensor | None], list[WindowFrameInfo]]:
     """Calculate windows and return video inputs for the Qwen language model from input clips.
 
     Processes video to determine the windows for a clip, decode in one shot and return processed frames
     for each window in a format suitable for consumption by the Qwen model.
+
+    All three returned lists are guaranteed to have the same length.  When
+    ``return_bytes`` or ``return_video_frames`` is ``False``, the
+    corresponding list is padded with ``None`` so that callers can safely
+    ``zip`` the results without length checks.
 
     Args:
         mp4_bytes: input video in bytes
@@ -123,10 +128,10 @@ def split_video_into_windows(  # noqa: PLR0913
         num_threads: number of threads
 
     Returns:
-        Tuple containing:
-            - "window_mp4_bytes": mp4 bytes corresponding to each window - only used when Preview stage is enabled
-            - "window_frames": Decoded and per-window processed frames ready for use by Qwen model
-            - "window info": start and end frame indices for each window in a clip
+        Tuple containing three lists of equal length:
+            - "window_mp4_bytes": mp4 bytes per window (``None`` when *return_bytes* is False)
+            - "window_frames": Decoded per-window frames (``None`` when *return_video_frames* is False)
+            - "window_info": start and end frame indices for each window in a clip
 
     """
     with make_pipeline_named_temporary_file(sub_dir="windowing") as input_file:
@@ -135,7 +140,7 @@ def split_video_into_windows(  # noqa: PLR0913
         total_frames = get_frame_count(mp4_bytes)
         windows = compute_windows(total_frames, window_size, remainder_threshold)
         video_frames: list[torch.Tensor | None] = []
-        mp4_bytes_list: list[bytes] = []
+        mp4_bytes_list: list[bytes | None] = []
 
         if not windows:
             return mp4_bytes_list, video_frames, windows
@@ -159,33 +164,37 @@ def split_video_into_windows(  # noqa: PLR0913
         if return_bytes:
             if len(windows) == 1:
                 raw = mp4_bytes.tobytes() if not isinstance(mp4_bytes, bytes) else mp4_bytes
-                return [raw], video_frames, windows
+                mp4_bytes_list.append(raw)
+            else:
+                for window in windows:
+                    with make_pipeline_named_temporary_file(sub_dir="windowing") as tmp_file:
+                        command = [
+                            "ffmpeg",
+                            "-threads",
+                            str(num_threads),
+                            "-y",
+                            "-i",
+                            str(input_file),
+                            "-loglevel",
+                            "error",
+                            "-vf",
+                            f"select='between(n\\,{window.start}\\,{window.end})',setpts=PTS-STARTPTS",
+                            "-b:v",
+                            str(target_bit_rate),
+                            "-threads",
+                            str(num_threads),
+                            "-f",
+                            "mp4",
+                            "-an",
+                            str(tmp_file),
+                        ]
+                        subprocess.check_call(command)  # noqa: S603
+                        mp4_bytes_list.append(tmp_file.read_bytes())
 
-            for window in windows:
-                with make_pipeline_named_temporary_file(sub_dir="windowing") as tmp_file:
-                    # Use ffmpeg to split the file on the frames.
-                    command = [
-                        "ffmpeg",
-                        "-threads",
-                        str(num_threads),
-                        "-y",
-                        "-i",
-                        str(input_file),
-                        "-loglevel",
-                        "error",
-                        "-vf",
-                        f"select='between(n\\,{window.start}\\,{window.end})',setpts=PTS-STARTPTS",
-                        "-b:v",
-                        str(target_bit_rate),
-                        "-threads",
-                        str(num_threads),
-                        "-f",
-                        "mp4",
-                        "-an",
-                        str(tmp_file),
-                    ]
-                    subprocess.check_call(command)  # noqa: S603
-                    mp4_bytes_list.append(tmp_file.read_bytes())
+        n = len(windows)
+        video_frames.extend([None] * (n - len(video_frames)))
+        mp4_bytes_list.extend([None] * (n - len(mp4_bytes_list)))
+
         return mp4_bytes_list, video_frames, windows
 
 
@@ -234,10 +243,9 @@ def _make_windows_for_clip(  # noqa: PLR0913
         num_threads=num_decode_threads,
     )
 
-    for idx, window_frame_info in enumerate(window_infos):
-        window_frames_tensor = window_frames[idx] if idx < len(window_frames) else None
-        window_bytes = window_mp4_bytes[idx] if keep_mp4 and idx < len(window_mp4_bytes) else None
-
+    for window_bytes, window_frames_tensor, window_frame_info in zip(
+        window_mp4_bytes, window_frames, window_infos, strict=True
+    ):
         if return_frames and window_frames_tensor is None:
             logger.error(f"Window frames are None for window {window_frame_info.start} to {window_frame_info.end}")
             continue
