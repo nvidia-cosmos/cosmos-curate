@@ -1277,16 +1277,16 @@ dev = ["black (==22.12.0)", "flake8 (>=3.8.3)", "isort (==5.8.0)", "nbconvert (>
 
 [[package]]
 name = "cosmos-xenna"
-version = "0.1.8"
+version = "0.2.0"
 description = "A framework for building and running distributed, AI-powered data pipelines using Ray"
 optional = true
 python-versions = ">=3.9"
 groups = ["main"]
 markers = "extra == \"local\""
 files = [
-    {file = "cosmos_xenna-0.1.8-cp39-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:f64af8d5d440ab42cc32b98ab733925c79ae5eccac4570d1b2b4fa29dedc838a"},
-    {file = "cosmos_xenna-0.1.8-cp39-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:ccf4537f233543f05eb5af17c8559809c13ae1adb5067ded71f26f1c12f27587"},
-    {file = "cosmos_xenna-0.1.8.tar.gz", hash = "sha256:af00d5026835409e91c4d7cf8614dc5354e4edd6a54d9dbc24e308b8292640e1"},
+    {file = "cosmos_xenna-0.2.0-cp39-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:a225fc302a424bfdfb7e54dc5c115f97d732db08e673b8c9a165b83ec260c0bd"},
+    {file = "cosmos_xenna-0.2.0-cp39-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:d224c23139e98bad008c244e9f9a85685aca2f2413115d0177e9d80cbf388623"},
+    {file = "cosmos_xenna-0.2.0.tar.gz", hash = "sha256:49f44c9fac39d83b9d78e1dd14271b1bffd4e34924ed5db6409025e52a27ddc9"},
 ]
 
 [package.dependencies]
@@ -4632,6 +4632,9 @@ files = [
     {file = "nvidia_cudnn_frontend-1.18.0-cp313-cp313-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:5a6e2b7bd43705ffa4af3b187374fdd5e7d09fc228a4d65fc8b4b0a537a8e605"},
     {file = "nvidia_cudnn_frontend-1.18.0-cp313-cp313-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:c0544206b02cae9da4f044ca3fe7416b99e0c8a8052285dd3e5a8fc445d34f9c"},
     {file = "nvidia_cudnn_frontend-1.18.0-cp313-cp313-win_amd64.whl", hash = "sha256:7eefa5f10cc003df5f3593f82f1ee6c001fc3412bdc78430c751914dfceefd7f"},
+    {file = "nvidia_cudnn_frontend-1.18.0-cp314-cp314-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:b489da1b30f1d7da822b37b89cc4f68afd80e020eb57e4ab24921f8b57f6e946"},
+    {file = "nvidia_cudnn_frontend-1.18.0-cp314-cp314-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:37688c81a34ac590aff9de4c34d2968bab949411af707baa327616ebd4b34ae1"},
+    {file = "nvidia_cudnn_frontend-1.18.0-cp314-cp314-win_amd64.whl", hash = "sha256:5053b473fa74168b5fbf35934cd6187f88aa03b8447b9f2cd417332d5e5c9569"},
     {file = "nvidia_cudnn_frontend-1.18.0-cp39-cp39-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:8e019ec7e693e6d38acd2c5a50b1834726bd4213ec8b5eb18d8f6f3ae83a80fb"},
     {file = "nvidia_cudnn_frontend-1.18.0-cp39-cp39-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:bd9049e397e3bbb81ceeb6e384e60fea08c5c7cfa07029e7509ec98002d3064f"},
     {file = "nvidia_cudnn_frontend-1.18.0-cp39-cp39-win_amd64.whl", hash = "sha256:e696a29a0d3c171ac81ad4374017771cf4c17081838a2115bde4c703fa9751c6"},
@@ -11112,4 +11115,4 @@ local = ["Pillow", "aiofiles", "astral", "attrs", "av", "awscli", "awscli_plugin
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.12,<3.13"
-content-hash = "479e5a8918d5ebdc5dd511a100ed4317e056932b89ec2beb7d38ec08f4253d62"
+content-hash = "c91d0a526bda2057f18a0af585d1f56f18d8b5bb0839fd79931bcdd23ce9ea38"
