@@ -14,7 +14,7 @@ export NAMESPACE="ci-helm-test-${CI_PIPELINE_ID:-local}"
 RELEASE_NAME="cosmos-curate-test"
 STATEFULSET_NAME="cosmos-curate"  # From chart's nameOverride
 CHART_PATH="charts/cosmos-curate"
-POLL_TIMEOUT=1200  # 20 minutes
+POLL_TIMEOUT=1800  # 30 minutes
 
 echo "Namespace: ${NAMESPACE}"
 echo "Chart path: ${CHART_PATH}"

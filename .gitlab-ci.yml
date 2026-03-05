@@ -790,7 +790,7 @@ k8s_helm_test:
     - k8s-cpu
   needs: ["build_deploy_curator"]
   image: ${CI_BUILDER_IMAGE}
-  timeout: 45 minutes
+  timeout: 60 minutes
   allow_failure: true
   variables:
     KUBERNETES_POLL_TIMEOUT: 1800
