@@ -389,7 +389,6 @@ class QwenInputPreparationStage(CuratorStage):
                         qwen_llm_inputs = self._qwen_utils.generate_llm_inputs(
                             prompt=prompt,
                             video_inputs=video_frames[frame_count],
-                            override_text_prompt=(len(self._prompts.keys()) > 1),
                         )
 
                         caption_window.model_input[prompt_variant] = qwen_llm_inputs

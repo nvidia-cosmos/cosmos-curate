@@ -695,7 +695,7 @@ class ClipWriterStage(CuratorStage):
 
         return clip_stats
 
-    def _make_clip_metadata(  # noqa: C901
+    def _make_clip_metadata(  # noqa: C901, PLR0912
         self, clip: Clip, video_metadata: VideoMetadata, *, filtered: bool = False
     ) -> dict[str, Any]:
         data: dict[str, Any] = {
@@ -730,6 +730,10 @@ class ClipWriterStage(CuratorStage):
             }
         if clip.aesthetic_score is not None:
             data["aesthetic_score"] = clip.aesthetic_score
+        if clip.qwen_type_classification is not None:
+            data["qwen_type_classification"] = clip.qwen_type_classification
+        if clip.qwen_rejection_stage is not None:
+            data["qwen_rejection_stage"] = clip.qwen_rejection_stage
         if len(clip.errors) > 0:
             data["errors"] = list(clip.errors)
         has_caption = False
@@ -740,7 +744,8 @@ class ClipWriterStage(CuratorStage):
                 "start_frame": window.start_frame,
                 "end_frame": window.end_frame,
             }
-            curr_filter_window["qwen_rejection_reasons"] = window.caption["qwen_rejection_reasons"]
+            if "qwen_rejection_reasons" in window.caption:
+                curr_filter_window["qwen_rejection_reasons"] = window.caption["qwen_rejection_reasons"]
             data["filtered_windows"].append(curr_filter_window)
         for window in clip.windows:
             curr_window: dict[str, Any] = {
@@ -850,6 +855,8 @@ class ClipWriterStage(CuratorStage):
             "clip_chunk_index": video.clip_chunk_index,
             "num_clips_filtered_by_motion": video.clip_stats.num_filtered_by_motion,
             "num_clips_filtered_by_aesthetic": video.clip_stats.num_filtered_by_aesthetic,
+            "num_clips_filtered_by_qwen_classifier": video.clip_stats.num_filtered_by_qwen_classifier,
+            "num_clips_filtered_by_qwen_semantic": video.clip_stats.num_filtered_by_qwen_semantic,
             "num_clips_passed": video.clip_stats.num_passed,
             "num_clips_transcoded": video.clip_stats.num_transcoded,
             "num_clips_with_embeddings": video.clip_stats.num_with_embeddings,

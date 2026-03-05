@@ -64,8 +64,8 @@ class QwenUtils:
 
         """
         self.weight_file = model_utils.get_local_dir_for_weights_name(_QWEN_VARIANTS_INFO[model_variant])
-        self.text_prompt = None
         self.processor: AutoProcessor | None = None
+        self._prompt_template_cache: dict[str, str] = {}
 
     def setup(self) -> None:
         """Set up the Qwen model.
@@ -109,20 +109,19 @@ class QwenUtils:
         self,
         prompt: str,
         video_inputs: torch.Tensor | None = None,
-        *,
-        override_text_prompt: bool = False,
     ) -> dict[str, Any]:
         """Generate inputs for the Qwen language model from video and text data.
 
         Processes video and text inputs to create the input for the Qwen model. It handles both video and
         image inputs, decoding video and applying preprocessing if needed, and creates a structured
-        input dictionary containing the processed prompt and multimodal data.
+        input dictionary containing the processed prompt and multimodal data. The applied chat template
+        is cached per prompt string so repeated calls with the same prompt (e.g. captioning) reuse it;
+        different prompts (e.g. type then filter in combined prep) each get their own template.
 
         Args:
             prompt: Text prompt to be included with the input.
             video_inputs: Pre-processed video inputs. If None, and video data is to be passed to
                           the model, then video cannot be None.
-            override_text_prompt: whether the text prompt should be overridden
 
         Returns:
             dict containing:
@@ -134,19 +133,22 @@ class QwenUtils:
             error_msg = "No input frames provided, cannot call process_vision_info"
             raise ValueError(error_msg)
 
-        messages = self.create_message(prompt)
-        if override_text_prompt or self.text_prompt is None:
+        if prompt in self._prompt_template_cache:
+            text_prompt = self._prompt_template_cache[prompt]
+        else:
+            messages = self.create_message(prompt)
             assert self.processor is not None
-            self.text_prompt = self.processor.apply_chat_template(  # type: ignore[attr-defined]
+            text_prompt = self.processor.apply_chat_template(  # type: ignore[attr-defined]
                 messages,
                 tokenize=False,
                 add_generation_prompt=True,
             )
+            self._prompt_template_cache[prompt] = text_prompt
 
         mm_data = {}
         mm_data["video"] = [video_inputs]
         return {
-            "prompt": self.text_prompt,
+            "prompt": text_prompt,
             "multi_modal_data": mm_data,
         }
 

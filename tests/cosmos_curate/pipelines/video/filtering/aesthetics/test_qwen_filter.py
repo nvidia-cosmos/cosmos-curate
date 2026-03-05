@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Test the QWEN result."""
+"""Test the QWEN filter and classifier stages."""
 
 import pathlib
 import uuid
@@ -25,11 +25,16 @@ from cosmos_curate.core.interfaces.runner_interface import RunnerInterface
 from cosmos_curate.pipelines.video.clipping.clip_extraction_stages import (  # type: ignore[import-untyped]
     ClipTranscodingStage,
 )
+from cosmos_curate.pipelines.video.filtering.aesthetics.qwen_filter_prompts import VIDEO_TYPE_LABELS
 from cosmos_curate.pipelines.video.filtering.aesthetics.qwen_filter_stages import (  # type: ignore[import-untyped]
     QwenFilteringStage,
     QwenInputPreparationStageFiltering,
+    QwenVideoClassifierStage,
 )
 from cosmos_curate.pipelines.video.utils.data_model import Clip, SplitPipeTask, Video  # type: ignore[import-untyped]
+
+# Fill in after running the classifier GPU test manually to lock in expected classifications.
+EXPECTED_CLASSIFICATIONS: list[str] = ["aerial_footage", "movie/film_scene", "nature_environment"]
 
 
 @pytest.fixture
@@ -79,3 +84,51 @@ def test_generate_embedding(sample_filtering_task: SplitPipeTask, sequential_run
     for clip in passing_clips + failing_clips:
         assert len(clip.filter_windows) > 0
         assert "qwen_rejection_reasons" in clip.filter_windows[0].caption
+
+
+@pytest.mark.env("unified")
+def test_qwen_video_classifier_classifications(
+    sample_filtering_task: SplitPipeTask, sequential_runner: RunnerInterface
+) -> None:
+    """Test that the Qwen video classifier sets qwen_type_classification on each clip.
+
+    Run with: cosmos-curate local launch --curator-path . -- pixi run -e unified pytest -m env
+        tests/cosmos_curate/pipelines/video/filtering/aesthetics/test_qwen_filter.py
+        -k test_qwen_video_classifier_classifications -v
+
+    When EXPECTED_CLASSIFICATIONS is empty, we only assert structure (classification is a list
+    of valid VIDEO_TYPE_LABELS). Fill in EXPECTED_CLASSIFICATIONS after a manual run to lock
+    in the expected result for the test clip.
+    """
+    stages = [
+        ClipTranscodingStage(encoder="libopenh264"),
+        QwenInputPreparationStageFiltering(
+            model_variant="qwen",
+            prompt_variant="type",
+            filter_categories=None,
+            sampling_fps=2.0,
+        ),
+        QwenVideoClassifierStage(
+            model_variant="qwen",
+            verbose=True,
+        ),
+    ]
+    tasks = run_pipeline([sample_filtering_task], stages, runner=sequential_runner)
+
+    assert tasks is not None
+    assert len(tasks) > 0
+
+    all_clips = tasks[0].video.clips + tasks[0].video.filtered_clips
+    assert len(all_clips) >= 1
+
+    for clip in all_clips:
+        assert clip.qwen_type_classification is not None
+        assert isinstance(clip.qwen_type_classification, list)
+        for label in clip.qwen_type_classification:
+            assert label in VIDEO_TYPE_LABELS, f"{label!r} not in VIDEO_TYPE_LABELS"
+
+    first_clip = tasks[0].video.clips[0] if tasks[0].video.clips else all_clips[0]
+    actual = sorted(first_clip.qwen_type_classification or [])
+
+    if EXPECTED_CLASSIFICATIONS:
+        assert actual == sorted(EXPECTED_CLASSIFICATIONS)

@@ -62,6 +62,8 @@ def make_summary_metrics(
         "pipeline_run_time",
         "total_num_clips_filtered_by_motion",
         "total_num_clips_filtered_by_aesthetic",
+        "total_num_clips_filtered_by_qwen_classifier",
+        "total_num_clips_filtered_by_qwen_semantic",
         "total_num_clips_passed",
         "total_num_clips_transcoded",
         "total_num_clips_with_embeddings",

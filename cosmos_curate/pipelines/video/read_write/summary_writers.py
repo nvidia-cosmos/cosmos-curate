@@ -152,6 +152,8 @@ def _write_split_result_summary(  # noqa: PLR0913
     clip_stats_keys = [
         "num_clips_filtered_by_motion",
         "num_clips_filtered_by_aesthetic",
+        "num_clips_filtered_by_qwen_classifier",
+        "num_clips_filtered_by_qwen_semantic",
         "num_clips_passed",
         "num_clips_transcoded",
         "num_clips_with_embeddings",

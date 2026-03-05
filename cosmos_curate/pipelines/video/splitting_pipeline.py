@@ -75,8 +75,9 @@ from cosmos_curate.pipelines.video.embedding.phases import EmbeddingConfig, Embe
 from cosmos_curate.pipelines.video.filtering.aesthetics.phases import (
     AestheticFilterConfig,
     AestheticFilterPhase,
+    QwenFilterClassifierPhase,
     QwenFilterConfig,
-    QwenFilterPhase,
+    QwenVideoClassifierConfig,
 )
 from cosmos_curate.pipelines.video.filtering.motion.phases import MotionFilterConfig, MotionFilterPhase
 from cosmos_curate.pipelines.video.read_write.metadata_writer_stage import (
@@ -405,29 +406,57 @@ def _assemble_stages(  # noqa: C901, PLR0912, PLR0915
             )
         )
 
-    # --- Qwen content filter (optional) ---
-    if args.qwen_filter != "disable":
+    # --- Qwen semantic filter and/or video classifier (optional) ---
+    qwen_filter_cfg = (
+        QwenFilterConfig(
+            score_only=args.qwen_filter == "score-only",
+            model_variant=args.qwen_filter_model_variant,
+            filter_categories=args.qwen_filter_categories,
+            prompt_variant=args.qwen_filter_prompt_variant,
+            rejection_threshold=args.qwen_filter_rejection_threshold,
+            batch_size=args.qwen_filter_batch_size,
+            fp8_enable=args.qwen_filter_fp8_enable,
+            max_output_tokens=args.qwen_filter_max_output_tokens,
+            use_mmcache=args.qwen_use_vllm_mmcache,
+            sampling_fps=args.captioning_sampling_fps,
+            window_size=args.captioning_window_size,
+            remainder_threshold=args.captioning_remainder_threshold,
+            preprocess_dtype=args.qwen_preprocess_dtype,
+            model_does_preprocess=args.qwen_model_does_preprocess,
+            generate_previews=args.generate_previews,
+            verbose=args.verbose,
+            perf_profile=args.perf_profile,
+        )
+        if args.qwen_filter != "disable"
+        else None
+    )
+    qwen_classifier_cfg = (
+        QwenVideoClassifierConfig(
+            model_variant=args.qwen_video_classifier_model_variant,
+            rejection_threshold=args.qwen_video_classifier_rejection_threshold,
+            batch_size=args.qwen_video_classifier_batch_size,
+            fp8_enable=args.qwen_video_classifier_fp8_enable,
+            max_output_tokens=args.qwen_video_classifier_max_output_tokens,
+            use_mmcache=args.qwen_use_vllm_mmcache,
+            sampling_fps=args.captioning_sampling_fps,
+            window_size=args.captioning_window_size,
+            remainder_threshold=args.captioning_remainder_threshold,
+            preprocess_dtype=args.qwen_preprocess_dtype,
+            model_does_preprocess=args.qwen_model_does_preprocess,
+            generate_previews=args.generate_previews,
+            verbose=args.verbose,
+            perf_profile=args.perf_profile,
+            type_allow=",".join(args.qwen_video_classifier_allow) if args.qwen_video_classifier_allow else None,
+            type_block=",".join(args.qwen_video_classifier_block) if args.qwen_video_classifier_block else None,
+        )
+        if args.qwen_video_classifier != "disable"
+        else None
+    )
+    if qwen_filter_cfg is not None or qwen_classifier_cfg is not None:
         builder.add_phase(
-            QwenFilterPhase(
-                QwenFilterConfig(
-                    score_only=args.qwen_filter == "score-only",
-                    model_variant=args.qwen_filter_model_variant,
-                    filter_categories=args.qwen_filter_categories,
-                    prompt_variant=args.qwen_filter_prompt_variant,
-                    rejection_threshold=args.qwen_filter_rejection_threshold,
-                    batch_size=args.qwen_filter_batch_size,
-                    fp8_enable=args.qwen_filter_fp8_enable,
-                    max_output_tokens=args.qwen_filter_max_output_tokens,
-                    use_mmcache=args.qwen_use_vllm_mmcache,
-                    sampling_fps=args.captioning_sampling_fps,
-                    window_size=args.captioning_window_size,
-                    remainder_threshold=args.captioning_remainder_threshold,
-                    preprocess_dtype=args.qwen_preprocess_dtype,
-                    model_does_preprocess=args.qwen_model_does_preprocess,
-                    generate_previews=args.generate_previews,
-                    verbose=args.verbose,
-                    perf_profile=args.perf_profile,
-                )
+            QwenFilterClassifierPhase(
+                filter_config=qwen_filter_cfg,
+                classifier_config=qwen_classifier_cfg,
             )
         )
 
@@ -1102,13 +1131,16 @@ def _setup_parser(parser: argparse.ArgumentParser) -> None:  # noqa: PLR0915
         choices=[
             "default",
         ],
-        help="Prompt variant for Qwen filtering stage.",
+        help="Prompt variant for Qwen semantic filtering stage.",
     )
     parser.add_argument(
         "--qwen-filter-categories",
         type=str,
         default=None,
-        help="Comma-separated list of categories to filter out. If not provided, default categories will be filtered.",
+        help=(
+            "Comma-separated list of categories to filter out (semantic mode). "
+            "If not provided, default categories will be used."
+        ),
     )
     parser.add_argument(
         "--qwen-filter-rejection-threshold",
@@ -1139,6 +1171,76 @@ def _setup_parser(parser: argparse.ArgumentParser) -> None:  # noqa: PLR0915
         type=int,
         default=512,
         help="Max number of output tokens for Qwen filtering model.",
+    )
+    parser.add_argument(
+        "--qwen-video-classifier",
+        dest="qwen_video_classifier",
+        choices=["enable", "disable"],
+        default="disable",
+        help=(
+            "Whether to enable Qwen-based video classifier (27 categories, imaginaire VideoTypeClassifier taxonomy). "
+            "enable: filter by type allow/block lists; disable: do not run. "
+            "Set --qwen-video-classifier-allow and/or --qwen-video-classifier-block."
+        ),
+    )
+    parser.add_argument(
+        "--qwen-video-classifier-allow",
+        dest="qwen_video_classifier_allow",
+        type=str,
+        action="append",
+        default=None,
+        metavar="TYPE",
+        help=(
+            "Video type(s) to keep (only clips with at least one window matching any pass). "
+            "Types use underscores, no spaces (e.g. egocentric_video/walking_POV, nature_environment). May be repeated."
+        ),
+    )
+    parser.add_argument(
+        "--qwen-video-classifier-block",
+        dest="qwen_video_classifier_block",
+        type=str,
+        action="append",
+        default=None,
+        metavar="TYPE",
+        help=(
+            "Video type(s) to reject (clips with too many windows matching any are filtered out). "
+            "Types use underscores, no spaces. May be repeated."
+        ),
+    )
+    parser.add_argument(
+        "--qwen-video-classifier-rejection-threshold",
+        dest="qwen_video_classifier_rejection_threshold",
+        type=float,
+        default=0.5,
+        help="Block ratio threshold for Qwen video classifier (default 0.5).",
+    )
+    parser.add_argument(
+        "--qwen-video-classifier-batch-size",
+        dest="qwen_video_classifier_batch_size",
+        type=int,
+        default=16,
+        help="Batch size for Qwen video classifier stage.",
+    )
+    parser.add_argument(
+        "--qwen-video-classifier-model-variant",
+        dest="qwen_video_classifier_model_variant",
+        type=str,
+        default="qwen",
+        help="Model variant for Qwen video classifier stage.",
+    )
+    parser.add_argument(
+        "--qwen-video-classifier-fp8-enable",
+        dest="qwen_video_classifier_fp8_enable",
+        action="store_true",
+        default=False,
+        help="Whether to use FP8 weights for Qwen video classifier model.",
+    )
+    parser.add_argument(
+        "--qwen-video-classifier-max-output-tokens",
+        dest="qwen_video_classifier_max_output_tokens",
+        type=int,
+        default=512,
+        help="Max number of output tokens for Qwen video classifier model.",
     )
     parser.add_argument(
         "--embedding-gpus-per-worker",

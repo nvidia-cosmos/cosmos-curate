@@ -30,127 +30,13 @@ from cosmos_curate.core.utils.infra.gpu_start_helper import (
 )
 from cosmos_curate.core.utils.infra.performance_utils import StageTimer
 from cosmos_curate.models import qwen_vl
+from cosmos_curate.pipelines.video.filtering.aesthetics.qwen_filter_prompts import (
+    FILTER_CRITERIA,
+    VIDEO_TYPE_LABELS,
+    get_qwen_filter_prompt,
+)
 from cosmos_curate.pipelines.video.utils import windowing_utils
 from cosmos_curate.pipelines.video.utils.data_model import SplitPipeTask, Video, Window
-
-"""
-Custom prompts are supported by passing a comma separated list of categories to the --qwen-filter-categories flag.
-If the prompt is not a comma separated list, the default prompt will be used.
-As an example, if the user passes --qwen-filter-categories flag "blue car, red car, green car", the prompt will be:
-
-Can you answer the following questions about this video:
-Is there blue car in the video?
-Is there red car in the video?
-Is there green car in the video?
-Answer format:
-{
-"blue car": "yes" or "no",
-"red car": "yes" or "no",
-"green car": "yes" or "no"
-}
-"""
-
-_PROMPTS = {
-    "custom": """
-    Can you answer the following questions about this video:
-    """,
-    "default": """Can you answer the following questions about this video:
-        1. Is this a slideshow (e.g., only showing static images, animated text / image, etc.)
-        or a video with slide transitions?
-        2. Is this a synthetic video (e.g., screen recording, motion graphics, AI-generated video,
-        stop motion, slideshow, etc.)
-        as opposed to a video captured by an optical camera sensor?
-        3. Does this video have visual filters (e.g., editing properties
-        like grain, noise, saturation, color, aliasing, simulated weather effect, etc.)?
-        4. Does this video have text overlaid in post-production (e.g., waterwark, subtitles, logo, graphics, etc.)?
-        Text that is part of the original video content is not considered as post-production text.
-        5. Is this video a video in video (e.g., video overlay/collage, etc.)?
-        6. Does this video have bad photographic artifacts(e.g., over/under exposure, lens flare, poor focus, etc.)?
-        7. Does this video have distorted view (e.g., fisheye effect form wide field of view)?
-        8. Is the video rotated to an uncommon view?
-        9. Does this video have low resolution or is it blurry for all or some of the frames?
-        10. Does this video contain any blurred or pixelated region
-        (e.g., on specific human faces or objects, background, logo region, etc.)?
-        11. Does this video mainly involve camera movement and little scene dynamics?
-        12. Does this video contain abrupt / very large camera motion or camera shake (e.g., in some
-        frames the camera is moving or rotated so fast that you cannot see clearly what's happening).
-        13. Does this video involve fast zoom in or zoom out of the camera?
-        14. Does this video have unnatural speed (e.g., slow motion, time lapse, frame skipping, etc.)?
-        Answer format:
-        {
-        "slideshow": "yes" or "no",
-        "synthetic video": "yes" or "no",
-        "visual filter": "yes" or "no",
-        "post-production text": "yes" or "no",
-        "video in video": "yes" or "no",
-        "photographic artifacts": "yes" or "no",
-        "distorted view": "yes" or "no",
-        "rotated view": "yes" or "no",
-        "low resolution": "yes" or "no",
-        "blurred region": "yes" or "no",
-        "little scene dynamics": "yes" or "no",
-        "abrupt camera motion": "yes" or "no",
-        "fast zoom": "yes" or "no",
-        "unnatural speed": "yes" or "no"
-}""",
-}
-
-"""
-The default filter criteria are listed below.
-When using a custom prompt with "--qwen-filter-categories" the criteria will be generated automatically.
-If you wish to create and save a longer custom prompt above,
-add the criteria list to the _FILTER_CRITERIA dictionary below.
-Ensure the name of the custom prompt matches the name of the created criteria list.
-"""
-
-_FILTER_CRITERIA = {
-    "default": [
-        "slideshow",
-        "synthetic video",
-        "visual filter",
-        "post-production text",
-        "video in video",
-        "photographic artifacts",
-        "distorted view",
-        "rotated view",
-        "low resolution",
-        "blurred region",
-        "abrupt camera motion",
-        "fast zoom",
-        "unnatural speed",
-    ],
-}
-
-
-def _get_prompt(
-    prompt_variant: str,
-    filter_categories: str | None,
-    *,
-    verbose: bool = False,
-) -> str:
-    """Get the filtering prompt for Qwen model."""
-    if filter_categories is not None:
-        try:
-            categories = filter_categories.split(",")
-            prompt = _PROMPTS["custom"]
-            for category in categories:
-                prompt += f"Is there {category} in the video?\n"
-            prompt += "\nAnswer format: {\n"
-            for i, category in enumerate(categories):
-                comma = "," if i < len(categories) - 1 else ""  # No comma for last item
-                prompt += f""""{category}": "yes" or "no"{comma}\n"""
-            prompt += "}"
-        except AttributeError:
-            logger.warning(f"Prompt text is not a comma separated list: {filter_categories}")
-            prompt = _PROMPTS["default"]
-    else:
-        if prompt_variant not in _PROMPTS:
-            error_msg = f"Invalid prompt variant: {prompt_variant}"
-            raise ValueError(error_msg)
-        prompt = _PROMPTS[prompt_variant]
-    if verbose:
-        logger.debug(f"Filtering prompt: {prompt}")
-    return prompt
 
 
 class QwenInputPreparationStageFiltering(CuratorStage):
@@ -174,12 +60,13 @@ class QwenInputPreparationStageFiltering(CuratorStage):
         generate_previews: bool = True,
         verbose: bool = False,
         log_stats: bool = False,
+        extra_outputs: (list[tuple[str, str] | tuple[str, str, str | None]] | None) = None,
     ) -> None:
         """Initialize the Qwen input preparation stage.
 
         Args:
-            model_variant: Name of the model variant to use.
-            prompt_variant: Type of prompt to use.
+            model_variant: Name of the model variant (for QwenUtils and key for main output in model_input).
+            prompt_variant: Type of prompt to use for the main output.
             filter_categories: Custom prompt categories as a list if provided.
             sampling_fps: Frames per second for sampling.
             window_size: Size of each window in frames.
@@ -189,6 +76,11 @@ class QwenInputPreparationStageFiltering(CuratorStage):
             generate_previews: Whether to generate previews.
             verbose: Whether to print verbose logs.
             log_stats: Whether to log performance statistics.
+            extra_outputs: Optional list of (prompt_variant, output_key) or
+                (prompt_variant, output_key, filter_categories_override). All keys are
+                stored in the same Window.model_input so multiple stages (e.g. filter +
+                classifier) can share one preparation. When the third element is present
+                it is used as filter_categories for that output's prompt.
 
         """
         self._timer = StageTimer(self)
@@ -204,6 +96,7 @@ class QwenInputPreparationStageFiltering(CuratorStage):
         self._model_does_preprocess = model_does_preprocess
         self._generate_previews = generate_previews
         self._model_variant = model_variant
+        self._extra_outputs = list(extra_outputs) if extra_outputs else []
 
     @property
     def resources(self) -> CuratorStageResource:
@@ -249,6 +142,7 @@ class QwenInputPreparationStageFiltering(CuratorStage):
                     logger.warning(f"Clip {clip.uuid} has no encoded_data.")
                     clip.errors["encoded_data"] = "empty"
                     continue
+                clip.filter_windows.clear()
                 with self._timer.time_process():
                     for window_bytes, window_frames, window_frame_info in zip(
                         *windowing_utils.split_video_into_windows(
@@ -263,25 +157,40 @@ class QwenInputPreparationStageFiltering(CuratorStage):
                         ),
                         strict=True,
                     ):
-                        prompt = _get_prompt(
-                            self._prompt_variant,
-                            self._filter_categories,
-                            verbose=self._verbose,
-                        )
-                        try:
-                            llm_input = self._qwen_utils.generate_llm_inputs(
-                                prompt=prompt, video_inputs=window_frames, override_text_prompt=False
+                        model_input: dict[str, dict[str, object]] = {}
+                        main = (self._prompt_variant, self._model_variant)
+                        for item in [main, *self._extra_outputs]:
+                            pv, out_key = item[0], item[1]
+                            fc_override: str | None = None
+                            if len(item) >= 3:  # noqa: PLR2004
+                                fc_override = item[2]
+                            filter_cats = (
+                                fc_override
+                                if fc_override is not None
+                                else (self._filter_categories if pv == self._prompt_variant else None)
                             )
-                        except Exception as e:  # noqa: BLE001
-                            logger.error(f"Error in Qwen input preparation: {e}")
-                            clip.errors["qwen_input"] = str(e)
+                            prompt = get_qwen_filter_prompt(
+                                pv,
+                                filter_cats,
+                                verbose=self._verbose,
+                            )
+                            try:
+                                llm_input = self._qwen_utils.generate_llm_inputs(
+                                    prompt=prompt,
+                                    video_inputs=window_frames,
+                                )
+                            except Exception as e:  # noqa: BLE001
+                                logger.error(f"Error in Qwen input preparation ({out_key}): {e}")
+                                clip.errors["qwen_input"] = str(e)
+                                break
+                            model_input[out_key] = llm_input
                         else:
                             clip.filter_windows.append(
                                 Window(
                                     window_frame_info.start,
                                     window_frame_info.end,
                                     mp4_bytes=window_bytes,
-                                    model_input={self._model_variant: llm_input},
+                                    model_input=model_input,
                                 ),
                             )
 
@@ -293,10 +202,11 @@ class QwenInputPreparationStageFiltering(CuratorStage):
 
 
 class QwenFilteringStage(CuratorStage):
-    """Stage that generates filtering results for video windows using the Qwen model.
+    """Stage that applies semantic (criteria-based) filtering using the Qwen model.
 
-    This stage processes prepared video windows through the Qwen vision-language model to
-    generate filtering results.
+    Processes prepared video windows through the Qwen vision-language model and
+    filters clips based on configurable criteria (e.g. slideshow, synthetic video,
+    visual filter) and a rejection threshold.
     """
 
     def __init__(  # noqa: PLR0913
@@ -314,11 +224,13 @@ class QwenFilteringStage(CuratorStage):
         model_does_preprocess: bool = False,
         disable_mmcache: bool = False,
         score_only: bool = False,
+        clear_model_input_after: bool = True,
+        model_input_key: str | None = None,
     ) -> None:
-        """Initialize the Qwen filtering stage.
+        """Initialize the Qwen semantic filtering stage.
 
         Args:
-            model_variant: Name of the model variant to use.
+            model_variant: Name of the model variant to use for the QwenVL model.
             batch_size: Number of samples to process in parallel.
             fp8_enable: Whether to enable FP8 precision.
             max_output_tokens: Maximum number of tokens to generate.
@@ -329,10 +241,18 @@ class QwenFilteringStage(CuratorStage):
             user_prompt: Custom prompt categories as a list if provided.
             filter_variant: Variant of filter criteria to use.
             rejection_threshold: Threshold for clip rejection.
-            score_only: Whether to only calculate Qwen-based content filtering scores without filtering clips.
+            score_only: Whether to only calculate scores without filtering clips.
+            clear_model_input_after: If True, clear window.model_input after filtering so
+                downstream stages do not see it; set False when another stage (e.g. classifier)
+                will read from the same windows.
+            model_input_key: Key in Window.model_input to read prepared inputs from; default
+                is model_variant. Use a different key (e.g. "qwen_filter") when sharing prep
+                with the classifier stage.
 
         """
         self._timer = StageTimer(self)
+        self._clear_model_input_after = clear_model_input_after
+        self._model_input_key = model_input_key if model_input_key is not None else model_variant
         self._filter_variant = filter_variant
         self._rejection_threshold = rejection_threshold
         self._batch_size = batch_size
@@ -413,7 +333,7 @@ class QwenFilteringStage(CuratorStage):
                         logger.warning(f"Clip {clip.uuid} has no windows.")
                         clip.errors["windows"] = "empty"
                     for window_idx, window in enumerate(clip.filter_windows):
-                        llm_input = window.model_input.get(self._model_variant)
+                        llm_input = window.model_input.get(self._model_input_key)
                         if llm_input is None:
                             logger.error(f"Clip {clip.uuid} window {window_idx} has no prepared inputs.")
                             clip.errors[f"window-{window_idx}"] = "empty"
@@ -461,7 +381,7 @@ class QwenFilteringStage(CuratorStage):
         mapping: dict[int, tuple[int, int]],
         captions: Iterable[tuple[int, str]],
     ) -> None:
-        """Filter clips based on the captions."""
+        """Filter clips based on semantic criteria and rejection threshold."""
         clip_results: dict[int, list[tuple[int, str]]] = {}
         for idx, result in captions:
             clip_idx, window_idx = mapping[idx]
@@ -469,62 +389,325 @@ class QwenFilteringStage(CuratorStage):
                 clip_results[clip_idx] = []
             clip_results[clip_idx].append((window_idx, result))
 
-        # A list of clips that pass the filter
         passing_clips = []
-
-        # For each clip, check if it should pass the filter
         for clip_idx, window_results in clip_results.items():
             clip_should_pass = True
-            all_issues = set()
-            rejected_windows = set()
+            all_issues: set[str] = set()
+            rejected_windows: set[int] = set()
 
-            # Inner loop: look at all windows for this clip
+            if self._user_prompt is None:
+                filter_criteria = FILTER_CRITERIA[self._filter_variant]
+            else:
+                filter_criteria = [s.strip() for s in self._user_prompt.split(",") if s.strip()]
+
             for window_idx, result in window_results:
                 filtering_dict = _parse_results(result)
                 if filtering_dict is None:
-                    # If the filtering dict is None, it means the model failed to generate a valid JSON string.
-                    # We should not reject the clip in this case.
                     continue
-
-                if self._user_prompt is None:
-                    filter_criteria = _FILTER_CRITERIA[self._filter_variant]
-                else:
-                    filter_criteria = self._user_prompt.split(",")
-
-                # Check if the window passes the filter
                 window_specific_issues = {}
                 for criterion in filter_criteria:
                     if filtering_dict.get(criterion, "no") == "yes":
                         all_issues.add(criterion)
                         rejected_windows.add(window_idx)
                         window_specific_issues[criterion] = filtering_dict.get(criterion, "no")
-
                 video.clips[clip_idx].filter_windows[window_idx].caption["qwen_rejection_reasons"] = str(
                     window_specific_issues
                 )
 
-            if not self._score_only:  # noqa: SIM102
-                # Reject the clip if more than half of the windows are rejected
-                if (
-                    len(window_results) > 0
-                    and (len(rejected_windows) / len(window_results)) > self._rejection_threshold
-                ):
-                    clip_should_pass = False
+            if (
+                not self._score_only
+                and len(window_results) > 0
+                and (len(rejected_windows) / len(window_results)) > self._rejection_threshold
+            ):
+                clip_should_pass = False
 
             if not clip_should_pass:
                 if self._verbose:
                     logger.info(f"Clip {video.clips[clip_idx].uuid} filtered out due to: {set(all_issues)}")
-                video.filtered_clips.append(video.clips[clip_idx])
+                clip = video.clips[clip_idx]
+                clip.qwen_rejection_stage = "semantic"
+                video.filtered_clips.append(clip)
+                video.clip_stats.num_filtered_by_qwen_semantic += 1
             else:
                 passing_clips.append(video.clips[clip_idx])
 
-            # Clean up filter windows after processing
+        for clip_idx in range(len(video.clips)):
+            if clip_idx not in clip_results:
+                clip = video.clips[clip_idx]
+                clip.errors["qwen"] = "all_windows_failed_preparation"
+                clip.qwen_rejection_stage = "semantic"
+                video.filtered_clips.append(clip)
+                video.clip_stats.num_filtered_by_qwen_semantic += 1
+                logger.warning(f"Clip {clip.uuid} had no successfully mapped windows; added to filtered_clips")
 
         video.clips = passing_clips
-        for clip in video.clips:
-            for window in clip.filter_windows:
-                window.model_input.clear()
-                window.mp4_bytes.drop()
+        if self._clear_model_input_after:
+            for clip in video.clips + video.filtered_clips:
+                for window in clip.filter_windows:
+                    window.model_input.clear()
+                    window.mp4_bytes.drop()
+
+
+class QwenVideoClassifierStage(CuratorStage):
+    """Stage that applies video-type (allow/block list) filtering using the Qwen model.
+
+    Classifies each window into the 27 VIDEO_TYPE_LABELS and filters clips based on
+    type_allow (keep if any window matches) and/or type_block (reject if too many
+    windows match), with a configurable rejection threshold.
+    """
+
+    def __init__(  # noqa: PLR0913
+        self,
+        model_variant: str = "qwen",
+        batch_size: int = 16,
+        rejection_threshold: float = 0.5,
+        *,
+        type_allow: str | None = None,
+        type_block: str | None = None,
+        fp8_enable: bool = False,
+        max_output_tokens: int = 512,
+        verbose: bool = False,
+        log_stats: bool = False,
+        model_does_preprocess: bool = False,
+        disable_mmcache: bool = False,
+        clear_model_input_after: bool = True,
+    ) -> None:
+        """Initialize the Qwen video classifier stage.
+
+        Args:
+            model_variant: Name of the model variant to use.
+            batch_size: Number of samples to process in parallel.
+            rejection_threshold: Threshold for clip rejection (block ratio).
+            type_allow: Comma-separated video types to keep; only clips with at least
+                one window matching any of these types pass.
+            type_block: Comma-separated video types to reject; clips with too many
+                windows matching any of these types are filtered out.
+            fp8_enable: Whether to enable FP8 precision.
+            max_output_tokens: Maximum number of tokens to generate.
+            verbose: Whether to print verbose logs.
+            log_stats: Whether to log performance statistics.
+            model_does_preprocess: Whether model handles preprocessing.
+            disable_mmcache: Whether to disable model cache.
+            clear_model_input_after: If True, clear window.model_input after classification.
+                Set False when the semantic filter stage will run next and read from the same
+                windows (e.g. when both classifier and filter are enabled with shared prep).
+
+        """
+        self._timer = StageTimer(self)
+        self._clear_model_input_after = clear_model_input_after
+        self._rejection_threshold = rejection_threshold
+        self._batch_size = batch_size
+        self._verbose = verbose
+        self._log_stats = log_stats
+        self._type_allow: list[str] = [s.strip() for s in type_allow.split(",") if s.strip()] if type_allow else []
+        self._type_block: list[str] = [s.strip() for s in type_block.split(",") if s.strip()] if type_block else []
+        valid = set(VIDEO_TYPE_LABELS)
+        for t in self._type_allow + self._type_block:
+            if t not in valid:
+                msg = f"Unknown video type {t!r}; must be one of VIDEO_TYPE_LABELS: {sorted(valid)}"
+                raise ValueError(msg)
+        self._model_does_preprocess = model_does_preprocess
+        self._disable_mmcache = disable_mmcache
+        self._model = qwen_vl.QwenVL(
+            model_variant,
+            fp8=fp8_enable,
+            max_output_tokens=max_output_tokens,
+            model_does_preprocess=self._model_does_preprocess,
+            disable_mmcache=self._disable_mmcache,
+        )
+        self._model_variant = model_variant
+
+    @property
+    def resources(self) -> CuratorStageResource:
+        """Get the resource requirements for this stage."""
+        return CuratorStageResource(gpus=1.0)
+
+    @property
+    def conda_env_name(self) -> str:
+        """Get the conda environment name."""
+        return "unified"
+
+    def stage_setup(self) -> None:
+        """Initialize stage resources and configuration."""
+        gpu_stage_startup(self.__class__.__name__, self.resources.gpus, pre_setup=True)
+        self._model.setup()
+        gpu_stage_startup(self.__class__.__name__, self.resources.gpus, pre_setup=False)
+
+    def destroy(self) -> None:
+        """Clean up resources."""
+        gpu_stage_cleanup(self.__class__.__name__)
+
+    @property
+    def model(self) -> ModelInterface:
+        """Get the model."""
+        return self._model
+
+    def _process_data_sync(self, tasks: list[SplitPipeTask]) -> list[SplitPipeTask]:
+        """Process the data for the Qwen video classifier stage."""
+        for task in tasks:
+            self._timer.reinit(self, task.get_major_size())
+            video = task.video
+            inputs = []
+            mapping: dict[int, tuple[int, int]] = {}
+            idx = 0
+            with self._timer.time_process(len(video.clips)):
+                for clip_idx, clip in enumerate(video.clips):
+                    if len(clip.filter_windows) == 0:
+                        logger.warning(f"Clip {clip.uuid} has no windows.")
+                        clip.errors["windows"] = "empty"
+                    for window_idx, window in enumerate(clip.filter_windows):
+                        llm_input = window.model_input.get(self._model_variant)
+                        if llm_input is None:
+                            logger.error(f"Clip {clip.uuid} window {window_idx} has no prepared inputs.")
+                            clip.errors[f"window-{window_idx}"] = "empty"
+                            continue
+                        mapping[idx] = (clip_idx, window_idx)
+                        inputs.append(llm_input)
+                        idx += 1
+
+                results = self._model.generate(
+                    inputs,
+                    batch_size=self._batch_size,
+                )
+
+                self._filter_clips(video, mapping, enumerate(results))
+
+            if self._verbose:
+                logger.info(
+                    f"Video {video.input_video} chunk-{video.clip_chunk_index} has "
+                    f"{len(video.clips)}/{len(video.filtered_clips)} clips "
+                    "passed/filtered"
+                )
+
+        if self._log_stats:
+            stage_name, stage_perf_stats = self._timer.log_stats()
+            task.stage_perf[stage_name] = stage_perf_stats
+
+        return tasks
+
+    @nvtx.annotate("QwenVideoClassifierStage")  # type: ignore[untyped-decorator]
+    def process_data(self, tasks: list[SplitPipeTask]) -> list[SplitPipeTask] | None:
+        """Process the data for the Qwen video classifier stage."""
+        return self._process_data_sync(tasks)
+
+    def _type_mode_filter_clip(  # noqa: C901, PLR0912
+        self,
+        video: Video,
+        clip_idx: int,
+        window_results: list[tuple[int, str]],
+        all_issues: set[str],
+        rejected_windows: set[int],
+    ) -> bool:
+        """Apply type filtering: allow list (keep if matches) and/or block list (reject if matches).
+
+        When both type_allow and type_block are empty, acts as a classifier only: no filtering
+        (all clips pass) and full 27-type classification is written to metadata.
+
+        Rejection reasons (for filtered clips) are written per window using the actual category
+        names (VIDEO_TYPE_LABELS) with "yes" or "no":
+        - Block list: each block-list category and its status; e.g. {"video_game": "yes"} means
+          this window was classified as video_game, so the clip was blocked for being on the deny list.
+        - Allow list: each allow-list category and its status; e.g. {"nature_environment": "no"}
+          means this window was not nature_environment, so the clip was rejected for not being
+          on the allow list.
+        Block list takes precedence over allow list: a clip can be rejected by either condition.
+        When type_allow is set and every window fails to parse, the clip is passed and a warning
+        is logged so allow-list behavior matches block-list (no parse -> no rejection).
+        """
+        has_allowed = False
+        any_parsed = False
+        all_types_yes: set[str] = set()
+        for window_idx, result in window_results:
+            filtering_dict = _parse_results(result)
+            if filtering_dict is None:
+                continue
+            any_parsed = True
+            all_types_yes.update(k for k, v in filtering_dict.items() if v == "yes" and k in VIDEO_TYPE_LABELS)
+            rejection_reasons: dict[str, str] = {}
+            if self._type_block:
+                for t in self._type_block:
+                    rejection_reasons[t] = filtering_dict.get(t, "no")
+            if self._type_allow:
+                for t in self._type_allow:
+                    rejection_reasons[t] = filtering_dict.get(t, "no")
+            video.clips[clip_idx].filter_windows[window_idx].caption["qwen_rejection_reasons"] = str(rejection_reasons)
+            if self._type_allow:
+                if any(filtering_dict.get(t, "no") == "yes" for t in self._type_allow):
+                    has_allowed = True
+            else:
+                has_allowed = True
+            if self._type_block:
+                for t in self._type_block:
+                    if filtering_dict.get(t, "no") == "yes":
+                        all_issues.add(t)
+                        rejected_windows.add(window_idx)
+                        break
+        clip = video.clips[clip_idx]
+        clip.qwen_type_classification = sorted(all_types_yes)
+        if self._verbose and all_types_yes:
+            logger.info(f"Clip {clip.uuid} type classification: {clip.qwen_type_classification}")
+        if self._type_allow and not any_parsed:
+            logger.warning(
+                f"Clip {clip.uuid}: all windows failed to parse; passing for allow-list (no rejection reason)"
+            )
+            has_allowed = True
+        allow_ok = has_allowed
+        block_ok = True
+        if self._type_block and window_results:
+            ratio = len(rejected_windows) / len(window_results)
+            block_ok = ratio <= self._rejection_threshold
+        return bool(allow_ok and block_ok)
+
+    def _filter_clips(  # noqa: C901
+        self,
+        video: Video,
+        mapping: dict[int, tuple[int, int]],
+        captions: Iterable[tuple[int, str]],
+    ) -> None:
+        """Filter clips based on type allow/block lists and rejection threshold."""
+        clip_results: dict[int, list[tuple[int, str]]] = {}
+        for idx, result in captions:
+            clip_idx, window_idx = mapping[idx]
+            if clip_idx not in clip_results:
+                clip_results[clip_idx] = []
+            clip_results[clip_idx].append((window_idx, result))
+
+        passing_clips = []
+        for clip_idx, window_results in clip_results.items():
+            all_issues: set[str] = set()
+            rejected_windows: set[int] = set()
+            clip_should_pass = self._type_mode_filter_clip(
+                video, clip_idx, window_results, all_issues, rejected_windows
+            )
+
+            if not clip_should_pass:
+                clip = video.clips[clip_idx]
+                clip.qwen_rejection_stage = "classifier"
+                if self._verbose:
+                    logger.info(
+                        f"Clip {clip.uuid} filtered out due to: {set(all_issues)} "
+                        f"(classified as: {clip.qwen_type_classification or []})"
+                    )
+                video.filtered_clips.append(clip)
+                video.clip_stats.num_filtered_by_qwen_classifier += 1
+            else:
+                passing_clips.append(video.clips[clip_idx])
+
+        for clip_idx in range(len(video.clips)):
+            if clip_idx not in clip_results:
+                clip = video.clips[clip_idx]
+                clip.errors["qwen"] = "all_windows_failed_preparation"
+                clip.qwen_rejection_stage = "classifier"
+                video.filtered_clips.append(clip)
+                video.clip_stats.num_filtered_by_qwen_classifier += 1
+                logger.warning(f"Clip {clip.uuid} had no successfully mapped windows; added to filtered_clips")
+
+        video.clips = passing_clips
+        if self._clear_model_input_after:
+            for clip in video.clips + video.filtered_clips:
+                for window in clip.filter_windows:
+                    window.model_input.clear()
+                    window.mp4_bytes.drop()
 
 
 def _clean_json_string(output_text: str) -> dict[str, str] | None:

@@ -190,6 +190,10 @@ class Clip:
     intern_video_2_text_match: tuple[str, float] | None = None
     # for debugging
     errors: dict[str, str] = attrs.Factory(dict)
+    # Qwen video classifier: list of VIDEO_TYPE_LABELS that were "yes" in any window (for metadata/debug)
+    qwen_type_classification: list[str] | None = None
+    # When clip is in filtered_clips due to Qwen: "classifier" (type allow/block) or "semantic" (criteria filter)
+    qwen_rejection_stage: str | None = None
 
     def get_all_captions(self) -> list[str]:
         """Get all captions from the clip's windows.
@@ -273,6 +277,8 @@ class ClipStats:
 
     num_filtered_by_motion: int = 0
     num_filtered_by_aesthetic: int = 0
+    num_filtered_by_qwen_classifier: int = 0
+    num_filtered_by_qwen_semantic: int = 0
     num_passed: int = 0
     num_transcoded: int = 0
     num_with_embeddings: int = 0
@@ -290,6 +296,8 @@ class ClipStats:
         """
         self.num_filtered_by_motion += other.num_filtered_by_motion
         self.num_filtered_by_aesthetic += other.num_filtered_by_aesthetic
+        self.num_filtered_by_qwen_classifier += other.num_filtered_by_qwen_classifier
+        self.num_filtered_by_qwen_semantic += other.num_filtered_by_qwen_semantic
         self.num_passed += other.num_passed
         self.num_transcoded += other.num_transcoded
         self.num_with_embeddings += other.num_with_embeddings
