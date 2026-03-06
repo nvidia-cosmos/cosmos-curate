@@ -297,8 +297,8 @@ class _ResilientOtlpExporter(SpanExporter):
             # exception hierarchy, so we walk __cause__ / __context__.
             if _is_connection_error(exc):
                 self._disabled = True
-                logger.warning(
-                    f"[otel] OTLP collector unreachable -- disabling remote span export "
+                logger.debug(
+                    f"[otel] OTLP collector unreachable - disabling remote span export "
                     f"for this process. Spans are still written to the local .jsonl file. "
                     f"({type(exc).__name__}: {exc})",
                 )

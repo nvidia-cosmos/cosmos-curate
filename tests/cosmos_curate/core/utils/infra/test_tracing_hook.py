@@ -412,3 +412,129 @@ class TestResilientOtlpExporter:
 
         assert wrapper.force_flush() is True
         delegate.force_flush.assert_not_called()
+
+
+class TestFlushInsideTracedSpanCausesExportError:
+    """Reproduce flush_tracing() inside traced_span closing the file.
+
+    This test exercises the **underlying mechanism** of the bug
+    reported in the error trace:
+
+    ::
+
+        traced_span("Stage.setup")     <-- span created
+          |
+          except BaseException:
+          |   flush_tracing()           <-- closes .jsonl file handle
+          |   raise
+          |
+          exit traced_span             <-- OTel ends span, on_end() fires
+               ConsoleSpanExporter.export()
+                 self.out.write(...)    <-- writes to closed file
+                 --> ValueError: I/O operation on closed file
+
+    The fix defers flush_tracing() until after the traced_span exits,
+    so the ConsoleSpanExporter can write the span before the file
+    is closed.
+
+    The test validates both the broken sequence (simulated inline
+    flush) and the correct sequence (deferred flush) to prove the
+    fix is necessary and effective.
+    """
+
+    @staticmethod
+    def _simulate_inline_flush(traced_span_fn: object, flush_fn: object) -> None:
+        """Simulate the buggy pattern: flush inside traced_span on error."""
+        with traced_span_fn("Stage.setup_INLINE_FLUSH"):  # type: ignore[operator]
+            flush_fn()  # type: ignore[operator]
+            msg = "simulated setup failure"
+            raise RuntimeError(msg)
+
+    def test_inline_flush_inside_traced_span_raises_on_export(
+        self,
+        tmp_path: pathlib.Path,
+    ) -> None:
+        """Inline flush closes the file before OTel exports the ending span.
+
+        This test demonstrates the root cause of the bug: the
+        flush -> close -> span.end() -> export -> write-to-closed-file
+        sequence.
+        """
+        config = TracingConfig(
+            trace_dir=str(tmp_path),
+            otlp_endpoint="",
+        )
+        backend = _TracingBackend(config)
+        _reset_otel_provider_guard()
+        backend.setup_provider()
+
+        _hook_module._current_backend = backend
+
+        # Simulate the buggy pattern: flush inside traced_span on error.
+        # OTel's SimpleSpanProcessor fires on_end() synchronously when
+        # the traced_span context exits.  After flush_tracing() closes
+        # the file, ConsoleSpanExporter.export() writes to a closed
+        # file, producing "Exception while exporting Span" with a
+        # ValueError.  OTel catches this internally and prints it to
+        # stderr rather than raising, so we detect the failure by
+        # checking that the span data is NOT in the file (because the
+        # export was aborted).
+        from cosmos_curate.core.utils.infra.tracing import traced_span  # noqa: PLC0415
+
+        with pytest.raises(RuntimeError, match="simulated setup failure"):
+            self._simulate_inline_flush(traced_span, flush_tracing)
+
+        # The span file should be empty or missing the span name because
+        # the ConsoleSpanExporter could not write to the closed file.
+        jsonl_files = list(tmp_path.glob("*.jsonl"))
+        assert len(jsonl_files) == 1
+        content = jsonl_files[0].read_text(encoding="utf-8")
+        assert "Stage.setup_INLINE_FLUSH" not in content, (
+            "Span should NOT appear in the file -- the export should have "
+            "failed because flush_tracing() closed the file handle before "
+            "the traced_span exited."
+        )
+
+    @staticmethod
+    def _simulate_deferred_flush(traced_span_fn: object, flush_fn: object) -> None:
+        """Simulate the correct pattern: flush after traced_span exits."""
+        try:
+            with traced_span_fn("Stage.setup_DEFERRED_FLUSH"):  # type: ignore[operator]
+                msg = "simulated setup failure"
+                raise RuntimeError(msg)
+        finally:
+            flush_fn()  # type: ignore[operator]
+
+    def test_deferred_flush_after_traced_span_preserves_span_data(
+        self,
+        tmp_path: pathlib.Path,
+    ) -> None:
+        """Deferred flush lets OTel export the span before closing the file.
+
+        This validates the fix: deferring flush to after span export
+        allows ConsoleSpanExporter to write the span data to the
+        still-open file, then flush_tracing() closes and persists it.
+        """
+        config = TracingConfig(
+            trace_dir=str(tmp_path),
+            otlp_endpoint="",
+        )
+        backend = _TracingBackend(config)
+        _reset_otel_provider_guard()
+        backend.setup_provider()
+
+        _hook_module._current_backend = backend
+
+        from cosmos_curate.core.utils.infra.tracing import traced_span  # noqa: PLC0415
+
+        with pytest.raises(RuntimeError, match="simulated setup failure"):
+            self._simulate_deferred_flush(traced_span, flush_tracing)
+
+        jsonl_files = list(tmp_path.glob("*.jsonl"))
+        assert len(jsonl_files) == 1
+        content = jsonl_files[0].read_text(encoding="utf-8")
+        assert "Stage.setup_DEFERRED_FLUSH" in content, (
+            "Span SHOULD appear in the file -- flush_tracing() ran after "
+            "the traced_span exited, so ConsoleSpanExporter wrote to the "
+            "still-open file before it was closed."
+        )

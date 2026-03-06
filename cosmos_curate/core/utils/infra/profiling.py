@@ -897,37 +897,58 @@ class _ProfilingState:
         call_id = f"{label}_{self._call_count + 1}"
         prof_artifact_id = artifact_id(self._stage_name, call_id)
 
-        with traced_span(
-            f"{self._stage_name}.{label}",
-            attributes={
-                "stage.name": self._stage_name,
-                "stage.lifecycle": label,
-                "profiling.artifact_id": prof_artifact_id,
-            },
-        ):
-            # OTel's start_as_current_span automatically records
-            # unhandled exceptions and sets ERROR status (defaults:
-            # record_exception=True, set_status_on_exception=True).
-            # No explicit except/record_exception needed here.
-            self.start(label)
-            try:
-                yield
-            except BaseException:
-                # On unhandled error, flush the OTel trace file to the
-                # staging directory now.  For setup failures, destroy()
-                # is never called and Ray kills workers with SIGKILL
-                # (atexit never runs), so this is the only opportunity
-                # to persist worker spans to the staging dir.
-                # flush_tracing() is idempotent -- if destroy() does run
-                # later, its call will be a no-op.
-                with contextlib.suppress(Exception):
+        # flush_tracing() must run AFTER the traced_span context exits.
+        # If called inside the traced_span (as part of error handling),
+        # it closes the .jsonl file handle via _persist().  When the
+        # exception then propagates out of traced_span, OTel ends the
+        # span and SimpleSpanProcessor.on_end() calls
+        # ConsoleSpanExporter.export() which writes to the now-closed
+        # file - raising "ValueError: I/O operation on closed file".
+        #
+        # The flag defers the flush to the outer finally block, after
+        # the traced_span has fully exited and all spans are exported.
+        # This mirrors the pattern already used in destroy() (below).
+        _needs_trace_flush = False
+        try:
+            with traced_span(
+                f"{self._stage_name}.{label}",
+                attributes={
+                    "stage.name": self._stage_name,
+                    "stage.lifecycle": label,
+                    "profiling.artifact_id": prof_artifact_id,
+                },
+            ):
+                # OTel's start_as_current_span automatically records
+                # unhandled exceptions and sets ERROR status (defaults:
+                # record_exception=True, set_status_on_exception=True).
+                # No explicit except/record_exception needed here.
+                self.start(label)
+                try:
+                    yield
+                except BaseException:
+                    # On unhandled error, signal that the OTel trace file
+                    # should be flushed to the staging directory.  For
+                    # setup failures, destroy() is never called and Ray
+                    # kills workers with SIGKILL (atexit never runs), so
+                    # the outer finally block is the only opportunity to
+                    # persist worker spans to the staging dir.
+                    # flush_tracing() is idempotent -- if destroy() does
+                    # run later, its call will be a no-op.
+                    _needs_trace_flush = True
+                    raise
+                finally:
+                    self.stop_and_save()
+                    self.flush_final_artifacts()
+        finally:
+            if _needs_trace_flush:
+                try:
                     from cosmos_curate.core.utils.infra.tracing_hook import flush_tracing  # noqa: PLC0415
 
                     flush_tracing()
-                raise
-            finally:
-                self.stop_and_save()
-                self.flush_final_artifacts()
+                except Exception as e:  # noqa: BLE001 -- profiling must never crash the pipeline
+                    logger.debug(
+                        f"[otel] {self._stage_name}_{process_tag()}: flush_tracing() failed on exception path: {e}",
+                    )
 
     def flush_final_artifacts(self) -> None:
         """Flush end-of-life artifacts for all backends.

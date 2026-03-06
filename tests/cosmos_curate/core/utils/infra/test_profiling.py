@@ -394,6 +394,205 @@ class TestProfilingWrapper:
         assert len(cpu_files) >= 1, f"Expected CPU artifacts after process_data, found {cpu_files}"
 
 
+class TestScopeExceptionPath:
+    """Verify scope() handles exceptions correctly with deferred trace flush.
+
+    When an exception occurs inside scope(), the OTel trace file must
+    be flushed AFTER the traced_span exits (not inside it).  This
+    prevents the ConsoleSpanExporter from writing to a closed file.
+
+    ::
+
+        scope("setup")
+        |
+        +-- try:
+        |     with traced_span("Stage.setup"):
+        |       yield  --> exception raised here
+        |       except BaseException:
+        |         _needs_trace_flush = True   <-- flag set
+        |         raise
+        |       finally:
+        |         stop_and_save()
+        |
+        +-- traced_span exits --> span exported to OPEN file (OK)
+        |
+        +-- finally:
+              if _needs_trace_flush:
+                flush_tracing()  <-- file closed here, AFTER export
+    """
+
+    @staticmethod
+    def _raise_inside_scope(state: _ProfilingState, label: str, msg: str) -> None:
+        """Enter scope() and immediately raise RuntimeError."""
+        with state.scope(label):
+            raise RuntimeError(msg)
+
+    def test_scope_exception_calls_flush_tracing(
+        self,
+        tmp_path: pathlib.Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """On exception, scope() calls flush_tracing() to persist spans."""
+        monkeypatch.setenv("COSMOS_CURATE_ARTIFACTS_STAGING_DIR", str(tmp_path))
+
+        import cosmos_curate.core.utils.infra.tracing_hook as hook_mod  # noqa: PLC0415
+
+        flush_called = False
+        original_flush = hook_mod.flush_tracing
+
+        def mock_flush() -> None:
+            nonlocal flush_called
+            flush_called = True
+            original_flush()
+
+        monkeypatch.setattr(hook_mod, "flush_tracing", mock_flush)
+
+        config = ProfilingConfig(cpu_enabled=True)
+        state = _ProfilingState("TestStage", config)
+
+        with pytest.raises(RuntimeError, match="stage setup failed"):
+            self._raise_inside_scope(state, "setup", "stage setup failed")
+
+        assert flush_called, "flush_tracing() should be called on exception path"
+
+    def test_scope_normal_path_does_not_call_flush_tracing(
+        self,
+        tmp_path: pathlib.Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """On normal exit, scope() does NOT call flush_tracing().
+
+        flush_tracing() is only for the error path (setup failures
+        where destroy() never runs).  On normal exit, destroy() handles
+        the flush.
+        """
+        monkeypatch.setenv("COSMOS_CURATE_ARTIFACTS_STAGING_DIR", str(tmp_path))
+
+        flush_called = False
+
+        def mock_flush() -> None:
+            nonlocal flush_called
+            flush_called = True
+
+        import cosmos_curate.core.utils.infra.tracing_hook as hook_mod  # noqa: PLC0415
+
+        monkeypatch.setattr(hook_mod, "flush_tracing", mock_flush)
+
+        config = ProfilingConfig(cpu_enabled=True)
+        state = _ProfilingState("TestStage", config)
+
+        with state.scope("process_data"):
+            time.sleep(0.01)
+
+        assert not flush_called, "flush_tracing() should NOT be called on normal path"
+
+    def test_scope_exception_preserves_original_exception(
+        self,
+        tmp_path: pathlib.Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The original exception propagates unchanged through scope().
+
+        The try/finally structure must not swallow, wrap, or alter the
+        exception raised inside the scope block.
+        """
+        monkeypatch.setenv("COSMOS_CURATE_ARTIFACTS_STAGING_DIR", str(tmp_path))
+
+        config = ProfilingConfig(cpu_enabled=True)
+        state = _ProfilingState("TestStage", config)
+
+        with pytest.raises(RuntimeError, match="vllm serve exited with code 1"):
+            self._raise_inside_scope(state, "setup", "vllm serve exited with code 1")
+
+    def test_scope_exception_with_flush_tracing_failure_still_propagates(
+        self,
+        tmp_path: pathlib.Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """If flush_tracing() itself fails, the original exception still propagates.
+
+        The outer finally block catches flush failures so they don't
+        mask the real error (e.g. stage setup failure).
+        """
+        monkeypatch.setenv("COSMOS_CURATE_ARTIFACTS_STAGING_DIR", str(tmp_path))
+
+        def broken_flush() -> None:
+            msg = "trace flush exploded"
+            raise OSError(msg)
+
+        import cosmos_curate.core.utils.infra.tracing_hook as hook_mod  # noqa: PLC0415
+
+        monkeypatch.setattr(hook_mod, "flush_tracing", broken_flush)
+
+        config = ProfilingConfig(cpu_enabled=True)
+        state = _ProfilingState("TestStage", config)
+
+        with pytest.raises(RuntimeError, match="real setup error"):
+            self._raise_inside_scope(state, "setup", "real setup error")
+
+    def test_scope_exception_produces_span_data_before_flush(
+        self,
+        tmp_path: pathlib.Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """On exception, the traced_span is exported before flush closes the file.
+
+        Sets up a real TracerProvider with a ConsoleSpanExporter so we
+        can verify that the span data appears in the .jsonl file --
+        proving that the span was exported while the file was still
+        open.
+        """
+        from opentelemetry.sdk.trace import TracerProvider as SdkProvider  # noqa: PLC0415
+        from opentelemetry.sdk.trace.export import ConsoleSpanExporter, SimpleSpanProcessor  # noqa: PLC0415
+
+        import cosmos_curate.core.utils.infra.tracing_hook as hook_mod  # noqa: PLC0415
+
+        monkeypatch.setenv("COSMOS_CURATE_ARTIFACTS_STAGING_DIR", str(tmp_path))
+
+        trace_dir = tmp_path / "traces"
+        trace_dir.mkdir(parents=True, exist_ok=True)
+        span_file = trace_dir / "test_spans.jsonl"
+        file_handle = span_file.open("w")
+
+        import os  # noqa: PLC0415
+
+        if hasattr(_otel_trace, "_TRACER_PROVIDER_SET_ONCE"):
+            _otel_trace._TRACER_PROVIDER_SET_ONCE._done = False
+        provider = SdkProvider()
+        provider.add_span_processor(
+            SimpleSpanProcessor(
+                ConsoleSpanExporter(
+                    out=file_handle,
+                    formatter=lambda span: span.to_json(indent=None) + os.linesep,
+                ),
+            ),
+        )
+        _otel_trace.set_tracer_provider(provider)
+
+        # Mock flush_tracing to close the file (simulating _persist())
+        # so we can verify the ordering: span export first, then close.
+        def flush_that_closes_file() -> None:
+            provider.force_flush()
+            file_handle.close()
+
+        monkeypatch.setattr(hook_mod, "flush_tracing", flush_that_closes_file)
+
+        config = ProfilingConfig(cpu_enabled=True)
+        state = _ProfilingState("TestStage", config)
+
+        with pytest.raises(RuntimeError, match="setup boom"):
+            self._raise_inside_scope(state, "setup", "setup boom")
+
+        # The span should be in the file because the traced_span exited
+        # (exporting the span) BEFORE flush closed the file.
+        content = span_file.read_text(encoding="utf-8")
+        assert "TestStage.setup" in content, (
+            f"Span 'TestStage.setup' should appear in the trace file. "
+            f"This proves the span was exported before the file was closed. "
+            f"File content: {content[:500]}"
+        )
+
+
 class TestResolveStagingPath:
     """Verify _resolve_staging_path creates dirs and removes stale files."""
 
