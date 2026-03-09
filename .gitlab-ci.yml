@@ -631,6 +631,7 @@ nvcf-helm:
     - .gitlab/scripts/nvcf_helm_deploy.sh
   after_script:
     - *setup_ci_builder_env
+    - *setup_curator_cli
     - *configure_nvcf_cli
     - .gitlab/scripts/nvcf_helm_cleanup.sh
   retry:
