@@ -448,6 +448,7 @@ def _assemble_stages(  # noqa: C901, PLR0912, PLR0915
             perf_profile=args.perf_profile,
             type_allow=",".join(args.qwen_video_classifier_allow) if args.qwen_video_classifier_allow else None,
             type_block=",".join(args.qwen_video_classifier_block) if args.qwen_video_classifier_block else None,
+            custom_categories=args.qwen_video_classifier_use_custom_categories,
         )
         if args.qwen_video_classifier != "disable"
         else None
@@ -1178,9 +1179,20 @@ def _setup_parser(parser: argparse.ArgumentParser) -> None:  # noqa: PLR0915
         choices=["enable", "disable"],
         default="disable",
         help=(
-            "Whether to enable Qwen-based video classifier (27 categories, imaginaire VideoTypeClassifier taxonomy). "
+            "Whether to enable Qwen-based video classifier. "
             "enable: filter by type allow/block lists; disable: do not run. "
-            "Set --qwen-video-classifier-allow and/or --qwen-video-classifier-block."
+            "Set --qwen-video-classifier-allow and/or --qwen-video-classifier-block. "
+            "With --qwen-video-classifier-use-custom-categories, allow/block define the full category set."
+        ),
+    )
+    parser.add_argument(
+        "--qwen-video-classifier-use-custom-categories",
+        dest="qwen_video_classifier_use_custom_categories",
+        action="store_true",
+        default=False,
+        help=(
+            "Use custom categories: allow and block lists define the full set of categories. "
+            "The model is prompted only for those. Requires at least one of allow/block."
         ),
     )
     parser.add_argument(
@@ -1192,7 +1204,8 @@ def _setup_parser(parser: argparse.ArgumentParser) -> None:  # noqa: PLR0915
         metavar="TYPE",
         help=(
             "Video type(s) to keep (only clips with at least one window matching any pass). "
-            "Types use underscores, no spaces (e.g. egocentric_video/walking_POV, nature_environment). May be repeated."
+            "Default: 27 imaginaire taxonomy labels (underscores, no spaces). "
+            "With --qwen-video-classifier-use-custom-categories, any names; union with block defines categories."
         ),
     )
     parser.add_argument(
@@ -1204,7 +1217,7 @@ def _setup_parser(parser: argparse.ArgumentParser) -> None:  # noqa: PLR0915
         metavar="TYPE",
         help=(
             "Video type(s) to reject (clips with too many windows matching any are filtered out). "
-            "Types use underscores, no spaces. May be repeated."
+            "With --qwen-video-classifier-use-custom-categories, any names; union with allow defines categories."
         ),
     )
     parser.add_argument(

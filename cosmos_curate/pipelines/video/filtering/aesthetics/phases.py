@@ -25,6 +25,7 @@ from cosmos_curate.pipelines.video.filtering.aesthetics.qwen_filter_stages impor
     QwenFilteringStage,
     QwenInputPreparationStageFiltering,
     QwenVideoClassifierStage,
+    custom_categories_union,
 )
 
 
@@ -67,7 +68,10 @@ class QwenFilterConfig:
 class QwenVideoClassifierConfig:
     """Configuration for Qwen-based video-type (allow/block list) filtering.
 
-    Uses the 27 VIDEO_TYPE_LABELS (imaginaire VideoTypeClassifier taxonomy).
+    By default uses the 27 VIDEO_TYPE_LABELS (imaginaire VideoTypeClassifier taxonomy).
+    When custom_categories is True, type_allow and type_block define the full set of
+    categories (plus an "unclassified" fallback when none match); the model is prompted
+    only for those, and allow/block logic applies.
     """
 
     model_variant: str = "qwen"
@@ -86,6 +90,7 @@ class QwenVideoClassifierConfig:
     perf_profile: bool = False
     type_allow: str | None = None
     type_block: str | None = None
+    custom_categories: bool = False
 
 
 class AestheticFilterPhase(CurationPhase):
@@ -199,6 +204,7 @@ class QwenFilterClassifierPhase(CurationPhase):
                 rejection_threshold=cc.rejection_threshold,
                 type_allow=cc.type_allow,
                 type_block=cc.type_block,
+                custom_categories=cc.custom_categories,
                 fp8_enable=cc.fp8_enable,
                 max_output_tokens=cc.max_output_tokens,
                 disable_mmcache=not cc.use_mmcache,
@@ -231,7 +237,11 @@ class QwenFilterClassifierPhase(CurationPhase):
 
     def _classifier_stages(self, cc: QwenVideoClassifierConfig) -> list[CuratorStage | CuratorStageSpec]:
         return [
-            self._prep_stage(cc, "type", None),
+            self._prep_stage(
+                cc,
+                "type",
+                custom_categories_union(cc.type_allow, cc.type_block) if cc.custom_categories else None,
+            ),
             self._classifier_stage_spec(cc),
         ]
 
@@ -249,7 +259,7 @@ class QwenFilterClassifierPhase(CurationPhase):
             self._prep_stage(
                 cc,
                 "type",
-                None,
+                custom_categories_union(cc.type_allow, cc.type_block) if cc.custom_categories else None,
                 extra_outputs=[(fc.prompt_variant, "qwen_filter", fc.filter_categories)],
             ),
             self._classifier_stage_spec(cc, clear_model_input_after=False),

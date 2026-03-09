@@ -39,6 +39,19 @@ from cosmos_curate.pipelines.video.utils import windowing_utils
 from cosmos_curate.pipelines.video.utils.data_model import SplitPipeTask, Video, Window
 
 
+def parse_comma_separated_types(cs: str | None) -> list[str]:
+    """Return list of non-empty stripped tokens from a comma-separated string."""
+    if not cs:
+        return []
+    return [s.strip() for s in cs.split(",") if s.strip()]
+
+
+def custom_categories_union(type_allow: str | None, type_block: str | None) -> str | None:
+    """Return comma-separated sorted union of allow and block types, or None if empty."""
+    categories = set(parse_comma_separated_types(type_allow)) | set(parse_comma_separated_types(type_block))
+    return ",".join(sorted(categories)) if categories else None
+
+
 class QwenInputPreparationStageFiltering(CuratorStage):
     """Stage that prepares video windows for Qwen model processing.
 
@@ -451,9 +464,10 @@ class QwenFilteringStage(CuratorStage):
 class QwenVideoClassifierStage(CuratorStage):
     """Stage that applies video-type (allow/block list) filtering using the Qwen model.
 
-    Classifies each window into the 27 VIDEO_TYPE_LABELS and filters clips based on
-    type_allow (keep if any window matches) and/or type_block (reject if too many
-    windows match), with a configurable rejection threshold.
+    By default classifies each window into the 27 VIDEO_TYPE_LABELS and filters clips
+    based on type_allow (keep if any window matches) and/or type_block (reject if too
+    many windows match). When custom_categories is True, type_allow and type_block
+    define the full set of categories (union); the model is prompted only for those.
     """
 
     def __init__(  # noqa: PLR0913
@@ -464,6 +478,7 @@ class QwenVideoClassifierStage(CuratorStage):
         *,
         type_allow: str | None = None,
         type_block: str | None = None,
+        custom_categories: bool = False,
         fp8_enable: bool = False,
         max_output_tokens: int = 512,
         verbose: bool = False,
@@ -482,6 +497,10 @@ class QwenVideoClassifierStage(CuratorStage):
                 one window matching any of these types pass.
             type_block: Comma-separated video types to reject; clips with too many
                 windows matching any of these types are filtered out.
+            custom_categories: If True, type_allow and type_block define the full set
+                of categories (union); model is prompted only for these. No validation
+                against VIDEO_TYPE_LABELS. Requires at least one of type_allow or
+                type_block to be set.
             fp8_enable: Whether to enable FP8 precision.
             max_output_tokens: Maximum number of tokens to generate.
             verbose: Whether to print verbose logs.
@@ -499,13 +518,22 @@ class QwenVideoClassifierStage(CuratorStage):
         self._batch_size = batch_size
         self._verbose = verbose
         self._log_stats = log_stats
-        self._type_allow: list[str] = [s.strip() for s in type_allow.split(",") if s.strip()] if type_allow else []
-        self._type_block: list[str] = [s.strip() for s in type_block.split(",") if s.strip()] if type_block else []
-        valid = set(VIDEO_TYPE_LABELS)
-        for t in self._type_allow + self._type_block:
-            if t not in valid:
-                msg = f"Unknown video type {t!r}; must be one of VIDEO_TYPE_LABELS: {sorted(valid)}"
+        self._type_allow: list[str] = parse_comma_separated_types(type_allow)
+        self._type_block: list[str] = parse_comma_separated_types(type_block)
+        self._custom_categories = custom_categories
+        if custom_categories:
+            combined = set(self._type_allow) | set(self._type_block)
+            if not combined:
+                msg = "custom_categories=True requires at least one of type_allow or type_block to be set"
                 raise ValueError(msg)
+            self._valid_type_labels: tuple[str, ...] = tuple(sorted(combined))
+        else:
+            valid = set(VIDEO_TYPE_LABELS)
+            for t in self._type_allow + self._type_block:
+                if t not in valid:
+                    msg = f"Unknown video type {t!r}; must be one of VIDEO_TYPE_LABELS: {sorted(valid)}"
+                    raise ValueError(msg)
+            self._valid_type_labels = VIDEO_TYPE_LABELS
         self._model_does_preprocess = model_does_preprocess
         self._disable_mmcache = disable_mmcache
         self._model = qwen_vl.QwenVL(
@@ -601,16 +629,11 @@ class QwenVideoClassifierStage(CuratorStage):
         """Apply type filtering: allow list (keep if matches) and/or block list (reject if matches).
 
         When both type_allow and type_block are empty, acts as a classifier only: no filtering
-        (all clips pass) and full 27-type classification is written to metadata.
+        (all clips pass) and full classification is written to metadata.
 
-        Rejection reasons (for filtered clips) are written per window using the actual category
-        names (VIDEO_TYPE_LABELS) with "yes" or "no":
-        - Block list: each block-list category and its status; e.g. {"video_game": "yes"} means
-          this window was classified as video_game, so the clip was blocked for being on the deny list.
-        - Allow list: each allow-list category and its status; e.g. {"nature_environment": "no"}
-          means this window was not nature_environment, so the clip was rejected for not being
-          on the allow list.
-        Block list takes precedence over allow list: a clip can be rejected by either condition.
+        - Block list: include a category with "yes" only when the model said yes (matched block list).
+        - Allow list: include a category with "no" only when the model said no (did not match allow list).
+
         When type_allow is set and every window fails to parse, the clip is passed and a warning
         is logged so allow-list behavior matches block-list (no parse -> no rejection).
         """
@@ -622,14 +645,16 @@ class QwenVideoClassifierStage(CuratorStage):
             if filtering_dict is None:
                 continue
             any_parsed = True
-            all_types_yes.update(k for k, v in filtering_dict.items() if v == "yes" and k in VIDEO_TYPE_LABELS)
+            all_types_yes.update(k for k, v in filtering_dict.items() if v == "yes" and k in self._valid_type_labels)
             rejection_reasons: dict[str, str] = {}
             if self._type_block:
                 for t in self._type_block:
-                    rejection_reasons[t] = filtering_dict.get(t, "no")
+                    if filtering_dict.get(t, "no") == "yes":
+                        rejection_reasons[t] = "yes"
             if self._type_allow:
                 for t in self._type_allow:
-                    rejection_reasons[t] = filtering_dict.get(t, "no")
+                    if filtering_dict.get(t, "no") == "no":
+                        rejection_reasons[t] = "no"
             video.clips[clip_idx].filter_windows[window_idx].caption["qwen_rejection_reasons"] = str(rejection_reasons)
             if self._type_allow:
                 if any(filtering_dict.get(t, "no") == "yes" for t in self._type_allow):
@@ -643,8 +668,10 @@ class QwenVideoClassifierStage(CuratorStage):
                         rejected_windows.add(window_idx)
                         break
         clip = video.clips[clip_idx]
-        clip.qwen_type_classification = sorted(all_types_yes)
-        if self._verbose and all_types_yes:
+        clip.qwen_type_classification = (
+            sorted(all_types_yes) if all_types_yes else (["unclassified"] if self._custom_categories else [])
+        )
+        if self._verbose and clip.qwen_type_classification:
             logger.info(f"Clip {clip.uuid} type classification: {clip.qwen_type_classification}")
         if self._type_allow and not any_parsed:
             logger.warning(
@@ -711,7 +738,7 @@ class QwenVideoClassifierStage(CuratorStage):
 
 
 def _clean_json_string(output_text: str) -> dict[str, str] | None:
-    """Clean and fix common JSON formatting issues. Qwen2.5 sometimes fails to output valid JSON."""
+    """Clean and fix common JSON formatting issues."""
     # Remove markdown code block markers if present
     output_text = output_text.removeprefix("```json")
     output_text = output_text.removesuffix("```")
