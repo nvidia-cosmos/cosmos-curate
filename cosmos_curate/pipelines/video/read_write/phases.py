@@ -12,7 +12,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""CurationPhase implementations for download, remux, and output stages."""
+"""CurationPhase implementations for download (includes inline remux) and output stages."""
 
 import attrs
 
@@ -20,12 +20,11 @@ from cosmos_curate.core.interfaces.phase_interface import CurationPhase
 from cosmos_curate.core.interfaces.stage_interface import CuratorStage, CuratorStageSpec
 from cosmos_curate.pipelines.video.read_write.download_stages import VideoDownloader
 from cosmos_curate.pipelines.video.read_write.metadata_writer_stage import ClipWriterStage
-from cosmos_curate.pipelines.video.read_write.remux_stages import RemuxStage
 
 
 @attrs.define(frozen=True)
 class IngestConfig:
-    """Configuration for the ingest phase (download + remux)."""
+    """Configuration for the ingest phase (download, includes inline remux)."""
 
     input_path: str
     num_workers_per_node: int = 4
@@ -61,7 +60,7 @@ class OutputConfig:
 
 
 class IngestPhase(CurationPhase):
-    """Download and remux input videos."""
+    """Download input videos (includes inline remux for mpegts containers)."""
 
     def __init__(self, config: IngestConfig) -> None:
         """Initialise the ingest phase with the given configuration."""
@@ -83,7 +82,7 @@ class IngestPhase(CurationPhase):
         return frozenset({"remuxed"})
 
     def build_stages(self) -> list[CuratorStage | CuratorStageSpec]:
-        """Construct and return the download and remux stages."""
+        """Construct and return the download stage (includes inline remux)."""
         cfg = self._cfg
         return [
             CuratorStageSpec(
@@ -95,10 +94,6 @@ class IngestPhase(CurationPhase):
                 ),
                 num_workers_per_node=cfg.num_workers_per_node,
                 num_run_attempts_python=cfg.num_run_attempts,
-            ),
-            RemuxStage(
-                verbose=cfg.verbose,
-                log_stats=cfg.perf_profile,
             ),
         ]
 

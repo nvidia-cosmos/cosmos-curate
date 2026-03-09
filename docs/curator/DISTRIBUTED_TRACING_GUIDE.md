@@ -128,14 +128,14 @@ the start of each `process_data` batch.
 The resulting span tree:
 
 ```
-[Ray: actor_method process_data]                    <-- automatic
-  +-- [cosmos_curate: RemuxStage.process_data]      <-- lifecycle span
+[Ray: actor_method process_data]                         <-- automatic
+  +-- [cosmos_curate: VideoDownloader.process_data]      <-- lifecycle span
        | attrs: stage.name, stage.num_input_tasks, stage.process_time_s, ...
        | event: batch_start (stage.input_data_size_b, stage.rss_before_mb)
        |
-       +-- [cosmos_curate: RemuxStage.sample]       <-- per-sample span
+       +-- [cosmos_curate: VideoDownloader.sample]       <-- per-sample span
        |   attrs: stage.name, stage.num_samples
-       +-- [cosmos_curate: RemuxStage.sample]
+       +-- [cosmos_curate: VideoDownloader.sample]
        ...
 ```
 

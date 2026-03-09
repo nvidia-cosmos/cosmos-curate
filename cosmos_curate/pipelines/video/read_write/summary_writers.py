@@ -130,6 +130,7 @@ def _write_split_result_summary(  # noqa: PLR0913
     write_all_caption_json: bool = True,
     video_bytes: int = 0,
     multi_cam: bool = False,
+    num_remuxed_videos: int = 0,
 ) -> None:
     logger.info(f"Starting to summarize data in {output_path} ...")
     client_output = storage_utils.get_storage_client(
@@ -170,6 +171,7 @@ def _write_split_result_summary(  # noqa: PLR0913
         "max_clip_duration": 0,
         "pipeline_run_time": pipeline_run_time,
         "total_video_bytes": video_bytes,
+        "num_remuxed_videos": num_remuxed_videos,
     }
 
     for key in clip_stats_keys:
@@ -267,6 +269,7 @@ def write_split_summary(  # noqa: PLR0913
     """
     # dump and write job summary
     video_bytes = sum(v.metadata.size for task in output_tasks for v in task.videos if v.metadata.size is not None)
+    num_remuxed = sum(v.was_remuxed for task in output_tasks for v in task.videos if v.clip_chunk_index == 0)
 
     _write_split_result_summary(
         input_path,
@@ -280,6 +283,7 @@ def write_split_summary(  # noqa: PLR0913
         write_all_caption_json=write_all_caption_json,
         video_bytes=video_bytes,
         multi_cam=multi_cam,
+        num_remuxed_videos=num_remuxed,
     )
     # dump and write performance stats
     if perf_profile:

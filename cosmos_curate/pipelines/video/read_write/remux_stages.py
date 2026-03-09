@@ -33,6 +33,9 @@ from cosmos_curate.pipelines.video.utils.data_model import (
 )
 
 REMUX_FORMATS = {"mpegts"}
+_REMUX_STAGE_DEPRECATION_MSG = (
+    "RemuxStage is deprecated and will be removed on 2026-04-30. Remuxing is now handled inline by VideoDownloader."
+)
 
 
 def remux_to_mp4(encoded_data: bytes | npt.NDArray[np.uint8], threads: int = 1) -> npt.NDArray[np.uint8]:
@@ -100,12 +103,18 @@ def remux_to_mp4(encoded_data: bytes | npt.NDArray[np.uint8], threads: int = 1) 
         return bytes_to_numpy(Path(output_file.name).read_bytes())
 
 
-def remux_if_needed(video: Video, threads: int) -> None:
+def remux_if_needed(video: Video, threads: int) -> bool:
     """Remux the video if it is not in the correct format.
 
     Args:
         video: The video to remux, modified in place.
         threads: The number of threads to use for ffmpeg.
+
+    Returns:
+        True if a remux was applied and succeeded.
+        False if no remux was needed (format not in REMUX_FORMATS) or metadata is absent.
+        Raises on precondition failure (encoded_data is None) or remux failure — caller
+        handles via try/except.
 
     """
     data = video.encoded_data.resolve()
@@ -118,7 +127,7 @@ def remux_if_needed(video: Video, threads: int) -> None:
         # TODO(LazyData): re-enable .release() when .store() is active.
         # Without .store(), .release() clears the only copy -> ValueError downstream.
         # video.encoded_data.release()  # noqa: ERA001
-        return
+        return False
 
     format_name = video.metadata.format_name.lower() if video.metadata.format_name else "unknown"
 
@@ -129,15 +138,20 @@ def remux_if_needed(video: Video, threads: int) -> None:
         # TODO(LazyData): re-enable when batch-mode ObjectRef ownership is
         # resolved.  In batch mode, pool.stop() kills actor -> OwnerDiedError.
         # video.encoded_data.store()  # noqa: ERA001
-    else:
-        # TODO(LazyData): re-enable .release() when .store() is active.
-        # Without .store(), .release() clears the only copy -> ValueError downstream.
-        # video.encoded_data.release()  # noqa: ERA001
-        pass
+        return True
+    # TODO(LazyData): re-enable .release() when .store() is active.
+    # Without .store(), .release() clears the only copy -> ValueError downstream.
+    # video.encoded_data.release()  # noqa: ERA001
+    return False
 
 
 class RemuxStage(CuratorStage):
-    """Remuxing stage for video pipelines, no-op if the video is already in the correct format."""
+    """Remuxing stage for video pipelines, no-op if the video is already in the correct format.
+
+    .. deprecated::
+        RemuxStage is deprecated and will be removed on 2026-04-30.
+        Remuxing is now handled inline by VideoDownloader.
+    """
 
     def __init__(
         self,
@@ -145,11 +159,9 @@ class RemuxStage(CuratorStage):
         verbose: bool = False,
         log_stats: bool = False,
     ) -> None:
-        """Initialize the video downloader stage.
+        """Initialize RemuxStage.
 
         Args:
-            input_path: Path to input videos.
-            input_s3_profile_name: S3 profile name for input.
             verbose: Whether to print verbose logs.
             log_stats: Whether to log performance statistics.
 
@@ -157,6 +169,8 @@ class RemuxStage(CuratorStage):
         self._timer = StageTimer(self)
         self._verbose = verbose
         self._log_stats = log_stats
+        self._deprecation_warned = False
+        logger.warning(_REMUX_STAGE_DEPRECATION_MSG)
 
     @property
     def resources(self) -> CuratorStageResource:
@@ -171,6 +185,9 @@ class RemuxStage(CuratorStage):
     @nvtx.annotate("RemuxStage")  # type: ignore[untyped-decorator]
     def process_data(self, tasks: list[SplitPipeTask]) -> list[SplitPipeTask] | None:
         """Remux the video if it is not in the correct format."""
+        if not self._deprecation_warned:
+            logger.warning(_REMUX_STAGE_DEPRECATION_MSG)
+            self._deprecation_warned = True
         for task in tasks:
             self._timer.reinit(self, task.get_major_size())
 

@@ -357,6 +357,10 @@ class Video:
     clip_stats: ClipStats = attrs.Factory(ClipStats)
     # for debugging
     errors: dict[str, str] = attrs.Factory(dict)
+    # True if VideoDownloader remuxed this video (mpegts → mp4). Set once per source
+    # video, so filter on clip_chunk_index == 0 when aggregating to avoid double-counting
+    # chunked outputs.
+    was_remuxed: bool = False
 
     def populate_metadata(self) -> None:
         """Extract and assign video metadata from encoded_data.

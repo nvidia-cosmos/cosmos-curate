@@ -123,9 +123,10 @@ def test_remux_if_needed_mp4_no_change(synthetic_mp4_video: io.BytesIO) -> None:
     video.populate_metadata()
 
     # Act
-    remux_if_needed(video, threads=1)
+    result = remux_if_needed(video, threads=1)
 
     # Assert
+    assert result is False  # mp4 does not need remux
     assert np.array_equal(video.encoded_data.resolve(), original_data)  # Should be unchanged
 
 
@@ -143,9 +144,10 @@ def test_remux_if_needed_mpegts_to_mp4(synthetic_mpegts_video: io.BytesIO) -> No
     assert video.metadata.format_name == "mpegts"
 
     # Act
-    remux_if_needed(video, threads=1)
+    result = remux_if_needed(video, threads=1)
 
     # Assert
+    assert result is True  # mpegts was remuxed
     assert not np.array_equal(video.encoded_data.resolve(), original_data)  # Should be changed
     assert video.encoded_data.resolve() is not None
 
@@ -173,9 +175,10 @@ def test_remux_if_needed_avi_to_mp4(synthetic_avi_video: io.BytesIO) -> None:
     assert "avi" in video.metadata.format_name.lower()
 
     # Act
-    remux_if_needed(video, threads=1)
+    result = remux_if_needed(video, threads=1)
 
     # Assert
+    assert result is False  # avi is not in REMUX_FORMATS
     assert np.array_equal(video.encoded_data.resolve(), original_data)  # Should be unchanged
 
     # Verify the result is valid AVI
@@ -201,7 +204,8 @@ def test_remux_if_needed_mkv_to_mp4(synthetic_mkv_video: io.BytesIO) -> None:
     assert "matroska,webm" in video.metadata.format_name.lower()
 
     # Act
-    remux_if_needed(video, threads=1)
+    result = remux_if_needed(video, threads=1)
+    assert result is False  # mkv is not in REMUX_FORMATS
 
     # Assert
     assert np.array_equal(video.encoded_data.resolve(), encoded_data)  # Should be unchanged
@@ -241,9 +245,10 @@ def test_remux_if_needed_preserves_video_content(synthetic_mpegts_video: io.Byte
     original_frame_count = _frame_count(original_bytes)
 
     # Act
-    remux_if_needed(video, threads=1)
+    result = remux_if_needed(video, threads=1)
 
     # Assert
+    assert result is True  # mpegts was remuxed
     resolved = video.encoded_data.resolve()
     assert resolved is not None
 

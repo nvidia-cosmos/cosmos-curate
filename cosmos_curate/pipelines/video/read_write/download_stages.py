@@ -28,6 +28,7 @@ from cosmos_curate.core.utils.dataset import webdataset_utils
 from cosmos_curate.core.utils.infra.performance_utils import StageTimer
 from cosmos_curate.core.utils.storage import storage_client, storage_utils
 from cosmos_curate.core.utils.storage.writer_utils import write_bytes
+from cosmos_curate.pipelines.video.read_write.remux_stages import remux_if_needed
 from cosmos_curate.pipelines.video.utils.data_model import (
     ShardPipeTask,
     SplitPipeTask,
@@ -191,6 +192,13 @@ class VideoDownloader(CuratorStage):
 
                     # Extract and validate metadata
                     if not self._extract_and_validate_metadata(video):
+                        continue
+
+                    try:
+                        video.was_remuxed = remux_if_needed(video, threads=1)
+                    except Exception as e:  # noqa: BLE001
+                        video.errors["remux"] = str(e)
+                        logger.exception(f"Failed to remux video {video.input_video}")
                         continue
 
                     # TODO(LazyData): re-enable when batch-mode ObjectRef ownership is

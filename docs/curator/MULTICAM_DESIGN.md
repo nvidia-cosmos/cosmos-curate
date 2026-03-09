@@ -117,8 +117,7 @@ Not all stages will receive multi-cam support. Some stages, like VllmCaptionStag
 
 | Stage | Multicam behavior |
 | ------- | ------------------- |
-| VideoDownloader | iterate over `task.videos`, download each. |
-| RemuxStage | iterate over `task.videos`, remux each. |
+| VideoDownloader | iterate over `task.videos`, download each (includes inline remux for mpegts). |
 | FixedStrideExtractorStage | aligned spans, per-cell Clip creation (M×N), max(start)/min(end). Multicam only uses this path. |
 | ClipFrameExtractionStage | iterate over `task.videos`, process clips for each video. |
 | ClipTranscodingStage | transcode each `videos[i]` for each span `j`, set `videos[i].clips[j].encoded_data`. |

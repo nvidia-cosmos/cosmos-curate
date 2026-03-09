@@ -61,7 +61,7 @@ implementation-based.
 All `--profile-*` flags imply `--perf-profile`.
 
 Scope names used in `--profile-*-exclude` match stage class names
-(e.g. `VideoDownloader`, `RemuxStage`) and the special name `_root` for the
+(e.g. `VideoDownloader`, `ClipWriterStage`) and the special name `_root` for the
 driver process.  By default, `_root` is excluded from both GPU profiling
 (the driver typically has no CUDA context) and memory profiling (memray
 conflicts with pyinstrument's `sys.setprofile` hook on long-lived
