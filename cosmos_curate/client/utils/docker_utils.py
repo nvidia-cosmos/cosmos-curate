@@ -114,10 +114,7 @@ def build(  # noqa: PLR0913
                 f"Invalid COSMOS_CURATE_DOCKER_BUILD_ULIMIT value: {_custom_ulimit}. Using default value of 65536.",
             )
 
-    cmd = ["docker"]
-    if cache_from or cache_to:
-        cmd.append("buildx")
-    cmd.append("build")
+    cmd = ["docker", "buildx", "build"]
     if cache_from is not None:
         for cache_from_src in cache_from:
             cmd.extend(["--cache-from", cache_from_src])
