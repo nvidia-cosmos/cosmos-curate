@@ -27,6 +27,7 @@ from cosmos_curate.core.interfaces.stage_interface import CuratorStage, CuratorS
 from cosmos_curate.core.utils.config import args_utils
 from cosmos_curate.core.utils.db.database_types import EnvType, PostgresDB
 from cosmos_curate.core.utils.infra import ray_cluster_utils
+from cosmos_curate.core.utils.infra.profiling import profiling_scope
 from cosmos_curate.core.utils.misc.grouping import split_by_chunk_size
 from cosmos_curate.pipelines.av.av_video_pipelines_common import (
     build_caption_pipeline_stages,
@@ -49,6 +50,21 @@ from cosmos_curate.pipelines.av.writers.cosmos_predict2_writer_stage import (
 
 
 def caption(args: argparse.Namespace) -> None:
+    """Caption video clips with profiling and tracing.
+
+    Public entry point that wraps ``_caption()`` with ``profiling_scope``
+    so that every execution path (CLI, Slurm, NVCF, local launch)
+    automatically gets profiling and distributed tracing.
+
+    Args:
+        args: Command line arguments
+
+    """
+    with profiling_scope(args):
+        _caption(args)
+
+
+def _caption(args: argparse.Namespace) -> None:
     """Caption video clips.
 
     This function:

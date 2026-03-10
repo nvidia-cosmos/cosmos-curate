@@ -17,6 +17,7 @@ from cosmos_curate.core.interfaces.pipeline_interface import run_pipeline
 from cosmos_curate.core.interfaces.stage_interface import CuratorStage, CuratorStageSpec
 from cosmos_curate.core.utils.config import args_utils
 from cosmos_curate.core.utils.db.database_types import EnvType, PostgresDB
+from cosmos_curate.core.utils.infra.profiling import profiling_scope
 from cosmos_curate.core.utils.storage.storage_utils import verify_path
 from cosmos_curate.pipelines.av.pipeline_args import add_common_args
 from cosmos_curate.pipelines.av.utils.av_data_model import (
@@ -31,6 +32,21 @@ from cosmos_curate.pipelines.av.writers.clip_writer_stage import (
 
 
 def ingest(args: argparse.Namespace) -> None:
+    """Run the ingestion pipeline with profiling and tracing.
+
+    Public entry point that wraps ``_ingest()`` with ``profiling_scope``
+    so that every execution path (CLI, Slurm, NVCF, local launch)
+    automatically gets profiling and distributed tracing.
+
+    Args:
+        args: The arguments for the pipeline.
+
+    """
+    with profiling_scope(args):
+        _ingest(args)
+
+
+def _ingest(args: argparse.Namespace) -> None:
     """Run the ingestion pipeline.
 
     Args:

@@ -36,6 +36,7 @@ from cosmos_curate.core.interfaces.pipeline_interface import run_pipeline
 from cosmos_curate.core.interfaces.stage_interface import CuratorStage, CuratorStageSpec
 from cosmos_curate.core.utils.config import args_utils
 from cosmos_curate.core.utils.infra.hardware_info import get_gpu_infos
+from cosmos_curate.core.utils.infra.profiling import profiling_scope
 from cosmos_curate.core.utils.misc.stage_replay import (
     StageSaveConfig,
     add_stage_replay_args,
@@ -683,6 +684,21 @@ def _assemble_stages(  # noqa: C901, PLR0912, PLR0915
 
 
 def split(args: argparse.Namespace) -> None:
+    """Run the split pipeline with profiling and tracing.
+
+    Public entry point that wraps ``_split()`` with ``profiling_scope``
+    so that every execution path (CLI, Slurm, NVCF, local launch)
+    automatically gets profiling and distributed tracing.
+
+    Args:
+        args: Command line arguments.
+
+    """
+    with profiling_scope(args):
+        _split(args)
+
+
+def _split(args: argparse.Namespace) -> None:
     """Run the split pipeline.
 
     This function orchestrates the entire pipeline, from input validation to output generation.

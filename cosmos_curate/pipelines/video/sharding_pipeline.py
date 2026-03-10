@@ -33,6 +33,7 @@ from cosmos_curate.core.interfaces.pipeline_interface import run_pipeline
 from cosmos_curate.core.interfaces.stage_interface import CuratorStage, CuratorStageSpec
 from cosmos_curate.core.utils.config import args_utils
 from cosmos_curate.core.utils.dataset import dimensions, webdataset_utils
+from cosmos_curate.core.utils.infra.profiling import profiling_scope
 from cosmos_curate.core.utils.misc import grouping
 from cosmos_curate.core.utils.storage.storage_client import StoragePrefix
 from cosmos_curate.core.utils.storage.storage_utils import (
@@ -187,6 +188,21 @@ def _group_samples_into_tasks(  # noqa: PLR0913
 
 
 def shard(args: argparse.Namespace) -> None:
+    """Run the shard pipeline with profiling and tracing.
+
+    Public entry point that wraps ``_shard()`` with ``profiling_scope``
+    so that every execution path (CLI, Slurm, NVCF, local launch)
+    automatically gets profiling and distributed tracing.
+
+    Args:
+        args: Command line arguments.
+
+    """
+    with profiling_scope(args):
+        _shard(args)
+
+
+def _shard(args: argparse.Namespace) -> None:
     """Run the shard pipeline.
 
     This function orchestrates the entire pipeline, from input validation to output generation.

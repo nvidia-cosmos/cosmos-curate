@@ -63,6 +63,7 @@ from loguru import logger
 
 from cosmos_curate.core.utils.config import args_utils
 from cosmos_curate.core.utils.infra import ray_cluster_utils
+from cosmos_curate.core.utils.infra.profiling import profiling_scope
 from cosmos_curate.core.utils.storage import storage_utils
 from cosmos_curate.core.utils.storage.storage_client import StoragePrefix
 from cosmos_curate.core.utils.storage.storage_utils import extract_parquet_files
@@ -234,6 +235,21 @@ def _reduce_and_write_summary(stats: list[dict[str, int]], args: argparse.Namesp
 
 
 def dedup(args: argparse.Namespace) -> None:
+    """Run the semantic dedup pipeline with profiling and tracing.
+
+    Public entry point that wraps ``_dedup()`` with ``profiling_scope``
+    so that every execution path (CLI, Slurm, NVCF, local launch)
+    automatically gets profiling and distributed tracing.
+
+    Args:
+        args: Command line arguments.
+
+    """
+    with profiling_scope(args):
+        _dedup(args)
+
+
+def _dedup(args: argparse.Namespace) -> None:
     """Run the semantic dedup pipeline.
 
     Args:

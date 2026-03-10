@@ -124,7 +124,14 @@ from opentelemetry import context, trace
 from opentelemetry.sdk.trace import ReadableSpan
 from opentelemetry.sdk.trace.export import SpanExporter, SpanExportResult
 
-from cosmos_curate.core.utils.infra.tracing import artifact_id, short_hostname
+from cosmos_curate.core.utils.infra.tracing import (
+    _DEFAULT_OTLP_ENDPOINT,
+    _ENV_OTLP_ENDPOINT,
+    _ENV_OTLP_TRACES_ENDPOINT,
+    artifact_id,
+    get_otlp_endpoint,
+    short_hostname,
+)
 
 # Hook module path for ray.init(_tracing_startup_hook=...).
 # Must be importable on all Ray worker nodes.
@@ -142,15 +149,6 @@ _ENV_TRACE_DIR = "COSMOS_CURATE_TRACE_DIR"
 # Workers read this to create spans as children of the driver's root span,
 # unifying all spans under a single trace_id.
 _ENV_TRACEPARENT = "COSMOS_CURATE_TRACEPARENT"
-
-# Standard OpenTelemetry environment variables for OTLP export.
-# The OTLP exporter defaults to http://localhost:4318 when neither
-# env var is set, so a local collector (e.g. Jaeger) receives spans
-# out of the box.  The OTLPSpanExporter also reads
-# OTEL_EXPORTER_OTLP_HEADERS, OTEL_EXPORTER_OTLP_TIMEOUT,
-# OTEL_EXPORTER_OTLP_CERTIFICATE, etc. automatically.
-_ENV_OTLP_ENDPOINT = "OTEL_EXPORTER_OTLP_ENDPOINT"
-_ENV_OTLP_TRACES_ENDPOINT = "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"
 
 # Standard OTel env var for overriding the resource service name.
 # When set, takes precedence over the default "cosmos_curate".
@@ -194,7 +192,7 @@ class TracingConfig:
     """
 
     trace_dir: str = "/tmp/cosmos_curate_traces"  # noqa: S108
-    otlp_endpoint: str = "http://localhost:4318"
+    otlp_endpoint: str = _DEFAULT_OTLP_ENDPOINT
     traceparent: str = ""
     service_name: str = "cosmos_curate"
 
@@ -219,11 +217,7 @@ class TracingConfig:
         )
         return cls(
             trace_dir=os.environ.get(_ENV_TRACE_DIR, default_trace_dir),
-            otlp_endpoint=(
-                os.environ.get(_ENV_OTLP_TRACES_ENDPOINT)
-                or os.environ.get(_ENV_OTLP_ENDPOINT)
-                or "http://localhost:4318"
-            ),
+            otlp_endpoint=get_otlp_endpoint(),
             traceparent=os.environ.get(_ENV_TRACEPARENT, ""),
             service_name=os.environ.get(_ENV_SERVICE_NAME, "cosmos_curate"),
         )
@@ -369,16 +363,27 @@ class _TracingBackend:
         [worker runs stages]      caller closes _file_handle
               |                   (prevents FD leak; backend
               v                    is never installed as singleton)
-        flush()                   <-- force_flush + persist to disk
-              |
-              v
-        shutdown()                <-- provider.shutdown + persist (atexit)
+        flush()                   <-- force_flush provider + flush file
+              |                       file stays OPEN so late spans
+              v                       can still be exported
+        shutdown()                <-- provider.shutdown (no more exports)
+                                      THEN close file + log stats
 
-    Both ``flush()`` and ``shutdown()`` are idempotent.  ``flush()``
-    uses ``force_flush()`` (safe to call while the provider is still
-    active), ``shutdown()`` uses ``provider.shutdown()`` (final exit).
-    Internally both delegate to ``_persist()`` for the close/log
-    logic.
+    ``flush()`` pushes buffered span data to the OS kernel without
+    closing the file handle.  Late-arriving spans (e.g. from async
+    operations that fail after teardown begins) can still be written
+    by the ``ConsoleSpanExporter`` because the file remains open.
+
+    ``shutdown()`` first disables the provider (sets
+    ``SimpleSpanProcessor.done = True`` so ``on_end()`` stops
+    exporting), **then** closes the file handle.  This ordering
+    guarantees the file is never closed while exports can still
+    occur.
+
+    Both methods are naturally idempotent: ``force_flush()`` and
+    ``file.flush()`` are safe to call repeatedly, and
+    ``provider.shutdown()`` / ``close_file_handle()`` have their
+    own internal guards.
 
     If ``setup_provider()`` raises, neither ``flush()`` nor
     ``shutdown()`` will ever be called (the backend is not stored
@@ -392,14 +397,11 @@ class _TracingBackend:
         _filepath: Local path to the ``.jsonl`` span file.
         _filename: Base filename for the artifact.
         _file_handle: Open file handle for the span exporter.
-        _flushed: ``True`` after ``flush()`` or ``shutdown()`` has
-            successfully persisted the file.
 
     """
 
     def __init__(self, config: TracingConfig) -> None:
         self._config = config
-        self._flushed = False
 
         # Build a unique artifact ID and filename using the shared
         # artifact_id() convention.  artifact_id lives in tracing.py
@@ -634,18 +636,31 @@ class _TracingBackend:
             )
 
     def flush(self) -> None:
-        """Force-flush pending spans and upload the trace file.
+        """Force-flush pending spans to disk without closing the file.
 
-        Called explicitly from ``_ProfiledStage.destroy()`` to persist
-        trace data **before** Ray kills the worker.  Uses
-        ``force_flush()`` so the provider remains usable for any
-        final spans (e.g. the ``destroy`` span itself).
+        Called explicitly from ``_ProfiledStage.destroy()`` and from
+        the exception path in ``_ProfilingState.scope()`` to persist
+        trace data **before** Ray kills the worker.
 
-        Idempotent: second and subsequent calls are no-ops.
+        The file handle stays **open** so that late-arriving spans
+        (e.g. from async operations that fail with ``EngineDeadError``
+        after teardown begins) can still be exported by the
+        ``ConsoleSpanExporter``.  Only ``shutdown()`` closes the file,
+        and only after disabling the provider.
+
+        ::
+
+            flush()
+              +-- TracerProvider.force_flush()
+              |     Drains any buffered spans to the exporter.
+              +-- file_handle.flush()
+              |     Pushes Python buffer to OS kernel.
+              |     Data survives SIGKILL (kernel writes to disk).
+              +-- [file remains OPEN]
+
+        Idempotent: calling ``force_flush()`` and ``file.flush()``
+        multiple times is safe and cheap.
         """
-        if self._flushed:
-            return
-
         try:
             provider = trace.get_tracer_provider()
             if hasattr(provider, "force_flush"):
@@ -653,66 +668,76 @@ class _TracingBackend:
         except Exception as exc:  # noqa: BLE001
             logger.warning(f"[otel] {self._id}: TracerProvider force_flush failed: {exc}")
 
-        self._persist()
+        try:
+            self._file_handle.flush()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"[otel] {self._id}: File buffer flush failed: {exc}")
 
     def shutdown(self) -> None:
-        """Shut down the TracerProvider and upload the trace file.
+        """Shut down the TracerProvider, then close the trace file.
 
         Called from the ``atexit`` handler as a fallback for processes
-        that exit gracefully (e.g. the driver).  Uses
-        ``provider.shutdown()`` since no more spans will be recorded.
+        that exit gracefully (e.g. the driver).
 
-        If ``flush()`` already ran, only the provider shutdown is
-        performed (the upload is skipped as a no-op).
+        Order matters: the provider must be shut down **before** the
+        file handle is closed.  ``TracerProvider.shutdown()`` sets
+        ``SimpleSpanProcessor.done = True``, which prevents further
+        ``on_end()`` calls from reaching the ``ConsoleSpanExporter``.
+        Only then is it safe to close the underlying file.
+
+        ::
+
+            shutdown()
+              +-- TracerProvider.shutdown()
+              |     Sets SimpleSpanProcessor.done = True.
+              |     No further on_end() -> export() calls.
+              +-- close_file_handle()
+              |     NOW safe -- no more writes possible.
+              +-- log file stats
+
+        Idempotent: ``TracerProvider.shutdown()`` checks its own
+        ``_shutdown`` flag internally, and ``close_file_handle()``
+        suppresses errors on an already-closed handle.
         """
         try:
             provider = trace.get_tracer_provider()
             if hasattr(provider, "shutdown"):
                 provider.shutdown()
         except Exception as exc:  # noqa: BLE001
-            if not self._flushed:
-                logger.warning(f"[otel] {self._id}: TracerProvider shutdown failed: {exc}")
+            logger.warning(f"[otel] {self._id}: TracerProvider shutdown failed: {exc}")
 
-        if not self._flushed:
-            self._persist()
+        self.close_file_handle()
+        self._log_file_stats()
 
     def close_file_handle(self) -> None:
         """Close the span file handle, suppressing errors.
 
         Idempotent: calling on an already-closed handle is a no-op.
-        Used by ``_persist()`` during normal lifecycle and by
+        Used by ``shutdown()`` after the provider is disabled, and by
         ``setup_tracing()`` for cleanup when ``setup_provider()``
         fails before the atexit handler is registered.
         """
         with contextlib.suppress(Exception):
             self._file_handle.close()
 
-    def _persist(self) -> None:
-        """Flush buffered span data to disk and mark as persisted.
+    def _log_file_stats(self) -> None:
+        """Log the final trace file size after closing.
 
-        Shared implementation for both ``flush()`` and ``shutdown()``.
-        Closes the file handle first so all buffered data is written
-        to disk.  After a successful persist, sets ``_flushed = True``
-        so subsequent calls are no-ops.
-
-        The trace file remains in the local staging directory for
-        post-pipeline collection by ``ArtifactDelivery``.
+        Called by ``shutdown()`` after ``close_file_handle()`` to
+        report the persisted file size.  Separated from
+        ``close_file_handle()`` so the close + log sequence is
+        explicit in ``shutdown()``'s control flow.
         """
-        # Close the file handle so all buffered span data is flushed
-        # to disk before we stat() the file size.
-        self.close_file_handle()
-
         try:
             file_size = self._filepath.stat().st_size
-        except OSError:
+        except OSError as e:
+            logger.trace(f"[otel] {self._id}: Could not stat trace file: {e}")
             file_size = 0
 
         if file_size == 0:
             logger.trace(f"[otel] {self._id}: Trace file empty (no spans recorded): {self._filepath}")
         else:
-            logger.debug(f"[otel] {self._id}: Trace file flushed: {self._filepath} ({file_size} bytes)")
-
-        self._flushed = True
+            logger.debug(f"[otel] {self._id}: Trace file persisted: {self._filepath} ({file_size} bytes)")
 
 
 # Per-process singleton.  Set by setup_tracing(), read by
@@ -910,7 +935,7 @@ def setup_tracing() -> None:
     construction is closed before re-raising.  This prevents a file
     descriptor leak because the backend is never installed as the
     module singleton and the ``atexit`` handler is never registered,
-    making the normal ``_persist()`` cleanup path unreachable.
+    making the normal ``shutdown()`` cleanup path unreachable.
 
     Environment variables (set by :func:`enable_tracing`):
         COSMOS_CURATE_ARTIFACTS_STAGING_DIR: Staging directory for artifacts.
@@ -938,8 +963,8 @@ def setup_tracing() -> None:
         # setup_provider() failed before the atexit handler was
         # registered.  Close the file handle opened in __init__()
         # to prevent a file descriptor leak.  The backend is never
-        # installed as the singleton, so _persist() would never run
-        # through the normal flush/shutdown paths.
+        # installed as the singleton, so shutdown() would never run
+        # through the normal atexit path.
         logger.warning(f"[otel] setup_provider() failed; closing file handle: {e}", exc_info=True)
         backend.close_file_handle()
         raise
@@ -950,26 +975,25 @@ def setup_tracing() -> None:
     # flush_tracing() is called explicitly from
     # _ProfiledStage.destroy() before the worker is killed.
     #
-    # backend.shutdown() checks _flushed and only persists if
-    # flush() has not already run.
+    # shutdown() disables the provider first (preventing further
+    # span exports), then closes the file handle and logs stats.
     atexit.register(backend.shutdown)
 
 
 def flush_tracing() -> None:
-    """Flush the TracerProvider and persist span data to the staging directory.
+    """Flush pending spans and file buffer to disk without closing the file.
 
-    Called explicitly from ``_ProfiledStage.destroy()`` to ensure
-    trace data is written to disk **before** Ray kills the worker
-    process.  Ray uses SIGKILL during ``ray.shutdown()``, so
-    ``atexit`` handlers are never invoked for worker processes --
-    this function is the primary persist path for workers.
+    Called explicitly from ``_ProfiledStage.destroy()`` and the
+    exception path in ``_ProfilingState.scope()`` to push span data
+    to the OS kernel **before** Ray kills the worker process.
 
-    The trace file stays in the local staging directory; post-pipeline,
-    ``ArtifactDelivery`` collects it from all nodes.
+    The file handle stays **open** so that late-arriving spans
+    (e.g. from async operations failing during teardown) can still
+    be exported by the ``ConsoleSpanExporter``.
 
-    Idempotent: safe to call multiple times (second call is a no-op).
-    The ``atexit`` handler (``_TracingBackend.shutdown``) also checks
-    the flushed flag, so traces are persisted exactly once.
+    Only ``shutdown()`` (via ``atexit``) closes the file, and only
+    after disabling the ``TracerProvider`` so no more exports can
+    occur.
 
     ::
 
@@ -981,8 +1005,8 @@ def flush_tracing() -> None:
               |     |
               |     +-- backend.flush()
               |     |     +-- TracerProvider.force_flush()
-              |     |     +-- _persist() -> close file, log size
-              |     |     +-- _flushed = True
+              |     |     +-- file_handle.flush()
+              |     |     +-- [file stays OPEN]
               |
               v
         [worker exits or is killed]
@@ -990,9 +1014,13 @@ def flush_tracing() -> None:
               v
         atexit -> backend.shutdown()
                     |
-                    +-- (no-op persist if _flushed == True)
-                    +-- TracerProvider.shutdown() (always, to release resources)
+                    +-- TracerProvider.shutdown()
+                    |     (prevents further on_end exports)
+                    +-- close_file_handle()
+                    +-- log file stats
 
+    Idempotent: calling ``force_flush()`` and ``file.flush()``
+    multiple times is safe and cheap.
     """
     if _current_backend is not None:
         _current_backend.flush()

@@ -897,17 +897,15 @@ class _ProfilingState:
         call_id = f"{label}_{self._call_count + 1}"
         prof_artifact_id = artifact_id(self._stage_name, call_id)
 
-        # flush_tracing() must run AFTER the traced_span context exits.
-        # If called inside the traced_span (as part of error handling),
-        # it closes the .jsonl file handle via _persist().  When the
-        # exception then propagates out of traced_span, OTel ends the
-        # span and SimpleSpanProcessor.on_end() calls
-        # ConsoleSpanExporter.export() which writes to the now-closed
-        # file - raising "ValueError: I/O operation on closed file".
+        # Flush tracing after the traced_span exits so the span
+        # itself is included in the flushed data.  The flush is
+        # deferred to the outer finally block via a flag, mirroring
+        # the pattern already used in destroy() (below).
         #
-        # The flag defers the flush to the outer finally block, after
-        # the traced_span has fully exited and all spans are exported.
-        # This mirrors the pattern already used in destroy() (below).
+        # Note: flush_tracing() no longer closes the file handle --
+        # it only pushes data to the OS kernel buffer.  The file
+        # stays open for any late-arriving spans.  shutdown() (via
+        # atexit) closes the file after disabling the provider.
         _needs_trace_flush = False
         try:
             with traced_span(
@@ -1040,16 +1038,14 @@ def _make_profiled_stage_class[T: CuratorStage](
 
             After flushing per-stage backends (cpu/memory/gpu), also
             flushes the per-process OTel trace file via
-            ``flush_tracing()``.  This is the **primary** persist path
-            for Ray workers because ``atexit`` handlers are not
-            invoked when Ray kills workers with SIGKILL during
-            ``ray.shutdown()``.  The trace file stays in the staging
-            directory for post-pipeline collection by
-            ``ArtifactDelivery``.
+            ``flush_tracing()``.  This pushes buffered span data to the
+            OS kernel so it survives SIGKILL.  The file handle stays
+            **open** so late-arriving spans can still be exported; only
+            ``shutdown()`` (via ``atexit``) closes it after disabling
+            the provider.
 
-            ``flush_tracing()`` is idempotent -- if multiple profiled
-            stages share a worker process, only the first ``destroy()``
-            call persists the file; subsequent calls are no-ops.
+            ``flush_tracing()`` is idempotent -- calling it multiple
+            times is safe and cheap (just re-flushes the buffer).
             """
             with traced_span(
                 f"{base_name}.destroy",

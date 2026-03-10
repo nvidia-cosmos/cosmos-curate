@@ -224,6 +224,55 @@ class TestArtifactNaming:
         assert str(os.getpid()) in tag
 
 
+class TestGetOtlpEndpoint:
+    """get_otlp_endpoint resolves the OTLP endpoint from env vars."""
+
+    def test_default_when_no_env_vars(self) -> None:
+        """Should return the default endpoint when no env vars are set."""
+        from unittest.mock import patch  # noqa: PLC0415
+
+        with patch.dict(
+            os.environ,
+            {},
+            clear=True,
+        ):
+            # Re-import to avoid stale env reads
+            from cosmos_curate.core.utils.infra.tracing import get_otlp_endpoint  # noqa: PLC0415
+
+            # clear=True removes all env vars, so only the default remains
+            assert "localhost:4318" in get_otlp_endpoint()
+
+    def test_traces_endpoint_takes_precedence(self) -> None:
+        """OTEL_EXPORTER_OTLP_TRACES_ENDPOINT should win over general endpoint."""
+        from unittest.mock import patch  # noqa: PLC0415
+
+        with patch.dict(
+            os.environ,
+            {
+                "OTEL_EXPORTER_OTLP_ENDPOINT": "http://general:4318",
+                "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "http://traces:4318",
+            },
+        ):
+            from cosmos_curate.core.utils.infra.tracing import get_otlp_endpoint  # noqa: PLC0415
+
+            assert get_otlp_endpoint() == "http://traces:4318"
+
+    def test_general_endpoint_used_when_no_traces_endpoint(self) -> None:
+        """OTEL_EXPORTER_OTLP_ENDPOINT should be used when traces-specific is not set."""
+        from unittest.mock import patch  # noqa: PLC0415
+
+        with patch.dict(
+            os.environ,
+            {
+                "OTEL_EXPORTER_OTLP_ENDPOINT": "http://general:4318",
+            },
+            clear=True,
+        ):
+            from cosmos_curate.core.utils.infra.tracing import get_otlp_endpoint  # noqa: PLC0415
+
+            assert get_otlp_endpoint() == "http://general:4318"
+
+
 class TestTraceRootAnchor:
     """trace_root_anchor creates a root span with no parent."""
 

@@ -218,12 +218,21 @@ _TRACER_NAME = "cosmos_curate"
 # (scalar subset -- sequences are rarely needed in our spans).
 SpanAttributeValue = str | int | float | bool
 
+# Standard OpenTelemetry environment variables for OTLP export.
+# Kept here (the public API module) so both tracing_hook.py and
+# application code (e.g. local_vllm_serve_stage.py) share a single
+# source of truth for endpoint resolution.
+_ENV_OTLP_ENDPOINT = "OTEL_EXPORTER_OTLP_ENDPOINT"
+_ENV_OTLP_TRACES_ENDPOINT = "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"
+_DEFAULT_OTLP_ENDPOINT = "http://localhost:4318"
+
 # Re-export StatusCode so callers don't need an extra import.
 __all__ = [
     "SpanAttributeValue",
     "StatusCode",
     "TracedSpan",
     "artifact_id",
+    "get_otlp_endpoint",
     "process_tag",
     "short_hostname",
     "trace_root_anchor",
@@ -281,6 +290,31 @@ def process_tag() -> str:
     The hostname portion is cached separately via ``short_hostname()``.
     """
     return f"{short_hostname()}_{os.getpid()}"
+
+
+def get_otlp_endpoint() -> str:
+    """Resolve the OTLP HTTP endpoint from standard OTel environment variables.
+
+    Resolution order (first non-empty value wins):
+
+    1. ``OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`` (trace-specific override)
+    2. ``OTEL_EXPORTER_OTLP_ENDPOINT`` (general OTLP endpoint)
+    3. ``http://localhost:4318`` (standard OTLP HTTP port)
+
+    This function is the single source of truth for OTLP endpoint
+    resolution.  Used by:
+
+    - ``TracingConfig.from_env()`` in ``tracing_hook.py`` when
+      configuring the per-process ``OTLPSpanExporter``.
+    - ``build_vllm_serve_config()`` in ``local_vllm_serve_stage.py`` to
+      pass ``--otlp-traces-endpoint`` to the ``vllm serve`` subprocess
+      so it exports spans to the same collector as the pipeline.
+
+    Returns:
+        The resolved OTLP HTTP endpoint URL.
+
+    """
+    return os.environ.get(_ENV_OTLP_TRACES_ENDPOINT) or os.environ.get(_ENV_OTLP_ENDPOINT) or _DEFAULT_OTLP_ENDPOINT
 
 
 class TracedSpan:

@@ -20,6 +20,7 @@ from cosmos_curate.core.interfaces.pipeline_interface import run_pipeline
 from cosmos_curate.core.interfaces.stage_interface import CuratorStage, CuratorStageSpec
 from cosmos_curate.core.utils.config import args_utils
 from cosmos_curate.core.utils.db.database_types import EnvType, PostgresDB
+from cosmos_curate.core.utils.infra.profiling import profiling_scope
 from cosmos_curate.core.utils.misc.grouping import split_by_chunk_size
 from cosmos_curate.core.utils.storage.s3_client import S3Prefix, create_s3_client, is_s3path
 from cosmos_curate.core.utils.storage.writer_utils import write_json
@@ -44,7 +45,22 @@ from cosmos_curate.pipelines.av.writers.dataset_writer_stage import (
 _SPLIT_ALGO_NAME = "fixed-stride"
 
 
-def shard(args: argparse.Namespace) -> None:  # noqa: PLR0912, C901
+def shard(args: argparse.Namespace) -> None:
+    """Run the AV sharding pipeline with profiling and tracing.
+
+    Public entry point that wraps ``_shard()`` with ``profiling_scope``
+    so that every execution path (CLI, Slurm, NVCF, local launch)
+    automatically gets profiling and distributed tracing.
+
+    Args:
+        args: The arguments for the pipeline.
+
+    """
+    with profiling_scope(args):
+        _shard(args)
+
+
+def _shard(args: argparse.Namespace) -> None:  # noqa: PLR0912, C901
     """Run the sharding pipeline.
 
     Args:

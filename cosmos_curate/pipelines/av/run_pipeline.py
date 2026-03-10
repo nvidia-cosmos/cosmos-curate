@@ -13,7 +13,6 @@ import argparse
 import importlib
 
 from cosmos_curate.core.utils.config.operation_context import check_if_running_in_pixi_env
-from cosmos_curate.core.utils.infra.profiling import profiling_scope
 
 
 def cli() -> None:
@@ -44,11 +43,7 @@ def cli() -> None:
 
     args = parser.parse_args()
 
-    # Root-level profile covers the full pipeline lifecycle.
-    # Per-stage profiles (inside Ray actors) are configured by
-    # run_pipeline(args=args) via _apply_profiling_config().
-    with profiling_scope(args):
-        args.func(args)
+    args.func(args)
 
 
 if __name__ == "__main__":

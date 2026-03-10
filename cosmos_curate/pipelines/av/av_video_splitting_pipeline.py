@@ -24,6 +24,7 @@ from cosmos_curate.core.interfaces.pipeline_interface import run_pipeline
 from cosmos_curate.core.interfaces.stage_interface import CuratorStage, CuratorStageSpec
 from cosmos_curate.core.utils.config import args_utils
 from cosmos_curate.core.utils.db.database_types import EnvType, PostgresDB
+from cosmos_curate.core.utils.infra.profiling import profiling_scope
 from cosmos_curate.pipelines.av.av_video_pipelines_common import (
     build_caption_pipeline_stages,
 )
@@ -46,8 +47,23 @@ from cosmos_curate.pipelines.av.utils.run_utils import add_run_to_postrges
 from cosmos_curate.pipelines.av.writers.clip_writer_stage import ClipWriterStage
 
 
-def split(args: argparse.Namespace) -> None:  # noqa: C901
-    """Run the split pipeline.
+def split(args: argparse.Namespace) -> None:
+    """Run the AV split pipeline with profiling and tracing.
+
+    Public entry point that wraps ``_split()`` with ``profiling_scope``
+    so that every execution path (CLI, Slurm, NVCF, local launch)
+    automatically gets profiling and distributed tracing.
+
+    Args:
+        args: The arguments for the pipeline.
+
+    """
+    with profiling_scope(args):
+        _split(args)
+
+
+def _split(args: argparse.Namespace) -> None:  # noqa: C901
+    """Run the AV split pipeline.
 
     Args:
         args: The arguments for the pipeline.

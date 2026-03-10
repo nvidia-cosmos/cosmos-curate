@@ -28,7 +28,7 @@ functions.
     | _TracingBackend file creation    |  | Real backend in tmp_path -> .jsonl   |
     | setup_provider + flush -> spans  |  | Real provider, create span, flush    |
     |                                  |  |   -> assert span name in .jsonl file |
-    | flush() idempotency              |  | Call twice, assert _flushed=True     |
+    | flush() idempotency              |  | Call twice, assert file still open   |
     | setup_tracing() re-entrancy      |  | Call twice -> exactly one .jsonl     |
     | flush_tracing / propagate no-op  |  | _current_backend=None, no raise      |
     | _is_connection_error chain walk  |  | Direct/wrapped/OSError/unrelated exc |
@@ -186,6 +186,12 @@ class TestTracingBackendFileLifecycle:
 
         backend.flush()
 
+        # File must still be open after flush.
+        assert not backend._file_handle.closed, "File must stay open after flush"
+
+        # Shut down to close the file for reading.
+        backend.shutdown()
+
         # The .jsonl file should contain the span name.
         jsonl_files = list(tmp_path.glob("*.jsonl"))
         assert len(jsonl_files) == 1
@@ -193,20 +199,21 @@ class TestTracingBackendFileLifecycle:
         assert "test.hook.span" in content, f"Span name not found in trace file. Content: {content[:500]}"
 
     def test_flush_is_idempotent(self, tmp_path: pathlib.Path) -> None:
-        """Calling flush() twice does not raise; _flushed is True after the first."""
+        """Calling flush() twice does not raise; file stays open."""
         config = TracingConfig(
             trace_dir=str(tmp_path),
             otlp_endpoint="",
         )
         backend = _TracingBackend(config)
 
-        # First flush.
         backend.flush()
-        assert backend._flushed is True
+        assert not backend._file_handle.closed, "File must stay open after flush"
 
-        # Second flush (no-op).
         backend.flush()
-        assert backend._flushed is True
+        assert not backend._file_handle.closed, "File must stay open after second flush"
+
+        # Clean up.
+        backend.close_file_handle()
 
 
 class TestSetupTracingReentrancy:
@@ -414,51 +421,50 @@ class TestResilientOtlpExporter:
         delegate.force_flush.assert_not_called()
 
 
-class TestFlushInsideTracedSpanCausesExportError:
-    """Reproduce flush_tracing() inside traced_span closing the file.
+class TestFlushKeepsFileOpen:
+    """Verify flush_tracing() no longer closes the file handle.
 
-    This test exercises the **underlying mechanism** of the bug
-    reported in the error trace:
+    With the lifecycle fix, ``flush()`` only pushes buffered data to
+    the OS kernel -- the file stays open.  This means:
+
+    1. Inline flush (inside a ``traced_span``) is safe: the span
+       that ends after flush can still be exported to the open file.
+    2. Late-arriving spans (e.g. async operations failing during
+       teardown) are written successfully.
+    3. Only ``shutdown()`` closes the file, after disabling the
+       provider.
 
     ::
 
         traced_span("Stage.setup")     <-- span created
           |
           except BaseException:
-          |   flush_tracing()           <-- closes .jsonl file handle
+          |   flush_tracing()           <-- flushes buffer, file stays OPEN
           |   raise
           |
           exit traced_span             <-- OTel ends span, on_end() fires
                ConsoleSpanExporter.export()
-                 self.out.write(...)    <-- writes to closed file
-                 --> ValueError: I/O operation on closed file
-
-    The fix defers flush_tracing() until after the traced_span exits,
-    so the ConsoleSpanExporter can write the span before the file
-    is closed.
-
-    The test validates both the broken sequence (simulated inline
-    flush) and the correct sequence (deferred flush) to prove the
-    fix is necessary and effective.
+                 self.out.write(...)    <-- writes to OPEN file -> OK
     """
 
     @staticmethod
     def _simulate_inline_flush(traced_span_fn: object, flush_fn: object) -> None:
-        """Simulate the buggy pattern: flush inside traced_span on error."""
+        """Flush inside traced_span on error -- previously caused ValueError."""
         with traced_span_fn("Stage.setup_INLINE_FLUSH"):  # type: ignore[operator]
             flush_fn()  # type: ignore[operator]
             msg = "simulated setup failure"
             raise RuntimeError(msg)
 
-    def test_inline_flush_inside_traced_span_raises_on_export(
+    def test_inline_flush_inside_traced_span_exports_span(
         self,
         tmp_path: pathlib.Path,
     ) -> None:
-        """Inline flush closes the file before OTel exports the ending span.
+        """Inline flush no longer closes the file -- span IS exported.
 
-        This test demonstrates the root cause of the bug: the
-        flush -> close -> span.end() -> export -> write-to-closed-file
-        sequence.
+        Previously, flush_tracing() closed the file via _persist(), so
+        the span ending after the flush would fail to export.  With
+        the lifecycle fix, flush() keeps the file open and the span
+        is successfully written.
         """
         config = TracingConfig(
             trace_dir=str(tmp_path),
@@ -470,34 +476,29 @@ class TestFlushInsideTracedSpanCausesExportError:
 
         _hook_module._current_backend = backend
 
-        # Simulate the buggy pattern: flush inside traced_span on error.
-        # OTel's SimpleSpanProcessor fires on_end() synchronously when
-        # the traced_span context exits.  After flush_tracing() closes
-        # the file, ConsoleSpanExporter.export() writes to a closed
-        # file, producing "Exception while exporting Span" with a
-        # ValueError.  OTel catches this internally and prints it to
-        # stderr rather than raising, so we detect the failure by
-        # checking that the span data is NOT in the file (because the
-        # export was aborted).
         from cosmos_curate.core.utils.infra.tracing import traced_span  # noqa: PLC0415
 
         with pytest.raises(RuntimeError, match="simulated setup failure"):
             self._simulate_inline_flush(traced_span, flush_tracing)
 
-        # The span file should be empty or missing the span name because
-        # the ConsoleSpanExporter could not write to the closed file.
+        # File must still be open -- flush does not close it.
+        assert not backend._file_handle.closed, "File must stay open after flush_tracing()"
+
+        # Shut down to finalize the file.
+        backend.shutdown()
+
         jsonl_files = list(tmp_path.glob("*.jsonl"))
         assert len(jsonl_files) == 1
         content = jsonl_files[0].read_text(encoding="utf-8")
-        assert "Stage.setup_INLINE_FLUSH" not in content, (
-            "Span should NOT appear in the file -- the export should have "
-            "failed because flush_tracing() closed the file handle before "
-            "the traced_span exited."
+        assert "Stage.setup_INLINE_FLUSH" in content, (
+            "Span SHOULD appear in the file -- flush_tracing() no longer "
+            "closes the file handle, so ConsoleSpanExporter can write the "
+            "span when the traced_span exits."
         )
 
     @staticmethod
     def _simulate_deferred_flush(traced_span_fn: object, flush_fn: object) -> None:
-        """Simulate the correct pattern: flush after traced_span exits."""
+        """Flush after traced_span exits -- always worked, still works."""
         try:
             with traced_span_fn("Stage.setup_DEFERRED_FLUSH"):  # type: ignore[operator]
                 msg = "simulated setup failure"
@@ -509,12 +510,7 @@ class TestFlushInsideTracedSpanCausesExportError:
         self,
         tmp_path: pathlib.Path,
     ) -> None:
-        """Deferred flush lets OTel export the span before closing the file.
-
-        This validates the fix: deferring flush to after span export
-        allows ConsoleSpanExporter to write the span data to the
-        still-open file, then flush_tracing() closes and persists it.
-        """
+        """Deferred flush still works -- span is exported before flush runs."""
         config = TracingConfig(
             trace_dir=str(tmp_path),
             otlp_endpoint="",
@@ -530,11 +526,80 @@ class TestFlushInsideTracedSpanCausesExportError:
         with pytest.raises(RuntimeError, match="simulated setup failure"):
             self._simulate_deferred_flush(traced_span, flush_tracing)
 
+        # Shut down to finalize the file.
+        backend.shutdown()
+
         jsonl_files = list(tmp_path.glob("*.jsonl"))
         assert len(jsonl_files) == 1
         content = jsonl_files[0].read_text(encoding="utf-8")
         assert "Stage.setup_DEFERRED_FLUSH" in content, (
             "Span SHOULD appear in the file -- flush_tracing() ran after "
             "the traced_span exited, so ConsoleSpanExporter wrote to the "
-            "still-open file before it was closed."
+            "still-open file."
         )
+
+    def test_late_span_after_flush_is_exported(
+        self,
+        tmp_path: pathlib.Path,
+    ) -> None:
+        """A span created and ended after flush() is still written to the file.
+
+        This is the direct regression test for the EngineDeadError bug:
+        an async operation fails after flush has been called, its
+        traced_span ends, and the span must still be exported because
+        the file handle is open.
+        """
+        config = TracingConfig(
+            trace_dir=str(tmp_path),
+            otlp_endpoint="",
+        )
+        backend = _TracingBackend(config)
+        _reset_otel_provider_guard()
+        backend.setup_provider()
+
+        # Create and end an early span, then flush.
+        tracer = trace.get_tracer("cosmos_curate")
+        early = tracer.start_span("early.span")
+        early.end()
+        backend.flush()
+
+        # Create and end a LATE span -- simulates an async operation
+        # failing after flush_tracing() has already been called.
+        late = tracer.start_span("late.span.after_flush")
+        late.end()
+
+        # Shut down to close the file.
+        backend.shutdown()
+
+        content = (tmp_path / backend._filename).read_text(encoding="utf-8")
+        assert "early.span" in content, "Early span should be in the file"
+        assert "late.span.after_flush" in content, (
+            "Late span should ALSO be in the file -- flush() keeps the "
+            "file open so late-arriving spans can still be exported."
+        )
+
+    def test_shutdown_closes_file_after_provider(
+        self,
+        tmp_path: pathlib.Path,
+    ) -> None:
+        """shutdown() closes the file handle after disabling the provider."""
+        config = TracingConfig(
+            trace_dir=str(tmp_path),
+            otlp_endpoint="",
+        )
+        backend = _TracingBackend(config)
+        _reset_otel_provider_guard()
+        backend.setup_provider()
+
+        tracer = trace.get_tracer("cosmos_curate")
+        span = tracer.start_span("test.shutdown.span")
+        span.end()
+
+        assert not backend._file_handle.closed, "File must be open before shutdown"
+
+        backend.shutdown()
+
+        assert backend._file_handle.closed, "File must be closed after shutdown"
+
+        content = (tmp_path / backend._filename).read_text(encoding="utf-8")
+        assert "test.shutdown.span" in content, "Span should be persisted before file close"

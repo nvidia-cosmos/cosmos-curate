@@ -397,9 +397,10 @@ class TestProfilingWrapper:
 class TestScopeExceptionPath:
     """Verify scope() handles exceptions correctly with deferred trace flush.
 
-    When an exception occurs inside scope(), the OTel trace file must
-    be flushed AFTER the traced_span exits (not inside it).  This
-    prevents the ConsoleSpanExporter from writing to a closed file.
+    When an exception occurs inside scope(), the OTel trace file is
+    flushed (buffered data pushed to OS kernel) after the traced_span
+    exits.  The file handle stays **open** so late-arriving spans can
+    still be exported; only ``shutdown()`` (via atexit) closes it.
 
     ::
 
@@ -418,7 +419,7 @@ class TestScopeExceptionPath:
         |
         +-- finally:
               if _needs_trace_flush:
-                flush_tracing()  <-- file closed here, AFTER export
+                flush_tracing()  <-- flushes buffer, file stays OPEN
     """
 
     @staticmethod
@@ -535,12 +536,12 @@ class TestScopeExceptionPath:
         tmp_path: pathlib.Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """On exception, the traced_span is exported before flush closes the file.
+        """On exception, the traced_span is exported and flush pushes data to disk.
 
         Sets up a real TracerProvider with a ConsoleSpanExporter so we
-        can verify that the span data appears in the .jsonl file --
-        proving that the span was exported while the file was still
-        open.
+        can verify that the span data appears in the .jsonl file.
+        flush_tracing() flushes the buffer without closing the file;
+        the file is then closed manually after the test to read it.
         """
         from opentelemetry.sdk.trace import TracerProvider as SdkProvider  # noqa: PLC0415
         from opentelemetry.sdk.trace.export import ConsoleSpanExporter, SimpleSpanProcessor  # noqa: PLC0415
@@ -569,13 +570,13 @@ class TestScopeExceptionPath:
         )
         _otel_trace.set_tracer_provider(provider)
 
-        # Mock flush_tracing to close the file (simulating _persist())
-        # so we can verify the ordering: span export first, then close.
-        def flush_that_closes_file() -> None:
+        # Mock flush_tracing to flush (but NOT close) the file,
+        # matching the real lifecycle where flush() keeps the file open.
+        def flush_without_close() -> None:
             provider.force_flush()
-            file_handle.close()
+            file_handle.flush()
 
-        monkeypatch.setattr(hook_mod, "flush_tracing", flush_that_closes_file)
+        monkeypatch.setattr(hook_mod, "flush_tracing", flush_without_close)
 
         config = ProfilingConfig(cpu_enabled=True)
         state = _ProfilingState("TestStage", config)
@@ -583,12 +584,14 @@ class TestScopeExceptionPath:
         with pytest.raises(RuntimeError, match="setup boom"):
             self._raise_inside_scope(state, "setup", "setup boom")
 
-        # The span should be in the file because the traced_span exited
-        # (exporting the span) BEFORE flush closed the file.
+        # Close the file so we can read its contents.
+        file_handle.close()
+
         content = span_file.read_text(encoding="utf-8")
         assert "TestStage.setup" in content, (
             f"Span 'TestStage.setup' should appear in the trace file. "
-            f"This proves the span was exported before the file was closed. "
+            f"This proves the span was exported to the still-open file "
+            f"and flush pushed the data to disk. "
             f"File content: {content[:500]}"
         )
 
