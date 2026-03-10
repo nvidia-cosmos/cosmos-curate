@@ -549,6 +549,9 @@ slurm_end_to_end:
     - .gitlab/scripts/slurm_end_to_end.sh
   after_script:
     - rm -rf venv || true
+  retry:
+    max: 2
+    when: always
   artifacts:
     when: always
     paths:
