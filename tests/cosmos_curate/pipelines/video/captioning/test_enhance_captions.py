@@ -22,7 +22,7 @@ import pytest
 
 from cosmos_curate.core.interfaces.pipeline_interface import run_pipeline
 from cosmos_curate.core.interfaces.runner_interface import RunnerInterface
-from cosmos_curate.core.utils.config.config import ConfigFileData, OpenAIConfig
+from cosmos_curate.core.utils.config.config import ConfigFileData, OpenAIConfig, OpenAIEndpointConfig
 from cosmos_curate.pipelines.video.captioning.captioning_stages import (  # type: ignore[import-untyped]
     EnhanceCaptionStage,
 )
@@ -69,7 +69,9 @@ def test_enhance_caption_lm_variants(
     if model_variant == "openai":
         monkeypatch.setattr(
             "cosmos_curate.models.chat_lm.maybe_load_config",
-            lambda: ConfigFileData(openai=OpenAIConfig(api_key="fake-key", base_url="https://fake.endpoint")),
+            lambda: ConfigFileData(
+                openai=OpenAIConfig(enhance=OpenAIEndpointConfig(api_key="fake-key", base_url="https://fake.endpoint"))
+            ),
         )
 
         def _fake_generate_remote(
@@ -109,6 +111,6 @@ def test_openai_variant_requires_config(monkeypatch: pytest.MonkeyPatch) -> None
 
     with pytest.raises(
         RuntimeError,
-        match="OpenAI configuration not found",
+        match="OpenAI enhance configuration not found",
     ):
         EnhanceCaptionStage(model_variant="openai")

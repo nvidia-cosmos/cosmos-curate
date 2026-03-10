@@ -23,7 +23,7 @@ from uuid import uuid4
 
 import pytest
 
-from cosmos_curate.core.utils.config.config import ConfigFileData, OpenAIConfig
+from cosmos_curate.core.utils.config.config import ConfigFileData, OpenAIConfig, OpenAIEndpointConfig
 from cosmos_curate.pipelines.video.captioning import openai_caption_stage
 from cosmos_curate.pipelines.video.captioning.openai_caption_stage import OpenAICaptionStage
 from cosmos_curate.pipelines.video.utils.data_model import Clip, SplitPipeTask, Video, Window
@@ -106,7 +106,7 @@ def test_stage_setup_creates_client_with_api_key(monkeypatch: pytest.MonkeyPatch
     monkeypatch.setattr(
         openai_caption_stage,
         "maybe_load_config",
-        lambda: ConfigFileData(openai=OpenAIConfig(api_key="test-key")),
+        lambda: ConfigFileData(openai=OpenAIConfig(caption=OpenAIEndpointConfig(api_key="test-key"))),
     )
 
     stage = OpenAICaptionStage(model_name="m")
@@ -130,7 +130,9 @@ def test_stage_setup_passes_base_url_when_configured(monkeypatch: pytest.MonkeyP
     monkeypatch.setattr(
         openai_caption_stage,
         "maybe_load_config",
-        lambda: ConfigFileData(openai=OpenAIConfig(api_key="k", base_url="http://localhost:8000/v1")),
+        lambda: ConfigFileData(
+            openai=OpenAIConfig(caption=OpenAIEndpointConfig(api_key="k", base_url="http://localhost:8000/v1"))
+        ),
     )
 
     stage = OpenAICaptionStage(model_name="m")
@@ -145,7 +147,7 @@ def test_stage_setup_raises_when_config_missing(monkeypatch: pytest.MonkeyPatch)
     monkeypatch.setattr(openai_caption_stage, "maybe_load_config", lambda: None)
 
     stage = OpenAICaptionStage(model_name="m")
-    with pytest.raises(RuntimeError, match="OpenAI configuration not found"):
+    with pytest.raises(RuntimeError, match="OpenAI caption configuration not found"):
         stage.stage_setup()
 
 
@@ -155,7 +157,7 @@ def test_stage_setup_raises_when_openai_section_missing(monkeypatch: pytest.Monk
     monkeypatch.setattr(openai_caption_stage, "maybe_load_config", lambda: ConfigFileData())
 
     stage = OpenAICaptionStage(model_name="m")
-    with pytest.raises(RuntimeError, match="OpenAI configuration not found"):
+    with pytest.raises(RuntimeError, match="OpenAI caption configuration not found"):
         stage.stage_setup()
 
 

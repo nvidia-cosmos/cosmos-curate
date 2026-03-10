@@ -104,16 +104,17 @@ class OpenAICaptionStage(CuratorStage):
     def stage_setup(self) -> None:
         """Create the OpenAI API client using credentials from the config file."""
         config = maybe_load_config()
-        if config is None or config.openai is None or not config.openai.api_key:
+        endpoint = config.openai.caption if config is not None and config.openai is not None else None
+        if endpoint is None or not endpoint.api_key:
             error_msg = (
-                "OpenAI configuration not found. Provide openai.api_key in "
+                "OpenAI caption configuration not found. Provide openai.caption.api_key in "
                 f"{CONTAINER_PATHS_COSMOS_CURATOR_CONFIG_FILE}"
             )
             raise RuntimeError(error_msg)
 
-        client_kwargs: dict[str, Any] = {"api_key": config.openai.api_key}
-        if config.openai.base_url:
-            client_kwargs["base_url"] = config.openai.base_url
+        client_kwargs: dict[str, Any] = {"api_key": endpoint.api_key}
+        if endpoint.base_url:
+            client_kwargs["base_url"] = endpoint.base_url
         self._client = openai.OpenAI(**client_kwargs)
 
     def _generate_caption(self, window: Window) -> str:

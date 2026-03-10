@@ -27,11 +27,19 @@ from cosmos_curate.core.utils.environment import CONTAINER_PATHS_COSMOS_CURATOR_
 
 
 @attrs.define
-class OpenAIConfig:
-    """Configuration for OpenAI API access."""
+class OpenAIEndpointConfig:
+    """Configuration for a single OpenAI-compatible API endpoint."""
 
     api_key: str = attrs.field(repr=False)
     base_url: str | None = attrs.field(default=None, repr=True)
+
+
+@attrs.define
+class OpenAIConfig:
+    """Configuration for OpenAI API access with separate caption and enhance endpoints."""
+
+    caption: OpenAIEndpointConfig | None = None
+    enhance: OpenAIEndpointConfig | None = None
 
 
 @attrs.define
@@ -74,8 +82,12 @@ class ConfigFileData:
 
     ``` yaml
     openai:
-        api_key: "xyz"
-        base_url: "https://custom.base.url/v1"
+        caption:
+            api_key: "xyz"
+            base_url: "https://caption.endpoint/v1"
+        enhance:
+            api_key: "xyz"
+            base_url: "https://enhance.endpoint/v1"
     gemini:
         api_key: "xyz"
     huggingface:

@@ -129,24 +129,16 @@ class ChatLM(ModelInterface):
 
         """
         config = maybe_load_config()
-        if config is None or config.openai is None:
+        endpoint = config.openai.enhance if config is not None and config.openai is not None else None
+
+        if endpoint is None or not endpoint.api_key:
             error_msg = (
-                "OpenAI configuration not found. Provide openai.api_key in "
+                "OpenAI enhance configuration not found. Provide openai.enhance.api_key in "
                 f"{CONTAINER_PATHS_COSMOS_CURATOR_CONFIG_FILE}"
             )
             raise RuntimeError(error_msg)
 
-        api_key = config.openai.api_key
-        base_url = config.openai.base_url
-
-        if not api_key:
-            error_msg = (
-                "OpenAI configuration not found. Provide openai.api_key in "
-                f"{CONTAINER_PATHS_COSMOS_CURATOR_CONFIG_FILE}"
-            )
-            raise RuntimeError(error_msg)
-
-        return api_key, base_url
+        return endpoint.api_key, endpoint.base_url
 
     @nvtx.annotate("Setup Chat LM model")  # type: ignore[untyped-decorator]
     def setup(self) -> None:
