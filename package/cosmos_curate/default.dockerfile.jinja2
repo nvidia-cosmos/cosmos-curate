@@ -34,9 +34,14 @@ RUN apt-get update \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# GPU-accelerated ffmpeg (also needed for opencv)
-ENV FFMPEG_VERSION=8.0.1 \
-    NVCODEC_VERSION=13.0.19.0
+# Build ffmpeg from source (also needed for opencv)
+ENV FFMPEG_VERSION=8.0.1
+{%- if ffmpeg_cuda %}
+# GPU-accelerated ffmpeg (--enable-nonfree, NVENC/NVDEC via nv-codec-headers)
+ENV NVCODEC_VERSION=13.0.19.0
+{%- else %}
+# CPU-only ffmpeg (LGPL-compatible, no nonfree codecs)
+{%- endif %}
 RUN mkdir -p /tmp && chmod 1777 /tmp && \
     apt-get update && \
     apt-get install -y \
@@ -64,20 +69,26 @@ RUN mkdir -p /tmp && chmod 1777 /tmp && \
     vainfo \
     yasm \
     zlib1g-dev && \
+{%- if ffmpeg_cuda %}
     wget -O /tmp/nv-codec-headers.tar.gz https://github.com/FFmpeg/nv-codec-headers/releases/download/n${NVCODEC_VERSION}/nv-codec-headers-${NVCODEC_VERSION}.tar.gz && \
     tar xzvf /tmp/nv-codec-headers.tar.gz -C /tmp/ && \
     cd /tmp/nv-codec-headers-${NVCODEC_VERSION} && \
     make && \
     make install && \
+{%- endif %}
     wget -O /tmp/ffmpeg-snapshot.tar.bz2 https://www.ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.bz2 && \
     tar xjvf /tmp/ffmpeg-snapshot.tar.bz2 -C /tmp/ && \
     cd /tmp/ffmpeg-${FFMPEG_VERSION} && \
+{%- if ffmpeg_cuda %}
     PATH="/usr/local/cuda/bin:$PATH" \
+{%- endif %}
     ./configure \
     --prefix=/usr/local \
+{%- if ffmpeg_cuda %}
     --enable-nonfree \
     --enable-cuda-nvcc \
     --enable-libnpp \
+{%- endif %}
     --enable-libopenh264 \
     --enable-libaom \
     --enable-libdav1d \
@@ -85,8 +96,10 @@ RUN mkdir -p /tmp && chmod 1777 /tmp && \
     --enable-libvpx \
     --enable-libwebp \
     --enable-vaapi \
+{%- if ffmpeg_cuda %}
     --extra-cflags=-I/usr/local/cuda/include \
     --extra-ldflags=-L/usr/local/cuda/lib64 \
+{%- endif %}
     --extra-libs=-lpthread \
     --extra-libs=-lm \
     --disable-static \
@@ -99,7 +112,9 @@ RUN mkdir -p /tmp && chmod 1777 /tmp && \
     # Clean up
     cd / && \
     rm -rf /tmp/ffmpeg* && \
+{%- if ffmpeg_cuda %}
     rm -rf /tmp/nv-codec-headers* && \
+{%- endif %}
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Install pixi

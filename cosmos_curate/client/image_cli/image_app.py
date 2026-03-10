@@ -127,6 +127,16 @@ def build(  # noqa: PLR0913
             rich_help_panel="common",
         ),
     ] = False,
+    ffmpeg_cuda: Annotated[
+        bool,
+        Option(
+            help=(
+                "Build ffmpeg with CUDA/nonfree support (NVENC/NVDEC). "
+                "By default, ffmpeg is built CPU-only (LGPL-compatible)."
+            ),
+            rich_help_panel="common",
+        ),
+    ] = False,
     extra_code_paths: Annotated[
         str | None,
         Option(
@@ -167,6 +177,7 @@ def build(  # noqa: PLR0913
         code_paths=code_paths,
         dockerfile_output_path=_dockerfile_output_path,
         verbose=verbose,
+        ffmpeg_cuda=ffmpeg_cuda,
     )
 
     if dry_run:
