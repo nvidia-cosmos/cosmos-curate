@@ -2,6 +2,28 @@
 
 ## Latest
 
+## [1.2.1]
+
+### Released
+
+- 2026-03-10
+
+### Added
+
+- Separate OpenAI endpoints for caption and enhance stages
+- Build CPU-only ffmpeg by default for LGPL-compatible images
+- Allow `QwenVideoClassifier` stage to be configurable
+
+### Fixed
+
+- Fix tracing flush lifecycle and embed profiling inside pipeline functions
+- Always use `docker buildx build` to avoid legacy builder errors
+- Defer `flush_tracing()` until after traced span exits to prevent closed-file ValueError
+
+### Changed
+
+- Fold `RemuxStage` into `VideoDownloader`
+
 ## [1.2.0]
 
 ### Released
