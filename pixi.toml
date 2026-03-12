@@ -148,7 +148,7 @@ cvcuda-cu12 = "*" # not available on conda-forge
 flashinfer-python = ">=0.4.0rc3" # not available on conda-forge; pre-release to avoid pynvml dependency
 pycuda = "*" # conda-forge package is too old
 PyNvVideoCodec = "*" # not available on conda-forge
-vllm = "==0.17.0" # not available on conda-forge
+vllm = "==0.17.1" # not available on conda-forge
 
 [feature.legacy-transformers.dependencies]
 einops = "*"

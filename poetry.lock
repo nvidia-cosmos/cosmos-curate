@@ -10868,16 +10868,16 @@ test = ["covdefaults (>=2.3)", "coverage (>=7.2.7)", "coverage-enable-subprocess
 
 [[package]]
 name = "vllm"
-version = "0.17.0"
+version = "0.17.1"
 description = "A high-throughput and memory-efficient inference and serving engine for LLMs"
 optional = true
 python-versions = "<3.14,>=3.10"
 groups = ["main"]
 markers = "extra == \"local\""
 files = [
-    {file = "vllm-0.17.0-cp38-abi3-manylinux_2_31_aarch64.whl", hash = "sha256:310fb82fe061ed75dceeb4aeb803cd8ee0d590337ec720f7abfb03a69314d710"},
-    {file = "vllm-0.17.0-cp38-abi3-manylinux_2_31_x86_64.whl", hash = "sha256:0296670a09d392ee43455d9bebf590d05a9bc2ebce5e25e2919222fc815158da"},
-    {file = "vllm-0.17.0.tar.gz", hash = "sha256:b0b62e58ef4eb633ef371f2726976372cf6dfcb7ff2ea9ddf7194c1930d5629a"},
+    {file = "vllm-0.17.1-cp38-abi3-manylinux_2_31_aarch64.whl", hash = "sha256:f04d63a94d0415b2323b0a0d3ab89a8d4d9bd346251ff60d47a7df679f7b3ff8"},
+    {file = "vllm-0.17.1-cp38-abi3-manylinux_2_31_x86_64.whl", hash = "sha256:c52e892309532b4e51cb94d022c5e3c0087300cdb56e4645708601443299d871"},
+    {file = "vllm-0.17.1.tar.gz", hash = "sha256:d26a95dcb92e2ff78ed4b48bff247d845b0c768edf6c0acf2401376a56c57b61"},
 ]
 
 [package.dependencies]
@@ -10909,6 +10909,7 @@ msgspec = "*"
 ninja = "*"
 numba = "0.61.2"
 numpy = "*"
+nvidia-cudnn-frontend = ">=1.13.0,<1.19.0"
 nvidia-cutlass-dsl = ">=4.4.0.dev1"
 openai = ">=1.99.1,<2.25.0"
 openai-harmony = ">=0.0.3"
@@ -11538,4 +11539,4 @@ local = ["Pillow", "aiofiles", "astral", "attrs", "av", "awscli", "awscli_plugin
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.12,<3.13"
-content-hash = "019d7a1dffde5b019e5f5451c4161519725e7cf36b1d36fdeaab40a29cc8feec"
+content-hash = "bd279474cf1381c5ae39757d06d766752d8c7a8e7223ce51e2858eb92b949996"

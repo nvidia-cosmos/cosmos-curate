@@ -117,7 +117,7 @@ local = [
     "transformers<5.0",
     "typer[all]>=0.21.0",
     "uvicorn",
-    "vllm==0.17.0",
+    "vllm==0.17.1",
     "webdataset==0.2.111",
     "fabric (>=3.2.2,<4.0.0)",
     "cosmos-xenna==0.2.0",
