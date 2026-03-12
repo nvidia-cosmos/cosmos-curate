@@ -22,8 +22,7 @@ from loguru import logger
 from nvtx import nvtx  # type: ignore[import-untyped]
 
 from cosmos_curate.core.interfaces.model_interface import ModelInterface
-from cosmos_curate.core.utils.config.config import maybe_load_config
-from cosmos_curate.core.utils.environment import CONTAINER_PATHS_COSMOS_CURATOR_CONFIG_FILE
+from cosmos_curate.core.utils.config.config import maybe_load_config, resolve_model_name_auto
 from cosmos_curate.core.utils.misc import grouping
 from cosmos_curate.core.utils.model import conda_utils, model_utils
 
@@ -55,7 +54,7 @@ class ChatLM(ModelInterface):
         *,
         max_output_tokens: int = 2048,
         quantization: str | None = None,
-        openai_model: str = "gpt-5.1-20251113",
+        openai_model: str = "auto",
         verbose: bool = False,
     ) -> None:
         """Initialize the ChatLM.
@@ -133,8 +132,8 @@ class ChatLM(ModelInterface):
 
         if endpoint is None or not endpoint.api_key:
             error_msg = (
-                "OpenAI enhance configuration not found. Provide openai.enhance.api_key in "
-                f"{CONTAINER_PATHS_COSMOS_CURATOR_CONFIG_FILE}"
+                "OpenAI enhance configuration not found. "
+                "Provide openai.enhance.api_key in ~/.config/cosmos_curate/config.yaml"
             )
             raise RuntimeError(error_msg)
 
@@ -177,7 +176,9 @@ class ChatLM(ModelInterface):
             if base_url:
                 client_kwargs["base_url"] = base_url
             self.openai_client: OpenAIClient = OpenAIClient(**client_kwargs)  # type: ignore[arg-type]
-            # For OpenAI API, we'll format messages manually in generate()
+            self._openai_model = resolve_model_name_auto(
+                self.openai_client, self._openai_model, endpoint_label="OpenAI enhance"
+            )
 
     @nvtx.annotate("Chat LM Generate tokens")  # type: ignore[untyped-decorator]
     def generate(

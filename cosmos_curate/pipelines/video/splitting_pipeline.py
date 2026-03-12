@@ -72,7 +72,7 @@ from cosmos_curate.pipelines.video.clipping.phases import (
     TransNetV2SplitConfig,
     TransNetV2SplitPhase,
 )
-from cosmos_curate.pipelines.video.embedding.phases import EmbeddingConfig, EmbeddingPhase
+from cosmos_curate.pipelines.video.embedding.phases import EmbeddingConfig, EmbeddingPhase, OpenAIEmbeddingConfig
 from cosmos_curate.pipelines.video.filtering.aesthetics.phases import (
     AestheticFilterConfig,
     AestheticFilterPhase,
@@ -465,6 +465,14 @@ def _assemble_stages(  # noqa: C901, PLR0912, PLR0915
     # --- Embedding (optional) ---
     embedding_model_version: str = "unspecified"
     if has_embeddings:
+        openai_embedding_config: OpenAIEmbeddingConfig | None = None
+        if args.embedding_algorithm == "openai":
+            openai_embedding_config = OpenAIEmbeddingConfig(
+                model_name=args.openai_embedding_model_name,
+                max_retries=args.openai_embedding_retries,
+                retry_delay_seconds=args.openai_embedding_retry_delay_seconds,
+                max_concurrent_requests=args.openai_embedding_max_concurrent_requests,
+            )
         embedding_phase = EmbeddingPhase(
             EmbeddingConfig(
                 algorithm=args.embedding_algorithm,
@@ -472,6 +480,7 @@ def _assemble_stages(  # noqa: C901, PLR0912, PLR0915
                 batch_size=args.embedding_batch_size,
                 verbose=args.verbose,
                 perf_profile=args.perf_profile,
+                openai_config=openai_embedding_config,
             )
         )
         embedding_model_version = embedding_phase.model_version
@@ -827,7 +836,7 @@ def _setup_parser(parser: argparse.ArgumentParser) -> None:  # noqa: PLR0915
         "--embedding-algorithm",
         type=str,
         default="internvideo2",
-        choices=["cosmos-embed1-224p", "cosmos-embed1-336p", "cosmos-embed1-448p", "internvideo2"],
+        choices=["cosmos-embed1-224p", "cosmos-embed1-336p", "cosmos-embed1-448p", "internvideo2", "openai"],
         help="Embedding algorithm to use.",
     )
     parser.add_argument(
@@ -1358,8 +1367,8 @@ def _setup_parser(parser: argparse.ArgumentParser) -> None:  # noqa: PLR0915
     parser.add_argument(
         "--openai-model-name",
         type=str,
-        default="qwen3.5-397b-a17b-fp8",
-        help="Model name to use with the OpenAI-compatible API.",
+        default="auto",
+        help="Model name to use with the OpenAI-compatible caption API ('auto' queries /v1/models).",
     )
     parser.add_argument(
         "--openai-caption-retries",
@@ -1372,6 +1381,30 @@ def _setup_parser(parser: argparse.ArgumentParser) -> None:  # noqa: PLR0915
         type=float,
         default=1.0,
         help="Delay between retries for OpenAI API caption requests.",
+    )
+    parser.add_argument(
+        "--openai-embedding-model-name",
+        type=str,
+        default="auto",
+        help="Model name to use with the OpenAI-compatible embedding API ('auto' queries /v1/models).",
+    )
+    parser.add_argument(
+        "--openai-embedding-retries",
+        type=int,
+        default=3,
+        help="Max number of retries for OpenAI API embedding requests.",
+    )
+    parser.add_argument(
+        "--openai-embedding-retry-delay-seconds",
+        type=float,
+        default=1.0,
+        help="Delay between retries for OpenAI API embedding requests.",
+    )
+    parser.add_argument(
+        "--openai-embedding-max-concurrent-requests",
+        type=int,
+        default=8,
+        help="Max concurrent requests to the OpenAI-compatible embedding endpoint.",
     )
     parser.add_argument(
         "--qwen-preprocess-dtype",
@@ -1491,8 +1524,8 @@ def _setup_parser(parser: argparse.ArgumentParser) -> None:  # noqa: PLR0915
     parser.add_argument(
         "--enhance-captions-openai-model",
         type=str,
-        default="gpt-5.1-20251113",
-        help="OpenAI model name (only used when --enhance-captions-lm-variant is 'openai').",
+        default="auto",
+        help="OpenAI model name for caption enhancement ('auto' queries /v1/models).",
     )
     parser.add_argument(
         "--enhance-captions-prompt-variant",

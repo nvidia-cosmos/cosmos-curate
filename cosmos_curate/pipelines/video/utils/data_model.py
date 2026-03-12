@@ -182,6 +182,7 @@ class Clip:
     cosmos_embed1_embedding: npt.NDArray[np.float32] | None = None
     intern_video_2_frames: LazyData[npt.NDArray[np.float32]] = attrs.field(factory=LazyData, converter=LazyData.coerce)  # type: ignore[misc]
     intern_video_2_embedding: npt.NDArray[np.float32] | None = None
+    openai_embedding: npt.NDArray[np.float32] | None = None
     # captioning
     windows: list[Window] = attrs.Factory(list)
     filter_windows: list[Window] = attrs.Factory(list)
@@ -261,6 +262,8 @@ class Clip:
             total_size += self.intern_video_2_embedding.nbytes
         if self.cosmos_embed1_embedding is not None:
             total_size += self.cosmos_embed1_embedding.nbytes
+        if self.openai_embedding is not None:
+            total_size += self.openai_embedding.nbytes
         for window in self.windows:
             total_size += window.get_major_size()
         return total_size

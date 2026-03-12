@@ -23,7 +23,9 @@ import attrs
 import cattrs
 import yaml
 
-from cosmos_curate.core.utils.environment import CONTAINER_PATHS_COSMOS_CURATOR_CONFIG_FILE
+from cosmos_curate.core.utils.environment import (
+    CONTAINER_PATHS_COSMOS_CURATOR_CONFIG_FILE,
+)
 
 
 @attrs.define
@@ -36,10 +38,11 @@ class OpenAIEndpointConfig:
 
 @attrs.define
 class OpenAIConfig:
-    """Configuration for OpenAI API access with separate caption and enhance endpoints."""
+    """Configuration for OpenAI API access with separate caption, enhance, and embedding endpoints."""
 
     caption: OpenAIEndpointConfig | None = None
     enhance: OpenAIEndpointConfig | None = None
+    embedding: OpenAIEndpointConfig | None = None
 
 
 @attrs.define
@@ -88,6 +91,9 @@ class ConfigFileData:
         enhance:
             api_key: "xyz"
             base_url: "https://enhance.endpoint/v1"
+        embedding:
+            api_key: "xyz"
+            base_url: "https://embedding.endpoint/v1"
     gemini:
         api_key: "xyz"
     huggingface:
@@ -170,6 +176,38 @@ class ConfigFileData:
         return self.postgres.profiles[profile_name]
 
 
+def resolve_model_name_auto(client: object, model_name: str, *, endpoint_label: str = "OpenAI") -> str:
+    """Resolve a model name, querying ``/v1/models`` when set to ``auto``.
+
+    Args:
+        client: An OpenAI-compatible client with a ``models.list()`` method.
+        model_name: The model name to resolve. If ``"auto"``, queries the endpoint.
+        endpoint_label: Label for error messages (e.g. ``"OpenAI caption"``).
+
+    Returns:
+        The resolved model name.
+
+    Raises:
+        RuntimeError: If ``"auto"`` is used but the endpoint serves zero or multiple models.
+
+    """
+    if model_name != "auto":
+        return model_name
+
+    response = client.models.list()  # type: ignore[attr-defined]
+    model_ids: list[str] = [m.id for m in response.data]
+    if len(model_ids) == 1:
+        return model_ids[0]
+    if not model_ids:
+        msg = f"{endpoint_label} endpoint serves no models; specify an explicit model name."
+        raise RuntimeError(msg)
+    msg = (
+        f"{endpoint_label} endpoint serves multiple models: {model_ids}. "
+        f"Specify an explicit model name instead of 'auto'."
+    )
+    raise RuntimeError(msg)
+
+
 def maybe_load_config() -> ConfigFileData | None:
     """Load a ConfigFileData object from a file.
 
@@ -190,8 +228,7 @@ def load_config() -> ConfigFileData:
     config = maybe_load_config()
     if config is None:
         error_msg = (
-            "cosmos-curate config file not found. "
-            f"Please create a config file at {CONTAINER_PATHS_COSMOS_CURATOR_CONFIG_FILE}"
+            "cosmos-curate config file not found. Please create a config file at ~/.config/cosmos_curate/config.yaml"
         )
         raise RuntimeError(error_msg)
     return config

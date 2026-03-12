@@ -199,7 +199,7 @@ class EnhanceCaptionStage(CuratorStage):
         prompt_variant: str = "default",
         prompt_text: str | None = None,
         batch_size: int = 32,
-        openai_model: str = "gpt-5.1-20251113",
+        openai_model: str = "auto",
         *,
         fp8_enable: bool = False,
         max_output_tokens: int = 2048,

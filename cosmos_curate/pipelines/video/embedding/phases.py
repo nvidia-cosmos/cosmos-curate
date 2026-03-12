@@ -29,8 +29,19 @@ from cosmos_curate.pipelines.video.embedding.internvideo2_stages import (
     InternVideo2EmbeddingStage,
     InternVideo2FrameCreationStage,
 )
+from cosmos_curate.pipelines.video.embedding.openai_embedding_stage import OpenAIEmbeddingStage
 
 _COSMOS_EMBED1_VARIANTS: frozenset[str] = frozenset({"224p", "336p", "448p"})
+
+
+@attrs.define(frozen=True)
+class OpenAIEmbeddingConfig:
+    """Configuration specific to the OpenAI-compatible API embedding path."""
+
+    model_name: str = "auto"
+    max_retries: int = 3
+    retry_delay_seconds: float = 1.0
+    max_concurrent_requests: int = 8
 
 
 @attrs.define(frozen=True)
@@ -38,10 +49,12 @@ class EmbeddingConfig:
     """Configuration for clip embedding generation."""
 
     algorithm: str = "internvideo2"
+    target_fps: float = 2.0
     gpus_per_worker: float = 0.25
     batch_size: int = 8
     verbose: bool = False
     perf_profile: bool = False
+    openai_config: OpenAIEmbeddingConfig | None = None
     # Populated and validated in __attrs_post_init__; None for non-cosmos-embed1 algorithms.
     cosmos_embed1_variant: Literal["224p", "336p", "448p"] | None = attrs.field(init=False, default=None)
 
@@ -56,7 +69,7 @@ class EmbeddingConfig:
 
 
 class EmbeddingPhase(CurationPhase):
-    """Generate clip embeddings using InternVideo2 or Cosmos-Embed1."""
+    """Generate clip embeddings using InternVideo2, Cosmos-Embed1, or an OpenAI-compatible API."""
 
     def __init__(self, config: EmbeddingConfig) -> None:
         """Initialise the embedding phase with the given configuration."""
@@ -80,12 +93,28 @@ class EmbeddingPhase(CurationPhase):
                 verbose=cfg.verbose,
                 log_stats=cfg.perf_profile,
             )
+        if cfg.algorithm == "openai":
+            if cfg.openai_config is None:
+                msg = "openai_config required for algorithm='openai'"
+                raise ValueError(msg)
+            return OpenAIEmbeddingStage(
+                model_name=cfg.openai_config.model_name,
+                target_fps=cfg.target_fps,
+                max_retries=cfg.openai_config.max_retries,
+                retry_delay_seconds=cfg.openai_config.retry_delay_seconds,
+                max_concurrent_requests=cfg.openai_config.max_concurrent_requests,
+                verbose=cfg.verbose,
+                log_stats=cfg.perf_profile,
+            )
         msg = f"Unknown embedding algorithm: {cfg.algorithm!r}"
         raise NotImplementedError(msg)
 
     @property
     def model_version(self) -> str:
         """Return the embedding model version string for output metadata."""
+        if self._cfg.algorithm == "openai":
+            # No local model registry entry for API-based embedding; use the model name.
+            return self._cfg.openai_config.model_name if self._cfg.openai_config else "unspecified"
         model = self._build_embedding_stage().model
         if model is not None:
             model_id = model.model_id_names[0]
@@ -110,10 +139,15 @@ class EmbeddingPhase(CurationPhase):
     def build_stages(self) -> list[CuratorStage | CuratorStageSpec]:
         """Construct and return the frame creation and embedding stages."""
         cfg = self._cfg
+
+        # OpenAI embedding reads pre-extracted frames directly; no model-specific frame creation stage.
+        if cfg.algorithm == "openai":
+            return [self._build_embedding_stage()]
+
         frame_stage: CuratorStage
         if cfg.algorithm == "internvideo2":
             frame_stage = InternVideo2FrameCreationStage(
-                target_fps=2.0,
+                target_fps=cfg.target_fps,
                 verbose=cfg.verbose,
                 log_stats=cfg.perf_profile,
             )
@@ -121,7 +155,7 @@ class EmbeddingPhase(CurationPhase):
             assert cfg.cosmos_embed1_variant is not None
             frame_stage = CosmosEmbed1FrameCreationStage(
                 cfg.cosmos_embed1_variant,
-                target_fps=2.0,
+                target_fps=cfg.target_fps,
                 verbose=cfg.verbose,
                 log_stats=cfg.perf_profile,
             )

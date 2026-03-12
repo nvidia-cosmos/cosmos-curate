@@ -22,8 +22,7 @@ import tenacity
 from loguru import logger
 
 from cosmos_curate.core.interfaces.stage_interface import CuratorStage, CuratorStageResource
-from cosmos_curate.core.utils.config.config import maybe_load_config
-from cosmos_curate.core.utils.environment import CONTAINER_PATHS_COSMOS_CURATOR_CONFIG_FILE
+from cosmos_curate.core.utils.config.config import maybe_load_config, resolve_model_name_auto
 from cosmos_curate.core.utils.infra.performance_utils import StageTimer
 from cosmos_curate.core.utils.model import conda_utils
 from cosmos_curate.models.prompts import get_prompt
@@ -107,8 +106,8 @@ class OpenAICaptionStage(CuratorStage):
         endpoint = config.openai.caption if config is not None and config.openai is not None else None
         if endpoint is None or not endpoint.api_key:
             error_msg = (
-                "OpenAI caption configuration not found. Provide openai.caption.api_key in "
-                f"{CONTAINER_PATHS_COSMOS_CURATOR_CONFIG_FILE}"
+                "OpenAI caption configuration not found. "
+                "Provide openai.caption.api_key in ~/.config/cosmos_curate/config.yaml"
             )
             raise RuntimeError(error_msg)
 
@@ -116,6 +115,7 @@ class OpenAICaptionStage(CuratorStage):
         if endpoint.base_url:
             client_kwargs["base_url"] = endpoint.base_url
         self._client = openai.OpenAI(**client_kwargs)
+        self._model_name = resolve_model_name_auto(self._client, self._model_name, endpoint_label="OpenAI caption")
 
     def _generate_caption(self, window: Window) -> str:
         """Generate a caption for a single window with retry logic."""

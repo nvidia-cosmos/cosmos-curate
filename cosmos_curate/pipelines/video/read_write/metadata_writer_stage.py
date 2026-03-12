@@ -224,6 +224,8 @@ class ClipWriterStage(CuratorStage):
             return ClipWriterStage._get_output_path(output_path, "iv2_embd")
         if embedding_algorithm.startswith("cosmos-embed1"):
             return ClipWriterStage._get_output_path(output_path, "ce1_embd")
+        if embedding_algorithm == "openai":
+            return ClipWriterStage._get_output_path(output_path, "openai_embd")
         # should not happen
         logger.error(f"Unknown embedding algorithm: {embedding_algorithm}")
         return ClipWriterStage._get_output_path(output_path, f"{embedding_algorithm}_embd")
@@ -235,6 +237,8 @@ class ClipWriterStage(CuratorStage):
             return ClipWriterStage._get_output_path(output_path, "iv2_embd_parquet")
         if embedding_algorithm.startswith("cosmos-embed1"):
             return ClipWriterStage._get_output_path(output_path, "ce1_embd_parquet")
+        if embedding_algorithm == "openai":
+            return ClipWriterStage._get_output_path(output_path, "openai_embd_parquet")
         return ClipWriterStage._get_output_path(output_path, f"{embedding_algorithm}_embd_parquet")
 
     @staticmethod
@@ -244,6 +248,8 @@ class ClipWriterStage(CuratorStage):
             return ClipWriterStage._get_output_path(output_path, "iv2_embd_lance")
         if embedding_algorithm.startswith("cosmos-embed1"):
             return ClipWriterStage._get_output_path(output_path, "ce1_embd_lance")
+        if embedding_algorithm == "openai":
+            return ClipWriterStage._get_output_path(output_path, "openai_embd_lance")
         return ClipWriterStage._get_output_path(output_path, f"{embedding_algorithm}_embd_lance")
 
     @staticmethod
@@ -253,6 +259,8 @@ class ClipWriterStage(CuratorStage):
             return ClipWriterStage._get_output_path(output_path, "iv2_embd_lance_fragments")
         if embedding_algorithm.startswith("cosmos-embed1"):
             return ClipWriterStage._get_output_path(output_path, "ce1_embd_lance_fragments")
+        if embedding_algorithm == "openai":
+            return ClipWriterStage._get_output_path(output_path, "openai_embd_lance_fragments")
         return ClipWriterStage._get_output_path(output_path, f"{embedding_algorithm}_embd_lance_fragments")
 
     @staticmethod
@@ -262,6 +270,8 @@ class ClipWriterStage(CuratorStage):
             return ClipWriterStage._get_output_path(output_path, "iv2_embd_lance_fragments_processed")
         if embedding_algorithm.startswith("cosmos-embed1"):
             return ClipWriterStage._get_output_path(output_path, "ce1_embd_lance_fragments_processed")
+        if embedding_algorithm == "openai":
+            return ClipWriterStage._get_output_path(output_path, "openai_embd_lance_fragments_processed")
         return ClipWriterStage._get_output_path(output_path, f"{embedding_algorithm}_embd_lance_fragments_processed")
 
     @staticmethod
@@ -413,6 +423,7 @@ class ClipWriterStage(CuratorStage):
                 clip.encoded_data.drop()
                 clip.intern_video_2_embedding = None
                 clip.cosmos_embed1_embedding = None
+                clip.openai_embedding = None
                 for window in clip.windows:
                     window.mp4_bytes.drop()
                     for model_variant in window.model_input:
@@ -656,6 +667,8 @@ class ClipWriterStage(CuratorStage):
             return clip.intern_video_2_embedding
         if self._embedding_algorithm.startswith("cosmos-embed1"):
             return clip.cosmos_embed1_embedding
+        if self._embedding_algorithm == "openai":
+            return clip.openai_embedding
         return None
 
     def _add_clip_embedding_to_buffer(self, clip: Clip) -> None:

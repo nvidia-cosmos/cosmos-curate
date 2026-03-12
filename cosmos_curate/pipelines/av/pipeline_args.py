@@ -157,8 +157,8 @@ def add_common_args(parser: argparse.ArgumentParser, pipeline_name: str) -> None
         parser.add_argument(
             "--enhance-captions-openai-model",
             type=str,
-            default="gpt-5.1-20251113",
-            help="OpenAI model when using --enhance-captions-lm-variant openai.",
+            default="auto",
+            help="OpenAI model for caption enhancement ('auto' queries /v1/models).",
         )
         parser.add_argument(
             "--qwen-lm-batch-size",

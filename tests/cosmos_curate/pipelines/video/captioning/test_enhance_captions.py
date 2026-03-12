@@ -90,6 +90,10 @@ def test_enhance_caption_lm_variants(
             "cosmos_curate.models.chat_lm.ChatLM._generate_remote",
             _fake_generate_remote,
         )
+        monkeypatch.setattr(
+            "cosmos_curate.models.chat_lm.resolve_model_name_auto",
+            lambda _client, model, **_kwargs: model,
+        )
 
     stages = [EnhanceCaptionStage(model_variant=model_variant)]
     result_tasks = run_pipeline([task], stages, runner=sequential_runner)

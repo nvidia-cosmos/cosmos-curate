@@ -40,7 +40,7 @@ class EnhanceCaptionConfig:
 
     model_variant: str = "qwen_lm"
     batch_size: int = 32
-    openai_model: str = "gpt-5.1-20251113"
+    openai_model: str = "auto"
     fp8_enable: bool = False
     max_output_tokens: int = 2048
     prompt_variant: str = "default"
@@ -67,7 +67,7 @@ class GeminiConfig:
 class OpenAIConfig:
     """Configuration specific to the OpenAI-compatible API captioning path."""
 
-    model_name: str = "qwen3.5-397b-a17b-fp8"
+    model_name: str = "auto"
     max_output_tokens: int = 8192
     prompt_variant: str = "default"
     prompt_text: str | None = None

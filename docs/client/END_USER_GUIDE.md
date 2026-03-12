@@ -13,6 +13,7 @@
     - [Run the Reference Video Pipeline](#run-the-reference-video-pipeline)
     - [Use Gemini for Captioning](#use-gemini-for-captioning)
     - [Enhance Captions with OpenAI](#enhance-captions-with-openai)
+    - [Use an OpenAI-Compatible Endpoint for Embedding](#use-an-openai-compatible-endpoint-for-embedding)
     - [Generate Dataset for Cosmos-Predict2 Post-Training](#generate-dataset-for-cosmos-predict2-post-training)
     - [Useful Options for Local Run](#useful-options-for-local-run)
   - [Launch Pipelines on Slurm](#launch-pipelines-on-slurm)
@@ -68,7 +69,7 @@ Cosmos-Curate is a powerful tool for video curation and processing. This guide w
 ## Initial Setup
 This guide covers launching the video curator on multiple platforms (local, DGXC, and slurm). The steps below are platform‑agnostic; complete them on whichever platform you plan to run the video curator on.
 
-1. Create a configuration file at `~/.config/cosmos_curate/config.yaml` and put your credentials. The Hugging Face section is required for model downloads; the Gemini and OpenAI sections are optional but needed for their respective captioning features:
+1. Create a configuration file at `~/.config/cosmos_curate/config.yaml` and put your credentials. The Hugging Face section is required for model downloads; the Gemini and OpenAI sections are optional but needed for their respective features:
 
 ```yaml
 huggingface:
@@ -77,8 +78,15 @@ huggingface:
 gemini:
     api_key: "<your-gemini-api-key>"
 openai:
-    api_key: "<your-openai-api-key>"
-    base_url: "https://<optional-base-url>/v1"
+    caption:
+        api_key: "<your-openai-api-key>"
+        base_url: "https://<optional-base-url>/v1"
+    enhance:
+        api_key: "<your-openai-api-key>"
+        base_url: "https://<optional-base-url>/v1"
+    embedding:
+        api_key: "<api-key-or-dummy-for-local>"
+        base_url: "http://<embedding-endpoint>/v1"
 ```
 
 1. To use `InternVideo2` embedding model:
@@ -263,11 +271,52 @@ cosmos-curate local launch \
     --output-clip-path <output path> \
     --enhance-captions \
     --enhance-captions-lm-variant openai \
-    --enhance-captions-openai-model gpt-5.1-20251113 \
     --enhance-captions-max-output-tokens 2048
 ```
 
-`--enhance-captions-openai-model` selects the OpenAI API model (default `gpt-5.1-20251113`). Set `openai.base_url` in config if you need to use a custom base URL. You can increase `--enhance-captions-max-output-tokens` if you need longer rewrites; the default `2048` works for most scenarios.
+`--enhance-captions-openai-model` selects the OpenAI API model (default `auto`, which discovers the model via `/v1/models`). Set `openai.enhance.base_url` in config if you need to use a custom base URL. You can increase `--enhance-captions-max-output-tokens` if you need longer rewrites; the default `2048` works for most scenarios.
+
+### Use an OpenAI-Compatible Endpoint for Embedding
+
+You can generate video clip embeddings using any OpenAI-compatible embedding API (e.g. a local [vLLM](https://docs.vllm.ai/) server) instead of the built-in InternVideo2 or Cosmos-Embed1 models.
+
+1. Download an embedding model, for example:
+
+```bash
+hf download Qwen/Qwen3-VL-Embedding-8B --local-dir /opt/models/qwen3-vl-embedding-8b
+```
+
+2. Start a vLLM server with the pooling runner:
+
+```bash
+VLLM_ALLOW_LONG_MAX_MODEL_LEN=1 \
+vllm serve /opt/models/qwen3-vl-embedding-8b \
+  --runner pooling \
+  --max-model-len 131072 \
+  --port 8000
+```
+
+3. Add the `openai.embedding` section to `~/.config/cosmos_curate/config.yaml`:
+
+```yaml
+openai:
+    embedding:
+        api_key: "dummy"
+        base_url: "http://localhost:8000/v1"
+```
+
+4. Run the split-annotate pipeline with `--embedding-algorithm openai`:
+
+```bash
+cosmos-curate local launch \
+    --image-name cosmos-curate --image-tag 1.0.0 --curator-path . \
+    -- pixi run python -m cosmos_curate.pipelines.video.run_pipeline split \
+    --input-video-path <input path> \
+    --output-clip-path <output path> \
+    --embedding-algorithm openai
+```
+
+The model name defaults to `auto`, which discovers the served model automatically via the `/v1/models` endpoint. To specify a model explicitly, use `--openai-embedding-model-name <model-name>`.
 
 4. **Optionally, Run the Split-Annotate Pipeline via API Endpoint**
 
