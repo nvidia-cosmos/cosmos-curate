@@ -387,7 +387,7 @@ def sample_closest(  # noqa: PLR0913
         # sample interval.
         _stop += sample_interval * 0.5
 
-    sample_elements = np.arange(_start, _stop, sample_interval, dtype=np.float32)
+    sample_elements: npt.NDArray[np.float32] = np.arange(_start, _stop, sample_interval, dtype=np.float32)
     indices = find_closest_indices(src, sample_elements)
 
     if not endpoint and np.isclose(sample_elements[-1], _stop):

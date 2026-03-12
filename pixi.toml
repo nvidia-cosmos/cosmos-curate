@@ -35,7 +35,7 @@ gpustat = "*"
 huggingface_hub = "*"
 jinja2 = "*"
 loguru = "*"
-numpy = ">2,<2.3" # vllm requires numpy>=2 via opencv; numba 0.61.x requires <2.3
+numpy = ">2,<2.3" # opencv-python-headless requires >=2; numba 0.61.x requires <2.3
 nvidia-ml-py = "*"
 nvtx = "*"
 pandas = "*"
@@ -67,6 +67,8 @@ pillow = "==11.3.0"  # required by phi-4 and nemotron models, 12.0 breaks nemotr
 pylance = ">=0.39.0" # conda-forge package is too old
 pulp = "*" # conda-forge package is too old
 timm = "*" # conda-forge package pulls in torchvision, which is behind
+torch = { version = "==2.10+cu129", index = "https://download.pytorch.org/whl/cu129" } # match system CUDA 12.9
+torchvision = { version = "==0.25.0", index = "https://download.pytorch.org/whl/cu129" }
 uvicorn = "*"
 webdataset = "*" # conda-forge package pulls in pytorch
 
@@ -80,7 +82,7 @@ cuda-nvrtc-static = "12.9.*"
 cuda-cupti = "12.9.*"
 cuda-cuobjdump = "12.9.*"
 cuda-nvdisasm = "12.9.*"
-triton = "==3.5.1"
+triton = "==3.6.0"
 
 [feature.core.target.linux-aarch64.pypi-dependencies]
 # Add available NVIDIA CUDA runtime wheels for aarch64 to match linux-64 installs.
@@ -100,10 +102,6 @@ nvidia-nvjitlink-cu12 = "*"
 nvidia-nvshmem-cu12 = "*"
 nvidia-nvtx-cu12 = "*"
 
-# Use CUDA-enabled PyTorch wheels on aarch64 to avoid CPU-only builds.
-torch = { version = "==2.9.1+cu129", index = "https://download.pytorch.org/whl/cu129" }
-torchvision = { version = "==0.24.1", index = "https://download.pytorch.org/whl/cu129" }
-
 [feature.cuml.system-requirements]
 cuda = "12.9.1" # match the version of the nvidia/cuda docker base image
 
@@ -112,7 +110,7 @@ azure-identity = "*"
 azure-storage-blob = "*"
 cuml = "==25.12"
 loguru = "*"
-numpy = ">2,<2.3" # vllm requires numpy>=2 via opencv; numba 0.61.x requires <2.3
+numpy = ">2,<2.3" # opencv-python-headless requires >=2; numba 0.61.x requires <2.3
 raft-dask = "*"
 setuptools = "<81" # prettytable 2.0 (via ngcsdk) requires pkg_resources, removed in setuptools 81
 tqdm = "*"
@@ -128,7 +126,7 @@ cattrs = "*"
 huggingface_hub = "*"
 loguru = "*"
 pandas = "*"
-numpy = ">2,<2.3" # vllm requires numpy>=2 via opencv; numba 0.61.x requires <2.3
+numpy = ">2,<2.3" # opencv-python-headless requires >=2; numba 0.61.x requires <2.3
 nvidia-ml-py = "*"
 scipy = "*"
 setuptools = "<81" # prettytable 2.0 (via ngcsdk) requires pkg_resources, removed in setuptools 81
@@ -139,7 +137,7 @@ ngcsdk = "*" # not available on conda-forge
 opencv-python-headless = "*" # not available on conda-forge
 
 [feature.transformers.dependencies]
-transformers = ">=4.57.1,<5.0.0" # vllm 0.15 requires transformers<5
+transformers = ">=4.57.1,<5.0.0" # Transformers v5 changes apply_chat_template to return BatchEncoding instead of input_ids
 
 [feature.unified.dependencies]
 cuda-libraries-dev = "*"
@@ -150,14 +148,11 @@ cvcuda-cu12 = "*" # not available on conda-forge
 flashinfer-python = ">=0.4.0rc3" # not available on conda-forge; pre-release to avoid pynvml dependency
 pycuda = "*" # conda-forge package is too old
 PyNvVideoCodec = "*" # not available on conda-forge
-vllm = "==0.15.1" # not available on conda-forge
+vllm = "==0.17.0" # not available on conda-forge
 
 [feature.legacy-transformers.dependencies]
 einops = "*"
 transformers = "==4.55.4" # legacy models (cosmos-embed1, internvideo2) require older transformers
-
-[feature.legacy-transformers.pypi-dependencies]
-torch = "==2.9.1" # pin PyTorch version for compatibility with legacy models
 
 # Distributed tracing (OpenTelemetry).
 # Lightweight -- pure-Python wheels only.  Included in ALL environments
