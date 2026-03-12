@@ -123,7 +123,7 @@ def build(  # noqa: PLR0913
             cmd.extend(["--cache-from", cache_from_src])
     if cache_to:
         cmd.extend(["--cache-to", cache_to, "--push"])
-    elif cache_from:
+    else:
         cmd.extend(["--load"])
     cmd.extend(
         [
