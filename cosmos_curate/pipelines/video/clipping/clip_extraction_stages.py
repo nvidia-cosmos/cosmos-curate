@@ -185,6 +185,7 @@ class ClipTranscodingStage(CuratorStage):
         use_hwaccel: bool = False,
         use_input_bit_rate: bool = False,
         num_clips_per_chunk: int = 32,
+        max_output_frames: int | None = None,
         verbose: bool = False,
         ffmpeg_verbose: bool = False,
         log_stats: bool = False,
@@ -200,6 +201,8 @@ class ClipTranscodingStage(CuratorStage):
             use_hwaccel: Whether to use hardware acceleration.
             use_input_bit_rate: Whether to use input video bit rate.
             num_clips_per_chunk: Number of clips per chunk.
+            max_output_frames: If set, limit each clip's output frame count to this value
+                by reducing FPS during transcoding. Source FPS is never increased.
             verbose: Whether to print verbose logs.
             ffmpeg_verbose: Whether to print FFmpeg verbose logs.
             log_stats: Whether to log performance statistics.
@@ -214,11 +217,15 @@ class ClipTranscodingStage(CuratorStage):
         self._use_hwaccel = use_hwaccel
         self._use_input_bit_rate = use_input_bit_rate
         self._num_clips_per_chunk = num_clips_per_chunk
+        self._max_output_frames = max_output_frames
         self._verbose = verbose
         self._ffmpeg_verbose = ffmpeg_verbose
         self._log_stats = log_stats
         if encoder not in {"libopenh264", "h264_nvenc"}:
             error_msg = f"Expected encoder of `libopenh264` or `h264_nvenc`. Got {encoder}"
+            raise ValueError(error_msg)
+        if max_output_frames is not None and max_output_frames <= 0:
+            error_msg = f"max_output_frames must be a positive integer, got {max_output_frames}"
             raise ValueError(error_msg)
 
     def _process_video(self, video: Video) -> None:
@@ -260,6 +267,7 @@ class ClipTranscodingStage(CuratorStage):
                     use_bit_rate=use_bit_rate,
                     clips=batch,
                     input_video=str(video.input_video),
+                    source_fps=video.metadata.framerate,
                 )
 
     @nvtx.annotate("ClipTranscodingStage")  # type: ignore[untyped-decorator]
@@ -319,6 +327,7 @@ class ClipTranscodingStage(CuratorStage):
         use_bit_rate: str | None,
         clips: list[Clip],
         input_video: str,
+        source_fps: float | None = None,
     ) -> None:
         # construct ffmpeg command
         command = [
@@ -386,6 +395,14 @@ class ClipTranscodingStage(CuratorStage):
                 command.extend(["-threads", str(1)])
             else:
                 command.extend(["-threads", str(self._encoder_threads)])
+            # Limit output frame count by reducing FPS when max_output_frames is set.
+            # We use both -r (target FPS) and -frames:v (hard cap) because ffmpeg's
+            # FPS resampling can produce 1-2 extra frames due to timestamp rounding.
+            if self._max_output_frames is not None and source_fps is not None:
+                duration = end_s - start_s
+                if duration > 0 and source_fps * duration > self._max_output_frames:
+                    target_fps = self._max_output_frames / duration
+                    command.extend(["-r", f"{target_fps:.4f}", "-frames:v", str(self._max_output_frames)])
             command.extend(
                 [
                     "-map",

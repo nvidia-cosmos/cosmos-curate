@@ -72,6 +72,7 @@ class TranscodeConfig:
     use_hwaccel: bool = False
     use_input_bit_rate: bool = False
     num_clips_per_chunk: int = 32
+    max_output_frames: int | None = None
     verbose: bool = False
     perf_profile: bool = False
 
@@ -213,6 +214,7 @@ class TranscodePhase(CurationPhase):
                 use_hwaccel=cfg.use_hwaccel,
                 use_input_bit_rate=cfg.use_input_bit_rate,
                 num_clips_per_chunk=cfg.num_clips_per_chunk,
+                max_output_frames=cfg.max_output_frames,
                 verbose=cfg.verbose,
                 log_stats=cfg.perf_profile,
             ),

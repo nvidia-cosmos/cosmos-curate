@@ -352,6 +352,7 @@ def _assemble_stages(  # noqa: C901, PLR0912, PLR0915
                 use_hwaccel=args.transcode_use_hwaccel,
                 use_input_bit_rate=args.transcode_use_input_video_bit_rate,
                 num_clips_per_chunk=args.clip_re_chunk_size,
+                max_output_frames=args.transcode_max_output_frames,
                 verbose=args.verbose,
                 perf_profile=args.perf_profile,
             )
@@ -1037,6 +1038,13 @@ def _setup_parser(parser: argparse.ArgumentParser) -> None:  # noqa: PLR0915
         action="store_true",
         default=False,
         help="Whether to use input video's bit rate for encoding clips.",
+    )
+    parser.add_argument(
+        "--transcode-max-output-frames",
+        type=int,
+        default=None,
+        help="If set, limit each transcoded clip's frame count by reducing FPS. "
+        "For example, 186 for Cosmos Transfer compatibility. Source FPS is never increased.",
     )
     parser.add_argument(
         "--clip-re-chunk-size",
