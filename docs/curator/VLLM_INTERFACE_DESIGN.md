@@ -38,7 +38,7 @@ The `vllm_interface` provides separation of concerns, enabling CuratorStage clas
 │                       ▼                                     │
 │  ┌──────────────────────────────────────────────────────┐   │
 │  │  Plugin Registry: _VLLM_PLUGINS                      │   │
-│  │  • VllmPhi4        • VllmQwen7B                      │   │
+│  │  • VllmNemotronNano12Bv2VL • VllmQwen7B              │   │
 │  │  • VllmCosmosReason1VL                               │   │
 │  │  • VllmCosmosReason2VL                               │   │
 │  └──────────────────────────────────────────────────────┘   │
@@ -60,8 +60,8 @@ The `vllm_interface` provides separation of concerns, enabling CuratorStage clas
 ┌───────────────────────────────────────────────────────────────────────────────────┐
 │                        Concrete Plugin Implementations                            │
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────────┐  ┌──────────────────┐   │
-│  │  VllmPhi4    │  │  VllmQwen7B  │  │ VllmCosmosR1VL   │  │ VllmCosmosR2VL   │   │
-│  │  (vllm_phi)  │  │ (vllm_qwen)  │  │(vllm_cosmos_r1)  │  │(vllm_cosmos_r2)  │   │
+│  │ VllmNemotron │  │  VllmQwen7B  │  │ VllmCosmosR1VL   │  │ VllmCosmosR2VL   │   │
+│  │(vllm_nemotron)│ │ (vllm_qwen)  │  │(vllm_cosmos_r1)  │  │(vllm_cosmos_r2)  │   │
 │  └──────────────┘  └──────────────┘  └──────────────────┘  └──────────────────┘   │
 └──────────────────────┬────────────────────────────────────────────────────────────┘
                        │
@@ -88,7 +88,7 @@ The `vllm_interface` provides separation of concerns, enabling CuratorStage clas
 
 ```python
 _VLLM_PLUGINS = {
-    VllmPhi4.model_variant(): VllmPhi4,
+    VllmNemotronNano12Bv2VL.model_variant(): VllmNemotronNano12Bv2VL,
     VllmQwen7B.model_variant(): VllmQwen7B,
     VllmCosmosReason1VL.model_variant(): VllmCosmosReason1VL,
     VllmCosmosReason2VL.model_variant(): VllmCosmosReason2VL,
@@ -125,7 +125,7 @@ _VLLM_PLUGINS = {
 ```python
 @attrs.define
 class VllmConfig:
-    model_variant: str                    # Which model to use (e.g., "qwen", "phi4")
+    model_variant: str                    # Which model to use (e.g., "qwen", "nemotron")
     prompt_variant: str = "default"       # Prompt template variant
     prompt_text: str | None = None        # Custom prompt text
     fp8: bool = True                      # Enable FP8 quantization
@@ -217,7 +217,7 @@ Converts decoded video frames into model-ready inputs.
 
 **Model-Specific Formats**:
 - **Qwen**: `{"prompt_token_ids": [...], "multi_modal_data": {"video": tensor}}`
-- **Phi-4**: `{"prompt": "...", "multi_modal_data": {"image": [PIL.Image, ...]}}`
+- **Nemotron**: `{"prompt_token_ids": [...], "multi_modal_data": {"video": (video_np, metadata)}}`
 - **CosmosReason1VL/CosmosReason2VL**: Similar to Qwen
 
 ### Inference Functions
@@ -360,7 +360,7 @@ refined_request = plugin.make_refined_llm_request(
 
 **Model-Specific Refinement**:
 - **Qwen**: Concatenates refine prompt + stage1 caption, reuses video tensor
-- **Phi-4**: Concatenates refine prompt + stage1 caption, reuses PIL images
+- **Nemotron**: Concatenates refine prompt + stage1 caption, reuses video payload + metadata
 
 ### Configuration
 
@@ -485,8 +485,8 @@ config = VllmConfig(
 
 ```python
 config = VllmConfig(
-    model_variant="phi4",
-    num_gpus=2,
+    model_variant="nemotron",
+    num_gpus=1,
     batch_size=4,
     temperature=0.7,
     top_p=0.9,
@@ -614,7 +614,7 @@ except Exception:
 
 - `cosmos_curate.core.utils.misc.grouping`: Batch splitting utilities
 - `cosmos_curate.pipelines.video.utils.data_model`: Configuration and request objects
-- Plugin implementations: `vllm_phi.py`, `vllm_qwen.py`, `vllm_cosmos_reason1_vl.py`, `vllm_cosmos_reason2_vl.py`
+- Plugin implementations: `vllm_nemotron.py`, `vllm_qwen.py`, `vllm_cosmos_reason1_vl.py`, `vllm_cosmos_reason2_vl.py`
 
 ### Conda Environment
 

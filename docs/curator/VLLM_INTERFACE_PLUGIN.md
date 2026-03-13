@@ -36,7 +36,7 @@ class VllmPlugin(ABC):
     @staticmethod
     @abstractmethod
     def model_variant() -> str:
-        """Return unique identifier (e.g., "qwen", "phi4")"""
+        """Return unique identifier (e.g., "qwen", "nemotron")"""
     
     @classmethod
     def model_id(cls) -> str:
@@ -199,7 +199,7 @@ def model(cls, config: VllmConfig) -> LLM:
 
 **Model-specific considerations:**
 - **Qwen**: Supports video, uses token IDs, no image limit
-- **Phi-4**: Supports images (not video), needs frame-to-PIL conversion
+- **Nemotron**: Supports video with model-specific metadata payload
 - **Your model**: Check vLLM docs for supported multimodal types
 
 **Testing:**
@@ -243,7 +243,7 @@ def make_llm_input(prompt: str, frames: torch.Tensor, processor: AutoProcessor) 
     }
 ```
 
-#### Pattern 2: Text Prompt + Images (e.g., Phi-4)
+#### Pattern 2: Text Prompt + Images (image-only models)
 
 ```python
 @staticmethod
@@ -451,7 +451,7 @@ Add your plugin to the registry in `cosmos_curate/models/vllm_interface.py`:
 from cosmos_curate.models.vllm_mymodel import VllmMyModel
 
 _VLLM_PLUGINS = {
-    VllmPhi4.model_variant(): VllmPhi4,
+    VllmNemotronNano12Bv2VL.model_variant(): VllmNemotronNano12Bv2VL,
     VllmQwen7B.model_variant(): VllmQwen7B,
     VllmCosmosReason1VL.model_variant(): VllmCosmosReason1VL,
     VllmCosmosReason2VL.model_variant(): VllmCosmosReason2VL,
@@ -466,7 +466,7 @@ Add your model's HuggingFace ID to `cosmos_curate/models/vllm_model_ids.py`:
 ```python
 _VLLM_MODELS = {
     "qwen": "Qwen/Qwen2.5-VL-7B-Instruct",
-    "phi4": "microsoft/Phi-4-multimodal-instruct",
+    "nemotron": "nvidia/NVIDIA-Nemotron-Nano-12B-v2-VL-BF16",
     "cosmos_r1": "nvidia/Cosmos-Reason1-7B",
     "cosmos_r2": "nvidia/Cosmos-Reason2-8B",
     "mymodel": "organization/my-model-name",  # Add this line
@@ -801,7 +801,7 @@ def make_refined_llm_request(request, processor, refine_prompt):
 
 **Reference implementations:**
 - **`vllm_qwen.py`**: Token-based model with video support (most complete example)
-- **`vllm_phi.py`**: Text-based model with PIL images
+- **`vllm_nemotron.py`**: Video + metadata model format
 - **`vllm_cosmos_reason1_vl.py`**: NVIDIA model example
 
 Copy structure from the closest match to your model.
@@ -938,7 +938,7 @@ Use this checklist to ensure your plugin is complete:
 **Solutions:**
 1. Check vLLM's documentation for your model
 2. Inspect vLLM's model implementation: `vllm/model_executor/models/yourmodel.py`
-3. Compare with working plugin (Qwen or Phi-4)
+3. Compare with a working plugin (Qwen or Nemotron)
 4. Verify `multi_modal_data` keys match what vLLM expects
 
 ### Captions Are "Unknown caption"
@@ -1101,7 +1101,7 @@ class VllmVideoLLaMA(VllmPlugin):
 - **Plugin Interface Definition**: `cosmos_curate/models/vllm_plugin.py`
 - **Existing Plugin Examples**:
   - `cosmos_curate/models/vllm_qwen.py` - Token-based with video
-  - `cosmos_curate/models/vllm_phi.py` - Text-based with images
+  - `cosmos_curate/models/vllm_nemotron.py` - Video + metadata format
   - `cosmos_curate/models/vllm_cosmos_reason1_vl.py` - NVIDIA model
 - **vLLM Documentation**: https://docs.vllm.ai/
 - **Design Document**: [VLLM_INTERFACE_DESIGN.md](VLLM_INTERFACE_DESIGN.md)

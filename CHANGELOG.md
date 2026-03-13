@@ -2,6 +2,13 @@
 
 ## Latest
 
+## [Unreleased]
+
+### Changed
+
+- Remove support for [Phi-4](https://huggingface.co/microsoft/Phi-4-multimodal-instruct) captioning to keep a
+  security floor of `pillow>=12.1.1` (GHSA-cfh3-3jmp-rvhc)
+
 ## [1.2.1]
 
 ### Released

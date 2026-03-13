@@ -23,7 +23,7 @@ Problem this solves:
   * Model loading with correct quantization/tensor parallelism settings
   * Two-stage captioning workflow (initial caption → refinement request → final caption)
   * Batching logic with proper request tracking
-  * Model-specific input formatting (Qwen token IDs vs Phi-4 prompts vs ...)
+  * Model-specific input formatting (Qwen token IDs vs Nemotron metadata prompts vs ...)
 
 This was leading to code duplication across the input preparation and captioning stages
 for each model.
@@ -64,7 +64,6 @@ Plugin Implementations (model-specific code):
 - VllmCosmosReason1VL:     cosmos_curate/models/vllm_cosmos_reason1_vl.py
 - VllmCosmosReason2VL:     cosmos_curate/models/vllm_cosmos_reason2_vl.py
 - VllmNemotronNano12Bv2VL: cosmos_curate/models/vllm_nemotron.py
-- VllmPhi4:                cosmos_curate/models/vllm_phi.py
 - VllmQwen7B:              cosmos_curate/models/vllm_qwen.py
 - VllmQwen3VL30B:          cosmos_curate/models/vllm_qwen.py
 - VllmQwen3VL235B:         cosmos_curate/models/vllm_qwen.py
@@ -106,7 +105,6 @@ from cosmos_curate.core.utils.misc import grouping
 from cosmos_curate.models.vllm_cosmos_reason1_vl import VllmCosmosReason1VL
 from cosmos_curate.models.vllm_cosmos_reason2_vl import VllmCosmosReason2VL
 from cosmos_curate.models.vllm_nemotron import VllmNemotronNano12Bv2VL
-from cosmos_curate.models.vllm_phi import VllmPhi4
 from cosmos_curate.models.vllm_plugin import VllmPlugin
 from cosmos_curate.models.vllm_qwen import (
     VllmQwen3VL30B,
@@ -127,7 +125,6 @@ _VLLM_PLUGINS = {
     VllmCosmosReason1VL.model_variant(): VllmCosmosReason1VL,
     VllmCosmosReason2VL.model_variant(): VllmCosmosReason2VL,
     VllmNemotronNano12Bv2VL.model_variant(): VllmNemotronNano12Bv2VL,
-    VllmPhi4.model_variant(): VllmPhi4,
     VllmQwen3VL235B.model_variant(): VllmQwen3VL235B,
     VllmQwen3VL235BFP8.model_variant(): VllmQwen3VL235BFP8,
     VllmQwen3VL30B.model_variant(): VllmQwen3VL30B,

@@ -137,8 +137,6 @@ function createTimestampElement(startTime, endTime) {
                         captionText = jsonData.windows[0].gemini_caption;
                     } else if (jsonData.windows?.[0]?.nemotron_caption) {
                         captionText = jsonData.windows[0].nemotron_caption;
-                    } else if (jsonData.windows?.[0]?.phi4_caption) {
-                        captionText = jsonData.windows[0].phi4_caption;
                     } else if (jsonData.windows?.[0]?.qwen_caption) {
                         captionText = jsonData.windows[0].qwen_caption;
                     }

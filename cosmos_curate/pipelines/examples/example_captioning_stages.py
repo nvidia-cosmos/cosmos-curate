@@ -58,9 +58,6 @@ _WINDOW_VARIANT_OVERRIDES: dict[str, dict[str, Any]] = {
     "cosmos_r2": {
         "sampling_fps": 4.0,
     },
-    "phi4": {
-        "sampling_fps": 1.0,
-    },
 }
 
 _BASE_VLLM_CONFIG: dict[str, Any] = {
@@ -89,7 +86,6 @@ _KEEP_MP4_DEFAULTS: dict[str, bool] = {
     "qwen": True,
     "cosmos_r1": True,
     "cosmos_r2": True,
-    "phi4": True,
 }
 
 

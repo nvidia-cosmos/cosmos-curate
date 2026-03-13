@@ -439,5 +439,5 @@ debug_request(refined_request, "After Stage 2 Creation")
 - **vLLM Documentation**: https://docs.vllm.ai/ - Official vLLM docs
 - **Plugin Examples**: 
   - `cosmos_curate/models/vllm_qwen.py` - Most complete example
-  - `cosmos_curate/models/vllm_phi.py` - Example with PIL images
+  - `cosmos_curate/models/vllm_nemotron.py` - Example with video + metadata inputs
   - `cosmos_curate/models/vllm_cosmos_reason1_vl.py` - NVIDIA model example

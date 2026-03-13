@@ -566,9 +566,6 @@ def _assemble_stages(  # noqa: C901, PLR0912, PLR0915
                 )
                 window_config.model_does_preprocess = True
 
-        elif caption_algo == "phi4":
-            vllm_config.stage2_caption = args.phi4_stage2_caption
-            vllm_config.stage2_prompt_text = args.phi4_stage2_prompt_text
         elif caption_algo in COSMOS_REASON_ALGOS:
             vllm_config.batch_size = args.qwen_batch_size
             vllm_config.fp8 = args.qwen_use_fp8_weights
@@ -1475,19 +1472,6 @@ def _setup_parser(parser: argparse.ArgumentParser) -> None:  # noqa: PLR0915
         type=float,
         default=1.0,
         help="Number of GPUs per worker for Qwen captioning stage.",
-    )
-    parser.add_argument(
-        "--phi4-stage2-caption",
-        dest="phi4_stage2_caption",
-        action="store_true",
-        default=False,
-        help="If set, generated captions are used as input prompts again into Phi4 to refine them",
-    )
-    parser.add_argument(
-        "--phi4-stage2-prompt-text",
-        type=str,
-        default=None,
-        help="Specify the input prompt used to generate stage2 Phi4 captions",
     )
     parser.add_argument(
         "--vllm-prepare-num-cpus-per-worker",

@@ -63,7 +63,7 @@ av = "*" # conda-forge package pulls in ffmpeg
 google-genai= ">=1.59.0" # conda-forge package is too old
 ngcsdk = "*" # not available on conda-forge
 opencv-python-headless = "*" # not available on conda-forge
-pillow = "==11.3.0"  # required by phi-4 and nemotron models, 12.0 breaks nemotron
+pillow = ">=12.1.1"  # Fix GHSA-cfh3-3jmp-rvhc
 pylance = ">=0.39.0" # conda-forge package is too old
 pulp = "*" # conda-forge package is too old
 timm = "*" # conda-forge package pulls in torchvision, which is behind
