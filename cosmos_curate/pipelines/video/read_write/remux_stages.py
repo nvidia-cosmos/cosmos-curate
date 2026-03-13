@@ -134,6 +134,9 @@ def remux_if_needed(video: Video, threads: int) -> bool:
     if any(remux_format in format_name for remux_format in REMUX_FORMATS):
         logger.info(f"Video {video.input_video} is in `{format_name}` format, remuxing to mp4")
         video.encoded_data = remux_to_mp4(data, threads=threads)  # type: ignore[assignment]
+        video.timestamps = (
+            None  # Invalidate after byte replacement; keep state correct even if populate_metadata() fails.
+        )
         video.populate_metadata()
         # TODO(LazyData): re-enable when batch-mode ObjectRef ownership is
         # resolved.  In batch mode, pool.stop() kills actor -> OwnerDiedError.

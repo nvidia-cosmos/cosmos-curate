@@ -447,3 +447,27 @@ class TestRemuxStage:
         call_args = mock_remux_to_mp4.call_args
         assert np.array_equal(call_args[0][0], failing_data)
         assert call_args[1]["threads"] == 1
+
+
+def test_remux_if_needed_invalidates_timestamps(monkeypatch: pytest.MonkeyPatch) -> None:
+    """remux_if_needed() sets video.timestamps = None after replacing encoded_data."""
+    remuxed_data = bytes_to_numpy(b"remuxed")
+    monkeypatch.setattr(
+        "cosmos_curate.pipelines.video.read_write.remux_stages.remux_to_mp4",
+        lambda _data, **_kw: remuxed_data,
+    )
+
+    video = Video(
+        input_video="test.ts",
+        encoded_data=bytes_to_numpy(b"original"),
+        timestamps=np.array([0.0, 0.033, 0.066], dtype=np.float32),
+    )
+    monkeypatch.setattr(Video, "populate_metadata", lambda _: None)
+    video.metadata = MagicMock()
+    video.metadata.format_name = "mpegts"
+    video.metadata.__bool__ = lambda _: True
+
+    result = remux_if_needed(video, threads=1)
+
+    assert result is True
+    assert video.timestamps is None

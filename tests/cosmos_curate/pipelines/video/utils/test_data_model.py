@@ -23,6 +23,7 @@ from unittest.mock import MagicMock, patch
 
 import attrs
 import numpy as np
+import numpy.typing as npt
 import pytest
 
 from cosmos_curate.core.utils.data.bytes_transport import bytes_to_numpy
@@ -712,3 +713,49 @@ class TestSplitPipeTask:
             ],
         ]
         assert check_clip_time_alignment(misaligned_clips) == [0]
+
+
+class TestVideoPopulateTimestamps:
+    """Tests for Video.populate_timestamps() and timestamps field."""
+
+    def test_populate_timestamps_sets_field(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """populate_timestamps() stores the result of get_video_timestamps on video.timestamps."""
+        expected = np.array([0.0, 0.033, 0.066], dtype=np.float32)
+        monkeypatch.setattr(
+            "cosmos_curate.pipelines.video.utils.data_model.get_video_timestamps",
+            lambda _data: expected,
+        )
+        video = Video(
+            input_video=pathlib.Path("test.mp4"),
+            encoded_data=bytes_to_numpy(b"fake"),
+        )
+        video.populate_timestamps()
+        assert video.timestamps is not None
+        assert np.array_equal(video.timestamps, expected)
+
+    def test_populate_timestamps_raises_without_encoded_data(self) -> None:
+        """populate_timestamps() raises ValueError when encoded_data is None."""
+        video = Video(input_video=pathlib.Path("test.mp4"))
+        with pytest.raises(ValueError, match="encoded_data is None"):
+            video.populate_timestamps()
+
+    @pytest.mark.parametrize(
+        ("timestamps", "expect_nonzero"),
+        [
+            (np.array([0.0, 0.033, 0.066], dtype=np.float32), True),
+            (None, False),
+        ],
+    )
+    def test_get_major_size_with_and_without_timestamps(
+        self, timestamps: npt.NDArray[np.float32] | None, *, expect_nonzero: bool
+    ) -> None:
+        """get_major_size() includes timestamps.nbytes when set, unaffected when None."""
+        base_size = Video(input_video=pathlib.Path("test.mp4")).get_major_size()
+        video = Video(input_video=pathlib.Path("test.mp4"), timestamps=timestamps)
+        size = video.get_major_size()
+        if expect_nonzero:
+            assert timestamps is not None
+            assert size >= base_size + timestamps.nbytes
+        else:
+            # None timestamps add nothing to size
+            assert size == base_size

@@ -12,7 +12,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Clip extraction stages."""
+"""Video download and inline remux stages."""
 
 import json
 import pathlib
@@ -204,6 +204,12 @@ class VideoDownloader(CuratorStage):
                     # TODO(LazyData): re-enable when batch-mode ObjectRef ownership is
                     # resolved.  In batch mode, pool.stop() kills actor -> OwnerDiedError.
                     # video.encoded_data.store()  # noqa: ERA001
+
+                    try:
+                        video.populate_timestamps()
+                    except Exception as e:  # noqa: BLE001
+                        video.errors["timestamps"] = str(e)  # authoritative setter; intentional overwrite on retry
+                        logger.exception(f"Failed to populate timestamps for {video.input_video}")
 
                     # Log video information
                     self._log_video_info(video)

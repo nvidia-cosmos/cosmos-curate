@@ -23,6 +23,7 @@ maintains consistency across code changes.
 
 import copy
 import pathlib
+import uuid
 from contextlib import AbstractContextManager, nullcontext
 from typing import Any
 
@@ -32,7 +33,6 @@ import pytest
 from cosmos_curate.core.interfaces.pipeline_interface import run_pipeline
 from cosmos_curate.core.interfaces.runner_interface import RunnerInterface
 from cosmos_curate.core.utils.data.bytes_transport import bytes_to_numpy
-from cosmos_curate.pipelines.video.clipping import clip_extraction_stages
 from cosmos_curate.pipelines.video.clipping.clip_extraction_stages import (
     FixedStrideExtractorStage,
     _get_videos_durations,
@@ -41,8 +41,9 @@ from cosmos_curate.pipelines.video.clipping.clip_extraction_stages import (
     _make_spans_fixed_stride,
     _populate_clips_fixed_stride,
     _validate_video_timestamps,
+    slice_video_clips,
 )
-from cosmos_curate.pipelines.video.utils.data_model import SplitPipeTask, Video, VideoMetadata
+from cosmos_curate.pipelines.video.utils.data_model import Clip, SplitPipeTask, Video, VideoMetadata
 
 
 def test_fixed_stride_extractor_setup() -> None:
@@ -359,11 +360,14 @@ def test_fixed_stride_extraction_no_clips_short_video(sequential_runner: RunnerI
     assert len(video.clips) == 0
 
 
-def test_error_handling_no_encoded_data(sequential_runner: RunnerInterface) -> None:
-    """Test error handling when video has no source bytes."""
+def test_error_handling_no_timestamps(sequential_runner: RunnerInterface) -> None:
+    """Test error handling when video has no timestamps (strict mode)."""
     video = Video(
         input_video=pathlib.Path("no_bytes_video.mp4"),
-        encoded_data=None,  # No encoded_data
+        metadata=VideoMetadata(
+            height=720, width=1280, duration=30.0, framerate=30.0, num_frames=900, video_codec="h264"
+        ),
+        # timestamps defaults to None — strict getter will mark and raise
     )
     task = SplitPipeTask(session_id="test-session", video=video, stage_perf={})
 
@@ -372,7 +376,7 @@ def test_error_handling_no_encoded_data(sequential_runner: RunnerInterface) -> N
     run_pipeline([task], [stage], runner=sequential_runner)
 
     assert "FixedStrideExtractorStage" in task.errors
-    assert video.errors["encoded_data"] == "missing"
+    assert video.errors["timestamps"] == "missing"
 
 
 def test_error_handling_incomplete_metadata(sequential_runner: RunnerInterface) -> None:
@@ -503,91 +507,73 @@ def test_verbose_logging(
     assert len(result_tasks) == 1
 
 
+_FAKE_TIMESTAMPS = np.array([0.0, 0.033, 0.066, 0.1], dtype=np.float32)
+
+
 @pytest.mark.parametrize(
     ("videos", "raises"),
     [
         pytest.param(
-            [
-                Video(input_video=pathlib.Path("video1.mp4"), encoded_data=bytes_to_numpy(b"fake_video_data")),
-            ],
+            [Video(input_video=pathlib.Path("video1.mp4"), timestamps=_FAKE_TIMESTAMPS)],
             nullcontext(),
             id="single_video_valid",
         ),
         pytest.param(
             [
-                Video(input_video=pathlib.Path("video1.mp4"), encoded_data=bytes_to_numpy(b"fake_video_data")),
-                Video(input_video=pathlib.Path("video2.mp4"), encoded_data=bytes_to_numpy(b"fake_video_data")),
+                Video(input_video=pathlib.Path("video1.mp4"), timestamps=_FAKE_TIMESTAMPS),
+                Video(input_video=pathlib.Path("video2.mp4"), timestamps=_FAKE_TIMESTAMPS),
             ],
             nullcontext(),
             id="multicam_two_videos_valid",
         ),
         pytest.param(
             [
-                Video(input_video=pathlib.Path("video1.mp4"), encoded_data=bytes_to_numpy(b"fake_video_data")),
-                Video(input_video=pathlib.Path("video2.mp4"), encoded_data=bytes_to_numpy(b"fake_video_data")),
-                Video(input_video=pathlib.Path("video3.mp4"), encoded_data=bytes_to_numpy(b"fake_video_data")),
+                Video(input_video=pathlib.Path("video1.mp4"), timestamps=_FAKE_TIMESTAMPS),
+                Video(input_video=pathlib.Path("video2.mp4"), timestamps=_FAKE_TIMESTAMPS),
+                Video(input_video=pathlib.Path("video3.mp4"), timestamps=_FAKE_TIMESTAMPS),
             ],
             nullcontext(),
             id="multicam_three_videos_valid",
         ),
         pytest.param(
-            [
-                Video(input_video=pathlib.Path("video1.mp4"), encoded_data=None),
-            ],
-            pytest.raises(ValueError, match=r"Video .* has no encoded_data"),
-            id="single_video_no_encoded_data",
+            [Video(input_video=pathlib.Path("video1.mp4"), timestamps=None)],
+            pytest.raises(ValueError, match=r"Videos missing timestamps"),
+            id="single_video_timestamps_none",
+        ),
+        pytest.param(
+            [Video(input_video=pathlib.Path("video1.mp4"), timestamps=np.array([], dtype=np.float32))],
+            pytest.raises(ValueError, match=r"Videos missing timestamps"),
+            id="single_video_timestamps_empty",
         ),
         pytest.param(
             [
-                Video(input_video=pathlib.Path("video1.mp4"), encoded_data=None),
-                Video(input_video=pathlib.Path("video2.mp4"), encoded_data=bytes_to_numpy(b"fake_video_data")),
+                Video(input_video=pathlib.Path("video1.mp4"), timestamps=None),
+                Video(input_video=pathlib.Path("video2.mp4"), timestamps=_FAKE_TIMESTAMPS),
             ],
-            pytest.raises(ValueError, match=r"Video .* has no encoded_data"),
-            id="multicam_first_video_no_encoded_data",
+            pytest.raises(ValueError, match=r"Videos missing timestamps"),
+            id="multicam_first_video_timestamps_none",
         ),
         pytest.param(
             [
-                Video(input_video=pathlib.Path("video1.mp4"), encoded_data=bytes_to_numpy(b"fake_video_data")),
-                Video(input_video=pathlib.Path("video2.mp4"), encoded_data=None),
+                Video(input_video=pathlib.Path("video1.mp4"), timestamps=_FAKE_TIMESTAMPS),
+                Video(input_video=pathlib.Path("video2.mp4"), timestamps=None),
             ],
-            pytest.raises(ValueError, match=r"Video .* has no encoded_data"),
-            id="multicam_second_video_no_encoded_data",
+            pytest.raises(ValueError, match=r"Videos missing timestamps"),
+            id="multicam_second_video_timestamps_none",
         ),
     ],
 )
 def test_get_videos_timestamps(
     videos: list[Video],
     raises: AbstractContextManager[Any],
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Test _get_videos_timestamps validation and error handling.
-
-    Args:
-        videos: List of videos to test
-        raises: Expected exception context manager
-        monkeypatch: Pytest monkeypatch fixture
-
-    """
-    EXPECTED_TIMESTAMPS = np.array([0.0, 0.033, 0.066, 0.1], dtype=np.float32)
-
-    # Mock get_video_timestamps to return fake timestamps
-    def _mock_get_video_timestamps(_data: bytes) -> np.ndarray[tuple[int], np.dtype[np.float32]]:
-        return EXPECTED_TIMESTAMPS
-
-    monkeypatch.setattr(
-        "cosmos_curate.pipelines.video.clipping.clip_extraction_stages.get_video_timestamps",
-        _mock_get_video_timestamps,
-    )
-
+    """Test _get_videos_timestamps reads video.timestamps directly and raises on missing."""
     with raises:
         result = _get_videos_timestamps(videos)
-        # For success cases, verify the result
         assert len(result) == len(videos)
         for timestamps in result:
             assert isinstance(timestamps, np.ndarray)
-            assert timestamps.dtype == np.float32
-            assert len(timestamps) == len(EXPECTED_TIMESTAMPS)
-            assert np.array_equal(timestamps, EXPECTED_TIMESTAMPS)
+            assert np.array_equal(timestamps, _FAKE_TIMESTAMPS)
 
 
 def test_validate_video_timestamps_empty_list() -> None:
@@ -851,68 +837,58 @@ def test_populate_clips_fixed_stride() -> None:
         ),
     )
 
+    video1.timestamps = timestamps
+    video2.timestamps = timestamps
     videos = [video1, video2]
 
-    # Mock get_video_timestamps to return our test timestamps
-    def _mock_get_timestamps(_data: bytes) -> np.ndarray:
-        return timestamps
+    # Populate clips: 10s clips, 10s stride (non-overlapping)
+    _populate_clips_fixed_stride(
+        videos=videos,
+        session_id="test_session_123",
+        clip_len_s=10.0,
+        clip_stride_s=10.0,
+        min_clip_length_s=5.0,
+    )
 
-    original_fn = clip_extraction_stages.get_video_timestamps
-    clip_extraction_stages.get_video_timestamps = _mock_get_timestamps
+    # Both videos should have 3 clips (0-10, 10-20, 20-30)
+    assert len(video1.clips) == 3
+    assert len(video2.clips) == 3
 
-    try:
-        # Populate clips: 10s clips, 10s stride (non-overlapping)
-        _populate_clips_fixed_stride(
-            videos=videos,
-            session_id="test_session_123",
-            clip_len_s=10.0,
-            clip_stride_s=10.0,
-            min_clip_length_s=5.0,
-        )
+    # Verify clips have correct spans
+    assert video1.clips[0].span == (0.0, 10.0)
+    assert video1.clips[1].span == (10.0, 20.0)
+    assert video1.clips[2].span == (20.0, 30.0)
 
-        # Both videos should have 3 clips (0-10, 10-20, 20-30)
-        assert len(video1.clips) == 3
-        assert len(video2.clips) == 3
+    # Verify both videos have matching UUIDs for corresponding clips
+    for i in range(3):
+        assert video1.clips[i].uuid == video2.clips[i].uuid
+        assert video1.clips[i].span == video2.clips[i].span
 
-        # Verify clips have correct spans
-        assert video1.clips[0].span == (0.0, 10.0)
-        assert video1.clips[1].span == (10.0, 20.0)
-        assert video1.clips[2].span == (20.0, 30.0)
+    # Verify source_video is set correctly
+    assert video1.clips[0].source_video == "cam_front.mp4"
+    assert video2.clips[0].source_video == "cam_rear.mp4"
 
-        # Verify both videos have matching UUIDs for corresponding clips
-        for i in range(3):
-            assert video1.clips[i].uuid == video2.clips[i].uuid
-            assert video1.clips[i].span == video2.clips[i].span
+    # Test limit_clips: clear and repopulate with limit
+    video1.clips.clear()
+    video2.clips.clear()
+    _populate_clips_fixed_stride(
+        videos=videos,
+        session_id="test_session_123",
+        clip_len_s=10.0,
+        clip_stride_s=10.0,
+        min_clip_length_s=5.0,
+        limit_clips=2,
+    )
 
-        # Verify source_video is set correctly
-        assert video1.clips[0].source_video == "cam_front.mp4"
-        assert video2.clips[0].source_video == "cam_rear.mp4"
-
-        # Test limit_clips: clear and repopulate with limit
-        video1.clips.clear()
-        video2.clips.clear()
-        _populate_clips_fixed_stride(
-            videos=videos,
-            session_id="test_session_123",
-            clip_len_s=10.0,
-            clip_stride_s=10.0,
-            min_clip_length_s=5.0,
-            limit_clips=2,
-        )
-
-        # Both videos should have only 2 clips (first two spans)
-        assert len(video1.clips) == 2
-        assert len(video2.clips) == 2
-        assert video1.clips[0].span == (0.0, 10.0)
-        assert video1.clips[1].span == (10.0, 20.0)
-        assert video2.clips[0].span == (0.0, 10.0)
-        assert video2.clips[1].span == (10.0, 20.0)
-        for i in range(2):
-            assert video1.clips[i].uuid == video2.clips[i].uuid
-
-    finally:
-        # Restore original function
-        clip_extraction_stages.get_video_timestamps = original_fn
+    # Both videos should have only 2 clips (first two spans)
+    assert len(video1.clips) == 2
+    assert len(video2.clips) == 2
+    assert video1.clips[0].span == (0.0, 10.0)
+    assert video1.clips[1].span == (10.0, 20.0)
+    assert video2.clips[0].span == (0.0, 10.0)
+    assert video2.clips[1].span == (10.0, 20.0)
+    for i in range(2):
+        assert video1.clips[i].uuid == video2.clips[i].uuid
 
 
 def _make_multicam_task_two_cameras() -> SplitPipeTask:
@@ -928,10 +904,12 @@ def _make_multicam_task_two_cameras() -> SplitPipeTask:
         audio_codec=None,
         size=1000,
     )
+    timestamps = np.linspace(0.0, 30.0, 900, dtype=np.float32)
     v1 = Video(
         input_video=pathlib.Path("cam_front.mp4"),
         encoded_data=bytes_to_numpy(b"dummy"),
         metadata=meta,
+        timestamps=timestamps,
     )
     v2 = Video(
         input_video=pathlib.Path("cam_rear.mp4"),
@@ -947,27 +925,17 @@ def _make_multicam_task_two_cameras() -> SplitPipeTask:
             audio_codec=meta.audio_codec,
             size=meta.size,
         ),
+        timestamps=timestamps,
     )
     return SplitPipeTask(session_id="test-multicam-session", videos=[v1, v2])
 
 
 def test_fixed_stride_multicam_aligned_clips(
     sequential_runner: RunnerInterface,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Multi-cam task gets aligned clips: same count, uuid, and span per column across cameras."""
+    # _make_multicam_task_two_cameras() sets timestamps=np.linspace(0,30,900) on each video
     task = _make_multicam_task_two_cameras()
-
-    # Deterministic timestamps for 30s at 30fps; matches clip_len_s=5, clip_stride_s=5 -> 6 spans
-    timestamps_30s = np.linspace(0.0, 30.0, 900, dtype=np.float32)
-
-    def _mock_get_video_timestamps(_data: bytes) -> np.ndarray:
-        return timestamps_30s
-
-    monkeypatch.setattr(
-        "cosmos_curate.pipelines.video.clipping.clip_extraction_stages.get_video_timestamps",
-        _mock_get_video_timestamps,
-    )
 
     stage = FixedStrideExtractorStage(
         clip_len_s=5.0,
@@ -1014,3 +982,132 @@ def test_make_spans() -> None:
     for (start, end), (exp_start, exp_end) in zip(spans, expected_clip_spans_5s_stride, strict=True):
         assert start == pytest.approx(exp_start, abs=0.01)
         assert end == pytest.approx(exp_end, abs=0.01)
+
+
+# ---------------------------------------------------------------------------
+# New tests for CVC-694 strict timestamp consumption
+# ---------------------------------------------------------------------------
+
+
+def test_fixed_stride_extractor_uses_timestamps(sequential_runner: RunnerInterface) -> None:
+    """FixedStrideExtractorStage uses video.timestamps; no real encoded_data needed."""
+    video = Video(
+        input_video=pathlib.Path("fake.mp4"),
+        encoded_data=bytes_to_numpy(b"not real"),
+        metadata=VideoMetadata(
+            num_frames=900,
+            framerate=30.0,
+            duration=30.0,
+            height=720,
+            width=1280,
+            video_codec="h264",
+            pixel_format="yuv420p",
+            size=8,
+        ),
+        timestamps=np.linspace(0.0, 30.0, 900, dtype=np.float32),
+    )
+    task = SplitPipeTask(session_id="ts-test", video=video)
+    stage = FixedStrideExtractorStage(clip_len_s=10.0, clip_stride_s=10.0, min_clip_length_s=10.0)
+
+    result_tasks = run_pipeline([task], [stage], runner=sequential_runner)
+
+    assert len(result_tasks[0].video.clips) == 3
+    assert result_tasks[0].video.clips[0].span == (0.0, 10.0)
+    assert result_tasks[0].video.clips[2].span == (20.0, 30.0)
+
+
+def test_fixed_stride_extractor_no_encoded_data_needed(sequential_runner: RunnerInterface) -> None:
+    """FixedStrideExtractorStage succeeds with encoded_data absent when timestamps are set.
+
+    Guards removal of _require_video_bytes: the stage must not touch encoded_data.
+    """
+    video = Video(
+        input_video=pathlib.Path("fake.mp4"),
+        metadata=VideoMetadata(
+            num_frames=900,
+            framerate=30.0,
+            duration=30.0,
+            height=720,
+            width=1280,
+            video_codec="h264",
+            pixel_format="yuv420p",
+            size=0,
+        ),
+        timestamps=np.linspace(0.0, 30.0, 900, dtype=np.float32),
+    )
+    task = SplitPipeTask(session_id="ts-test-no-bytes", video=video)
+    stage = FixedStrideExtractorStage(clip_len_s=10.0, clip_stride_s=10.0, min_clip_length_s=10.0)
+
+    result_tasks = run_pipeline([task], [stage], runner=sequential_runner)
+
+    assert len(result_tasks[0].video.clips) == 3
+    assert "encoded_data" not in result_tasks[0].video.errors
+
+
+def test_get_videos_timestamps_marks_all_missing_multicam() -> None:
+    """Both cameras get errors['timestamps']='missing' before raise (full-pass marking)."""
+    v1 = Video(input_video=pathlib.Path("cam1.mp4"), timestamps=None)
+    v2 = Video(input_video=pathlib.Path("cam2.mp4"), timestamps=None)
+
+    with pytest.raises(ValueError, match=r"Videos missing timestamps"):
+        _get_videos_timestamps([v1, v2])
+
+    assert v1.errors.get("timestamps") == "missing"
+    assert v2.errors.get("timestamps") == "missing"
+
+
+def test_slice_video_clips_preserves_timestamps() -> None:
+    """slice_video_clips() propagates video.timestamps to the chunked subtask Video."""
+    timestamps = np.linspace(0.0, 30.0, 900, dtype=np.float32)
+    video = Video(
+        input_video=pathlib.Path("v.mp4"),
+        timestamps=timestamps,
+        clips=[
+            Clip(uuid=uuid.uuid4(), source_video="v.mp4", span=(float(i * 10), float(i * 10 + 10))) for i in range(3)
+        ],
+    )
+
+    sliced = slice_video_clips(video, 0, 2, chunk_index=0, num_chunks=2)
+
+    assert sliced.timestamps is timestamps  # same reference
+
+
+def test_get_videos_timestamps_preserves_existing_error() -> None:
+    """set-if-absent: pre-set errors['timestamps'] is not overwritten with 'missing'."""
+    video = Video(input_video=pathlib.Path("v.mp4"), timestamps=None)
+    video.errors["timestamps"] = "decoder failure"
+
+    with pytest.raises(ValueError, match=r"Videos missing timestamps"):
+        _get_videos_timestamps([video])
+
+    assert video.errors["timestamps"] == "decoder failure"
+
+
+def test_timestamp_failure_nonfatal_at_download_fatal_at_fixed_stride(
+    sequential_runner: RunnerInterface,
+) -> None:
+    """Downloader error detail is preserved; stage fails with that detail in errors."""
+    video = Video(
+        input_video=pathlib.Path("v.mp4"),
+        encoded_data=bytes_to_numpy(b"x"),
+        metadata=VideoMetadata(
+            num_frames=900,
+            framerate=30.0,
+            duration=30.0,
+            height=720,
+            width=1280,
+            video_codec="h264",
+            pixel_format="yuv420p",
+            size=8,
+        ),
+        timestamps=None,
+    )
+    video.errors["timestamps"] = "decoder failure"  # simulates downloader recording the error
+    task = SplitPipeTask(session_id="ts-fail", video=video)
+    stage = FixedStrideExtractorStage(clip_len_s=10.0, clip_stride_s=10.0, min_clip_length_s=10.0)
+
+    result_tasks = run_pipeline([task], [stage], runner=sequential_runner)
+
+    assert result_tasks[0].errors.get("FixedStrideExtractorStage") is not None
+    # Downloader error detail preserved; not overwritten with "missing"
+    assert result_tasks[0].videos[0].errors["timestamps"] == "decoder failure"

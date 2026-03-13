@@ -28,7 +28,6 @@ from loguru import logger
 from cosmos_curate.core.interfaces.stage_interface import CuratorStage, CuratorStageResource
 from cosmos_curate.core.utils.config.operation_context import make_pipeline_temporary_dir
 from cosmos_curate.core.utils.data.bytes_transport import bytes_to_numpy
-from cosmos_curate.core.utils.data.ref_resolver import prefetch
 from cosmos_curate.core.utils.infra.performance_utils import StageTimer
 from cosmos_curate.core.utils.misc import grouping
 from cosmos_curate.pipelines.video.utils.data_model import (
@@ -37,10 +36,7 @@ from cosmos_curate.pipelines.video.utils.data_model import (
     Video,
     assert_time_alignment,
 )
-from cosmos_curate.pipelines.video.utils.decoder_utils import (
-    DEFAULT_TRANSCODE_BITRATE_M,
-    get_video_timestamps,
-)
+from cosmos_curate.pipelines.video.utils.decoder_utils import DEFAULT_TRANSCODE_BITRATE_M
 
 
 def slice_video_clips(
@@ -83,6 +79,7 @@ def slice_video_clips(
         encoded_data=video.encoded_data,
         metadata=video.metadata,
         frame_array=video.frame_array,
+        timestamps=video.timestamps,
         clips=video.clips[start:end],
         num_total_clips=len(video.clips),
         num_clip_chunks=num_chunks,
@@ -473,22 +470,18 @@ def _get_videos_timestamps(videos: list[Video]) -> list[npt.NDArray[np.float32]]
         List of timestamp arrays (in seconds) for each video.
 
     Raises:
-        ValueError: If any video has no encoded_data.
+        ValueError: If any video has missing or empty timestamps.
 
     """
-    prefetch([video.encoded_data for video in videos])
-    video_timestamps = []
     for video in videos:
-        if not video.encoded_data:
-            error_msg = f"Video {video.input_video} has no encoded_data"
-            raise ValueError(error_msg)
-        data = video.encoded_data.resolve()
-        if data is None:
-            error_msg = f"Video {video.input_video} has no encoded_data after resolve"
-            raise ValueError(error_msg)
-        timestamps = get_video_timestamps(data)
-        video_timestamps.append(timestamps)
-    return video_timestamps
+        if (video.timestamps is None or len(video.timestamps) == 0) and "timestamps" not in video.errors:
+            video.errors["timestamps"] = "missing"
+    missing = [v for v in videos if v.timestamps is None or len(v.timestamps) == 0]
+    if missing:
+        missing_paths = [str(v.input_video) for v in missing]
+        msg = f"Videos missing timestamps: {missing_paths}"
+        raise ValueError(msg)
+    return [v.timestamps for v in videos]  # type: ignore[misc]
 
 
 def _get_videos_durations(videos: list[Video]) -> list[float]:
@@ -620,7 +613,7 @@ def _populate_clips_fixed_stride(  # noqa: PLR0913
     end_s = min(positive_durations)
 
     video_timestamps = _get_videos_timestamps(videos)
-    _validate_video_timestamps(video_timestamps)
+    _validate_video_timestamps(video_timestamps)  # secondary guard: catches empty-list edge case
 
     starts_s = [float(ts[0]) for ts in video_timestamps]
     ends_s = [t + duration for t, duration in zip(starts_s, durations, strict=True)]
@@ -716,12 +709,6 @@ class FixedStrideExtractorStage(CuratorStage):
 
         """
 
-        def _require_video_bytes(v: Video) -> None:
-            if not v.encoded_data:
-                v.errors["encoded_data"] = "missing"
-                error_msg = f"Please load video bytes for {v.input_video}!"
-                raise ValueError(error_msg)
-
         def _require_metadata(v: Video) -> None:
             if not v.has_metadata():
                 v.errors["metadata"] = "incomplete"
@@ -730,7 +717,6 @@ class FixedStrideExtractorStage(CuratorStage):
 
         def _validate_videos(videos: list[Video]) -> None:
             for video in videos:
-                _require_video_bytes(video)
                 _require_metadata(video)
 
         for task in tasks:

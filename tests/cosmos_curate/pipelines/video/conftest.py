@@ -79,6 +79,7 @@ def sample_splitting_task(sample_video_data: bytes) -> SplitPipeTask:
         encoded_data=bytes_to_numpy(sample_video_data),
     )
     video.populate_metadata()
+    video.populate_timestamps()
 
     return SplitPipeTask(
         session_id="test-session",
@@ -175,12 +176,14 @@ def sample_multicam_task(sample_video_data: bytes) -> SplitPipeTask:
         encoded_data=bytes_to_numpy(sample_video_data),
     )
     video1.populate_metadata()
+    video1.populate_timestamps()
 
     video2 = Video(
         input_video=pathlib.Path("camera_2.mp4"),
         encoded_data=bytes_to_numpy(sample_video_data),
     )
     video2.populate_metadata()
+    video2.populate_timestamps()
 
     return SplitPipeTask(
         session_id="test-session",

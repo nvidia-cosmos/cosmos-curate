@@ -31,7 +31,7 @@ from cosmos_curate.core.interfaces.stage_interface import PipelineTask
 from cosmos_curate.core.utils.data.lazy_data import LazyData
 from cosmos_curate.core.utils.infra.performance_utils import StagePerfStats
 from cosmos_curate.core.utils.storage import storage_client
-from cosmos_curate.pipelines.video.utils.decoder_utils import extract_video_metadata
+from cosmos_curate.pipelines.video.utils.decoder_utils import extract_video_metadata, get_video_timestamps
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -349,6 +349,8 @@ class Video:
     metadata: VideoMetadata = attrs.Factory(VideoMetadata)
     # decoded video frames (numpy for zero-copy Ray transport via PEP 574 PickleBuffer)
     frame_array: LazyData[npt.NDArray[np.uint8]] = attrs.field(factory=LazyData, converter=LazyData.coerce)  # type: ignore[misc]
+    # Per-frame PTS in seconds. If encoded_data is replaced, set to None and call populate_timestamps().
+    timestamps: npt.NDArray[np.float32] | None = attrs.field(default=None, eq=False)
     # clips
     clips: list[Clip] = attrs.Factory(list)
     filtered_clips: list[Clip] = attrs.Factory(list)
@@ -364,6 +366,19 @@ class Video:
     # video, so filter on clip_chunk_index == 0 when aggregating to avoid double-counting
     # chunked outputs.
     was_remuxed: bool = False
+
+    def populate_timestamps(self) -> None:
+        """Extract and assign per-frame PTS timestamps from encoded_data.
+
+        Raises:
+            ValueError: If encoded_data is None.
+
+        """
+        data = self.encoded_data.resolve()
+        if data is None:
+            error_msg = "No video data available: encoded_data is None"
+            raise ValueError(error_msg)
+        self.timestamps = get_video_timestamps(data)
 
     def populate_metadata(self) -> None:
         """Extract and assign video metadata from encoded_data.
@@ -498,6 +513,7 @@ class Video:
         total_size = 0
         total_size += self.encoded_data.nbytes
         total_size += self.frame_array.nbytes
+        total_size += self.timestamps.nbytes if self.timestamps is not None else 0
         for clip in self.clips:
             total_size += clip.get_major_size()
         return total_size
