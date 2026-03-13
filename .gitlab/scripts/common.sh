@@ -14,16 +14,81 @@ setup_s3_credentials() {
     echo "S3 credentials written to $output_path"
 }
 
-# Generate consistent image tag from CI variables
-# Mirrors the compute_image_tag anchor in .gitlab-ci.yml
-get_image_tag() {
+# Resolve branch prefix used in image and cache tags.
+# MR pipelines use target branch; push/web pipelines use commit branch.
+get_branch_prefix() {
     local branch_prefix
     if [ -n "${CI_MERGE_REQUEST_TARGET_BRANCH_NAME:-}" ]; then
         branch_prefix="${CI_MERGE_REQUEST_TARGET_BRANCH_NAME##*/}"
     else
         branch_prefix="${CI_COMMIT_BRANCH##*/}"
     fi
+    echo "${branch_prefix}"
+}
+
+# Generate consistent image tag from CI variables
+# Mirrors the compute_image_tag anchor in .gitlab-ci.yml
+get_image_tag() {
+    local branch_prefix
+    branch_prefix="$(get_branch_prefix)"
     echo "${branch_prefix}_${CI_COMMIT_TIMESTAMP%%T*}_${CI_COMMIT_SHORT_SHA}"
+}
+
+# Compute buildx registry cache references for --cache-from / --cache-to.
+# Mirrors the compute_cache_refs anchor in .gitlab-ci.yml.
+#
+# Args: image_repo, platform
+# Outputs: Exports CACHE_FROM_ARGS and CACHE_TO_ARG for use by callers.
+#
+# MR pipelines:  cache-mr-{IID}-{platform}  (primary) + cache-main-{platform} (fallback)
+# Push pipelines: cache-{branch}-{platform}
+get_cache_refs() {
+    local image_repo="$1"
+    local platform="$2"
+    local branch_prefix
+    branch_prefix="$(get_branch_prefix)"
+
+    export CACHE_FROM_ARGS=""
+    export CACHE_TO_ARG=""
+    if [ -n "${CI_MERGE_REQUEST_IID:-}" ]; then
+        local mr_ref="${image_repo}:cache-mr-${CI_MERGE_REQUEST_IID}-${platform}"
+        local main_ref="${image_repo}:cache-main-${platform}"
+        CACHE_FROM_ARGS="--cache-from type=registry,ref=${mr_ref} --cache-from type=registry,ref=${main_ref}"
+        CACHE_TO_ARG="--cache-to type=registry,ref=${mr_ref},mode=max"
+    else
+        local branch_ref="${image_repo}:cache-${branch_prefix}-${platform}"
+        CACHE_FROM_ARGS="--cache-from type=registry,ref=${branch_ref}"
+        CACHE_TO_ARG="--cache-to type=registry,ref=${branch_ref},mode=max"
+    fi
+}
+
+# Ensure a persistent buildx builder with the docker-container driver.
+# The default "docker" driver does not support registry cache export
+# (--cache-to type=registry). The docker-container driver runs BuildKit
+# in a container, which supports all cache backends.
+#
+# The builder is kept alive across jobs so its local layer cache stays
+# hot. Only layers missing from the local cache are pulled from the
+# registry (--cache-from acts as a cross-runner fallback).
+#
+#   First job on runner:  create builder --> cold, pulls from registry
+#   Subsequent jobs:      reuse builder  --> hot local cache, fast builds
+#
+# Must run AFTER docker login so the builder can reach the registry.
+#
+# Args: builder_name (default: $BUILDX_BUILDER_NAME or ci-cosmos-builder)
+setup_buildx_builder() {
+    local builder_name="${1:-${BUILDX_BUILDER_NAME:-ci-cosmos-builder}}"
+    if ! docker buildx inspect "${builder_name}" &>/dev/null; then
+        docker buildx create \
+            --name "${builder_name}" \
+            --driver docker-container \
+            --driver-opt network=host
+        echo "Created buildx builder: ${builder_name}"
+    else
+        echo "Reusing existing buildx builder: ${builder_name}"
+    fi
+    docker buildx use "${builder_name}"
 }
 
 # Canonical NGC credentials

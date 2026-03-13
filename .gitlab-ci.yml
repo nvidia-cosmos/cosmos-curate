@@ -26,6 +26,9 @@ variables:
   # Versions
   PYTHON_VERSION: "3.12.12"
 
+  # GitLab Runner feature flags
+  FF_USE_FASTZIP: "true"
+
   # Git config
   GIT_STRATEGY: fetch
   GIT_DEPTH: 1
@@ -36,6 +39,7 @@ variables:
   CURATOR_IMAGE: ${CI_REGISTRY_IMAGE}/curator
   CI_BUILDER_IMAGE_REPO: ${CI_REGISTRY_IMAGE}/ci-builder
   CI_BUILDER_IMAGE: ${CI_BUILDER_IMAGE_REPO}:latest
+  BUILDX_BUILDER_NAME: ci-cosmos-builder
 
   # Pytest configuration
   PYTEST_XDIST_WORKERS: 4
@@ -219,6 +223,22 @@ stages:
     IMAGE_TAG="${BRANCH_PREFIX}_${CI_COMMIT_TIMESTAMP%%T*}_${CI_COMMIT_SHORT_SHA}"
     echo "Image tag: ${IMAGE_TAG}"
 
+  # Compute buildx registry cache references for --cache-from / --cache-to.
+  #
+  # Cache hierarchy and tags are defined in .gitlab/scripts/common.sh:get_cache_refs.
+  # This anchor only sources the script and materializes CACHE_FROM_ARGS/CACHE_TO_ARG.
+  compute_cache_refs: &compute_cache_refs |
+    source .gitlab/scripts/common.sh
+    get_cache_refs "${CURATOR_IMAGE}" "${PLATFORM}"
+    echo "Cache from: ${CACHE_FROM_ARGS}"
+    echo "Cache to: ${CACHE_TO_ARG}"
+
+  # Set up persistent buildx builder (see .gitlab/scripts/common.sh for details).
+  # Must run AFTER docker_login so the builder can reach the registry.
+  setup_buildx_builder: &setup_buildx_builder |
+    source .gitlab/scripts/common.sh
+    setup_buildx_builder "${BUILDX_BUILDER_NAME}"
+
   # Configure Docker authentication for GitLab/NVCF registries
   docker_login: &docker_login |
     export DOCKER_CONFIG="${CI_PROJECT_DIR}/.docker"
@@ -355,17 +375,23 @@ build_deploy_curator_arch:
       fi
     # Set up environment
     - *docker_login
+    # Set up buildx builder with docker-container driver (required for registry cache)
+    - *setup_buildx_builder
     - *setup_micromamba
     - *setup_curator_cli
+    - *compute_cache_refs
+    # Build and push in a single step (BuildKit pushes directly to registry)
     - |
       cosmos-curate image build \
       --curator-path . \
       --image-name ${CURATOR_IMAGE} \
-      --image-tag ${IMAGE_TAG}-${PLATFORM}
-    - echo "Built image ${CURATOR_ARCH_IMAGE} from curator commit [${CI_COMMIT_SHA}]"
-    - docker push ${CURATOR_ARCH_IMAGE}
-    - echo "Pushed image ${CURATOR_ARCH_IMAGE} to GitLab registry"
-    # Cleanup
+      --image-tag ${IMAGE_TAG}-${PLATFORM} \
+      ${CACHE_FROM_ARGS} \
+      ${CACHE_TO_ARG} \
+      --push \
+      --no-load
+    - echo "Built and pushed image ${CURATOR_ARCH_IMAGE} from curator commit [${CI_COMMIT_SHA}]"
+    # Cleanup (builder is kept alive for local cache persistence)
     - *teardown_micromamba
   retry:
     max: 2
@@ -405,11 +431,12 @@ build_ci_builder_image:
     - export DOCKER_CONFIG="${CI_PROJECT_DIR}/.docker"
     - mkdir -p "${DOCKER_CONFIG}"
     - docker login -u gitlab-ci-token -p "${CI_JOB_TOKEN}" "${CI_REGISTRY}"
+    - *setup_buildx_builder
     - CI_BUILDER_IMAGE_SHA="${CI_BUILDER_IMAGE_REPO}:${CI_COMMIT_SHORT_SHA}"
     - CI_BUILDER_AMD64_IMAGE="${CI_BUILDER_IMAGE_REPO}:${CI_COMMIT_SHORT_SHA}-amd64"
     - CI_BUILDER_ARM64_IMAGE="${CI_BUILDER_IMAGE_REPO}:${CI_COMMIT_SHORT_SHA}-arm64"
-    - docker buildx imagetools create --tag "${CI_BUILDER_IMAGE_SHA}" "${CI_BUILDER_AMD64_IMAGE}" "${CI_BUILDER_ARM64_IMAGE}"
-    - docker buildx imagetools create --tag "${CI_BUILDER_IMAGE}" "${CI_BUILDER_AMD64_IMAGE}" "${CI_BUILDER_ARM64_IMAGE}"
+    - docker buildx imagetools create --builder "${BUILDX_BUILDER_NAME}" --tag "${CI_BUILDER_IMAGE_SHA}" "${CI_BUILDER_AMD64_IMAGE}" "${CI_BUILDER_ARM64_IMAGE}"
+    - docker buildx imagetools create --builder "${BUILDX_BUILDER_NAME}" --tag "${CI_BUILDER_IMAGE}" "${CI_BUILDER_AMD64_IMAGE}" "${CI_BUILDER_ARM64_IMAGE}"
     - echo "Pushed multi-arch ${CI_BUILDER_IMAGE_SHA} and ${CI_BUILDER_IMAGE}"
   retry:
     max: 2
@@ -446,6 +473,7 @@ build_deploy_curator:
         echo '{"experimental":"enabled"}' > ~/.docker/config.json
       fi
     - *docker_login
+    - *setup_buildx_builder
     - CURATOR_AMD64_IMAGE="${CURATOR_IMAGE}:${IMAGE_TAG}-amd64"
     - CURATOR_ARM64_IMAGE="${CURATOR_IMAGE}:${IMAGE_TAG}-arm64"
     - |
@@ -454,10 +482,10 @@ build_deploy_curator:
       echo "  Final tag: ${IMAGE_TAG}"
       echo "  AMD64 tag: ${IMAGE_TAG}-amd64"
       echo "  ARM64 tag: ${IMAGE_TAG}-arm64"
-    - docker buildx imagetools create --tag "${CURATOR_FULL_IMAGE}" "${CURATOR_AMD64_IMAGE}" "${CURATOR_ARM64_IMAGE}"
+    - docker buildx imagetools create --builder "${BUILDX_BUILDER_NAME}" --tag "${CURATOR_FULL_IMAGE}" "${CURATOR_AMD64_IMAGE}" "${CURATOR_ARM64_IMAGE}"
     - echo "Created multi-arch image ${CURATOR_FULL_IMAGE} from curator commit [${CI_COMMIT_SHA}]"
     - NVCF_IMAGE=${NVCF_DEV_IMAGE}:${IMAGE_TAG}
-    - docker buildx imagetools create -t "${NVCF_IMAGE}" "${CURATOR_AMD64_IMAGE}" "${CURATOR_ARM64_IMAGE}"
+    - docker buildx imagetools create --builder "${BUILDX_BUILDER_NAME}" -t "${NVCF_IMAGE}" "${CURATOR_AMD64_IMAGE}" "${CURATOR_ARM64_IMAGE}"
     - echo "Copied to image ${NVCF_IMAGE} from curator commit [${CI_COMMIT_SHA}]"
   artifacts:
     reports:

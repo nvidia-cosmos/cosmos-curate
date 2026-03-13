@@ -94,17 +94,31 @@ def build(  # noqa: PLR0913
     image: str | None = None,
     cache_from: list[str] | None = None,
     cache_to: str | None = None,
+    push: bool = False,
+    load: bool = True,
     verbose: bool = False,
 ) -> None:
-    """Build a Docker image variables and a Dockerfile template.
+    """Build a Docker image using buildx with optional registry cache.
+
+    Output mode flags (independent, can be combined):
+        - ``--push``: push directly from BuildKit to registry (CI fast path)
+        - ``--load``: load into local Docker daemon (local dev, default)
+        - both: push to registry and load into local daemon
+        - neither: default buildx behavior (e.g. cache-only builds)
 
     Args:
-        curator_path (pathlib.Path): The path to the curator directory.
-        dockerfile_path (pathlib.Path): The path to the Dockerfile.
-        image (Optional[str]): The name and tag of the Docker image. Default is None.
-        cache_from (Optional[str]): The image to use as a cache source. Default is None.
-        cache_to (Optional[str]): The image to use as a cache destination. Default is None.
-        verbose (bool): If True, logs detailed information. Default is False.
+        curator_path: The path to the curator directory (build context root).
+        dockerfile_path: The path to the Dockerfile.
+        image: The name and tag of the Docker image. Default is None.
+        cache_from: Registry references to use as cache sources
+            (e.g. ``["type=registry,ref=reg/img:cache-tag"]``).
+        cache_to: Registry reference to export cache to
+            (e.g. ``"type=registry,ref=reg/img:cache-tag,mode=max"``).
+        push: If True, push the image directly from BuildKit to the
+            registry (requires docker-container driver). Default is False.
+        load: If True, load the built image into the local Docker
+            daemon. Useful for local development. Default is True.
+        verbose: If True, logs detailed information. Default is False.
 
     """
     docker_build_limit = 65536
@@ -122,8 +136,10 @@ def build(  # noqa: PLR0913
         for cache_from_src in cache_from:
             cmd.extend(["--cache-from", cache_from_src])
     if cache_to:
-        cmd.extend(["--cache-to", cache_to, "--push"])
-    else:
+        cmd.extend(["--cache-to", cache_to])
+    if push:
+        cmd.extend(["--push"])
+    if load:
         cmd.extend(["--load"])
     cmd.extend(
         [

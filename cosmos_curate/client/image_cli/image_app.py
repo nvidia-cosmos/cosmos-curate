@@ -113,6 +113,27 @@ def build(  # noqa: PLR0913
             rich_help_panel="common",
         ),
     ] = None,
+    push: Annotated[
+        bool,
+        Option(
+            help=(
+                "Push the image directly from BuildKit to the registry, "
+                "skipping local daemon load. Faster in CI (single hop). "
+                "Requires a buildx builder with the docker-container driver."
+            ),
+            rich_help_panel="common",
+        ),
+    ] = False,
+    load: Annotated[
+        bool,
+        Option(
+            help=(
+                "Load the built image into the local Docker daemon. "
+                "Enabled by default; use --no-load to skip (e.g. in CI)."
+            ),
+            rich_help_panel="common",
+        ),
+    ] = True,
     dry_run: Annotated[
         bool,
         Option(
@@ -194,6 +215,8 @@ def build(  # noqa: PLR0913
         image=image_label,
         cache_from=cache_from,
         cache_to=cache_to,
+        push=push,
+        load=load,
         verbose=verbose,
     )
     logger.info(f"Built docker image: {image_label}")
