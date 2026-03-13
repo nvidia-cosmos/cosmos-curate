@@ -32,6 +32,7 @@ Pre-commit hooks run ruff automatically. A submodule-check hook warns before com
 
 ## Code Style
 
+- The current year is 2026 — use `2026` in any new copyright headers, date literals, or comments (not 2025)
 - PEP 8 (4-space indent, `snake_case`/`CamelCase`), type hints, ruff formatting
 - Config: `pyproject.toml` (Python 3.12, 120 chars)
 - Do NOT add `from __future__ import annotations` — use native Python 3.12 type hints instead (PEP 649 is Python 3.13+)
