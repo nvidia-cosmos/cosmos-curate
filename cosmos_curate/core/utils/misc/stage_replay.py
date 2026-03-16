@@ -33,7 +33,7 @@ import pickle
 import random
 import secrets
 from pathlib import Path
-from typing import Protocol, TypeVar, cast
+from typing import Any, Protocol, TypeVar, cast
 
 import attrs
 import ray
@@ -208,9 +208,9 @@ class RayStageExecutor:
         runtime_env = PixiRuntimeEnv(conda_env_name)
 
         logger.info(f"Starting actor for stage {stage.__class__.__name__}")
-        stage_runner = (
+        stage_runner: Any = (
             ray.remote(StageRunner)
-            .options(  # type: ignore[no-untyped-call]
+            .options(
                 runtime_env=runtime_env,
                 num_cpus=stage.required_resources.cpus,
                 num_gpus=stage.required_resources.gpus,

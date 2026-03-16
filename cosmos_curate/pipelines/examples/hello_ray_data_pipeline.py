@@ -76,11 +76,11 @@ def main() -> None:
     rows = [{"prompt": prompt} for prompt in EXAMPLE_PROMPTS]
     logger.info(f"Number of input tasks: {len(rows)}")
 
-    dataset = ray.data.from_items(rows)
+    materialized_dataset = ray.data.from_items(rows)
 
     # Ray Data builds a lazy DAG of transforms: batch lowercasing in Arrow,
     # per-row logging, then batched GPT-2 inference via a single GPU actor.
-    dataset = dataset.map_batches(_lowercase_batch, batch_format="pyarrow")
+    dataset = materialized_dataset.map_batches(_lowercase_batch, batch_format="pyarrow")
     dataset = dataset.map(_print_row)
     dataset = dataset.map_batches(
         _GPT2BatchPredictor,
