@@ -103,7 +103,7 @@ def run_ingest(args: argparse.Namespace) -> None:
 
 
 def add_ingest_command(
-    subparsers: argparse._SubParsersAction[argparse.ArgumentParser],
+    subparsers: argparse._SubParsersAction,  # type: ignore[type-arg]
 ) -> argparse.ArgumentParser:
     """Add the ingestion command to the parser.
 
@@ -121,4 +121,4 @@ def add_ingest_command(
     )
     parser.set_defaults(func=run_ingest)
     _setup_parser(parser)
-    return parser
+    return parser  # type: ignore[no-any-return]

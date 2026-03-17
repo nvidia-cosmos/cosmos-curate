@@ -262,7 +262,7 @@ def run_shard(args: argparse.Namespace) -> None:
 
 
 def add_shard_command(
-    subparsers: argparse._SubParsersAction[argparse.ArgumentParser],
+    subparsers: argparse._SubParsersAction,  # type: ignore[type-arg]
 ) -> argparse.ArgumentParser:
     """Add the shard command to the parser.
 
@@ -280,4 +280,4 @@ def add_shard_command(
     )
     parser.set_defaults(func=run_shard)
     _setup_parser(parser)
-    return parser
+    return parser  # type: ignore[no-any-return]
