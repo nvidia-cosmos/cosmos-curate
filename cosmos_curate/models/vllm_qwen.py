@@ -139,6 +139,7 @@ class VllmQwen(VllmPlugin):
             tensor_parallel_size=config.num_gpus,
             trust_remote_code=TRUST_REMOTE_CODE,
             compilation_config={"cudagraph_mode": "piecewise"},
+            performance_mode=config.performance_mode,
         )
 
     @classmethod
@@ -255,6 +256,7 @@ class VllmQwen3VL(VllmQwen):
             tensor_parallel_size=config.num_gpus,
             trust_remote_code=TRUST_REMOTE_CODE,
             compilation_config={"cudagraph_mode": "piecewise"},
+            performance_mode=config.performance_mode,
         )
 
     @staticmethod

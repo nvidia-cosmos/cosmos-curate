@@ -524,6 +524,7 @@ def _assemble_stages(  # noqa: C901, PLR0912, PLR0915
             max_retries=args.vllm_max_retries,
             copy_weights_to=pathlib.Path(args.copy_weights_to) if args.copy_weights_to else None,
             sampling_config=sampling_config,
+            performance_mode=args.vllm_performance_mode,
         )
 
         window_config = WindowConfig(
@@ -1478,6 +1479,17 @@ def _setup_parser(parser: argparse.ArgumentParser) -> None:  # noqa: PLR0915
         type=float,
         default=3.0,
         help="Number of CPUs per worker for VllmPrepStage.",
+    )
+    parser.add_argument(
+        "--vllm-performance-mode",
+        type=str,
+        default="throughput",
+        choices=["balanced", "interactivity", "throughput"],
+        help=(
+            "vLLM performance mode. 'throughput' (default) favors aggregate tokens/sec with "
+            "larger CUDA graphs and more aggressive batching. 'interactivity' favors low "
+            "per-request latency. 'balanced' is the vLLM default."
+        ),
     )
     parser.add_argument(
         "--vllm-use-inflight-batching",

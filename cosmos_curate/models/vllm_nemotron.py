@@ -175,6 +175,7 @@ class VllmNemotronNano12Bv2VL(VllmPlugin):
             max_model_len=MAX_MODEL_LEN,
             limit_mm_per_prompt=LIMIT_MM_PER_PROMPT,
             compilation_config={"cudagraph_mode": "piecewise"},
+            performance_mode=config.performance_mode,
         )
 
     @classmethod
