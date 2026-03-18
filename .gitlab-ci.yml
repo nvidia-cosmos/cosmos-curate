@@ -24,7 +24,7 @@ default:
 
 variables:
   # Versions
-  PYTHON_VERSION: "3.12.12"
+  PYTHON_VERSION: "3.12.13"
 
   # GitLab Runner feature flags
   FF_USE_FASTZIP: "true"

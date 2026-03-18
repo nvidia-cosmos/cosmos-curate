@@ -11,7 +11,7 @@ extra-index-urls = ["https://pypi.nvidia.com"]
 PYTHONNOUSERSITE = "1"  # isolate pixi environments from user/system site-packages
 
 [dependencies]
-python = ">=3.12,<3.13"
+python = ">=3.12.13,<3.13"
 pip = "*"
 click = "<8.3.0" # click 8.3.0 is broken
 

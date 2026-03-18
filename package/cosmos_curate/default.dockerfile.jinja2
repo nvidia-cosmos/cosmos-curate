@@ -32,6 +32,7 @@ RUN apt-get update \
     rsync \
     # And packages in the base image that have been updated \
     keyboxd gpgv gpgsm gpgconf gpg-agent \
+    binutils openssl libsqlite3-0 \
     && update-ca-certificates \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*

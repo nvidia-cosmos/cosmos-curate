@@ -23,6 +23,8 @@ authors = [
 ]
 license = "Apache-2.0"
 license-files = ["LICENSE"]
+# For image builds, pixi explicitly requests 3.12.13 to avoid bundling CVEs
+# For local development, accept what is still usable
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "asyncio",
