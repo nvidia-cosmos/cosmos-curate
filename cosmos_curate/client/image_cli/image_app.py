@@ -158,6 +158,13 @@ def build(  # noqa: PLR0913
             rich_help_panel="common",
         ),
     ] = False,
+    nsight: Annotated[
+        bool,
+        Option(
+            help="Install nsight-systems for CUDA profiling. Enable with --nsight for GPU kernel profiling.",
+            rich_help_panel="common",
+        ),
+    ] = False,
     extra_code_paths: Annotated[
         str | None,
         Option(
@@ -199,6 +206,7 @@ def build(  # noqa: PLR0913
         dockerfile_output_path=_dockerfile_output_path,
         verbose=verbose,
         ffmpeg_cuda=ffmpeg_cuda,
+        nsight=nsight,
     )
 
     if dry_run:

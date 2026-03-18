@@ -17,6 +17,7 @@
 import json
 import pathlib
 import pickle
+import subprocess
 
 import numpy as np
 import nvtx  # type: ignore[import-untyped]
@@ -127,6 +128,13 @@ class VideoDownloader(CuratorStage):
         """
         try:
             video.populate_metadata()
+        except subprocess.CalledProcessError as e:
+            stderr_text = e.stderr.decode(errors="replace").strip() if e.stderr else ""
+            logger.warning(
+                f"Failed to extract metadata for {video.input_video}: {e}"
+                + (f"\n  stderr: {stderr_text}" if stderr_text else "")
+            )
+            return False
         except Exception as e:  # noqa: BLE001
             logger.warning(f"Failed to extract metadata for {video.input_video}: {e}")
             return False

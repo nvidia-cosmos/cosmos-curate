@@ -9,42 +9,20 @@
 
 ARG DEBIAN_FRONTEND=noninteractive
 
-FROM nvcr.io/nvidia/cuda:12.9.1-devel-ubuntu24.04 AS main
+# ---------------------------------------------------------------------------
+# Builder stage: compile ffmpeg from source
+# ---------------------------------------------------------------------------
+# Isolated so that build-only apt packages (autoconf, build-essential, cmake,
+# nasm, yasm, texinfo, etc.) stay out of the final image layers. 
+FROM nvcr.io/nvidia/cuda:12.9.1-devel-ubuntu24.04 AS ffmpeg-builder
 
 SHELL ["/bin/bash", "-c"]
-ENV NVIDIA_DRIVER_CAPABILITIES=compute,video,utility
-ENV TZ=America/Los_Angeles
-# Get system level packages
-RUN apt-get update \
-    && apt-get install -y \
-    # Needed for opencv
-    libsm6 libxext6 \
-    # Needed because the certs age out sometimes?
-    ca-certificates \
-    # Needed for installing pixi \
-    wget \
-    # Needed for pip install \
-    git \
-    # Needed for cuda profiling \
-    nsight-systems-2025.3.2 \
-    --option=Dpkg::Options::=--force-confdef \
-    # Needed to copy model weights using rsync
-    rsync \
-    # And packages in the base image that have been updated \
-    keyboxd gpgv gpgsm gpgconf gpg-agent \
-    binutils openssl libsqlite3-0 \
-    && update-ca-certificates \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
 
-# Build ffmpeg from source (also needed for opencv)
 ENV FFMPEG_VERSION=8.0.1
 {%- if ffmpeg_cuda %}
-# GPU-accelerated ffmpeg (--enable-nonfree, NVENC/NVDEC via nv-codec-headers)
 ENV NVCODEC_VERSION=13.0.19.0
-{%- else %}
-# CPU-only ffmpeg (LGPL-compatible, no nonfree codecs)
 {%- endif %}
+
 RUN mkdir -p /tmp && chmod 1777 /tmp && \
     apt-get update && \
     apt-get install -y \
@@ -71,22 +49,23 @@ RUN mkdir -p /tmp && chmod 1777 /tmp && \
     texinfo \
     vainfo \
     yasm \
-    zlib1g-dev && \
+    zlib1g-dev \
+    curl && \
 {%- if ffmpeg_cuda %}
-    wget -O /tmp/nv-codec-headers.tar.gz https://github.com/FFmpeg/nv-codec-headers/releases/download/n${NVCODEC_VERSION}/nv-codec-headers-${NVCODEC_VERSION}.tar.gz && \
+    curl -fsSL -o /tmp/nv-codec-headers.tar.gz https://github.com/FFmpeg/nv-codec-headers/releases/download/n${NVCODEC_VERSION}/nv-codec-headers-${NVCODEC_VERSION}.tar.gz && \
     tar xzvf /tmp/nv-codec-headers.tar.gz -C /tmp/ && \
     cd /tmp/nv-codec-headers-${NVCODEC_VERSION} && \
     make && \
     make install && \
 {%- endif %}
-    wget -O /tmp/ffmpeg-snapshot.tar.bz2 https://www.ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.bz2 && \
+    curl -fsSL -o /tmp/ffmpeg-snapshot.tar.bz2 https://www.ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.bz2 && \
     tar xjvf /tmp/ffmpeg-snapshot.tar.bz2 -C /tmp/ && \
     cd /tmp/ffmpeg-${FFMPEG_VERSION} && \
 {%- if ffmpeg_cuda %}
     PATH="/usr/local/cuda/bin:$PATH" \
 {%- endif %}
     ./configure \
-    --prefix=/usr/local \
+    --prefix=/opt/ffmpeg \
 {%- if ffmpeg_cuda %}
     --enable-nonfree \
     --enable-cuda-nvcc \
@@ -111,22 +90,71 @@ RUN mkdir -p /tmp && chmod 1777 /tmp && \
     --disable-debug && \
     make -j$(nproc) && \
     make install && \
-    ldconfig && \
-    # Clean up
-    cd / && \
-    rm -rf /tmp/ffmpeg* && \
-{%- if ffmpeg_cuda %}
-    rm -rf /tmp/nv-codec-headers* && \
+    ldconfig
+
+# Install pixi with curl into /opt/pixi without modifying PATH
+RUN curl -fsSL https://pixi.sh/install.sh | PIXI_HOME=/opt/pixi PIXI_NO_PATH_UPDATE=1 sh
+
+# ---------------------------------------------------------------------------
+# Main stage - do not change this image without also changing the builder image.
+# To keep dynamic libraries in sync they should be the same version
+# ---------------------------------------------------------------------------
+FROM nvcr.io/nvidia/cuda:12.9.1-devel-ubuntu24.04 AS main
+
+SHELL ["/bin/bash", "-c"]
+ENV NVIDIA_DRIVER_CAPABILITIES=compute,video,utility
+ENV TZ=America/Los_Angeles
+# Get system level packages
+RUN apt-get update \
+    && apt-get install --option=Dpkg::Options::=--force-confdef -y \
+    # Needed for opencv
+    libsm6 libxext6 \
+    # Needed because the certs age out sometimes?
+    ca-certificates \
+    # Needed for NVIDIA wheel pre-download during pixi install
+    curl \
+{%- if nsight %}
+    # Needed for cuda profiling
+    nsight-systems-2025.3.2 \
 {%- endif %}
-    apt-get clean && rm -rf /var/lib/apt/lists/*
+    # Needed to copy model weights using rsync
+    rsync \
+    # Runtime libraries for ffmpeg (shared libs it links against)
+    libaom3 \
+    libass9 \
+    libdav1d7 \
+    libdrm2 \
+    libfreetype6 \
+    libgnutls30t64 \
+    libnuma1 \
+    libopenh264-7 \
+    libva2 \
+    libva-drm2 \
+    libvorbis0a libvorbisenc2 \
+    libvpx9 \
+    libwebp7 \
+    libwebpmux3 \
+    # Refresh GPG-related base packages without reintroducing full build tooling
+    keyboxd gpgv gpgsm gpgconf gpg-agent \
+    binutils openssl libsqlite3-0 \
+    && update-ca-certificates \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy ffmpeg from the builder stage (installed to /opt/ffmpeg to avoid collisions)
+COPY --from=ffmpeg-builder /opt/ffmpeg /opt/ffmpeg
+RUN echo "/opt/ffmpeg/lib" > /etc/ld.so.conf.d/ffmpeg.conf && \
+    ldconfig && \
+    /opt/ffmpeg/bin/ffmpeg -version > /dev/null && \
+    /opt/ffmpeg/bin/ffprobe -version > /dev/null
 
 # Triton 3.6+ looks for a separate "ptxas-blackwell" binary on Blackwell GPUs
 # (arch >= 100). The CUDA toolkit ships a single ptxas that already supports
 # Blackwell, so a symlink is sufficient.
 RUN ln -sf /usr/local/cuda/bin/ptxas /usr/local/cuda/bin/ptxas-blackwell
 
-# Install pixi
-RUN wget -qO- https://pixi.sh/install.sh | PIXI_HOME=/usr/local PIXI_NO_PATH_UPDATE=1 sh
+# Copy pixi binary from the builder stage
+COPY --from=ffmpeg-builder /opt/pixi/bin/pixi /usr/local/bin/pixi
 
 # Common ENV variables needed by some ML libs
 ENV AM_I_DOCKER=True \
@@ -134,7 +162,7 @@ ENV AM_I_DOCKER=True \
     TORCH_CUDA_ARCH_LIST="8.0;8.6;9.0;10.0+PTX" \
     CUDA_HOME="/usr/local/cuda" \
     CUDA_PATH="/usr/local/cuda" \
-    PATH="/usr/local/cuda/bin:${PATH}" \
+    PATH="/opt/ffmpeg/bin:/usr/local/cuda/bin:${PATH}" \
     CPATH="/usr/local/cuda/include" \
     LIBRARY_PATH="/usr/local/cuda/lib64:${LIBRARY_PATH:-}" \
     LD_LIBRARY_PATH="/usr/local/cuda/lib64:${LD_LIBRARY_PATH:-}" \
@@ -181,7 +209,7 @@ COPY --chown=1000:1000 pixi.toml pixi.lock {{code_dir_str}}/
 #
 # Solution:
 #   1. Parse pixi.lock for all pypi.nvidia.com wheel URLs
-#   2. Pre-download them with wget (5-minute timeout, 5 retries, resume)
+#   2. Pre-download them with curl (5-minute timeout, 5 retries)
 #   3. Patch pixi.lock in-place: replace remote URLs with file:// paths
 #   4. pixi install --frozen reads the patched lockfile and loads wheels locally
 #
@@ -189,7 +217,7 @@ COPY --chown=1000:1000 pixi.toml pixi.lock {{code_dir_str}}/
 # which persists across builds and does NOT bloat the Docker image layers.
 #
 #   +------------------+       +-------------------+       +---------------------+
-#   |   pixi.lock      | grep  | pypi.nvidia.com   | wget  | /pixi-cache/        |
+#   |   pixi.lock      | grep  | pypi.nvidia.com   | curl  | /pixi-cache/        |
 #   |   (lockfile)     +------>| wheel URLs        +------>| nvidia-wheels/*.whl |
 #   +------------------+       +-------------------+       +---------------------+
 #                                                                   |
@@ -214,7 +242,7 @@ RUN --mount=type=cache,target=/pixi-cache \
         fi; \
         filename=$(basename "$url") && \
         echo "Pre-downloading: $filename" && \
-        wget -q --continue --timeout=300 --tries=5 -P /pixi-cache/nvidia-wheels "$url" || \
+        curl -fsSL --retry 5 --retry-delay 3 --max-time 300 -C - -o "/pixi-cache/nvidia-wheels/$filename" "$url" || \
             echo "WARNING: Failed to download $filename (will retry during pixi install)"; \
     done && \
     echo "=== Pre-downloaded $(ls -1 /pixi-cache/nvidia-wheels/*.whl 2>/dev/null | wc -l) NVIDIA wheels ===" && \
