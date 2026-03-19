@@ -917,9 +917,9 @@ def _setup_parser(parser: argparse.ArgumentParser) -> None:  # noqa: PLR0915
     )
     parser.add_argument(
         "--transnetv2-frame-decoder-mode",
-        choices=["ffmpeg_cpu", "ffmpeg_gpu", "pynvc"],
+        choices=["ffmpeg_cpu", "pynvc"],
         default="ffmpeg_cpu",
-        help="Choose between ffmpeg on CPU or GPU or PyNvVideoCodec for video decode.",
+        help="Choose between ffmpeg on CPU or PyNvVideoCodec for video decode.",
     )
     parser.add_argument(
         "--transnetv2-frame-decode-cpus-per-worker",

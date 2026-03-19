@@ -40,56 +40,29 @@ def get_frames_from_ffmpeg(
     width: int,
     height: int,
     *,
-    use_gpu: bool = False,
     num_cpu_threads: int = 4,
 ) -> npt.NDArray[np.uint8] | None:
     """Fetch resized frames for video."""
-    if use_gpu:
-        command = [
-            "ffmpeg",
-            "-hide_banner",
-            "-loglevel",
-            "warning",
-            "-threads",
-            "1",
-            "-hwaccel",
-            "auto",
-            "-hwaccel_output_format",
-            "cuda",
-            "-i",
-            video_file.as_posix(),
-            "-vf",
-            f"scale_npp={width}:{height},hwdownload,format=nv12",
-            "-f",
-            "rawvideo",
-            "-pix_fmt",
-            "rgb24",
-            "-",
-        ]
-    else:
-        command = [
-            "ffmpeg",
-            "-hide_banner",
-            "-loglevel",
-            "warning",
-            "-threads",
-            str(num_cpu_threads),
-            "-i",
-            video_file.as_posix(),
-            "-f",
-            "rawvideo",
-            "-pix_fmt",
-            "rgb24",
-            "-s",
-            f"{width}x{height}",
-            "-",
-        ]
+    command = [
+        "ffmpeg",
+        "-hide_banner",
+        "-loglevel",
+        "warning",
+        "-threads",
+        str(num_cpu_threads),
+        "-i",
+        video_file.as_posix(),
+        "-f",
+        "rawvideo",
+        "-pix_fmt",
+        "rgb24",
+        "-s",
+        f"{width}x{height}",
+        "-",
+    ]
     process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)  # noqa: S603
     video_stream, err = process.communicate()
     if process.returncode != 0:
-        if use_gpu:
-            logger.warning("Caught ffmpeg runtime error with `use_gpu=True` option, falling back to CPU.")
-            return get_frames_from_ffmpeg(video_file, width, height, use_gpu=False)
         logger.exception(f"FFmpeg error: {err.decode('utf-8')}")
         return None
     return np.frombuffer(video_stream, np.uint8).reshape([-1, height, width, 3])
@@ -98,7 +71,7 @@ def get_frames_from_ffmpeg(
 class VideoFrameExtractionStage(CuratorStage):
     """Stage that extracts frames from videos into numpy arrays.
 
-    This stage handles video frame extraction using either FFmpeg (CPU/GPU) or PyNvCodec,
+    This stage handles video frame extraction using either FFmpeg (CPU) or PyNvCodec,
     converting video content into standardized frame arrays for downstream processing.
     """
 
@@ -191,7 +164,6 @@ class VideoFrameExtractionStage(CuratorStage):
                                 video_path,
                                 width=width,
                                 height=height,
-                                use_gpu=False,
                                 num_cpu_threads=self._num_cpu_threads,
                             )
                         else:
@@ -203,7 +175,7 @@ class VideoFrameExtractionStage(CuratorStage):
                         video_path,
                         width=width,
                         height=height,
-                        use_gpu=self.decoder_mode == "ffmpeg_gpu",
+                        num_cpu_threads=self._num_cpu_threads,
                     )
 
                 if not video.frame_array:
@@ -227,6 +199,6 @@ class VideoFrameExtractionStage(CuratorStage):
             The resource requirements for this stage.
 
         """
-        if self.decoder_mode != "ffmpeg_cpu":
+        if self.decoder_mode == "pynvc":
             return CuratorStageResource(gpus=0.1)
         return CuratorStageResource(cpus=self._num_cpus_per_worker)

@@ -3,9 +3,9 @@
 > **Note:** "Image" throughout this document refers to the Docker/OCI container image built by
 > `cosmos-curate image build`.
 
-> **Phasing note:** Phases 1-2 (removing the custom FFmpeg build) and Phase 4 (cleanup) are valuable independently of
-> the slim image work — they unblock CUDA 13, simplify compliance, and reduce image size for all modes. Only Phase 3
-> depends on the slim mode design and its shared storage assumptions.
+> **Phasing note:** Phases 1-2 (removing `ffmpeg_gpu`, switching to conda-forge FFmpeg) and Phase 4 (cleanup) are
+> valuable independently of the slim image work — they unblock CUDA 13, simplify compliance, and reduce image size for
+> all modes. Only Phase 3 depends on the slim mode design and its shared storage assumptions.
 
 ## Motivation
 
@@ -43,6 +43,9 @@
   with the LGPL conda-forge build. **Important:** conda-forge ships both GPL (`ffmpeg=*=gpl_*`) and LGPL
   (`ffmpeg=*=lgpl_*`) variants — pin the LGPL variant in `pixi.toml` (e.g. `ffmpeg = "=*=lgpl_*"`).
 - GPU video decode via PyNvVideoCodec (`pynvc` mode, already the preferred path in `VideoFrameExtractionStage`).
+  The `ffmpeg_gpu` decode mode is removed — benchmarks showed it performed the same as `ffmpeg_cpu`, while `pynvc`
+  is measurably faster. Removing it eliminates the only usage of `scale_npp` (libnpp) and the need for a custom
+  GPU FFmpeg build.
 - GPU FFmpeg transcoding (`h264_nvenc`) retained for teams with NVENC-capable GPUs (e.g. RTX in data center). CPU
   `libopenh264` remains the default encoder for GPUs without NVENC hardware (A100, H100).
 
@@ -79,22 +82,17 @@ mount before Ray workers start — workers then use the pre-populated environmen
 
 ## Task List
 
-### Phase 1: Remove GPU FFmpeg decode path and custom build flag
+### Phase 1: Remove `ffmpeg_gpu` decode path
 
-Small, self-contained removals that can each land independently and bake in CI.
+Benchmarks showed `ffmpeg_gpu` performed the same as `ffmpeg_cpu` (GPU decode savings negated by CPU scaling),
+while `pynvc` is measurably faster. This removal is justified independently of the conda-forge switch.
 
-- [ ] **1a. Remove `ffmpeg_gpu` decoder mode from `VideoFrameExtractionStage`**
+- [x] **1a. Remove `ffmpeg_gpu` decoder mode from `VideoFrameExtractionStage`**
     - Drop the `ffmpeg_gpu` choice from `--transnetv2-frame-decoder-mode` CLI arg (`splitting_pipeline.py`)
     - Remove the `use_gpu=True` branch in `get_frames_from_ffmpeg()` (`frame_extraction_stages.py`)
     - Update `VideoFrameExtractionStage` to remove the `ffmpeg_gpu` resource/logic path
-    - This eliminates the only usage of `scale_npp` (libnpp) and the only reason for a custom GPU FFmpeg build
+    - Eliminates the only usage of `scale_npp` (libnpp) — the sole reason for a custom GPU FFmpeg build
     - `pynvc` remains as the GPU decode option; `ffmpeg_cpu` remains as CPU fallback
-
-- [ ] **1b. Remove `--ffmpeg-cuda` build flag and GPU FFmpeg source build**
-    - Remove `--ffmpeg-cuda` option from `image_app.py`
-    - Remove all `ffmpeg_cuda` conditional blocks from `default.dockerfile.jinja2`
-    - No longer needed: conda-forge FFmpeg includes `h264_nvenc`/`hevc_nvenc` in the LGPL build
-    - The CPU-only source build remains at this point (removed in Phase 2)
 
 ### Phase 2: Replace source-built FFmpeg with conda-forge
 
@@ -109,7 +107,12 @@ Small, self-contained removals that can each land independently and bake in CI.
     - Verify `h264_nvenc`/`hevc_nvenc` are present (conda-forge includes them via `ffnvcodec-headers`)
     - Test GPU transcoding on an NVENC-capable GPU (e.g. RTX)
 
-- [ ] **2b. Remove FFmpeg source build from Dockerfile**
+- [ ] **2b. Remove `--ffmpeg-cuda` build flag and GPU FFmpeg source build**
+    - Remove `--ffmpeg-cuda` option from `image_app.py`
+    - Remove all `ffmpeg_cuda` conditional blocks from `default.dockerfile.jinja2`
+    - No longer needed: conda-forge FFmpeg includes `h264_nvenc`/`hevc_nvenc` in the LGPL build
+
+- [ ] **2c. Remove FFmpeg source build from Dockerfile**
     - Remove the entire FFmpeg source build block from `default.dockerfile.jinja2`
     - Remove apt dependencies only needed for FFmpeg compilation (autoconf, automake, cmake, yasm, nasm, libtool, etc.)
     - Keep system deps still needed elsewhere (libsm6, libxext6 for OpenCV)
