@@ -108,7 +108,7 @@ cuda = "12.9.1" # match the version of the nvidia/cuda docker base image
 [feature.cuml.dependencies]
 azure-identity = "*"
 azure-storage-blob = "*"
-cuml = "==25.12"
+cuml = "==26.02"
 loguru = "*"
 numpy = ">2,<2.3" # opencv-python-headless requires >=2; numba 0.61.x requires <2.3
 raft-dask = "*"

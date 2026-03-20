@@ -104,5 +104,7 @@ jq --arg output_path "$S3_OUTPUT_DEDUP_PATH" --arg input_embeddings_path "$S3_OU
 cosmos-curate nvcf function invoke-function --data-file invoke_dedup.json --s3-config-file aws_credentials
 
 # Shard-dataset pipeline
+# Clean prior shard output so CI retries don't fail ("Expect output path ... to be empty")
+AWS_SHARED_CREDENTIALS_FILE="$(pwd)/aws_credentials" aws s3 rm --recursive "$S3_OUTPUT_DATASET_PATH" || true
 jq --arg output_dataset_path "$S3_OUTPUT_DATASET_PATH" --arg input_clip_path "$S3_OUTPUT_CLIP_PATH" --arg input_semantic_dedup_path "$S3_OUTPUT_DEDUP_PATH" '.args.output_dataset_path = $output_dataset_path | .args.input_clip_path = $input_clip_path | .args.input_semantic_dedup_path = $input_semantic_dedup_path' < examples/nvcf/function/invoke_video_shard.json > invoke_shard.json
 cosmos-curate nvcf function invoke-function --data-file invoke_shard.json --s3-config-file aws_credentials

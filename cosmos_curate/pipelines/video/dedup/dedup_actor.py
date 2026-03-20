@@ -26,6 +26,7 @@ dedup workflows.
 import importlib
 import io
 import pathlib
+import warnings
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 
@@ -227,14 +228,19 @@ class SemDedupActor(RAFTActor):
         X /= cp.maximum(norms, 1e-12)  # avoid div-by-zero
 
         # ---- Fit MG KMeans ----
-        km = KMeansMG(
-            handle=self._raft_handle,
-            n_clusters=self._config.n_clusters,
-            max_iter=self._config.max_iter,
-            random_state=self._config.random_state,
-            verbose=self._verbose,
-        )
-        labels = km.fit_predict(X).astype("int32", copy=False)
+        # handle= is required for RAFT comms but triggers a spurious deprecation
+        # warning in cuml >=26.02 (KMeansMG inherits the KMeans warning even though
+        # MG classes still need the handle). Suppress it.
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", message=r".*\bhandle\b.*deprecated", category=FutureWarning)
+            km = KMeansMG(
+                handle=self._raft_handle,
+                n_clusters=self._config.n_clusters,
+                max_iter=self._config.max_iter,
+                random_state=self._config.random_state,
+                verbose=self._verbose,
+            )
+            labels = km.fit_predict(X).astype("int32", copy=False)
         if self._verbose:
             logger.debug(f"{self.display_name}: KMeans complete with {len(labels)} labels")
 
