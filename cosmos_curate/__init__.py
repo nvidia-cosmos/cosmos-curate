@@ -19,3 +19,9 @@ import warnings
 
 # Suppress repetitive pkg_resources deprecation warnings
 warnings.filterwarnings("ignore", category=UserWarning, message="pkg_resources is deprecated as an API")
+
+# Third-party packages (ngcsdk's vendored `registry`, vllm, etc.) contain
+# invalid escape sequences that trigger SyntaxWarning on Python 3.12+.
+# The module pattern needs `.*` because re.match() is used internally and
+# compile-time warnings use the full file path as the module name.
+warnings.filterwarnings("ignore", category=SyntaxWarning, message=r"invalid escape sequence", module=r".*")
