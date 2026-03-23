@@ -439,22 +439,27 @@ If you have defined `my-slurm-login-01.my-cluster.com` in your `/.ssh/config` li
 
 Otherwise you can replace `my-slurm-login-01.my-cluster.com` with your real login hostname in the following commands.
 
+These `rclone` examples use the SFTP backend over SSH (`:sftp,host=...`). Your Slurm login node must have an SFTP
+subsystem enabled in SSHD; plain SSH shell access alone is not sufficient.
+
 ```bash
+RCLONE_REMOTE=":sftp,host=my-slurm-login-01.my-cluster.com:"
+
 # Copy ~/.config/cosmos_curate/config.yaml
 ssh my-slurm-login-01.my-cluster.com mkdir -p ${SLURM_COSMOS_CURATE_CONFIG_DIR}
-rsync -avh ~/.config/cosmos_curate/config.yaml my-slurm-login-01.my-cluster.com:${SLURM_COSMOS_CURATE_CONFIG_DIR}/config.yaml
+rclone copyto -P ~/.config/cosmos_curate/config.yaml ${RCLONE_REMOTE}${SLURM_COSMOS_CURATE_CONFIG_DIR}/config.yaml
 
 # (Optional) Copy ~/.aws/credentials if using S3-compatible storage
 ssh my-slurm-login-01.my-cluster.com mkdir -p ${SLURM_AWS_CREDS_DIR}
-rsync -avh ~/.aws/credentials my-slurm-login-01.my-cluster.com:${SLURM_AWS_CREDS_DIR}/credentials
+rclone copyto -P ~/.aws/credentials ${RCLONE_REMOTE}${SLURM_AWS_CREDS_DIR}/credentials
 
 # (Optional) Copy ~/.azure/credentials if using Azure Blob Storage
 ssh my-slurm-login-01.my-cluster.com mkdir -p ${SLURM_AZURE_CREDS_DIR}
-rsync -avh ~/.azure/credentials my-slurm-login-01.my-cluster.com:${SLURM_AZURE_CREDS_DIR}/credentials
+rclone copyto -P ~/.azure/credentials ${RCLONE_REMOTE}${SLURM_AZURE_CREDS_DIR}/credentials
 
 # Copy models
 ssh my-slurm-login-01.my-cluster.com mkdir -p ${SLURM_WORKSPACE}/models
-rsync -avh --progress ${COSMOS_CURATE_LOCAL_WORKSPACE_PREFIX:-$HOME}/cosmos_curate_local_workspace/models/  my-slurm-login-01.my-cluster.com:${SLURM_WORKSPACE}/models/
+rclone copy -P ${COSMOS_CURATE_LOCAL_WORKSPACE_PREFIX:-$HOME}/cosmos_curate_local_workspace/models/ ${RCLONE_REMOTE}${SLURM_WORKSPACE}/models/
 ```
 
 ### Create sqsh Image and Copy to the Slurm Cluster
@@ -479,8 +484,9 @@ Again if you have defined `my-slurm-login-01.my-cluster.com` in your `/.ssh/conf
 Otherwise replace `my-slurm-login-01.my-cluster.com` with your real login hostname in the following commands.
 
 ```bash
+RCLONE_REMOTE=":sftp,host=my-slurm-login-01.my-cluster.com:"
 ssh my-slurm-login-01.my-cluster.com mkdir -p ${SLURM_IMAGE_DIR}
-rsync -avh --progress $COSMOS_CURATE_IMAGE_NAME "my-slurm-login-01.my-cluster.com:${SLURM_IMAGE_DIR}/"
+rclone copyto -P ./$COSMOS_CURATE_IMAGE_NAME ${RCLONE_REMOTE}${SLURM_IMAGE_DIR}/$COSMOS_CURATE_IMAGE_NAME
 ```
 
 ### Launch on Slurm
@@ -595,8 +601,9 @@ Again if you have defined `my-slurm-login-01.my-cluster.com` in your `/.ssh/conf
 Otherwise replace `my-slurm-login-01.my-cluster.com` with your real login hostname in the following commands.
 
 ```bash
+RCLONE_REMOTE=":sftp,host=my-slurm-login-01.my-cluster.com:"
 ssh my-slurm-login-01.my-cluster.com mkdir -p ${SLURM_SOURCE_DIR}/cosmos_curate/
-rsync -avh ./cosmos_curate/ my-slurm-login-01.my-cluster.com:${SLURM_SOURCE_DIR}/cosmos_curate/
+rclone copy -P ./cosmos_curate/ ${RCLONE_REMOTE}${SLURM_SOURCE_DIR}/cosmos_curate/
 ```
 
 Note that:
@@ -612,7 +619,7 @@ will not sync code from your local machine to the cluster. You'll need to either
 Model loading can sometimes be sped up by adding
 
 ```
---copy-weight-to /raid/scratch/models
+--copy-weights-to /raid/scratch/models
 ```
 
 to the launch command. This is because of the way that the transformers library loads safetensors from disk. Its method is efficient for local disk, but can be very slow if the model weights are stored on NFS or Lustre.

@@ -508,10 +508,10 @@ def download_model_weights_from_local_to_workspace(
 
 
 def copy_model_weights(source_dir: pathlib.Path, dest_dir: pathlib.Path, *, size_check: bool = True) -> None:
-    """Copy model weights from source to destination using rsync.
+    """Copy model weights from source to destination using rclone.
 
-    This function uses rsync for efficient, optimized file copying with built-in
-    resume capability and verification.
+    This function uses rclone for efficient, optimized file copying with built-in
+    transfer progress and file comparison options.
 
     Args:
         source_dir: Source directory containing the model weights.
@@ -527,7 +527,7 @@ def copy_model_weights(source_dir: pathlib.Path, dest_dir: pathlib.Path, *, size
     Raises:
         FileNotFoundError: If the source directory does not exist.
         ValueError: If the source path is not a directory.
-        OSError: If there are permission or I/O errors during copying, or if rsync is not available.
+        OSError: If there are permission or I/O errors during copying, or if rclone is not available.
 
     """
     if not source_dir.exists():
@@ -542,53 +542,51 @@ def copy_model_weights(source_dir: pathlib.Path, dest_dir: pathlib.Path, *, size
     dest_dir.mkdir(parents=True, exist_ok=True)
 
     size_check_msg = "with size check" if size_check else "without size check"
-    logger.info(f"Copying model weights from {source_dir} to {dest_dir} using rsync ({size_check_msg})...")
+    logger.info(f"Copying model weights from {source_dir} to {dest_dir} using rclone ({size_check_msg})...")
 
-    # Build rsync command
-    # -a: archive mode (recursive, preserves permissions, times, etc.)
-    # -v: verbose output
-    # --info=progress2: show overall progress
-    rsync_cmd = [
-        "rsync",
-        "-av",
-        "--info=progress2",
+    # Build rclone command
+    # copy: copy source directory contents to destination directory.
+    # --progress: show overall transfer progress.
+    rclone_cmd = [
+        "rclone",
+        "copy",
+        "--progress",
     ]
 
     if size_check:
-        # Only compare by size (skip files with matching size)
-        rsync_cmd.append("--size-only")
+        # Only compare by size (skip files with matching size).
+        rclone_cmd.append("--size-only")
     else:
-        # Skip all existing files without checking
-        rsync_cmd.append("--ignore-existing")
+        # Skip all existing files without checking.
+        rclone_cmd.append("--ignore-existing")
 
-    # Note: trailing slash on source is important for rsync
-    # It means "copy contents of dir" rather than "copy dir itself"
-    rsync_cmd.extend(
+    # For rclone copy, directory sources copy contents by default.
+    rclone_cmd.extend(
         [
-            f"{source_dir}/",
+            str(source_dir),
             str(dest_dir),
         ]
     )
 
     try:
         result = subprocess.run(  # noqa: S603
-            rsync_cmd,
+            rclone_cmd,
             capture_output=True,
             text=True,
             check=True,
         )
 
-        # Log rsync output
+        # Log rclone output
         if result.stdout:
-            logger.debug(f"rsync output:\n{result.stdout}")
+            logger.debug(f"rclone output:\n{result.stdout}")
 
         logger.info("Model weight copy complete")
 
     except FileNotFoundError as e:
-        msg = "rsync command not found. Please ensure rsync is installed."
+        msg = "rclone command not found. Please ensure rclone is installed."
         raise OSError(msg) from e
     except subprocess.CalledProcessError as e:
-        msg = f"rsync failed with exit code {e.returncode}"
+        msg = f"rclone failed with exit code {e.returncode}"
         logger.error(f"{msg}\nstderr: {e.stderr}")
         raise OSError(msg) from e
 

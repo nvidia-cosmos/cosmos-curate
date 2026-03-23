@@ -16,6 +16,8 @@
 
 import importlib
 import pathlib
+import shutil
+import subprocess
 import threading
 from types import SimpleNamespace
 
@@ -34,6 +36,46 @@ def _identity(path: str) -> str:
 
 def _return_none(_: str) -> None:
     """Return None regardless of the argument (helper for monkeypatch)."""
+
+
+@pytest.fixture
+def mock_rclone_copy(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Mock `rclone copy` so copy tests do not require rclone installed."""
+
+    def fake_run(
+        cmd: list[str],
+        *,
+        capture_output: bool,
+        text: bool,
+        check: bool,
+    ) -> SimpleNamespace:
+        assert capture_output is True
+        assert text is True
+        assert check is True
+        assert cmd[0:3] == ["rclone", "copy", "--progress"]
+
+        ignore_existing = "--ignore-existing" in cmd
+        size_only = "--size-only" in cmd
+        source = pathlib.Path(cmd[-2])
+        destination = pathlib.Path(cmd[-1])
+
+        for item in source.rglob("*"):
+            if not item.is_file():
+                continue
+            relative = item.relative_to(source)
+            target = destination / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+
+            if target.exists():
+                if ignore_existing:
+                    continue
+                if size_only and target.stat().st_size == item.stat().st_size:
+                    continue
+            shutil.copy2(item, target)
+
+        return SimpleNamespace(stdout="", stderr="", returncode=0)
+
+    monkeypatch.setattr(model_utils.subprocess, "run", fake_run)
 
 
 def test_hack_copydir_to_cloud_storage_uploads_all_files(tmp_path: pathlib.Path) -> None:
@@ -370,6 +412,7 @@ def test_reduce_t5_model_weights_filters_encoder(monkeypatch: pytest.MonkeyPatch
     assert fake_torch.saved[0] == "unchanged"
 
 
+@pytest.mark.usefixtures("mock_rclone_copy")
 def test_copy_model_weights_copies_new_files(tmp_path: pathlib.Path) -> None:
     """Test that copy_model_weights copies files that don't exist in destination."""
     source = tmp_path / "source"
@@ -405,6 +448,7 @@ def test_copy_model_weights_copies_new_files(tmp_path: pathlib.Path) -> None:
     ],
     ids=["same_size_check_true", "diff_size_check_true", "existing_size_check_false"],
 )
+@pytest.mark.usefixtures("mock_rclone_copy")
 def test_copy_model_weights_with_existing_files(
     tmp_path: pathlib.Path,
     source_content: bytes,
@@ -455,6 +499,7 @@ def test_copy_model_weights_error_cases(
         model_utils.copy_model_weights(source, dest)
 
 
+@pytest.mark.usefixtures("mock_rclone_copy")
 def test_copy_model_weights_creates_dest_if_missing(tmp_path: pathlib.Path) -> None:
     """Test that copy_model_weights creates destination directory if it doesn't exist."""
     source = tmp_path / "source"
@@ -473,6 +518,7 @@ def test_copy_model_weights_creates_dest_if_missing(tmp_path: pathlib.Path) -> N
     assert (dest / "model.bin").read_bytes() == b"data"
 
 
+@pytest.mark.usefixtures("mock_rclone_copy")
 def test_copy_model_weights_copies_new_files_when_size_check_false(tmp_path: pathlib.Path) -> None:
     """Test that copy_model_weights still copies new files when size_check=False."""
     source = tmp_path / "source"
@@ -494,3 +540,33 @@ def test_copy_model_weights_copies_new_files_when_size_check_false(tmp_path: pat
     assert (dest / "model.bin").read_bytes() == b"existing"
     # New file should be copied
     assert (dest / "config.json").read_text() == '{"key": "value"}'
+
+
+def test_copy_model_weights_raises_when_rclone_missing(monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path) -> None:
+    """Test user-facing error when rclone executable is unavailable."""
+    source = tmp_path / "source"
+    dest = tmp_path / "dest"
+    source.mkdir()
+
+    def fake_run(cmd: list[str], *, capture_output: bool, text: bool, check: bool) -> None:
+        del cmd, capture_output, text, check
+        raise FileNotFoundError
+
+    monkeypatch.setattr(model_utils.subprocess, "run", fake_run)
+    with pytest.raises(OSError, match="rclone command not found"):
+        model_utils.copy_model_weights(source, dest)
+
+
+def test_copy_model_weights_raises_when_rclone_fails(monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path) -> None:
+    """Test user-facing error when rclone returns a failure code."""
+    source = tmp_path / "source"
+    dest = tmp_path / "dest"
+    source.mkdir()
+
+    def fake_run(cmd: list[str], *, capture_output: bool, text: bool, check: bool) -> None:
+        del capture_output, text, check
+        raise subprocess.CalledProcessError(returncode=3, cmd=cmd, stderr="copy failed")
+
+    monkeypatch.setattr(model_utils.subprocess, "run", fake_run)
+    with pytest.raises(OSError, match="rclone failed with exit code 3"):
+        model_utils.copy_model_weights(source, dest)
