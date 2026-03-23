@@ -49,27 +49,16 @@ def _make_synthetic_video(format_name: str) -> io.BytesIO:
     container = av.open(buffer, mode="w", format=format_name)
     fps = 30
 
-    # Set up video stream
-    if format_name == "mp4":
-        stream = container.add_stream(
-            "h264",
-            rate=fps,
-            options={
-                "crf": "23",  # Good quality
-                "preset": "fast",  # Fast encoding
-            },
-        )
-    else:
-        stream = container.add_stream("h264", rate=fps)
-
-    stream.width = 4
-    stream.height = 4
+    # Use mpeg4 encoder (built-in to FFmpeg, no external codec dependency).
+    # These tests exercise remuxing (container format changes), not encoding.
+    stream = container.add_stream("mpeg4", rate=fps)
+    stream.width = 32
+    stream.height = 32
     stream.pix_fmt = "yuv420p"
     stream.time_base = Fraction(1, fps)
 
-    # Create 5 frames
-    for i in range(5):
-        array = np.full((stream.height, stream.width, 3), i * 50, dtype=np.uint8)
+    for i in range(30):
+        array = np.full((stream.height, stream.width, 3), (i * 8) % 256, dtype=np.uint8)
         frame = av.VideoFrame.from_ndarray(array, format="rgb24")
         for packet in stream.encode(frame):
             container.mux(packet)

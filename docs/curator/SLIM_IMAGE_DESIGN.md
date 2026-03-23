@@ -96,7 +96,7 @@ while `pynvc` is measurably faster. This removal is justified independently of t
 
 ### Phase 2: Replace source-built FFmpeg with conda-forge
 
-- [ ] **2a. Switch `av` from PyPI to conda-forge and verify FFmpeg codec parity**
+- [x] **2a. Switch `av` from PyPI to conda-forge and verify FFmpeg codec parity**
     - Move `av` from `[pypi-dependencies]` to `[dependencies]` in `pixi.toml` so it pulls conda-forge FFmpeg
     - Pin `ffmpeg = "=*=lgpl_*"` to ensure the LGPL variant is used (not GPL)
     - The PyPI `av` package bundles its own FFmpeg and does not include conda-forge FFmpeg or NVENC support
@@ -107,12 +107,12 @@ while `pynvc` is measurably faster. This removal is justified independently of t
     - Verify `h264_nvenc`/`hevc_nvenc` are present (conda-forge includes them via `ffnvcodec-headers`)
     - Test GPU transcoding on an NVENC-capable GPU (e.g. RTX)
 
-- [ ] **2b. Remove `--ffmpeg-cuda` build flag and GPU FFmpeg source build**
+- [x] **2b. Remove `--ffmpeg-cuda` build flag and GPU FFmpeg source build**
     - Remove `--ffmpeg-cuda` option from `image_app.py`
     - Remove all `ffmpeg_cuda` conditional blocks from `default.dockerfile.jinja2`
     - No longer needed: conda-forge FFmpeg includes `h264_nvenc`/`hevc_nvenc` in the LGPL build
 
-- [ ] **2c. Remove FFmpeg source build from Dockerfile**
+- [x] **2c. Remove FFmpeg source build from Dockerfile**
     - Remove the entire FFmpeg source build block from `default.dockerfile.jinja2`
     - Remove apt dependencies only needed for FFmpeg compilation (autoconf, automake, cmake, yasm, nasm, libtool, etc.)
     - Keep system deps still needed elsewhere (libsm6, libxext6 for OpenCV)

@@ -37,7 +37,6 @@ def generate_dockerfile(  # noqa: PLR0913
     code_paths: list[str] | None = None,
     dockerfile_output_path: pathlib.Path | None = None,
     verbose: bool = False,
-    ffmpeg_cuda: bool = False,
     nsight: bool = False,
 ) -> pathlib.Path:
     """Generate a Dockerfile based on the provided template and parameters.
@@ -50,7 +49,6 @@ def generate_dockerfile(  # noqa: PLR0913
         dockerfile_output_path (Optional[pathlib.Path]): The path to write the rendered Dockerfile.
                                                          If None, writes to Dockerfile.
         verbose (bool): If True, logs detailed information.
-        ffmpeg_cuda (bool): If True, builds ffmpeg with CUDA/nonfree support. Defaults to CPU-only.
         nsight (bool): If True, installs nsight-systems for CUDA profiling. Defaults to False.
 
     Returns:
@@ -75,7 +73,6 @@ def generate_dockerfile(  # noqa: PLR0913
         use_local_xenna_build=use_local_xenna_build,
         code_paths=code_paths,
         verbose=verbose,
-        ffmpeg_cuda=ffmpeg_cuda,
         nsight=nsight,
         **attrs.asdict(common_template_params),
     )

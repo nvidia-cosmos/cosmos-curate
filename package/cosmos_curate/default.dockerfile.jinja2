@@ -10,98 +10,20 @@
 ARG DEBIAN_FRONTEND=noninteractive
 
 # ---------------------------------------------------------------------------
-# Builder stage: compile ffmpeg from source and install pixi
+# Wheels builder stage: pre-download NVIDIA wheels
 # ---------------------------------------------------------------------------
-# Isolated so that build-only apt packages (autoconf, build-essential, cmake,
-# nasm, yasm, texinfo, etc.) stay out of the final image layers.
-FROM nvcr.io/nvidia/cuda:12.9.1-devel-ubuntu24.04 AS system-builder
+# Downloads large NVIDIA CUDA wheels from pypi.nvidia.com into a BuildKit
+# cache so pixi install can read them locally (avoiding its hardcoded 30s
+# HTTP timeout).  /wheels-ready is a sentinel that the main stage bind-mounts
+# to force this stage to run first.
+FROM nvcr.io/nvidia/cuda:12.9.1-devel-ubuntu24.04 AS wheels-builder
 
 SHELL ["/bin/bash", "-c"]
 
-ENV FFMPEG_VERSION=8.0.1
-{%- if ffmpeg_cuda %}
-ENV NVCODEC_VERSION=13.0.19.0
-{%- endif %}
-
-RUN mkdir -p /tmp && chmod 1777 /tmp && \
-    apt-get update && \
-    apt-get install -y \
-    libcrypt-dev \
-    autoconf \
-    automake \
-    build-essential \
-    cmake \
-    libaom-dev \
-    libass-dev \
-    libdav1d-dev \
-    libdrm-dev \
-    libfreetype6-dev \
-    libgnutls28-dev \
-    libnuma-dev \
-    libopenh264-dev \
-    libtool \
-    libvorbis-dev \
-    libvpx-dev \
-    libwebp-dev \
-    nasm \
-    pkg-config \
-    texinfo \
-    yasm \
-    zlib1g-dev \
-    curl && \
-{%- if ffmpeg_cuda %}
-    curl -fsSL -o /tmp/nv-codec-headers.tar.gz https://github.com/FFmpeg/nv-codec-headers/releases/download/n${NVCODEC_VERSION}/nv-codec-headers-${NVCODEC_VERSION}.tar.gz && \
-    tar xzvf /tmp/nv-codec-headers.tar.gz -C /tmp/ && \
-    cd /tmp/nv-codec-headers-${NVCODEC_VERSION} && \
-    make && \
-    make install && \
-{%- endif %}
-    curl -fsSL -o /tmp/ffmpeg-snapshot.tar.bz2 https://www.ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.bz2 && \
-    tar xjvf /tmp/ffmpeg-snapshot.tar.bz2 -C /tmp/ && \
-    cd /tmp/ffmpeg-${FFMPEG_VERSION} && \
-{%- if ffmpeg_cuda %}
-    PATH="/usr/local/cuda/bin:$PATH" \
-{%- endif %}
-    ./configure \
-    --prefix=/opt/ffmpeg \
-{%- if ffmpeg_cuda %}
-    --enable-nonfree \
-    --enable-cuda-nvcc \
-    --enable-libnpp \
-{%- endif %}
-    --enable-libopenh264 \
-    --enable-libaom \
-    --enable-libdav1d \
-    --enable-libvorbis \
-    --enable-libvpx \
-    --enable-libwebp \
-{%- if ffmpeg_cuda %}
-    --extra-cflags=-I/usr/local/cuda/include \
-    --extra-ldflags=-L/usr/local/cuda/lib64 \
-{%- endif %}
-    --extra-libs=-lpthread \
-    --extra-libs=-lm \
-    --disable-static \
-    --enable-shared \
-    --disable-doc \
-    --disable-debug && \
-    make -j$(nproc) && \
-    make install && \
-    ldconfig
+RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates && rm -rf /var/lib/apt/lists/*
 
 # Install pixi with curl into /opt/pixi without modifying PATH
 RUN curl -fsSL https://pixi.sh/install.sh | PIXI_HOME=/opt/pixi PIXI_NO_PATH_UPDATE=1 sh
-
-# ---------------------------------------------------------------------------
-# Wheels builder stage: pre-download NVIDIA wheels
-# ---------------------------------------------------------------------------
-# Kept separate from system-builder so pixi.lock changes don't invalidate the
-# ffmpeg compile in that stage.  Wheels go only into the named BuildKit cache
-# (id=pixi-nvidia-wheels) — one copy on the host, nothing in any image layer.
-# /wheels-ready is a sentinel that main bind-mounts to force this stage to run
-# before pixi install.  Stage definitions cannot be interleaved, so this lives
-# here even though it is only consumed by the pixi install steps in main below.
-FROM system-builder AS wheels-builder
 
 COPY pixi.toml pixi.lock /tmp/pixi-setup/
 RUN --mount=type=cache,id=pixi-nvidia-wheels,target=/pixi-cache/nvidia-wheels \
@@ -120,8 +42,7 @@ RUN --mount=type=cache,id=pixi-nvidia-wheels,target=/pixi-cache/nvidia-wheels \
     touch /wheels-ready
 
 # ---------------------------------------------------------------------------
-# Main stage - do not change this image without also changing the builder image.
-# To keep dynamic libraries in sync they should be the same version
+# Main stage
 # ---------------------------------------------------------------------------
 FROM nvcr.io/nvidia/cuda:12.9.1-devel-ubuntu24.04 AS main
 
@@ -139,19 +60,6 @@ RUN apt-get update \
 {%- endif %}
     # Needed to copy model weights using rclone
     rclone \
-    # Runtime libraries for ffmpeg (shared libs it links against)
-    libaom3 \
-    libass9 \
-    libdav1d7 \
-    libdrm2 \
-    libfreetype6 \
-    libgnutls30t64 \
-    libnuma1 \
-    libopenh264-7 \
-    libvorbis0a libvorbisenc2 \
-    libvpx9 \
-    libwebp7 \
-    libwebpmux3 \
     # Refresh GPG-related base packages without reintroducing full build tooling
     keyboxd gpgv gpgsm gpgconf gpg-agent \
     binutils openssl libsqlite3-0 \
@@ -159,20 +67,13 @@ RUN apt-get update \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy ffmpeg from the builder stage (installed to /opt/ffmpeg to avoid collisions)
-COPY --from=system-builder /opt/ffmpeg /opt/ffmpeg
-RUN echo "/opt/ffmpeg/lib" > /etc/ld.so.conf.d/ffmpeg.conf && \
-    ldconfig && \
-    /opt/ffmpeg/bin/ffmpeg -version > /dev/null && \
-    /opt/ffmpeg/bin/ffprobe -version > /dev/null
-
 # Triton 3.6+ looks for a separate "ptxas-blackwell" binary on Blackwell GPUs
 # (arch >= 100). The CUDA toolkit ships a single ptxas that already supports
 # Blackwell, so a symlink is sufficient.
 RUN ln -sf /usr/local/cuda/bin/ptxas /usr/local/cuda/bin/ptxas-blackwell
 
-# Copy pixi binary from the builder stage
-COPY --from=system-builder /opt/pixi/bin/pixi /usr/local/bin/pixi
+# Copy pixi binary from the wheels-builder stage
+COPY --from=wheels-builder /opt/pixi/bin/pixi /usr/local/bin/pixi
 
 # Common ENV variables needed by some ML libs
 ENV AM_I_DOCKER=True \
@@ -180,7 +81,7 @@ ENV AM_I_DOCKER=True \
     TORCH_CUDA_ARCH_LIST="8.0;8.6;9.0;10.0+PTX" \
     CUDA_HOME="/usr/local/cuda" \
     CUDA_PATH="/usr/local/cuda" \
-    PATH="/opt/ffmpeg/bin:/usr/local/cuda/bin:${PATH}" \
+    PATH="/usr/local/cuda/bin:${PATH}" \
     CPATH="/usr/local/cuda/include" \
     LIBRARY_PATH="/usr/local/cuda/lib64:${LIBRARY_PATH:-}" \
     LD_LIBRARY_PATH="/usr/local/cuda/lib64:${LD_LIBRARY_PATH:-}" \

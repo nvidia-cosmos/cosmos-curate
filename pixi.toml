@@ -26,11 +26,14 @@ libc = { family = "glibc", version = "2.31" } # vllm 0.15+ requires manylinux_2_
 [feature.core.dependencies]
 astral = "*"
 attrs = "*"
+av = "*"  # conda dep so it pulls conda-forge FFmpeg (LGPL, full codec suite) instead of PyPI's bundled build
+ffmpeg = { version = "*", build = "lgpl_*" }  # pin LGPL variant (not GPL)
 azure-identity = "*"
 azure-storage-blob = "*"
 cattrs = "*"
 easydict = "*"
 fastapi = "*"
+starlette = "<1"  # prometheus-fastapi-instrumentator (via vllm) requires <1.0.0
 gpustat = "*"
 huggingface_hub = "*"
 jinja2 = "*"
@@ -59,7 +62,6 @@ uvicorn = "*"
 websockets = "<16" # google-genai requires websockets<16
 
 [feature.core.pypi-dependencies]
-av = "*" # conda-forge package pulls in ffmpeg
 google-genai= ">=1.59.0" # conda-forge package is too old
 ngcsdk = "*" # not available on conda-forge
 opencv-python-headless = "*" # not available on conda-forge
