@@ -655,6 +655,78 @@ def test_per_window_dataset_assets_written(tmp_path: Path) -> None:
     assert window.mp4_bytes.resolve() is None
 
 
+def test_filtered_clips_cleaned_up_after_processing(tmp_path: Path) -> None:
+    """Verify that filtered_clips have intermediate data released after processing."""
+    input_dir = tmp_path / "input"
+    output_dir = tmp_path / "output"
+    input_dir.mkdir()
+    video_path = input_dir / "video.mp4"
+    video_path.write_bytes(b"input-video")
+
+    stage = _create_stage(output_dir, input_dir, generate_embeddings=False, upload_cds_parquet=False)
+
+    kept_clip = Clip(
+        uuid=uuid.uuid4(),
+        source_video=video_path.as_posix(),
+        span=(0.0, 2.0),
+        encoded_data=bytes_to_numpy(b"kept-bytes"),
+        windows=[Window(start_frame=0, end_frame=30, caption={"qwen": "cap"})],
+    )
+    filtered_window = Window(
+        start_frame=0,
+        end_frame=30,
+        mp4_bytes=b"filtered-window-mp4",
+        caption={"qwen": "filtered caption"},
+        enhanced_caption={"qwen_plus": "enhanced filtered"},
+        webp_bytes=b"filtered-webp",
+    )
+    filtered_clip = Clip(
+        uuid=uuid.uuid4(),
+        source_video=video_path.as_posix(),
+        span=(2.0, 4.0),
+        encoded_data=bytes_to_numpy(b"filtered-bytes"),
+        windows=[filtered_window],
+    )
+    filtered_clip.intern_video_2_embedding = np.array([0.5], dtype=np.float32)
+    filtered_clip.cosmos_embed1_embedding = np.array([0.6], dtype=np.float32)
+    filtered_clip.openai_embedding = np.array([0.7], dtype=np.float32)
+
+    metadata = VideoMetadata(
+        height=1080,
+        width=1920,
+        framerate=30.0,
+        num_frames=120,
+        duration=4.0,
+        video_codec="h264",
+        pixel_format="yuv420p",
+        audio_codec="aac",
+    )
+    video = Video(
+        input_video=video_path,
+        metadata=metadata,
+        clips=[kept_clip],
+        filtered_clips=[filtered_clip],
+        num_total_clips=2,
+        num_clip_chunks=1,
+    )
+    task = SplitPipeTask(session_id="test-session", video=video)
+
+    stage.process_data([task])
+
+    assert filtered_clip.encoded_data.resolve() is None
+    assert filtered_clip.intern_video_2_embedding is None
+    assert filtered_clip.cosmos_embed1_embedding is None
+    assert filtered_clip.openai_embedding is None
+    assert filtered_window.mp4_bytes.resolve() is None
+    assert filtered_window.caption == {}
+    assert filtered_window.enhanced_caption == {}
+    assert filtered_window.webp_bytes.resolve() is None
+
+    # Filtered clip MP4 should still be written to disk
+    filtered_mp4 = output_dir / "filtered_clips" / f"{filtered_clip.uuid}.mp4"
+    assert filtered_mp4.read_bytes() == b"filtered-bytes"
+
+
 def test_video_errors_written_to_error_path(tmp_path: Path) -> None:
     """Verify that videos with errors write to video_errors path and skip normal chunk metadata."""
     input_dir = tmp_path / "input"

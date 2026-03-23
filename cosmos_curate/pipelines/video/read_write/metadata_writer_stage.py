@@ -419,7 +419,7 @@ class ClipWriterStage(CuratorStage):
                     future_n.result()
 
             # clean up intermediate data
-            for clip in video.clips:
+            for clip in video.clips + video.filtered_clips:
                 clip.encoded_data.drop()
                 clip.intern_video_2_embedding = None
                 clip.cosmos_embed1_embedding = None
