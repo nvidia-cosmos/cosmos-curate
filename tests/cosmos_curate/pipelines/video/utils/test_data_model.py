@@ -715,6 +715,67 @@ class TestSplitPipeTask:
         assert check_clip_time_alignment(misaligned_clips) == [0]
 
 
+class TestVideoGetMajorSize:
+    """Test Video.get_major_size() accounts for both clips and filtered_clips."""
+
+    def test_filtered_clips_included(self) -> None:
+        """get_major_size() includes memory from filtered_clips."""
+        clip_data = bytes_to_numpy(b"x" * 1024)
+        clip = Clip(uuid=uuid.uuid4(), source_video="v.mp4", span=(0.0, 5.0), encoded_data=clip_data)
+
+        video_no_filtered = Video(
+            input_video=pathlib.Path("v.mp4"),
+            clips=[clip],
+        )
+        video_with_filtered = Video(
+            input_video=pathlib.Path("v.mp4"),
+            filtered_clips=[clip],
+        )
+
+        assert video_with_filtered.get_major_size() == video_no_filtered.get_major_size()
+
+    def test_both_clips_and_filtered_clips(self) -> None:
+        """get_major_size() includes memory from both clips and filtered_clips."""
+        bytes_a = bytes_to_numpy(b"a" * 512)
+        bytes_b = bytes_to_numpy(b"b" * 512)
+        clip_a = Clip(uuid=uuid.uuid4(), source_video="v.mp4", span=(0.0, 5.0), encoded_data=bytes_a)
+        clip_b = Clip(uuid=uuid.uuid4(), source_video="v.mp4", span=(5.0, 10.0), encoded_data=bytes_b)
+
+        only_clips = Video(input_video=pathlib.Path("v.mp4"), clips=[clip_a])
+        only_filtered = Video(input_video=pathlib.Path("v.mp4"), filtered_clips=[clip_b])
+        both = Video(input_video=pathlib.Path("v.mp4"), clips=[clip_a], filtered_clips=[clip_b])
+
+        assert both.get_major_size() > only_clips.get_major_size()
+        assert both.get_major_size() > only_filtered.get_major_size()
+
+    def test_empty_filtered_clips(self) -> None:
+        """get_major_size() unchanged when filtered_clips is empty."""
+        video = Video(input_video=pathlib.Path("v.mp4"))
+        assert video.get_major_size() == video.get_major_size()  # idempotent sanity
+        assert video.get_major_size() >= 0
+
+    def test_propagates_through_split_pipe_task(self) -> None:
+        """SplitPipeTask.get_major_size() reflects filtered_clips via Video."""
+        clip_data = bytes_to_numpy(b"z" * 256)
+        filtered_clip = Clip(uuid=uuid.uuid4(), source_video="v.mp4", span=(0.0, 5.0), encoded_data=clip_data)
+
+        video_with = Video(
+            input_video=pathlib.Path("v.mp4"),
+            metadata=VideoMetadata(duration=100.0, size=1000),
+            filtered_clips=[filtered_clip],
+        )
+        video_without = Video(
+            input_video=pathlib.Path("v.mp4"),
+            metadata=VideoMetadata(duration=100.0, size=1000),
+        )
+
+        task_with = SplitPipeTask(session_id="s1", video=video_with)
+        task_without = SplitPipeTask(session_id="s2", video=video_without)
+
+        assert task_with.get_major_size() > task_without.get_major_size()
+        assert task_with.get_major_size() == video_with.get_major_size()
+
+
 class TestVideoPopulateTimestamps:
     """Tests for Video.populate_timestamps() and timestamps field."""
 

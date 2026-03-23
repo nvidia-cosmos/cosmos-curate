@@ -510,13 +510,7 @@ class Video:
             Total size in bytes.
 
         """
-        total_size = 0
-        total_size += self.encoded_data.nbytes
-        total_size += self.frame_array.nbytes
-        total_size += self.timestamps.nbytes if self.timestamps is not None else 0
-        for clip in self.clips:
-            total_size += clip.get_major_size()
-        return total_size
+        return get_major_size(self)
 
 
 def check_clip_time_alignment(clips_per_video: list[list[Clip]]) -> list[int]:
