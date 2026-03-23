@@ -1470,8 +1470,8 @@ def _setup_parser(parser: argparse.ArgumentParser) -> None:  # noqa: PLR0915
     )
     parser.add_argument(
         "--qwen-num-gpus-per-worker",
-        type=float,
-        default=1.0,
+        type=int,
+        default=1,
         help="Number of GPUs per worker for Qwen captioning stage.",
     )
     parser.add_argument(

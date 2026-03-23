@@ -71,7 +71,7 @@
         "qwen_batch_size": 16,
         "qwen_use_vllm_mmcache": false,
         "qwen_use_fp8_weights": false,
-        "qwen_num_gpus_per_worker": 1.0,
+        "qwen_num_gpus_per_worker": 1,
         "vllm_prepare_num_cpus_per_worker": 3.0,
         "vllm_use_inflight_batching": 1,
         "preview_target_fps": 1,
