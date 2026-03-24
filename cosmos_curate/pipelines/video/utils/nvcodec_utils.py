@@ -30,7 +30,6 @@ from cosmos_curate.core.utils.model import conda_utils
 
 if conda_utils.is_running_in_env("unified"):
     import cvcuda  # type: ignore[import-untyped]
-    import pycuda.driver as cuda  # type: ignore[import-untyped]
     import PyNvVideoCodec as Nvc  # type: ignore[import-untyped]
 
     pixel_format_to_cvcuda_code = {
@@ -56,13 +55,12 @@ class VideoBatchDecoder:
     batch processing of frames with color space conversion and resizing capabilities.
     """
 
-    def __init__(  # noqa: PLR0913
+    def __init__(
         self,
         batch_size: int,
         target_width: int,
         target_height: int,
         device_id: int,
-        cuda_ctx: str,  # pyright: ignore[reportAttributeAccessIssue]
         cvcuda_stream: str,  # pyright: ignore[reportAttributeAccessIssue]
     ) -> None:
         """Initialize video batch decoder with GPU acceleration parameters.
@@ -72,7 +70,6 @@ class VideoBatchDecoder:
             target_width: Target width for decoded frames.
             target_height: Target height for decoded frames.
             device_id: GPU device ID to use.
-            cuda_ctx: CUDA context for GPU operations.
             cvcuda_stream: CUDA stream for parallel processing.
 
         """
@@ -82,7 +79,6 @@ class VideoBatchDecoder:
         self.target_height = target_height
         self.target_width = target_width
         self.device_id = device_id
-        self.cuda_ctx = cuda_ctx
         self.cvcuda_stream = cvcuda_stream
         self.decoder: NvVideoDecoder | None = None
         self.torch_YUVtensor = None
@@ -122,7 +118,6 @@ class VideoBatchDecoder:
                 self.input_path,
                 self.device_id,
                 self.batch_size,
-                self.cuda_ctx,
                 self.cvcuda_stream,
             )
             self.cvcuda_RGBtensor = None
@@ -213,17 +208,15 @@ class NvVideoDecoder:
         enc_file: str,
         device_id: int,
         batch_size: int,
-        cuda_ctx: Any,  # noqa: ANN401
         cvcuda_stream: Any,  # noqa: ANN401
     ) -> None:
         """Create instance of HW-accelerated video decoder.
 
         :param enc_file: Full path to the MP4 file that needs to be decoded.
         :param device_id: id of video card which will be used for decoding & processing.
-        :param cuda_ctx: A cuda context object.
+        :param cvcuda_stream: A cvcuda CUDA stream object.
         """
         self.device_id = device_id
-        self.cuda_ctx = cuda_ctx
         self.input_path = enc_file
         self.cvcuda_stream = cvcuda_stream
         # Demuxer is instantiated only to collect required information about
@@ -232,7 +225,7 @@ class NvVideoDecoder:
         self.nvDec = Nvc.CreateDecoder(  # pyright: ignore[reportAttributeAccessIssue]
             gpuid=self.device_id,
             codec=self.nvDemux.GetNvCodecId(),
-            cudacontext=self.cuda_ctx.handle,  # pyright: ignore[reportAttributeAccessIssue]
+            cudacontext=0,
             cudastream=self.cvcuda_stream.handle,  # pyright: ignore[reportAttributeAccessIssue]
             enableasyncallocations=False,
             usedevicememory=1,
@@ -320,71 +313,6 @@ class NvVideoDecoder:
         return torch.cat(decoded_frames)
 
 
-def gpu_decode_for_stitching(  # noqa: PLR0913
-    device_id: int,
-    ctx: str,
-    stream: int,
-    input_path: Path,
-    frame_list: list[int],
-    batch_size: int = 1,
-) -> list[torch.Tensor]:
-    """Decode video frames for stitching using GPU acceleration.
-
-    Args:
-        device_id: GPU device ID.
-        ctx: CUDA context.
-        stream: CUDA stream.
-        input_path: Path to the video file to process.
-        frame_list: List of frame indices to decode.
-        batch_size: Number of frames to process in each batch.
-
-    Returns:
-        List of decoded frames as tensors.
-
-    """
-    cuda_ctx = ctx
-    cvcuda_stream = cvcuda.cuda.as_stream(stream)
-    torch_stream = torch.cuda.ExternalStream(cvcuda_stream.handle)
-    frames = []
-
-    decoder = VideoBatchDecoder(
-        batch_size,
-        224,
-        224,
-        device_id,
-        cuda_ctx,
-        cvcuda_stream,
-    )
-
-    # Loop through all input frames
-    frame_idx = 0
-    while True:
-        # Make sure that cvcuda and torch are using the same stream
-        with torch.cuda.stream(torch_stream):  # pyright: ignore[reportArgumentType]
-            batch = decoder(input_path.as_posix())
-            if batch is None:
-                break  # No more frames to decode
-
-            actual_batch_size = batch.shape[0]
-            batch = torch.as_tensor(batch.cuda(), device=f"cuda:{device_id}")
-
-            for i in range(frame_idx, frame_idx + actual_batch_size):
-                if i in frame_list:
-                    # There can be cases where the clip is so small that boundary frames fall outside
-                    # or end up being the same. In such case, simply checking if "i in frame_list" won't work.
-                    # I am not sure if we want to discard such clips or keep them or what to do about the boundary.
-                    # So, this is a pure hack to make the pipeline work.
-
-                    for _j in range(frame_list.count(i)):
-                        # use list.extend
-                        frames.append(batch[i - frame_idx, :, :, :])  # noqa: PERF401
-
-            frame_idx += actual_batch_size
-
-    # No sync required here because it's in the same thread
-    return frames
-
-
 class PyNvcFrameExtractor:
     """High-level frame extraction interface using PyNvVideoCodec.
 
@@ -407,20 +335,14 @@ class PyNvcFrameExtractor:
 
         """
         device_id = 0
-        cuda_device = cuda.Device(device_id)  # type: ignore[X]
-        cuda_ctx = cuda_device.retain_primary_context()
-        cuda_ctx.push()
         cvcuda_stream = cvcuda.Stream()
-        # `cvcuda_stream = cvcuda.cuda.as_stream(cvcuda_stream)`
         self.torch_stream = torch.cuda.ExternalStream(cvcuda_stream.handle)
-        cuda_ctx.pop()
 
         self.decoder = VideoBatchDecoder(
             batch_size,
             width,
             height,
             device_id,
-            cuda_ctx,
             cvcuda_stream,
         )
 
