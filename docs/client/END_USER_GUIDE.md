@@ -24,6 +24,7 @@
     - [Create sqsh Image and Copy to the Slurm Cluster](#create-sqsh-image-and-copy-to-the-slurm-cluster)
     - [Launch on Slurm](#launch-on-slurm)
     - [Find Logs](#find-logs)
+    - [Processing Large Video Sets in Batches](#processing-large-video-sets-in-batches)
     - [Developing on Slurm](#developing-on-slurm)
       - [Add the source-code mount to the `$CONTAINER_MOUNTS`:](#add-the-source-code-mount-to-the-container_mounts)
       - [Sync source code to the slurm cluster](#sync-source-code-to-the-slurm-cluster)
@@ -577,6 +578,65 @@ cosmos-curate slurm job-log \
   --username my_username_on_slurm_cluster_if_different_than_local_username \
   --job-id slurm_job_id_printed_above
 ```
+
+### Processing Large Video Sets in Batches
+
+When processing a large number of videos (e.g., 1 million), you can split the work into smaller jobs using pre-split
+manifest files with `--input-video-list-json-path`. Each manifest is a JSON array of full input video paths:
+
+```json
+[
+  "s3://bucket/videos/vid_001.mp4",
+  "s3://bucket/videos/vid_002.mp4"
+]
+```
+
+**Note:** Every path in the manifest must be prefixed by the `--input-video-path` value.
+
+Generate the manifests by splitting your full video list into chunks and uploading them to S3, then submit one job per
+batch:
+
+```bash
+# Generate manifests and upload to S3 (one-time)
+python -c "
+import json, math, pathlib
+videos = json.load(open('all_videos.json'))
+pathlib.Path('manifests').mkdir(exist_ok=True)
+chunk = 1000
+for i in range(math.ceil(len(videos) / chunk)):
+    with open(f'manifests/batch_{i:04d}.json', 'w') as f:
+        json.dump(videos[i*chunk:(i+1)*chunk], f)
+"
+aws s3 sync manifests/ s3://bucket/manifests/
+
+# Submit one job per manifest
+NUM_BATCHES=1000
+for i in $(seq 0 $((NUM_BATCHES - 1))); do
+  MANIFEST=$(printf "s3://bucket/manifests/batch_%04d.json" "$i")
+  cosmos-curate slurm submit \
+    --login-node my-slurm-login-01.my-cluster.com \
+    --account my_slurm_account \
+    --partition my_slurm_gpu_partition \
+    --gres=gpu:8 \
+    --num-nodes 1 \
+    --job-name "split-batch-${i}" \
+    --remote-files-path "${SLURM_USER_DIR}/job_info" \
+    --container-image "${SLURM_IMAGE_DIR}/${COSMOS_CURATE_IMAGE_NAME}" \
+    --container-mounts "${CONTAINER_MOUNTS}" \
+      -- python -m cosmos_curate.pipelines.video.run_pipeline split \
+      --input-video-path s3://bucket/videos \
+      --input-video-list-json-path "$MANIFEST" \
+      --output-clip-path s3://bucket/output
+done
+```
+
+This approach avoids duplicates (each video appears in exactly one manifest) and missed videos (the union of all
+manifests equals the full input set). If a job fails, resubmit that specific batch — the pipeline automatically skips
+already-processed videos within each job, so partial failures are handled gracefully. Native Slurm array job support
+may be added in a future release to simplify this workflow.
+
+For smaller runs or sequential processing, you can also simply use `--limit N` with a shared output directory. The
+pipeline checks for completed output metadata and skips already-processed videos on each run.
 
 ### Developing on Slurm
 
