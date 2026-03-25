@@ -221,7 +221,7 @@ class VllmQwen(VllmPlugin):
     @staticmethod
     def decode(vllm_output: RequestOutput) -> str:
         """Decode vllm output into a caption."""
-        return vllm_output.outputs[0].text
+        return str(vllm_output.outputs[0].text)
 
 
 class VllmQwen7B(VllmQwen):

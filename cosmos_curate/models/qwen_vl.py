@@ -286,7 +286,7 @@ class QwenVL(ModelInterface):
                 assert self.llm is not None
                 assert self.sampling_params is not None
                 outputs = self.llm.generate(
-                    llm_inputs,  # type: ignore[arg-type]
+                    llm_inputs,
                     sampling_params=self.sampling_params,
                     use_tqdm=False,
                 )
@@ -302,7 +302,7 @@ class QwenVL(ModelInterface):
                         )
 
                     outputs = self.llm.generate(
-                        llm_inputs,  # type: ignore[arg-type]
+                        llm_inputs,
                         sampling_params=self.sampling_params,
                         use_tqdm=False,
                     )

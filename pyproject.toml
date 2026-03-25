@@ -94,6 +94,8 @@ local = [
     "ngcsdk",
     "numpy>2,<2.3",  # opencv-python-headless requires >=2; numba 0.61.x requires <2.3
     "nvtx==0.2.11",
+    "openai",
+    "opencv-python-headless",
     "pandas>=3,<3.1",
     "Pillow>=12.1.1",
     "prometheus_client==0.21.1",
@@ -115,11 +117,11 @@ local = [
     "timezonefinder",
     "toml",
     "torch",
+    "torchvision",
     "tqdm==4.67.1",
     "transformers<5.0",
     "typer[all]>=0.21.0",
     "uvicorn",
-    "vllm==0.17.1",
     "webdataset==0.2.111",
     "fabric (>=3.2.2,<4.0.0)",
     "cosmos-xenna==0.2.1",
@@ -207,6 +209,8 @@ module = [
     "ngcsdk",
     "registry.api.image",
     "registry.api.models",
+    "vllm",
+    "vllm.*",
 ]
 ignore_missing_imports = true
 

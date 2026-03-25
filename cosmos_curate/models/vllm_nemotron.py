@@ -259,4 +259,4 @@ class VllmNemotronNano12Bv2VL(VllmPlugin):
     @staticmethod
     def decode(vllm_output: RequestOutput) -> str:
         """Decode vLLM output into a caption (extract <answer> section)."""
-        return vllm_output.outputs[0].text
+        return str(vllm_output.outputs[0].text)

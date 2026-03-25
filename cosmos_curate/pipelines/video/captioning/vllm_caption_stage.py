@@ -515,11 +515,12 @@ class VllmCaptionStage(CuratorStage):
         @tenacity.retry(stop=tenacity.stop_after_attempt(self._vllm_config.max_retries), reraise=True)
         def _vllm_caption(model_inputs: list[dict[str, Any]], stage2_prompts: list[str | None]) -> list[str]:
             try:
+                assert self._processor is not None
                 captions = vllm_caption(
                     model_inputs,
-                    self._llm,  # type: ignore[arg-type]
-                    self._processor,  # type: ignore[arg-type]
-                    self._sampling_params,  # type: ignore[arg-type]
+                    self._llm,
+                    self._processor,
+                    self._sampling_params,
                     self._vllm_config,
                     inflight_batching=self._inflight_batching,
                     max_inflight_requests=self._max_inflight_requests,

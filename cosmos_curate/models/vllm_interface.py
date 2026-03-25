@@ -381,7 +381,7 @@ def vllm_generate(
 
     for batch_data in grouping.split_by_chunk_size(inputs, batch_size):
         # llm.generate can take a list of dicts, but does not advertize this in its type hints
-        outputs = llm.generate(batch_data, sampling_params=sampling_params, use_tqdm=False)  # type: ignore[arg-type]
+        outputs = llm.generate(batch_data, sampling_params=sampling_params, use_tqdm=False)
         all_outputs.extend(outputs)
 
     # Change request ids from integer strings to the vllm_interface unique request ids.
@@ -557,7 +557,7 @@ def _caption_inflight_batching(  # noqa: PLR0913
         if request_q and (max_inflight_requests == 0 or len(in_flight_requests) < max_inflight_requests):
             request = request_q.popleft()
             # engine.add_request can accept a dictionary, but does not advertise this in its type hints
-            engine.add_request(request.request_id, request.inputs, sampling_params)  # type: ignore[arg-type]
+            engine.add_request(request.request_id, request.inputs, sampling_params)
             in_flight_requests[request.request_id] = request
 
         engine_output = engine.step()
@@ -567,7 +567,7 @@ def _caption_inflight_batching(  # noqa: PLR0913
         # engine.step() returns list[RequestOutput | PoolingRequestOutput], but process_vllm_output
         # expects either list[RequestOutput] or list[PoolingRequestOutput] - at runtime, the list
         # will contain only one type based on the engine configuration
-        finished = process_vllm_output(engine_output, in_flight_requests, vllm_config)  # type: ignore[arg-type]
+        finished = process_vllm_output(engine_output, in_flight_requests, vllm_config)
 
         for request in finished:
             del in_flight_requests[request.request_id]
