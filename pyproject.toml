@@ -15,7 +15,7 @@
 
 [project]
 name = "cosmos_curate"
-version = "1.2.0"
+version = "1.2.2"
 description = "Cosmos-Curate"
 readme = "README.md"
 authors = [

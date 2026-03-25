@@ -2,12 +2,53 @@
 
 ## Latest
 
-## [Unreleased]
+## [1.2.2]
+
+### Released
+
+- 2026-03-24
+
+### Added
+
+- `--slim` flag and `--pixi-path` for lightweight image builds
+- `--transcode-max-output-frames` to limit clip frame count
+- OpenAI-compatible endpoint for video embedding
+- Pre-populate timestamps on `Video` during download
+- Multistage Docker builds to reduce container image size
+- Docker buildx cache for faster image builds
+- Set vLLM `performance_mode` for improved inference throughput
+- Upgrade vLLM to 0.17.1
+- Upgrade Ray to 2.54.0
+- Upgrade cuML to 26.0.2
+- Upgrade cosmos-xenna to 0.2.1
+- Upgrade Python to 3.12.13
+
+### Fixed
+
+- Remove pycuda dependency, use PyNvVideoCodec built-in context
+- Purge `filtered_clips` in `MetadataWriterStage` cleanup
+- `Video.get_major_size()` should include filtered clips
+- Type mismatch for `qwen-gpus-per-worker`
+- Remove syntax warnings in stages
+- Pin `importlib-metadata` to avoid version conflicts
+- Output built Docker images to the local Docker image store
+- Remove vllm from local extra to eliminate litellm from lock file
+- Update type annotations for AV pipeline
+
+### Removed
+
+- `ffmpeg_gpu` decode mode
 
 ### Changed
 
+- Replace FFmpeg source build with conda-forge package
 - Remove support for [Phi-4](https://huggingface.co/microsoft/Phi-4-multimodal-instruct) captioning to keep a
   security floor of `pillow>=12.1.1` (GHSA-cfh3-3jmp-rvhc)
+
+### Documentation
+
+- Add batch processing guide for large video sets
+- Add slim image design doc
 
 ## [1.2.1]
 
