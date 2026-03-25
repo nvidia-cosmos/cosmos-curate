@@ -22,15 +22,15 @@
 
 ## High-Level Design
 
-**Three image modes** via `cosmos-curate image build --mode <mode>`:
+**Two image modes** via `cosmos-curate image build [--slim]`:
 
-- `full` (default) — pre-installs a curated set of pixi environments at build time. Best for platforms without
-  shared/persistent storage (NVCF, air-gapped deployments).
-- `slim` — lockfile (`pixi.toml` + `pixi.lock`) and source code only. `pixi run --frozen` auto-installs the exact
-  environment on first use. Combined with `--pixi-path .`, this is ideal for local development (near-instant rebuilds,
-  no conda install in the image). Cluster use (Slurm/k8s with shared storage) is promising but needs validation.
-- `custom --envs env1,env2,...` — pre-installs only the specified pixi environments. Useful for teams that need a
-  subset of environments (e.g. `default,unified`) without the full image size.
+- Default (full) — pre-installs pixi environments at build time. Best for platforms without shared/persistent storage
+  (NVCF, air-gapped deployments). With no `--envs` flag, installs all environments. With `--envs env1,env2,...`,
+  installs only the specified subset (e.g. `--envs default,unified`).
+- `--slim` — lockfile (`pixi.toml` + `pixi.lock`) and source code only; ignores `--envs`. `pixi run --frozen`
+  auto-installs the exact environment on first use. Combined with `--pixi-path .`, this is ideal for local development
+  (near-instant rebuilds, no conda install in the image). Cluster use (Slurm/k8s with shared storage) is promising but
+  needs validation.
 
 **Dependency strategy:**
 
@@ -62,8 +62,8 @@ mount before Ray workers start — workers then use the pre-populated environmen
 
 2. **Shared storage dependency.** For cluster use, slim mode only makes sense when shared persistent storage is available
    (PVC on k8s, Lustre on Slurm). Without it, every worker downloads and installs independently, which is slower than
-   pulling a pre-built image. Platforms like NVCF have no shared storage, so they must use full/custom mode — and those
-   images are still large. (Local dev avoids this issue by mounting the host `.pixi` directory directly.)
+   pulling a pre-built image. Platforms like NVCF have no shared storage, so they must use full mode — and those images
+   are still large. (Local dev avoids this issue by mounting the host `.pixi` directory directly.)
 
 3. **Network access at runtime.** Slim mode requires network access to conda-forge (and PyPI for some packages) during
    the pre-warm step. Air-gapped environments cannot use slim mode at all.
@@ -76,7 +76,7 @@ mount before Ray workers start — workers then use the pre-populated environmen
    cosmos-curate typically runs (hundreds of workers). File locking, NFS/Lustre metadata performance, and concurrent
    access patterns are potential issues.
 
-6. **Full/custom modes don't solve the size problem.** For platforms that need pre-built images (NVCF, air-gapped), the
+6. **Full mode doesn't solve the size problem.** For platforms that need pre-built images (NVCF, air-gapped), the
    image size remains large. Phases 1-2 (removing the FFmpeg source build) help, but the bulk of the image size comes
    from conda environments and model dependencies, which this design does not address.
 
@@ -119,40 +119,35 @@ while `pynvc` is measurably faster. This removal is justified independently of t
 
 ### Phase 3: Slim image (lockfile-only)
 
-- [ ] **3a. Get pixi approved for open-source release and bundle source in image**
-    - Get pixi (MIT-licensed, single static Rust binary) approved for inclusion in the shipped image
-    - Bundle pixi source tarball at pinned version (e.g.
-      `ADD https://github.com/prefix-dev/pixi/archive/refs/tags/${PIXI_VERSION}.tar.gz /opt/oss-sources/pixi.tar.gz`)
-    - ~17MB compressed, source archival only — no build needed
+- [x] **3a. Add `--slim` flag to `cosmos-curate image build`**
+    - `--slim`: skip `pixi install`, image contains only lockfile + source; ignores `--envs`
+    - Default (no flag): pre-install pixi environments at build time, `--envs` selects subset
+    - Full mode retains the NVIDIA wheel pre-download hack and retry logic
 
-- [ ] **3b. Add `--pixi-path` flag to `cosmos-curate local launch`**
+- [x] **3b. Add `--pixi-path` flag to `cosmos-curate local launch`**
     - Mount the host `.pixi` directory into the container (envs, cache, config)
     - For local dev, `--curator-path . --pixi-path .` mounts both source and `.pixi` from the project root
     - For cluster deployments, `--pixi-path /mnt/shared/pixi` can point to shared storage independently
     - Enables near-instant iteration: slim image + host envs + host source, no image rebuild needed
 
-- [ ] **3c. Add `--mode` flag to `cosmos-curate image build`**
-    - `--mode slim`: skip `pixi install`, image contains only lockfile + source
-    - `--mode full`: pre-install a curated set of pixi environments at build time
-    - `--mode custom --envs env1,env2,...`: pre-install only the specified environments
-    - Full and custom modes retain the NVIDIA wheel pre-download hack and retry logic
+- [ ] **3c. Get pixi approved for open-source release and bundle source in image**
+    - Get pixi (MIT-licensed, single static Rust binary) approved for inclusion in the shipped image
+    - Bundle pixi source tarball at pinned version (e.g.
+      `ADD https://github.com/prefix-dev/pixi/archive/refs/tags/${PIXI_VERSION}.tar.gz /opt/oss-sources/pixi.tar.gz`)
+    - ~17MB compressed, source archival only — no build needed
+    - Can proceed in parallel with code work; gates shipping, not development
 
-- [ ] **3d. Switch entrypoint to `pixi run --frozen`**
-    - Update `CMD` in Dockerfile to use `pixi run --frozen` instead of `pixi run`
-    - Ensure `pixi run --frozen` triggers auto-install when envs are missing
-    - Verify this works for all modes: slim (installs on first run), full/custom (already installed, no-op)
-
-- [ ] **3e. Configure shared `.pixi` mount for cluster deployments**
+- [ ] **3d. Configure shared `.pixi` mount for cluster deployments**
     - Update `sbatch.sh.j2` to mount `.pixi` from shared storage (Lustre)
     - Update `launch_local.py` to support `--pixi-path` for mounting `.pixi` from an arbitrary location
     - Document shared storage setup for cluster deployments
 
-- [ ] **3f. Add pre-warm script for Slurm**
+- [ ] **3e. Add pre-warm script for Slurm**
     - Add a head-node step in `sbatch.sh.j2` that runs `pixi install --frozen` for all required envs before `srun` fans
       out workers
     - Populates the shared `.pixi` directory before Ray starts
 
-- [ ] **3g. Validate slim image on Slurm with shared storage**
+- [ ] **3f. Validate slim image on Slurm with shared storage**
     - End-to-end test: slim image + shared `.pixi` mount + multi-node Ray cluster
     - Measure cold-start time (empty cache) and warm-start time (pre-warmed)
     - Verify workers use pre-populated environments with no per-worker install

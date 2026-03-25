@@ -383,6 +383,21 @@ For local launcher, you can simply run `cosmos-curate local launch` to see help 
 A useful option is `--curator-path`; when this is given, the local launcher will mount the source code into the container,
 such that you don't have to rebuild the container after code changes for local run.
 
+For faster iteration, you can build a slim image and mount your host pixi environments:
+
+```bash
+# Build a slim image (lockfile + source only, no pixi install — builds in seconds)
+cosmos-curate image build --slim --image-name cosmos-curate --image-tag slim
+
+# Launch with host source code and pixi environments mounted
+cosmos-curate local launch --image-name cosmos-curate --image-tag slim \
+    --curator-path . --pixi-path . \
+    -- pixi run python -m cosmos_curate.pipelines.examples.hello_world_pipeline
+```
+
+The `--pixi-path .` option mounts the `.pixi` directory from the given path into the container, so the container
+uses your pre-installed environments directly — no environment installation at runtime.
+
 ## Launch Pipelines on Slurm
 
 ### **PLEASE READ: For end users walking through this section, the guide assumes that you have already set up a local environment and have launched a reference pipeline locally per [Initial Setup](#initial-setup) + [Run the Reference Video Pipeline](#run-the-reference-video-pipeline).**

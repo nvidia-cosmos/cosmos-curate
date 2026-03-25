@@ -59,6 +59,7 @@ class LaunchDocker:
 
     image_label: str
     curator_path: str | None
+    pixi_path: str | None
     mount_xenna: bool
     command: str
     gpus: str | None
@@ -88,6 +89,16 @@ def launch(  # noqa: PLR0913
         str | None,
         Option(
             help=("Path to the cosmos-curate repo directory; set to mount local curator code into the container."),
+            rich_help_panel="local-docker",
+        ),
+    ] = None,
+    pixi_path: Annotated[
+        str | None,
+        Option(
+            help=(
+                "Path to a directory containing a .pixi subdirectory to mount into the container. "
+                "Use with --curator-path to avoid reinstalling environments at runtime (e.g. --pixi-path .)."
+            ),
             rich_help_panel="local-docker",
         ),
     ] = None,
@@ -137,6 +148,7 @@ def launch(  # noqa: PLR0913
     opts = LaunchDocker(
         image_label=get_image_label(image_name, image_tag),
         curator_path=curator_path,
+        pixi_path=pixi_path,
         mount_xenna=mount_xenna,
         command=command_str,
         gpus=gpus,
@@ -235,6 +247,23 @@ def _get_python_version_from_pixi_toml(curator_path: Path) -> str | None:
         return ".".join(version_parts[:_TARGET_PYTHON_VERSION_PARTS])
 
 
+def _get_pixi_mount_strings(opts: LaunchDocker) -> list[str]:
+    if opts.pixi_path is None:
+        return []
+    pixi_root = Path(opts.pixi_path)
+    pixi_dir = pixi_root / ".pixi"
+    if not pixi_dir.is_dir():
+        logger.error(f"Pixi directory not found at {pixi_dir}")
+        sys.exit(1)
+    mount_strings = ["-v", f"{pixi_dir.absolute()}:{CONTAINER_PATHS_CODE_DIR / '.pixi'}"]
+    # Also mount pixi.toml and pixi.lock so they stay in sync with the environments
+    for name in ("pixi.toml", "pixi.lock"):
+        host_file = pixi_root / name
+        if host_file.is_file():
+            mount_strings.extend(["-v", f"{host_file.absolute()}:{CONTAINER_PATHS_CODE_DIR / name}"])
+    return mount_strings
+
+
 def _get_code_mount_strings(opts: LaunchDocker) -> list[str]:
     code_path_strings = []
     if opts.curator_path is not None:
@@ -316,6 +345,7 @@ def _launch_in_docker_container(opts: LaunchDocker) -> None:
         ]
     )
     docker_command.extend(_get_code_mount_strings(opts))
+    docker_command.extend(_get_pixi_mount_strings(opts))
     docker_command.extend(_get_s3_creds_mount_strings(opts))
     docker_command.extend(_get_azure_creds_mount_strings(opts))
     docker_command.extend(_get_config_file_mount_strings(is_model_cli=is_model_cli))

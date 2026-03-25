@@ -10,12 +10,8 @@
 ARG DEBIAN_FRONTEND=noninteractive
 
 # ---------------------------------------------------------------------------
-# Wheels builder stage: pre-download NVIDIA wheels
+# Wheels builder stage: install pixi (and pre-download NVIDIA wheels in full mode)
 # ---------------------------------------------------------------------------
-# Downloads large NVIDIA CUDA wheels from pypi.nvidia.com into a BuildKit
-# cache so pixi install can read them locally (avoiding its hardcoded 30s
-# HTTP timeout).  /wheels-ready is a sentinel that the main stage bind-mounts
-# to force this stage to run first.
 FROM nvcr.io/nvidia/cuda:12.9.1-devel-ubuntu24.04 AS wheels-builder
 
 SHELL ["/bin/bash", "-c"]
@@ -25,6 +21,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certifi
 # Install pixi with curl into /opt/pixi without modifying PATH
 RUN curl -fsSL https://pixi.sh/install.sh | PIXI_HOME=/opt/pixi PIXI_NO_PATH_UPDATE=1 sh
 
+{% if not slim %}
+# Downloads large NVIDIA CUDA wheels from pypi.nvidia.com into a BuildKit
+# cache so pixi install can read them locally (avoiding its hardcoded 30s
+# HTTP timeout).  /wheels-ready is a sentinel that the main stage bind-mounts
+# to force this stage to run first.
 COPY pixi.toml pixi.lock /tmp/pixi-setup/
 RUN --mount=type=cache,id=pixi-nvidia-wheels,target=/pixi-cache/nvidia-wheels \
     mkdir -p /pixi-cache/nvidia-wheels && \
@@ -40,6 +41,7 @@ RUN --mount=type=cache,id=pixi-nvidia-wheels,target=/pixi-cache/nvidia-wheels \
     done && \
     echo "=== Pre-downloaded $(ls -1 /pixi-cache/nvidia-wheels/*.whl 2>/dev/null | wc -l) NVIDIA wheels ===" && \
     touch /wheels-ready
+{% endif %}
 
 # ---------------------------------------------------------------------------
 # Main stage
@@ -112,6 +114,7 @@ ENV HF_HOME="${DEFAULT_WORKSPACE_LOC}/weights/hf_home/" \
 # Set up pixi environments
 COPY --chown=1000:1000 pixi.toml pixi.lock {{code_dir_str}}/
 
+{% if not slim %}
 # ============================================================================
 # NVIDIA CUDA Wheel Pre-download & pixi.lock Patching
 # ============================================================================
@@ -228,7 +231,7 @@ RUN --mount=type=bind,from=wheels-builder,source=/wheels-ready,target=/tmp/wheel
     done && \
     pixi clean cache -y && \
     $success
-{% endif %}
+{% endif %}{# cuml #}
 
 # Run any hacky post-install script for each environment
 COPY package/cosmos_curate/envs/ /tmp/cosmos_curate_build_envs
@@ -248,6 +251,8 @@ RUN cd {{code_dir_str}} && \
     pixi run -e {{ env }} pip install /tmp/cosmos-xenna
 {% endfor %}
 {% endif %}
+
+{% endif %}{# not slim #}
 
 # Copy the video pipeline code
 COPY --chown=1000:1000 cosmos_curate {{code_dir_str}}/cosmos_curate

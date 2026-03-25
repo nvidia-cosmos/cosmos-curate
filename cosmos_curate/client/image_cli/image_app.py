@@ -165,19 +165,32 @@ def build(  # noqa: PLR0913
             rich_help_panel="common",
         ),
     ] = None,
+    slim: Annotated[
+        bool,
+        Option(
+            help=(
+                "Build a slim image containing only the lockfile and source code (no pixi install). "
+                "Environments are installed at runtime via pixi run. "
+                "When set, --envs is ignored."
+            ),
+            rich_help_panel="docker",
+        ),
+    ] = False,
 ) -> None:
     """Build a docker image with the specified conda environments."""
     _curator_path = Path(curator_path)
     _dockerfile_output_path = Path(dockerfile_output_path) if dockerfile_output_path else None
     package_path = _curator_path / Path("package") / Path("cosmos_curate")
 
-    env_names = _parse_envs(envs)
-    # Validate that requested environments exist in Pixi
-    pixi_envs = get_pixi_envs()
-    invalid_envs = set(env_names) - set(pixi_envs)
-    if invalid_envs:
-        logger.error(f"Environments not available in Pixi: {sorted(invalid_envs)}")
-        sys.exit(1)
+    env_names: list[str] = []
+    if not slim:
+        env_names = _parse_envs(envs)
+        # Validate that requested environments exist in Pixi
+        pixi_envs = get_pixi_envs()
+        invalid_envs = set(env_names) - set(pixi_envs)
+        if invalid_envs:
+            logger.error(f"Environments not available in Pixi: {sorted(invalid_envs)}")
+            sys.exit(1)
 
     code_paths = []
     if extra_code_paths:
@@ -185,7 +198,10 @@ def build(  # noqa: PLR0913
 
     console = rich.console.Console()
 
-    console.log(f"Generating docker image with envs: {env_names}")
+    if slim:
+        console.log("Generating slim docker image (no pixi install)")
+    else:
+        console.log(f"Generating docker image with envs: {env_names}")
     dockerfile_template_path = package_path / Path("default.dockerfile.jinja2")
 
     dockerfile_path = docker_utils.generate_dockerfile(
@@ -196,6 +212,7 @@ def build(  # noqa: PLR0913
         dockerfile_output_path=_dockerfile_output_path,
         verbose=verbose,
         nsight=nsight,
+        slim=slim,
     )
 
     if dry_run:
