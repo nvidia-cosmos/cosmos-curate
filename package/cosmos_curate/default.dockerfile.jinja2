@@ -12,7 +12,7 @@ ARG DEBIAN_FRONTEND=noninteractive
 # ---------------------------------------------------------------------------
 # Wheels builder stage: install pixi (and pre-download NVIDIA wheels in full mode)
 # ---------------------------------------------------------------------------
-FROM nvcr.io/nvidia/cuda:12.9.1-devel-ubuntu24.04 AS wheels-builder
+FROM nvcr.io/nvidia/cuda:13.0.2-devel-ubuntu24.04 AS wheels-builder
 
 SHELL ["/bin/bash", "-c"]
 
@@ -46,7 +46,7 @@ RUN --mount=type=cache,id=pixi-nvidia-wheels,target=/pixi-cache/nvidia-wheels \
 # ---------------------------------------------------------------------------
 # Main stage
 # ---------------------------------------------------------------------------
-FROM nvcr.io/nvidia/cuda:12.9.1-devel-ubuntu24.04 AS main
+FROM nvcr.io/nvidia/cuda:13.0.2-devel-ubuntu24.04 AS main
 
 SHELL ["/bin/bash", "-c"]
 ENV NVIDIA_DRIVER_CAPABILITIES=compute,video,utility
@@ -192,7 +192,7 @@ RUN --mount=type=bind,from=wheels-builder,source=/wheels-ready,target=/tmp/wheel
 {%- if verbose %}
     echo "=== pixi version ===" && pixi --version && \
 {%- endif %}
-    export CONDA_OVERRIDE_CUDA=12.9.1 && \
+    export CONDA_OVERRIDE_CUDA=13.0.2 && \
 {%- if verbose %}
     export RUST_LOG=uv=debug && \
     export UV_NO_PROGRESS=1 && \
@@ -215,7 +215,7 @@ RUN --mount=type=bind,from=wheels-builder,source=/wheels-ready,target=/tmp/wheel
 RUN --mount=type=bind,from=wheels-builder,source=/wheels-ready,target=/tmp/wheels-ready \
     --mount=type=cache,id=pixi-nvidia-wheels,target=/pixi-cache/nvidia-wheels,readonly \
     cd {{code_dir_str}} && \
-    export CONDA_OVERRIDE_CUDA=12.9.1 && \
+    export CONDA_OVERRIDE_CUDA=13.0.2 && \
 {%- if verbose %}
     export RUST_LOG=uv=debug && \
     export UV_NO_PROGRESS=1 && \

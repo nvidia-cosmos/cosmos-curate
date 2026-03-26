@@ -20,8 +20,8 @@ cosmos-xenna = "==0.2.1"
 ray = { version = "==2.54.0", extras = ["default", "data"] } # conda-forge package pulls in an old version of protobuf
 
 [feature.core.system-requirements]
-cuda = "12.9.1" # match the version of the nvidia/cuda docker base image
-libc = { family = "glibc", version = "2.31" } # vllm 0.15+ requires manylinux_2_31 wheels
+cuda = "13.0.2" # match the version of the nvidia/cuda docker base image
+libc = { family = "glibc", version = "2.35" } # vllm cu130 wheels require manylinux_2_35
 
 [feature.core.dependencies]
 astral = "*"
@@ -69,43 +69,45 @@ pillow = ">=12.1.1"  # Fix GHSA-cfh3-3jmp-rvhc
 pylance = ">=0.39.0" # conda-forge package is too old
 pulp = "*" # conda-forge package is too old
 timm = "*" # conda-forge package pulls in torchvision, which is behind
-torch = { version = "==2.10+cu129", index = "https://download.pytorch.org/whl/cu129" } # match system CUDA 12.9
-torchvision = { version = "==0.25.0", index = "https://download.pytorch.org/whl/cu129" }
+torch = { version = "==2.10+cu130", index = "https://download.pytorch.org/whl/cu130" }
+torchvision = { version = "==0.25.0", index = "https://download.pytorch.org/whl/cu130" }
 uvicorn = "*"
 webdataset = "*" # conda-forge package pulls in pytorch
 
 [feature.core.target.linux-aarch64.dependencies]
 # Add CUDA toolchain packages on aarch64 -- these are automatic dependencies on linux-64.
-cuda-nvvm-tools = "12.9.*"
-cuda-nvcc-tools = "12.9.*"
-cuda-nvrtc = "12.9.*"
-cuda-nvrtc-dev = "12.9.*"
-cuda-nvrtc-static = "12.9.*"
-cuda-cupti = "12.9.*"
-cuda-cuobjdump = "12.9.*"
-cuda-nvdisasm = "12.9.*"
+cuda-nvvm-tools = "13.0.*"
+cuda-nvcc-tools = "13.0.*"
+cuda-nvrtc = "13.0.*"
+cuda-nvrtc-dev = "13.0.*"
+cuda-nvrtc-static = "13.0.*"
+cuda-cupti = "13.0.*"
+cuda-cuobjdump = "13.0.*"
+cuda-nvdisasm = "13.0.*"
 triton = "==3.6.0"
 
 [feature.core.target.linux-aarch64.pypi-dependencies]
 # Add available NVIDIA CUDA runtime wheels for aarch64 to match linux-64 installs.
-nvidia-cublas-cu12 = "*"
-nvidia-cuda-cupti-cu12 = "*"
-nvidia-cuda-nvrtc-cu12 = "*"
-nvidia-cuda-runtime-cu12 = "*"
-nvidia-cudnn-cu12 = "*"
-nvidia-cufft-cu12 = "*"
-nvidia-curand-cu12 = "*"
-nvidia-cusolver-cu12 = "*"
-nvidia-cusparse-cu12 = "*"
-nvidia-cusparselt-cu12 = "*"
-nvidia-cufile-cu12 = "*"
-nvidia-nccl-cu12 = "*"
-nvidia-nvjitlink-cu12 = "*"
-nvidia-nvshmem-cu12 = "*"
-nvidia-nvtx-cu12 = "*"
+# With CUDA 13, most nvidia-*-cu13 PyPI packages are deprecated stubs that fail to build.
+# Use unsuffixed names (e.g. nvidia-cublas) for those; keep -cu13 only where real wheels exist.
+nvidia-cublas = "*"
+nvidia-cuda-cupti = "*"
+nvidia-cuda-nvrtc = "*"
+nvidia-cuda-runtime = "*"
+nvidia-cudnn-cu13 = "*"
+nvidia-cufft = "*"
+nvidia-curand = "*"
+nvidia-cusolver = "*"
+nvidia-cusparse = "*"
+nvidia-cusparselt-cu13 = "*"
+nvidia-cufile = "*"
+nvidia-nccl-cu13 = "*"
+nvidia-nvjitlink = "*"
+nvidia-nvshmem-cu13 = "*"
+nvidia-nvtx = "*"
 
 [feature.cuml.system-requirements]
-cuda = "12.9.1" # match the version of the nvidia/cuda docker base image
+cuda = "13.0.2" # match the version of the nvidia/cuda docker base image
 
 [feature.cuml.dependencies]
 azure-identity = "*"
@@ -146,10 +148,10 @@ cuda-libraries-dev = "*"
 pycountry = "*"
 
 [feature.unified.pypi-dependencies]
-cvcuda-cu12 = "*" # not available on conda-forge
+cvcuda-cu13 = "*" # not available on conda-forge
 flashinfer-python = ">=0.4.0rc3" # not available on conda-forge; pre-release to avoid pynvml dependency
 PyNvVideoCodec = "*" # not available on conda-forge
-vllm = "==0.17.1" # not available on conda-forge
+vllm = { version = "==0.17.1", index = "https://wheels.vllm.ai/0.17.1/cu130" } # not available on conda-forge
 
 [feature.legacy-transformers.dependencies]
 einops = "*"
