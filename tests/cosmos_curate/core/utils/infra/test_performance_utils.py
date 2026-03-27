@@ -32,6 +32,7 @@ from cosmos_curate.core.utils.infra.performance_utils import (
     StagePerfStats,
     StageTimer,
     _get_rss_mb,
+    _summarize_perf_stats,
 )
 
 # ---------------------------------------------------------------------------
@@ -365,3 +366,60 @@ class TestStageTimerReinit:
 
         # idle_time should be > 0 because we slept between log_stats and reinit
         assert stats.actor_idle_time > 0.0
+
+
+class TestSummarizePerfStatsMissingStages:
+    """Verify _summarize_perf_stats handles tasks with different sets of stage keys."""
+
+    def test_missing_stage_in_later_task(self) -> None:
+        """Task 0 has stages A and B, task 1 only has A. Should not crash."""
+        task_stats = [
+            {
+                "StageA": StagePerfStats(process_time=1.0),
+                "StageB": StagePerfStats(process_time=2.0),
+            },
+            {
+                "StageA": StagePerfStats(process_time=3.0),
+                # StageB is missing -- e.g. the stage failed before recording stats.
+            },
+        ]
+        result = _summarize_perf_stats(task_stats)
+
+        assert "StageA" in result
+        assert "StageB" in result
+        assert result["StageA"]["process_time"] == pytest.approx(4.0)  # both tasks
+        assert result["StageB"]["process_time"] == pytest.approx(2.0)  # task 0 only
+
+    def test_stage_only_in_later_task(self) -> None:
+        """Task 0 has stage A, task 1 has stages A and B. B must appear in summary."""
+        task_stats = [
+            {
+                "StageA": StagePerfStats(process_time=1.0),
+            },
+            {
+                "StageA": StagePerfStats(process_time=2.0),
+                "StageB": StagePerfStats(process_time=5.0),
+            },
+        ]
+        result = _summarize_perf_stats(task_stats)
+
+        assert "StageA" in result
+        assert "StageB" in result
+        assert result["StageA"]["process_time"] == pytest.approx(3.0)  # both tasks
+        assert result["StageB"]["process_time"] == pytest.approx(5.0)  # task 1 only
+
+    def test_empty_task_stats(self) -> None:
+        """Empty list should return empty dict without crashing."""
+        result = _summarize_perf_stats([])
+        assert result == {}
+
+    def test_all_tasks_have_all_stages(self) -> None:
+        """When all tasks have all stages, behavior is unchanged from the original."""
+        task_stats = [
+            {"X": StagePerfStats(process_time=1.0), "Y": StagePerfStats(process_time=2.0)},
+            {"X": StagePerfStats(process_time=3.0), "Y": StagePerfStats(process_time=4.0)},
+        ]
+        result = _summarize_perf_stats(task_stats)
+
+        assert result["X"]["process_time"] == pytest.approx(4.0)
+        assert result["Y"]["process_time"] == pytest.approx(6.0)

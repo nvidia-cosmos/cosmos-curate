@@ -132,3 +132,27 @@ def get_stage2_prompt(prompt: str | None) -> str:
     if prompt is not None:
         return prompt
     return _DEFAULT_STAGE2_PROMPT.strip() + "\n"
+
+
+def build_refinement_prompt_text(
+    processor: object,
+    first_caption: str,
+    refinement_instruction: str | None = None,
+) -> str:
+    """Build rendered prompt text for stage-2 caption refinement via ``apply_chat_template``."""
+    instruction = get_stage2_prompt(refinement_instruction)
+    final_text = instruction + first_caption
+    messages: list[dict[str, str | list[dict[str, str]]]] = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "video"},
+                {"type": "text", "text": final_text},
+            ],
+        },
+    ]
+    return processor.apply_chat_template(  # type: ignore[attr-defined, no-any-return]
+        messages,
+        tokenize=False,
+        add_generation_prompt=True,
+    )

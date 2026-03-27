@@ -84,6 +84,8 @@ class PreviewStage(CuratorStage):
                 msg = f"Window [{window.start_frame}, {window.end_frame}] has no mp4 bytes for preview generation."
                 raise RuntimeError(msg)
             input_mp4.write_bytes(mp4_data)
+            # TODO: add `del mp4_data` here to release resolved bytes (~1-10 MB)
+            #   before ffmpeg runs. Currently held for the full subprocess duration.
             output_webp = pathlib.Path(tmp_dir, "output.webp")
             command = [
                 "ffmpeg",
@@ -116,6 +118,9 @@ class PreviewStage(CuratorStage):
                 if output:
                     logger.warning(f"ffmpeg output: {output.decode('utf-8')}")
             except subprocess.CalledProcessError as e:
+                # TODO: raise instead of swallowing - let process_data handle
+                #   fault isolation. Currently this silently returns with no
+                #   webp_bytes and no error recorded on clip.errors.
                 logger.error(f"ffmpeg command failed with return code {e.returncode}")
                 logger.warning(f"ffmpeg command: {' '.join(command)}")
                 if e.output:
@@ -135,6 +140,11 @@ class PreviewStage(CuratorStage):
             Processed tasks with generated previews.
 
         """
+        # TODO: add per-window fault isolation (try/except around _generate_preview)
+        #   and record errors on clip.errors[f"preview_{wi}"].
+        #   Currently a single window failure (e.g. mp4_bytes.resolve() raises,
+        #   or mp4_data is None) crashes the entire process_data call,
+        #   losing all windows/clips in the batch.
         for task in tasks:
             self._timer.reinit(self, task.get_major_size())
             video = task.video

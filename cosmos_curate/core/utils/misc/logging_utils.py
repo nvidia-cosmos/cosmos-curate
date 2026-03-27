@@ -13,18 +13,22 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Utilities for managing infra."""
+"""Loguru logging helpers for tagged and prefixed log output."""
 
-import contextlib
-import ctypes
-import sys
+from typing import TYPE_CHECKING, Any
 
-# Shared glibc handle for direct syscall access on Linux (None on macOS/Windows).
-# Some Python distributions omit wrappers for newer glibc symbols
-# (e.g. os.memfd_create) even though the runtime glibc exports them;
-# this handle lets consumers call those symbols directly via ctypes.
-# Loaded once at import time; fork-safe (child inherits the address space).
-libc: ctypes.CDLL | None = None
-if sys.platform == "linux":
-    with contextlib.suppress(OSError):
-        libc = ctypes.CDLL("libc.so.6", use_errno=True)
+from loguru import logger
+
+if TYPE_CHECKING:
+    import loguru
+
+
+def make_tagged_logger(tag: str) -> "loguru.Logger":
+    """Create a loguru logger that auto-prepends *tag* to every message."""
+    normalized = tag.strip() if tag else ""
+
+    def _prepend_tag(record: dict[str, Any]) -> None:
+        if normalized:
+            record["message"] = f"{normalized} {record['message']}"
+
+    return logger.patch(_prepend_tag)  # type: ignore[arg-type]

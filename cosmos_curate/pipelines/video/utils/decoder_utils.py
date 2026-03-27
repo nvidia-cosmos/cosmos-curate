@@ -199,34 +199,12 @@ def extract_video_metadata(video: str | bytes | npt.NDArray[np.uint8]) -> VideoM
 
 def _make_video_stream(
     data: Path | str | BinaryIO | bytes | npt.NDArray[np.uint8] | io.BytesIO | io.BufferedReader,
-) -> BinaryIO:
-    """Convert various input types into a binary stream for video processing.
-
-    This function handles different input types that could represent video
-    data and converts them into a consistent BinaryIO interface that can be
-    used for video processing operations.
-
-    Args:
-        data: The input video data, which can be one of:
-            - Path: A path to a video file
-            - bytes: Raw video data in bytes
-            - npt.NDArray[np.uint8]: NumPy array (zero-copy Ray transport)
-            - io.BytesIO: An in-memory binary stream
-            - io.BufferedReader: A buffered binary file reader
-            - BinaryIO: Any binary stream
-
-    Returns:
-        BinaryIO: A binary stream containing the video data
-
-    Raises:
-        ValueError: If the input type is not one of the supported types
-
-    """
+) -> str | BinaryIO:
+    """Convert various input types into a path string or ``BinaryIO`` stream for video processing."""
     if isinstance(data, str):
-        data = Path(data)
-
+        return data
     if isinstance(data, Path):
-        return data.open("rb")
+        return str(data)
     if isinstance(data, (bytes, np.ndarray)):
         return io.BytesIO(data)
     if isinstance(data, (io.BytesIO, io.BufferedReader, BinaryIO)):
@@ -237,8 +215,11 @@ def _make_video_stream(
 
 
 @contextmanager
-def save_stream_position(stream: BinaryIO) -> Generator[BinaryIO, None, None]:
-    """Context manager that saves and restores stream position."""
+def save_stream_position(stream: str | BinaryIO) -> Generator[str | BinaryIO, None, None]:
+    """Context manager that saves and restores stream position (no-op for string paths)."""
+    if isinstance(stream, str):
+        yield stream
+        return
     pos = stream.tell()
     try:
         yield stream
@@ -565,6 +546,11 @@ def decode_video_cpu(  # noqa: PLR0913
             the specified tolerance
 
     """
+    # TODO(decode-single-pass): decode_video_cpu opens the container twice -
+    # once in get_video_timestamps() to extract PTS values, and again in
+    # decode_video_cpu_frame_ids() to decode frames. For short clips (10-30s
+    # at 2fps = 20-60 frames), a single-pass approach that decodes while
+    # collecting timestamps would eliminate one container open/seek cycle.
     stream = _make_video_stream(data)
     _timestamps = timestamps
     if _timestamps is None:

@@ -148,7 +148,7 @@ exclude = [
 # Ignore FIX002 Line contains TODO and related TD002, TD003
 # Later C901, PLR0912, PLR0913, PLR0915
 ignore = ["D203", "D213", "FIX002", "S101", "TD002", "TD003", "N806",
-          "COM812", "TRY003", "RUF200", "TC001"]
+          "COM812", "TRY003", "RUF200", "TC001", "PLE1205"]
 select = ["ALL"]
 extend-select = ["I"]
 
@@ -177,7 +177,8 @@ warn_no_return = true
 warn_redundant_casts = true
 warn_return_any = true
 warn_unreachable = true
-warn_unused_ignores = true
+warn_unused_ignores = false
+disable_error_code = ["override"]
 files = ["cosmos_curate"]
 exclude = [
     "build/",

@@ -832,6 +832,7 @@ class VllmSamplingConfig:
         top_p: Nucleus sampling threshold.
         top_k: Top-k sampling parameter (0 = disabled).
         min_p: Minimum probability threshold for sampling.
+        min_tokens: Minimum tokens before EOS is allowed (0 = disabled, 16 = default for fp8 safety).
         max_tokens: Maximum number of tokens to generate (None = no limit).
 
     """
@@ -843,6 +844,7 @@ class VllmSamplingConfig:
     top_p: float = 0.001  # vLLM default is 1.0
     top_k: int = 0
     min_p: float = 0.0
+    min_tokens: int = attrs.field(default=16, validator=attrs.validators.ge(0))
     max_tokens: int | None = 8192  # vLLM default is None
 
 

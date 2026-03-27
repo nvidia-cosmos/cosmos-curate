@@ -266,17 +266,17 @@ def test_decode_cpu(synthetic_video: io.BytesIO, sample_rate_divisor: int, endpo
 @pytest.mark.parametrize(
     ("input_data", "expected_type", "raises"),
     [
-        # Happy path cases
+        # Happy path cases - Path and str now return str (path passthrough to av.open)
         (
             Path("dummy.mp4"),
-            (io.BufferedRandom, io.BufferedReader),
+            str,
             nullcontext(),
-        ),  # Path input
+        ),  # Path input -> str
         (
             "dummy.mp4",
-            (io.BufferedRandom, io.BufferedReader),
+            str,
             nullcontext(),
-        ),  # string input
+        ),  # string input -> str
         (b"video data", io.BytesIO, nullcontext()),  # bytes input
         # Error cases
         (
@@ -318,11 +318,14 @@ def test_make_video_stream(
         result = _make_video_stream(input_data)
         if expected_type is not None:
             assert isinstance(result, expected_type)
-        assert result.readable()
-        data = result.read(1)
-        assert len(data) == 1
-        result.seek(0)
-        result.close()
+        if isinstance(result, str):
+            assert Path(result).exists()
+        else:
+            assert result.readable()
+            data = result.read(1)
+            assert len(data) == 1
+            result.seek(0)
+            result.close()
 
 
 @pytest.mark.parametrize(

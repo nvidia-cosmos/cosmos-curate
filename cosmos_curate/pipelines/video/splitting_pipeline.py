@@ -61,6 +61,11 @@ from cosmos_curate.pipelines.video.captioning.phases import (
     OpenAIConfig,
     T5Config,
     T5Phase,
+    VllmAsyncCaptionConfig,
+)
+from cosmos_curate.pipelines.video.captioning.vllm_async_config import (
+    add_vllm_async_cli_args,
+    build_vllm_async_config,
 )
 from cosmos_curate.pipelines.video.clipping.phases import (
     FixedStrideSplitConfig,
@@ -89,7 +94,12 @@ from cosmos_curate.pipelines.video.read_write.phases import IngestConfig, Ingest
 from cosmos_curate.pipelines.video.read_write.summary_writers import (
     write_split_summary,
 )
-from cosmos_curate.pipelines.video.utils.data_model import SplitPipeTask, VllmConfig, VllmSamplingConfig, WindowConfig
+from cosmos_curate.pipelines.video.utils.data_model import (
+    SplitPipeTask,
+    VllmConfig,
+    VllmSamplingConfig,
+    WindowConfig,
+)
 from cosmos_curate.pipelines.video.utils.video_pipe_input import (
     extract_multi_cam_split_tasks,
     extract_single_cam_split_tasks,
@@ -99,7 +109,7 @@ from cosmos_curate.pipelines.video.utils.video_pipe_input import (
 QWEN2_CAPTION_ALGOS = {"qwen"}
 QWEN3_CAPTION_ALGOS = {"qwen3_vl_30b", "qwen3_vl_30b_fp8", "qwen3_vl_235b", "qwen3_vl_235b_fp8"}
 COSMOS_REASON_ALGOS = {"cosmos_r1", "cosmos_r2"}
-ALL_CAPTION_ALGOS = VLLM_CAPTION_ALGOS | {"gemini", "openai"}
+ALL_CAPTION_ALGOS = VLLM_CAPTION_ALGOS | {"gemini", "openai", "vllm_async"}
 MULTICAM_VIDEO_EXTENSIONS: set[str] = {".mp4"}
 QWEN3_VL_235B_HIGH_MEMORY_GPU_THRESHOLD_MB = 128_000
 
@@ -513,6 +523,7 @@ def _assemble_stages(  # noqa: C901, PLR0912, PLR0915
             presence_penalty=args.vllm_sampling_presence_penalty,
             frequency_penalty=args.vllm_sampling_frequency_penalty,
             min_p=args.vllm_sampling_min_p,
+            min_tokens=args.vllm_sampling_min_tokens,
             max_tokens=max_tokens,
         )
 
@@ -579,7 +590,7 @@ def _assemble_stages(  # noqa: C901, PLR0912, PLR0915
             if caption_algo == "cosmos_r2":
                 vllm_config.preprocess = True
                 window_config.model_does_preprocess = True
-        elif caption_algo in {"gemini", "openai"}:
+        elif caption_algo in {"gemini", "openai", "vllm_async"}:
             pass
         elif caption_algo == "nemotron":
             vllm_config.stage2_caption = args.nemotron_stage2_caption
@@ -616,6 +627,20 @@ def _assemble_stages(  # noqa: C901, PLR0912, PLR0915
                 num_cpus_for_prepare=args.vllm_prepare_num_cpus_per_worker,
             )
 
+        vllm_async_caption_config: VllmAsyncCaptionConfig | None = None
+        if caption_algo == "vllm_async":
+            vllm_async_caption_config = VllmAsyncCaptionConfig(
+                model_name=args.vllm_async_model_name,
+                prompt_variant=args.captioning_prompt_variant,
+                prompt_text=args.captioning_prompt_text,
+                max_concurrent_requests=args.vllm_async_max_concurrent_requests,
+                serve_config=build_vllm_async_config(args, sampling_config=sampling_config),
+                stage_batch_size=args.vllm_async_stage_batch_size,
+                num_workers_per_node=args.vllm_async_num_workers_per_node,
+                stage2_caption=args.vllm_async_stage2_caption,
+                stage2_prompt_text=args.vllm_async_stage2_prompt_text,
+            )
+
         enhance_config: EnhanceCaptionConfig | None = None
         if args.enhance_captions:
             enhance_config = EnhanceCaptionConfig(
@@ -635,9 +660,10 @@ def _assemble_stages(  # noqa: C901, PLR0912, PLR0915
                 CaptioningConfig(
                     caption_algo=caption_algo,
                     window_config=window_config,
-                    vllm_config=vllm_config if caption_algo not in {"gemini", "openai"} else None,
+                    vllm_config=vllm_config if caption_algo not in {"gemini", "openai", "vllm_async"} else None,
                     gemini_config=gemini_config,
                     openai_config=openai_config,
+                    vllm_async_config=vllm_async_caption_config,
                     keep_mp4=keep_mp4,
                     generate_previews=args.generate_previews,
                     preview_target_fps=args.preview_target_fps,
@@ -1388,6 +1414,9 @@ def _setup_parser(parser: argparse.ArgumentParser) -> None:  # noqa: PLR0915
         default=1.0,
         help="Delay between retries for OpenAI API caption requests.",
     )
+
+    # --- vllm_async args (VllmAsyncCaptionStage in-process AsyncLLM) ---
+    add_vllm_async_cli_args(parser)
     parser.add_argument(
         "--openai-embedding-model-name",
         type=str,
@@ -1657,6 +1686,16 @@ def _setup_parser(parser: argparse.ArgumentParser) -> None:  # noqa: PLR0915
         type=float,
         default=sampling_defaults["min_p"],
         help="Minimum probability threshold for vLLM sampling.",
+    )
+    parser.add_argument(
+        "--vllm-sampling-min-tokens",
+        type=int,
+        default=sampling_defaults["min_tokens"],
+        help=(
+            "Minimum tokens to generate before EOS/stop tokens are allowed (0 = disabled). "
+            "Prevents empty captions caused by fp8 quantization shifting EOS logits above "
+            "content tokens. Harmless for bf16/fp16 models. Default: 16."
+        ),
     )
     # Debug arguments for saving vLLM input frames
     parser.add_argument(

@@ -134,6 +134,10 @@ def split_video_into_windows(  # noqa: PLR0913
             - "window_info": start and end frame indices for each window in a clip
 
     """
+    # TODO(ep): Consider migrating to ``cosmos_curate.core.utils.misc.memfd.buffer_as_memfd_path``
+    # to avoid disk I/O for the temporary video file.  memfd provides a memory-backed
+    # /proc/self/fd/<fd> path, eliminating the write-to-disk round-trip.  Note: memfd_create
+    # may be blocked by seccomp on NVCF, in which case it falls back to tempfile anyway.
     with make_pipeline_named_temporary_file(sub_dir="windowing") as input_file:
         with input_file.open("wb") as f:
             f.write(mp4_bytes)

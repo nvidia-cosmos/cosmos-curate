@@ -24,6 +24,7 @@ from cosmos_curate.pipelines.video.captioning.captioning_stages import (
 )
 from cosmos_curate.pipelines.video.captioning.gemini_caption_stage import ApiPrepStage, GeminiCaptionStage
 from cosmos_curate.pipelines.video.captioning.openai_caption_stage import OpenAICaptionStage
+from cosmos_curate.pipelines.video.captioning.vllm_async_config import VllmAsyncConfig
 from cosmos_curate.pipelines.video.captioning.vllm_caption_stage import VllmCaptionStage, VllmPrepStage
 from cosmos_curate.pipelines.video.preview.preview_stages import PreviewStage
 from cosmos_curate.pipelines.video.utils.data_model import VllmConfig, WindowConfig
@@ -77,6 +78,21 @@ class OpenAIConfig:
 
 
 @attrs.define(frozen=True)
+class VllmAsyncCaptionConfig:
+    """Configuration for the ``vllm_async`` captioning path."""
+
+    model_name: str = "qwen"
+    prompt_variant: str = "default"
+    prompt_text: str | None = None
+    max_concurrent_requests: int = attrs.field(default=0, validator=attrs.validators.ge(0))
+    serve_config: VllmAsyncConfig | None = None
+    stage_batch_size: int = 0  # 0 = auto-derive
+    num_workers_per_node: int = 0
+    stage2_caption: bool = False
+    stage2_prompt_text: str | None = None
+
+
+@attrs.define(frozen=True)
 class CaptioningConfig:
     """Configuration for the captioning phase (prep + caption + optional enhance)."""
 
@@ -85,6 +101,7 @@ class CaptioningConfig:
     vllm_config: VllmConfig | None = None
     gemini_config: GeminiConfig | None = None
     openai_config: OpenAIConfig | None = None
+    vllm_async_config: VllmAsyncCaptionConfig | None = None
     keep_mp4: bool = False
     generate_previews: bool = False
     preview_target_fps: int = 1
@@ -126,6 +143,17 @@ class CaptioningPhase(CurationPhase):
         """Return the field tokens populated by this phase."""
         return frozenset({"captioned"})
 
+    def _require_vllm_async_config(self) -> tuple[VllmAsyncCaptionConfig, VllmAsyncConfig]:
+        """Validate and return the vllm_async config and serve_config."""
+        vsc = self._cfg.vllm_async_config
+        if vsc is None:
+            msg = "vllm_async_config required for caption_algo='vllm_async'"
+            raise ValueError(msg)
+        if vsc.serve_config is None:
+            msg = "vllm_async_config.serve_config required for caption_algo='vllm_async'"
+            raise ValueError(msg)
+        return vsc, vsc.serve_config
+
     def _build_prep_stage(self) -> CuratorStage:
         """Build the prep stage for the configured caption algorithm."""
         cfg = self._cfg
@@ -166,6 +194,53 @@ class CaptioningPhase(CurationPhase):
             verbose=cfg.verbose,
             log_stats=cfg.perf_profile,
         )
+
+    def _build_vllm_async_prep_stage(self) -> CuratorStageSpec:
+        """Build the vLLM async prep stage (windowing + decode + prompt build)."""
+        cfg = self._cfg
+        vsc, serve_config = self._require_vllm_async_config()
+
+        from cosmos_curate.pipelines.video.captioning.vllm_async_config import (  # noqa: PLC0415
+            VllmAsyncPrepConfig,
+        )
+        from cosmos_curate.pipelines.video.captioning.vllm_async_stage import (  # noqa: PLC0415
+            VllmAsyncPrepStage,
+        )
+
+        prep_config = VllmAsyncPrepConfig(
+            model_variant=serve_config.model_variant,
+            sampling_config=serve_config.sampling_config,
+            prompt_variant=vsc.prompt_variant,
+            prompt_text=vsc.prompt_text,
+            sample_fps=cfg.window_config.sampling_fps,
+            window_size=cfg.window_config.window_size,
+            remainder_threshold=cfg.window_config.remainder_threshold,
+            keep_mp4=cfg.generate_previews or cfg.keep_mp4,
+            use_input_bit_rate=cfg.window_config.use_input_bit_rate,
+        )
+        stage = VllmAsyncPrepStage(
+            prep_config=prep_config,
+            verbose=cfg.verbose,
+            log_stats=cfg.perf_profile,
+        )
+        return CuratorStageSpec(stage, over_provision_factor=2.0)
+
+    def _build_vllm_async_render_stage(self) -> CuratorStageSpec:
+        """Build the vLLM async render stage (TextPrompt -> ProcessorInputs)."""
+        cfg = self._cfg
+        vsc, serve_config = self._require_vllm_async_config()
+
+        from cosmos_curate.pipelines.video.captioning.vllm_async_stage import (  # noqa: PLC0415
+            VllmAsyncPromptRenderStage,
+        )
+
+        stage = VllmAsyncPromptRenderStage(
+            serve_config=serve_config,
+            model_name=vsc.model_name,
+            verbose=cfg.verbose,
+            log_stats=cfg.perf_profile,
+        )
+        return CuratorStageSpec(stage, over_provision_factor=1.5)
 
     def _build_caption_stage(self) -> CuratorStage | CuratorStageSpec:
         """Build the caption stage for the configured caption algorithm."""
@@ -222,13 +297,47 @@ class CaptioningPhase(CurationPhase):
                 log_stats=cfg.perf_profile,
             )
 
+        if caption_algo == "vllm_async":
+            return self._build_vllm_async_caption_stage()
+
         msg = f"Unknown caption algorithm: {caption_algo!r}"
         raise NotImplementedError(msg)
 
-    def build_stages(self) -> list[CuratorStage | CuratorStageSpec]:
-        """Construct and return the prep, optional preview, caption, and enhance stages."""
+    def _build_vllm_async_caption_stage(self) -> CuratorStageSpec:
+        """Build the vllm_async caption stage with mode-dependent worker count."""
         cfg = self._cfg
-        stages: list[CuratorStage | CuratorStageSpec] = [self._build_prep_stage()]
+        vsc, serve_config = self._require_vllm_async_config()
+
+        from cosmos_curate.pipelines.video.captioning.vllm_async_stage import (  # noqa: PLC0415
+            VllmAsyncCaptionStage,
+        )
+
+        stage = VllmAsyncCaptionStage(
+            serve_config=serve_config,
+            model_name=vsc.model_name,
+            max_concurrent_requests=vsc.max_concurrent_requests,
+            stage_batch_size=vsc.stage_batch_size,
+            verbose=cfg.verbose,
+            log_stats=cfg.perf_profile,
+            stage2_caption=vsc.stage2_caption,
+            stage2_prompt_text=vsc.stage2_prompt_text,
+        )
+        if serve_config.data_parallel_size > 1:
+            return CuratorStageSpec(stage, num_workers_per_node=1, worker_max_lifetime_m=0)
+        if vsc.num_workers_per_node > 0:
+            return CuratorStageSpec(stage, num_workers_per_node=vsc.num_workers_per_node, worker_max_lifetime_m=0)
+        return CuratorStageSpec(stage, worker_max_lifetime_m=0, over_provision_factor=1.5)
+
+    def build_stages(self) -> list[CuratorStage | CuratorStageSpec]:
+        """Construct and return the prep, optional preview, render, caption, and enhance stages."""
+        cfg = self._cfg
+        caption_algo = cfg.caption_algo.lower()
+        stages: list[CuratorStage | CuratorStageSpec] = []
+
+        if caption_algo == "vllm_async":
+            stages.append(self._build_vllm_async_prep_stage())
+        else:
+            stages.append(self._build_prep_stage())
 
         if cfg.generate_previews:
             stages.append(
@@ -239,6 +348,9 @@ class CaptioningPhase(CurationPhase):
                     log_stats=cfg.perf_profile,
                 )
             )
+
+        if caption_algo == "vllm_async":
+            stages.append(self._build_vllm_async_render_stage())
 
         stages.append(self._build_caption_stage())
 

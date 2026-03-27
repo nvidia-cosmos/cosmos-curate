@@ -142,10 +142,21 @@ class StagePerfStats:
 def _summarize_perf_stats(
     task_stats: list[dict[str, StagePerfStats]],
 ) -> dict[str, dict[str, float]]:
+    """Aggregate per-task stage stats into per-stage summaries."""
     data = {}
-    if len(task_stats) > 0:
-        for stage in task_stats[0]:
-            data[stage] = sum((x[stage] for x in task_stats), StagePerfStats()).to_dict()
+    # Collect stage names from ALL tasks (not just the first) so stages
+    # that only ran for a subset of tasks are still included in the summary.
+    all_stages: set[str] = set()
+    for ts in task_stats:
+        all_stages.update(ts)
+    for stage in sorted(all_stages):
+        # Use .get() to default to zero-valued stats for tasks where
+        # the stage has no recorded data (e.g. stage failed before
+        # logging perf stats).
+        data[stage] = sum(
+            (x.get(stage, StagePerfStats()) for x in task_stats),
+            StagePerfStats(),
+        ).to_dict()
     return data
 
 

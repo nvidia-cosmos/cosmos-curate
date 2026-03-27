@@ -241,6 +241,10 @@ def sampling_params(config: VllmSamplingConfig) -> SamplingParams:
         A sampling parameters object.
 
     """
+    # Performance: consider adding skip_clone=True here once the sync
+    # VllmCaptionStage path has been verified safe for shallow copies.
+    # With skip_clone=True, vLLM's InputProcessor.process_inputs()
+    # uses copy.copy() instead of copy.deepcopy() per request.
     return SamplingParams(
         temperature=config.temperature,
         top_p=config.top_p,
@@ -249,6 +253,7 @@ def sampling_params(config: VllmSamplingConfig) -> SamplingParams:
         presence_penalty=config.presence_penalty,
         frequency_penalty=config.frequency_penalty,
         min_p=config.min_p,
+        min_tokens=config.min_tokens,
         max_tokens=config.max_tokens,
         stop_token_ids=[],
         output_kind=RequestOutputKind.FINAL_ONLY,
