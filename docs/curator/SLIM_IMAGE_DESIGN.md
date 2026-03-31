@@ -27,10 +27,11 @@
 - Default (full) — pre-installs pixi environments at build time. Best for platforms without shared/persistent storage
   (NVCF, air-gapped deployments). With no `--envs` flag, installs all environments. With `--envs env1,env2,...`,
   installs only the specified subset (e.g. `--envs default,unified`).
-- `--slim` — lockfile (`pixi.toml` + `pixi.lock`) and source code only; ignores `--envs`. `pixi run --frozen`
-  auto-installs the exact environment on first use. Combined with `--pixi-path .`, this is ideal for local development
-  (near-instant rebuilds, no conda install in the image). Cluster use (Slurm/k8s with shared storage) is promising but
-  needs validation.
+- `--slim` — lockfile (`pixi.toml` + `pixi.lock`) and source code only. `--envs` selects which environments to
+  install at runtime (same default as full mode). The image stores the env list in `COSMOS_CURATE_SLIM_ENVS` and the
+  launch flow runs `pixi install --frozen` before the user command. Combined with `--pixi-path .`, this is ideal for
+  local development (near-instant rebuilds, the install is a fast no-op). Cluster use (Slurm/k8s with shared storage)
+  is promising but needs validation.
 
 **Dependency strategy:**
 
@@ -120,7 +121,9 @@ while `pynvc` is measurably faster. This removal is justified independently of t
 ### Phase 3: Slim image (lockfile-only)
 
 - [x] **3a. Add `--slim` flag to `cosmos-curate image build`**
-    - `--slim`: skip `pixi install`, image contains only lockfile + source; ignores `--envs`
+    - `--slim`: skip `pixi install`, image contains only lockfile + source
+    - `--envs` selects which environments to install at runtime (same default as full mode); the list is stored in the
+      image as `ENV COSMOS_CURATE_SLIM_ENVS` and `LABEL cosmos-curate.slim=true`
     - Default (no flag): pre-install pixi environments at build time, `--envs` selects subset
     - Full mode retains the NVIDIA wheel pre-download hack and retry logic
 
@@ -137,17 +140,22 @@ while `pynvc` is measurably faster. This removal is justified independently of t
     - ~17MB compressed, source archival only — no build needed
     - Can proceed in parallel with code work; gates shipping, not development
 
-- [ ] **3d. Configure shared `.pixi` mount for cluster deployments**
+- [x] **3d. Auto-warmup for local launch**
+    - `local launch` prepends a conditional `pixi install --frozen` to the container command
+    - Reads `COSMOS_CURATE_SLIM_ENVS` from the image; no-op when the variable is unset (full images)
+    - With `--pixi-path`, environments are already present so the install is a fast no-op
+    - Without `--pixi-path`, installs environments into the container's ephemeral filesystem
+
+- [ ] **3e. Configure shared `.pixi` mount for cluster deployments**
     - Update `sbatch.sh.j2` to mount `.pixi` from shared storage (Lustre)
-    - Update `launch_local.py` to support `--pixi-path` for mounting `.pixi` from an arbitrary location
     - Document shared storage setup for cluster deployments
 
-- [ ] **3e. Add pre-warm script for Slurm**
-    - Add a head-node step in `sbatch.sh.j2` that runs `pixi install --frozen` for all required envs before `srun` fans
-      out workers
+- [ ] **3f. Add pre-warm step for Slurm**
+    - Add a head-node step in `sbatch.sh.j2` that runs `pixi install --frozen` for the envs listed in
+      `COSMOS_CURATE_SLIM_ENVS` before `srun` fans out workers
     - Populates the shared `.pixi` directory before Ray starts
 
-- [ ] **3f. Validate slim image on Slurm with shared storage**
+- [ ] **3g. Validate slim image on Slurm with shared storage**
     - End-to-end test: slim image + shared `.pixi` mount + multi-node Ray cluster
     - Measure cold-start time (empty cache) and warm-start time (pre-warmed)
     - Verify workers use pre-populated environments with no per-worker install

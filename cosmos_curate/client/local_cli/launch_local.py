@@ -359,10 +359,21 @@ def _launch_in_docker_container(opts: LaunchDocker) -> None:
         ]
     )
 
-    docker_command_to_print = " ".join([*docker_command, f'"{opts.command}"'])
+    # Prepend slim-image environment warmup. When COSMOS_CURATE_SLIM_ENVS is set
+    # (slim images only), install the declared environments before running the user command.
+    # With --pixi-path this is a fast no-op since environments are already present.
+    _SLIM_WARMUP = (
+        'if [ -n "$COSMOS_CURATE_SLIM_ENVS" ]; then '
+        'echo "Installing pixi environments: $COSMOS_CURATE_SLIM_ENVS" && '
+        "pixi install --frozen -e ${COSMOS_CURATE_SLIM_ENVS//,/ -e }; "
+        "fi"
+    )
+    container_command = f"{_SLIM_WARMUP} && {opts.command}"
+
+    docker_command_to_print = " ".join([*docker_command, f'"{container_command}"'])
     logger.info(f"Docker command:\n{docker_command_to_print}")
 
-    docker_command.append(f"{opts.command}")
+    docker_command.append(container_command)
 
     result = subprocess.call(  # noqa: S603
         docker_command,

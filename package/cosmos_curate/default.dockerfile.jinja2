@@ -202,7 +202,7 @@ RUN --mount=type=bind,from=wheels-builder,source=/wheels-ready,target=/tmp/wheel
     success=false && \
     for attempt in {1..10}; do \
         echo "=== pixi install attempt $attempt/10 ===" && \
-        if pixi install {{ '-v' if verbose else '' }} -e default -e {{ envs | reject('equalto', 'cuml') | join(' -e ') }} --frozen 2>&1; then \
+        if pixi install {{ '-v' if verbose else '' }} -e {{ envs | reject('equalto', 'cuml') | join(' -e ') }} --frozen 2>&1; then \
             success=true && break; \
         fi; \
         echo "pixi install attempt $attempt/10 failed, retrying in 3s..." && sleep 3; \
@@ -244,8 +244,7 @@ RUN cd {{code_dir_str}} && \
 # For every environment, uninstall cosmos-xenna and then reinstall from local build.
 {% if use_local_xenna_build %}
 COPY cosmos-xenna /tmp/cosmos-xenna
-{% set all_envs = envs + ['default'] %}
-{% for env in all_envs %}
+{% for env in envs %}
 RUN cd {{code_dir_str}} && \
     pixi run -e {{ env }} pip uninstall -y cosmos-xenna && \
     pixi run -e {{ env }} pip install /tmp/cosmos-xenna
@@ -253,6 +252,13 @@ RUN cd {{code_dir_str}} && \
 {% endif %}
 
 {% endif %}{# not slim #}
+
+{% if slim %}
+# Slim image: store the environments for runtime installation.
+# The launch flow reads this variable and runs pixi install --frozen before the user command.
+ENV COSMOS_CURATE_SLIM_ENVS="{{ envs | join(',') }}"
+LABEL cosmos-curate.slim="true"
+{% endif %}
 
 # Copy the video pipeline code
 COPY --chown=1000:1000 cosmos_curate {{code_dir_str}}/cosmos_curate
