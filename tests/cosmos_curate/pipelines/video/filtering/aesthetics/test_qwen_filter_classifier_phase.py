@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Unit tests for QwenFilterClassifierPhase (unified filter/classifier phase) and classifier metadata."""
+"""Unit tests for build_qwen_filter_classifier_stages and classifier metadata."""
 
 import pathlib
 import uuid
@@ -21,10 +21,10 @@ import uuid
 import pytest
 
 from cosmos_curate.core.interfaces.stage_interface import CuratorStageSpec
-from cosmos_curate.pipelines.video.filtering.aesthetics.phases import (
-    QwenFilterClassifierPhase,
+from cosmos_curate.pipelines.video.filtering.aesthetics.aesthetics_builders import (
     QwenFilterConfig,
     QwenVideoClassifierConfig,
+    build_qwen_filter_classifier_stages,
 )
 from cosmos_curate.pipelines.video.filtering.aesthetics.qwen_filter_stages import (
     QwenFilteringStage,
@@ -34,67 +34,36 @@ from cosmos_curate.pipelines.video.filtering.aesthetics.qwen_filter_stages impor
 from cosmos_curate.pipelines.video.utils.data_model import Clip, Video, Window
 
 
-def test_qwen_filter_classifier_phase_requires_at_least_one_config() -> None:
-    """Phase must receive at least one of filter_config or classifier_config."""
+def test_qwen_filter_classifier_requires_at_least_one_config() -> None:
+    """Builder must receive at least one of filter_config or classifier_config."""
     with pytest.raises(ValueError, match="At least one of filter_config or classifier_config is required"):
-        QwenFilterClassifierPhase()
+        build_qwen_filter_classifier_stages()
 
 
-def test_qwen_filter_classifier_phase_name_filter_only() -> None:
-    """Phase name is qwen_filter when only filter config is set."""
-    phase = QwenFilterClassifierPhase(filter_config=QwenFilterConfig())
-    assert phase.name == "qwen_filter"
-
-
-def test_qwen_filter_classifier_phase_name_classifier_only() -> None:
-    """Phase name is qwen_video_classifier when only classifier config is set."""
-    phase = QwenFilterClassifierPhase(classifier_config=QwenVideoClassifierConfig())
-    assert phase.name == "qwen_video_classifier"
-
-
-def test_qwen_filter_classifier_phase_name_both() -> None:
-    """Phase name is qwen_filter_and_classifier when both configs are set."""
-    phase = QwenFilterClassifierPhase(
-        filter_config=QwenFilterConfig(),
-        classifier_config=QwenVideoClassifierConfig(),
-    )
-    assert phase.name == "qwen_filter_and_classifier"
-
-
-def test_qwen_filter_classifier_phase_requires_and_populates() -> None:
-    """Phase requires transcoded and populates qwen_filtered."""
-    phase = QwenFilterClassifierPhase(filter_config=QwenFilterConfig())
-    assert phase.requires == frozenset({"transcoded"})
-    assert phase.populates == frozenset({"qwen_filtered"})
-
-
-def test_qwen_filter_classifier_phase_build_stages_filter_only() -> None:
-    """Filter-only phase builds prep + filter stages (2 stages)."""
-    phase = QwenFilterClassifierPhase(filter_config=QwenFilterConfig())
-    stages = phase.build_stages()
+def test_qwen_filter_classifier_build_stages_filter_only() -> None:
+    """Filter-only builds prep + filter stages (2 stages)."""
+    stages = build_qwen_filter_classifier_stages(filter_config=QwenFilterConfig())
     assert len(stages) == 2
     assert isinstance(stages[0], QwenInputPreparationStageFiltering)
     assert isinstance(stages[1], CuratorStageSpec)
     assert isinstance(stages[1].stage, QwenFilteringStage)
 
 
-def test_qwen_filter_classifier_phase_build_stages_classifier_only() -> None:
-    """Classifier-only phase builds prep + classifier stages (2 stages)."""
-    phase = QwenFilterClassifierPhase(classifier_config=QwenVideoClassifierConfig())
-    stages = phase.build_stages()
+def test_qwen_filter_classifier_build_stages_classifier_only() -> None:
+    """Classifier-only builds prep + classifier stages (2 stages)."""
+    stages = build_qwen_filter_classifier_stages(classifier_config=QwenVideoClassifierConfig())
     assert len(stages) == 2
     assert isinstance(stages[0], QwenInputPreparationStageFiltering)
     assert isinstance(stages[1], CuratorStageSpec)
     assert isinstance(stages[1].stage, QwenVideoClassifierStage)
 
 
-def test_qwen_filter_classifier_phase_build_stages_both() -> None:
+def test_qwen_filter_classifier_build_stages_both() -> None:
     """Both configs: single prep, then classifier, then filter (3 stages, no double prep)."""
-    phase = QwenFilterClassifierPhase(
+    stages = build_qwen_filter_classifier_stages(
         filter_config=QwenFilterConfig(),
         classifier_config=QwenVideoClassifierConfig(),
     )
-    stages = phase.build_stages()
     assert len(stages) == 3
     # Single prep (feeds both classifier and filter via extra_outputs)
     assert isinstance(stages[0], QwenInputPreparationStageFiltering)
@@ -122,54 +91,50 @@ def test_qwen_video_classifier_stage_custom_categories_builds_valid_labels() -> 
     assert stage._valid_type_labels == ("penguins", "polar_bears")
 
 
-def test_qwen_filter_classifier_phase_build_stages_custom_categories() -> None:
-    """Phase with custom_categories passes filter_categories to prep so prompt uses only those."""
-    phase = QwenFilterClassifierPhase(
+def test_qwen_filter_classifier_build_stages_custom_categories() -> None:
+    """Builder with custom_categories passes filter_categories to prep so prompt uses only those."""
+    stages = build_qwen_filter_classifier_stages(
         classifier_config=QwenVideoClassifierConfig(
             custom_categories=True,
             type_allow="penguins",
             type_block="polar_bears",
         ),
     )
-    stages = phase.build_stages()
     assert len(stages) == 2
     prep = stages[0]
     assert isinstance(prep, QwenInputPreparationStageFiltering)
     assert prep._filter_categories == "penguins,polar_bears"
 
 
-def test_qwen_filter_classifier_phase_build_stages_default_categories_prep_gets_none() -> None:
+def test_qwen_filter_classifier_build_stages_default_categories_prep_gets_none() -> None:
     """When custom_categories=False, prep gets filter_categories=None (27 default labels)."""
-    phase = QwenFilterClassifierPhase(classifier_config=QwenVideoClassifierConfig())
-    stages = phase.build_stages()
+    stages = build_qwen_filter_classifier_stages(classifier_config=QwenVideoClassifierConfig())
     prep = stages[0]
     assert isinstance(prep, QwenInputPreparationStageFiltering)
     assert prep._filter_categories is None
 
 
-def test_qwen_filter_classifier_phase_custom_categories_union_only_allow() -> None:
+def test_qwen_filter_classifier_custom_categories_union_only_allow() -> None:
     """Custom categories with only allow list uses that list for prep."""
-    phase = QwenFilterClassifierPhase(
+    stages = build_qwen_filter_classifier_stages(
         classifier_config=QwenVideoClassifierConfig(
             custom_categories=True,
             type_allow="planet_earth,mountains",
             type_block=None,
         ),
     )
-    stages = phase.build_stages()
     assert stages[0]._filter_categories == "mountains,planet_earth"
 
 
-def test_qwen_filter_classifier_phase_custom_categories_union_only_block() -> None:
+def test_qwen_filter_classifier_custom_categories_union_only_block() -> None:
     """Custom categories with only block list uses that list for prep."""
-    phase = QwenFilterClassifierPhase(
+    stages = build_qwen_filter_classifier_stages(
         classifier_config=QwenVideoClassifierConfig(
             custom_categories=True,
             type_allow=None,
             type_block="space",
         ),
     )
-    stages = phase.build_stages()
     assert stages[0]._filter_categories == "space"
 
 

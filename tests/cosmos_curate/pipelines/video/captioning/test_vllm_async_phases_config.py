@@ -13,17 +13,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Focused tests for vLLM async phase-level config validation."""
+"""Focused tests for vLLM async builder-level config validation."""
 
 import pytest
 
 from cosmos_curate.core.interfaces.stage_interface import CuratorStageSpec
-from cosmos_curate.pipelines.video.captioning.gemini_caption_stage import ApiPrepStage
-from cosmos_curate.pipelines.video.captioning.phases import (
+from cosmos_curate.pipelines.video.captioning.captioning_builders import (
     CaptioningConfig,
-    CaptioningPhase,
     VllmAsyncCaptionConfig,
+    build_captioning_stages,
 )
+from cosmos_curate.pipelines.video.captioning.gemini_caption_stage import ApiPrepStage
 from cosmos_curate.pipelines.video.captioning.vllm_async_config import VllmAsyncConfig
 from cosmos_curate.pipelines.video.captioning.vllm_async_stage import (
     VllmAsyncPrepStage,
@@ -57,67 +57,73 @@ def test_num_workers_per_node_default_is_zero() -> None:
     assert cfg.num_workers_per_node == 0
 
 
-class TestPhasesNumWorkersPerNode:
-    """Verify phases.py sets num_workers_per_node based on mode and config."""
+def _make_config(
+    data_parallel_size: int = 1,
+    num_gpus: int = 1,
+    num_workers_per_node: int = 0,
+    *,
+    generate_previews: bool = False,
+) -> CaptioningConfig:
+    serve_config = VllmAsyncConfig(
+        model_variant="qwen",
+        num_gpus=num_gpus,
+        data_parallel_size=data_parallel_size,
+    )
+    backend = VllmAsyncCaptionConfig(
+        serve_config=serve_config,
+        num_workers_per_node=num_workers_per_node,
+    )
+    return CaptioningConfig(
+        backend=backend,
+        window_config=WindowConfig(),
+        generate_previews=generate_previews,
+    )
 
-    @staticmethod
-    def _build_phase(
-        data_parallel_size: int = 1,
-        num_gpus: int = 1,
-        num_workers_per_node: int = 0,
-    ) -> CaptioningPhase:
-        serve_config = VllmAsyncConfig(
-            model_variant="qwen",
-            num_gpus=num_gpus,
-            data_parallel_size=data_parallel_size,
-        )
-        vllm_async_config = VllmAsyncCaptionConfig(
-            serve_config=serve_config,
-            num_workers_per_node=num_workers_per_node,
-        )
-        cfg = CaptioningConfig(
-            caption_algo="vllm_async",
-            window_config=WindowConfig(),
-            vllm_async_config=vllm_async_config,
-        )
-        return CaptioningPhase(cfg)
+
+class TestBuildersNumWorkersPerNode:
+    """Verify builders set num_workers_per_node based on mode and config."""
 
     def test_default_autoscale(self) -> None:
         """Default (0) -> Xenna autoscale with OPF=1.5."""
-        phase = self._build_phase(num_workers_per_node=0)
-        result = phase._build_caption_stage()
-        assert isinstance(result, CuratorStageSpec)
-        assert result.num_workers_per_node is None
-        assert result.over_provision_factor == 1.5
+        cfg = _make_config(num_workers_per_node=0)
+        stages = build_captioning_stages(cfg)
+        caption_stage = stages[-1]
+        assert isinstance(caption_stage, CuratorStageSpec)
+        assert caption_stage.num_workers_per_node is None
+        assert caption_stage.over_provision_factor == 1.5
 
     def test_explicit_workers(self) -> None:
         """Explicit positive value -> exact worker count."""
-        phase = self._build_phase(num_workers_per_node=7)
-        result = phase._build_caption_stage()
-        assert isinstance(result, CuratorStageSpec)
-        assert result.num_workers_per_node == 7
+        cfg = _make_config(num_workers_per_node=7)
+        stages = build_captioning_stages(cfg)
+        caption_stage = stages[-1]
+        assert isinstance(caption_stage, CuratorStageSpec)
+        assert caption_stage.num_workers_per_node == 7
 
     def test_dp_mode_ignores_num_workers(self) -> None:
         """DP mode (dp=7): always 1 worker, num_workers_per_node ignored."""
-        phase = self._build_phase(data_parallel_size=7, num_workers_per_node=5)
-        result = phase._build_caption_stage()
-        assert isinstance(result, CuratorStageSpec)
-        assert result.num_workers_per_node == 1
+        cfg = _make_config(data_parallel_size=7, num_workers_per_node=5)
+        stages = build_captioning_stages(cfg)
+        caption_stage = stages[-1]
+        assert isinstance(caption_stage, CuratorStageSpec)
+        assert caption_stage.num_workers_per_node == 1
 
     def test_prep_stage_spec_config(self) -> None:
         """VllmAsyncPrepStage should have OPF=2.0 and default slots_per_actor."""
-        phase = self._build_phase()
-        result = phase._build_vllm_async_prep_stage()
-        assert isinstance(result, CuratorStageSpec)
-        assert result.slots_per_actor is None
-        assert result.over_provision_factor == 2.0
+        cfg = _make_config()
+        stages = build_captioning_stages(cfg)
+        prep_spec = stages[0]
+        assert isinstance(prep_spec, CuratorStageSpec)
+        assert prep_spec.slots_per_actor is None
+        assert prep_spec.over_provision_factor == 2.0
 
     def test_prep_stage_receives_windowing_fields(self) -> None:
         """VllmAsyncPrepConfig should receive windowing fields from CaptioningConfig."""
-        phase = self._build_phase()
-        result = phase._build_vllm_async_prep_stage()
-        assert isinstance(result, CuratorStageSpec)
-        stage = result.stage
+        cfg = _make_config()
+        stages = build_captioning_stages(cfg)
+        prep_spec = stages[0]
+        assert isinstance(prep_spec, CuratorStageSpec)
+        stage = prep_spec.stage
         assert isinstance(stage, VllmAsyncPrepStage)
         assert stage._prep_config.window_size == 256
         assert stage._prep_config.remainder_threshold == 128
@@ -125,8 +131,8 @@ class TestPhasesNumWorkersPerNode:
 
     def test_build_stages_vllm_async_prep_is_first(self) -> None:
         """vllm_async build_stages should produce Prep + Render + Caption (3 stages)."""
-        phase = self._build_phase()
-        stages = phase.build_stages()
+        cfg = _make_config()
+        stages = build_captioning_stages(cfg)
         assert len(stages) == 3
         assert isinstance(stages[0], CuratorStageSpec)
         assert isinstance(stages[0].stage, VllmAsyncPrepStage)
@@ -135,24 +141,16 @@ class TestPhasesNumWorkersPerNode:
 
     def test_build_stages_vllm_async_no_api_prep_stage(self) -> None:
         """vllm_async pipeline should NOT include ApiPrepStage."""
-        phase = self._build_phase()
-        stages = phase.build_stages()
+        cfg = _make_config()
+        stages = build_captioning_stages(cfg)
         for s in stages:
             stage_obj = s.stage if isinstance(s, CuratorStageSpec) else s
             assert not isinstance(stage_obj, ApiPrepStage)
 
     def test_build_stages_vllm_async_with_previews(self) -> None:
         """Enabling previews should produce Prep + Preview + Render + Caption (4 stages)."""
-        serve_config = VllmAsyncConfig(model_variant="qwen")
-        vllm_async_config = VllmAsyncCaptionConfig(serve_config=serve_config)
-        cfg = CaptioningConfig(
-            caption_algo="vllm_async",
-            window_config=WindowConfig(),
-            vllm_async_config=vllm_async_config,
-            generate_previews=True,
-        )
-        phase = CaptioningPhase(cfg)
-        stages = phase.build_stages()
+        cfg = _make_config(generate_previews=True)
+        stages = build_captioning_stages(cfg)
         assert len(stages) == 4
         assert isinstance(stages[0], CuratorStageSpec)
         assert isinstance(stages[0].stage, VllmAsyncPrepStage)
@@ -162,17 +160,10 @@ class TestPhasesNumWorkersPerNode:
 
     def test_prep_config_keep_mp4_from_generate_previews(self) -> None:
         """keep_mp4 should be True when generate_previews is enabled."""
-        serve_config = VllmAsyncConfig(model_variant="qwen")
-        vllm_async_config = VllmAsyncCaptionConfig(serve_config=serve_config)
-        cfg = CaptioningConfig(
-            caption_algo="vllm_async",
-            window_config=WindowConfig(),
-            vllm_async_config=vllm_async_config,
-            generate_previews=True,
-        )
-        phase = CaptioningPhase(cfg)
-        result = phase._build_vllm_async_prep_stage()
-        assert isinstance(result, CuratorStageSpec)
-        stage = result.stage
+        cfg = _make_config(generate_previews=True)
+        stages = build_captioning_stages(cfg)
+        prep_spec = stages[0]
+        assert isinstance(prep_spec, CuratorStageSpec)
+        stage = prep_spec.stage
         assert isinstance(stage, VllmAsyncPrepStage)
         assert stage._prep_config.keep_mp4 is True

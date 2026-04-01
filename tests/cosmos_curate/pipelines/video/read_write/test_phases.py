@@ -12,23 +12,23 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Tests for IngestPhase stage topology."""
+"""Tests for ingest stage builder topology."""
 
 from cosmos_curate.core.interfaces.stage_interface import CuratorStageSpec
-from cosmos_curate.pipelines.video.read_write.phases import IngestConfig, IngestPhase
+from cosmos_curate.pipelines.video.read_write.read_write_builders import IngestConfig, build_ingest_stages
 from cosmos_curate.pipelines.video.read_write.remux_stages import RemuxStage
 
 
-def test_remux_stage_absent_from_ingest_phase() -> None:
-    """RemuxStage must not appear in IngestPhase.build_stages().
+def test_remux_stage_absent_from_ingest_stages() -> None:
+    """RemuxStage must not appear in build_ingest_stages().
 
     RemuxStage was folded into VideoDownloader; leaving it in the stage list
     would run remux twice and waste a dedicated worker pool.
     """
     config = IngestConfig(input_path="/fake/path")
-    stages = IngestPhase(config).build_stages()
+    stages = build_ingest_stages(config)
 
-    assert len(stages) == 1, "IngestPhase should contain exactly one stage (VideoDownloader)"
+    assert len(stages) == 1, "build_ingest_stages should return exactly one stage (VideoDownloader)"
     # Unwrap CuratorStageSpec to catch RemuxStage whether bare or wrapped
     inner_stages = [s.stage if isinstance(s, CuratorStageSpec) else s for s in stages]
-    assert not any(isinstance(s, RemuxStage) for s in inner_stages), "RemuxStage must not be in IngestPhase"
+    assert not any(isinstance(s, RemuxStage) for s in inner_stages), "RemuxStage must not be in ingest stages"

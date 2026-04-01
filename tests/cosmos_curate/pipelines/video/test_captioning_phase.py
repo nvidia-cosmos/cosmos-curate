@@ -13,92 +13,75 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tests for the CaptioningPhase OpenAI dispatch paths in video_curation_phases."""
+"""Tests for the captioning stage builder dispatch paths."""
 
 import pytest
 
+from cosmos_curate.pipelines.video.captioning.captioning_builders import (
+    CaptioningConfig,
+    OpenAIConfig,
+    _build_captioning_caption_stage,
+    _build_captioning_prep_stage,
+    build_captioning_stages,
+)
 from cosmos_curate.pipelines.video.captioning.gemini_caption_stage import ApiPrepStage
 from cosmos_curate.pipelines.video.captioning.openai_caption_stage import OpenAICaptionStage
-from cosmos_curate.pipelines.video.captioning.phases import (
-    CaptioningConfig,
-    CaptioningPhase,
-    OpenAIConfig,
-)
 from cosmos_curate.pipelines.video.utils.data_model import WindowConfig
 
 
 def _default_openai_config() -> CaptioningConfig:
-    """Return a minimal CaptioningConfig for the openai algorithm."""
+    """Return a minimal CaptioningConfig for the openai backend."""
     return CaptioningConfig(
-        caption_algo="openai",
+        backend=OpenAIConfig(),
         window_config=WindowConfig(),
-        openai_config=OpenAIConfig(),
     )
 
 
 # ---------------------------------------------------------------------------
-# _build_prep_stage
+# _build_captioning_prep_stage
 # ---------------------------------------------------------------------------
 
 
 def test_build_prep_stage_openai_returns_api_prep_stage() -> None:
     """The openai prep stage should be an ApiPrepStage."""
-    phase = CaptioningPhase(_default_openai_config())
-    stage = phase._build_prep_stage()
+    stage = _build_captioning_prep_stage(_default_openai_config())
     assert isinstance(stage, ApiPrepStage)
 
 
 def test_build_prep_stage_openai_uses_configured_cpus() -> None:
     """ApiPrepStage should receive num_cpus_for_prepare from OpenAIConfig."""
     cfg = CaptioningConfig(
-        caption_algo="openai",
+        backend=OpenAIConfig(num_cpus_for_prepare=5.0),
         window_config=WindowConfig(),
-        openai_config=OpenAIConfig(num_cpus_for_prepare=5.0),
     )
-    phase = CaptioningPhase(cfg)
-    stage = phase._build_prep_stage()
+    stage = _build_captioning_prep_stage(cfg)
     assert isinstance(stage, ApiPrepStage)
     assert stage._num_cpus_for_prepare == 5.0
 
 
-def test_build_prep_stage_openai_missing_config_raises() -> None:
-    """ValueError should be raised when openai_config is None."""
-    cfg = CaptioningConfig(
-        caption_algo="openai",
-        window_config=WindowConfig(),
-        openai_config=None,
-    )
-    phase = CaptioningPhase(cfg)
-    with pytest.raises(ValueError, match="openai_config required"):
-        phase._build_prep_stage()
-
-
 # ---------------------------------------------------------------------------
-# _build_caption_stage
+# _build_captioning_caption_stage
 # ---------------------------------------------------------------------------
 
 
 def test_build_caption_stage_openai_returns_openai_stage() -> None:
     """The openai caption stage should be an OpenAICaptionStage."""
-    phase = CaptioningPhase(_default_openai_config())
-    stage = phase._build_caption_stage()
+    stage = _build_captioning_caption_stage(_default_openai_config())
     assert isinstance(stage, OpenAICaptionStage)
 
 
 def test_build_caption_stage_openai_forwards_config_params() -> None:
     """OpenAICaptionStage should receive parameters from OpenAIConfig."""
     cfg = CaptioningConfig(
-        caption_algo="openai",
-        window_config=WindowConfig(),
-        openai_config=OpenAIConfig(
+        backend=OpenAIConfig(
             model_name="my-custom-model",
             max_output_tokens=4096,
             caption_retries=5,
             retry_delay_seconds=2.0,
         ),
+        window_config=WindowConfig(),
     )
-    phase = CaptioningPhase(cfg)
-    stage = phase._build_caption_stage()
+    stage = _build_captioning_caption_stage(cfg)
     assert isinstance(stage, OpenAICaptionStage)
     assert stage._model_name == "my-custom-model"
     assert stage._max_output_tokens == 4096
@@ -106,38 +89,24 @@ def test_build_caption_stage_openai_forwards_config_params() -> None:
     assert stage._retry_delay_seconds == 2.0
 
 
-def test_build_caption_stage_openai_missing_config_raises() -> None:
-    """ValueError should be raised when openai_config is None for caption stage."""
+def test_build_caption_stage_unsupported_backend_raises() -> None:
+    """NotImplementedError for an unrecognized backend config type."""
     cfg = CaptioningConfig(
-        caption_algo="openai",
-        window_config=WindowConfig(),
-        openai_config=None,
-    )
-    phase = CaptioningPhase(cfg)
-    with pytest.raises(ValueError, match="openai_config required"):
-        phase._build_caption_stage()
-
-
-def test_build_caption_stage_unknown_algo_raises() -> None:
-    """NotImplementedError for an unrecognized caption algorithm."""
-    cfg = CaptioningConfig(
-        caption_algo="unknown_algo",
+        backend="not_a_real_backend",  # type: ignore[arg-type]
         window_config=WindowConfig(),
     )
-    phase = CaptioningPhase(cfg)
-    with pytest.raises(NotImplementedError, match="Unknown caption algorithm"):
-        phase._build_caption_stage()
+    with pytest.raises(NotImplementedError, match="Unsupported caption backend type"):
+        _build_captioning_caption_stage(cfg)
 
 
 # ---------------------------------------------------------------------------
-# build_stages (full pipeline)
+# build_captioning_stages (full pipeline)
 # ---------------------------------------------------------------------------
 
 
 def test_build_stages_base_count() -> None:
-    """Base openai build_stages should produce exactly 2 stages: prep + caption."""
-    phase = CaptioningPhase(_default_openai_config())
-    stages = phase.build_stages()
+    """Base openai build_captioning_stages should produce exactly 2 stages: prep + caption."""
+    stages = build_captioning_stages(_default_openai_config())
     assert len(stages) == 2
     assert isinstance(stages[0], ApiPrepStage)
     assert isinstance(stages[1], OpenAICaptionStage)
@@ -146,22 +115,12 @@ def test_build_stages_base_count() -> None:
 def test_build_stages_with_previews() -> None:
     """Enabling previews should add a PreviewStage (3 total)."""
     cfg = CaptioningConfig(
-        caption_algo="openai",
+        backend=OpenAIConfig(),
         window_config=WindowConfig(),
-        openai_config=OpenAIConfig(),
         generate_previews=True,
     )
-    phase = CaptioningPhase(cfg)
-    stages = phase.build_stages()
+    stages = build_captioning_stages(cfg)
     assert len(stages) == 3
     # Preview is inserted between prep and caption
     assert isinstance(stages[0], ApiPrepStage)
     assert isinstance(stages[2], OpenAICaptionStage)
-
-
-def test_phase_metadata() -> None:
-    """CaptioningPhase should expose correct name, requires, and populates."""
-    phase = CaptioningPhase(_default_openai_config())
-    assert phase.name == "captioning"
-    assert phase.requires == frozenset({"transcoded"})
-    assert phase.populates == frozenset({"captioned"})

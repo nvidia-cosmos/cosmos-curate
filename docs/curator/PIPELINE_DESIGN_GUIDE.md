@@ -230,36 +230,23 @@ Two commonly used properties are:
 - `num_workers_per_node: int = None`: set a fixed number of workers per node and disable auto-scaling, typically for IO workers.
 - `num_run_attempts_python: int = 1`: set number of retry attempts, if randomly failures are expected.
 
-#### Composable Phases (CurationPhase + PipelineBuilder)
+#### Stage Builder Functions
 
-For pipelines with multiple logical groups of stages, the `CurationPhase` + `PipelineBuilder` pattern provides validated composition at construction time.
-
-A `CurationPhase` declares:
-- `requires`: field tokens that must already be populated by prior phases
-- `populates`: field tokens this phase will write
-- `build_stages()`: returns the ordered list of stages for this phase
-
-`PipelineBuilder` assembles phases into a flat stage list and validates that each phase's `requires` tokens are satisfied by prior phases — raising immediately at `add_phase()` time if not.
+For pipelines with multiple logical groups of stages, each group has a dedicated **factory function** and a frozen **config dataclass**. This keeps stage construction modular and testable without introducing extra abstractions.
 
 ```python
-from cosmos_curate.core.interfaces.phase_interface import PipelineBuilder
-from cosmos_curate.pipelines.video.clipping.phases import TranscodeConfig, TranscodePhase, TransNetV2SplitConfig, TransNetV2SplitPhase
-from cosmos_curate.pipelines.video.read_write.phases import IngestConfig, IngestPhase
+from cosmos_curate.pipelines.video.clipping.clipping_builders import TranscodeConfig, TransNetV2SplitConfig, build_transcode_stages, build_transnetv2_split_stages
+from cosmos_curate.pipelines.video.read_write.read_write_builders import IngestConfig, build_ingest_stages
 
-builder = (
-    PipelineBuilder()
-    .add_phase(IngestPhase(IngestConfig(input_path=...)))
-    .add_phase(TransNetV2SplitPhase(TransNetV2SplitConfig()))
-    .add_phase(TranscodePhase(TranscodeConfig()))
-)
-stages = builder.build()  # flat list[CuratorStage | CuratorStageSpec]
+stages: list[CuratorStage | CuratorStageSpec] = []
+stages.extend(build_ingest_stages(IngestConfig(input_path=...)))
+stages.extend(build_transnetv2_split_stages(TransNetV2SplitConfig()))
+stages.extend(build_transcode_stages(TranscodeConfig()))
 
 run_pipeline(input_tasks, stages)
 ```
 
-If you add a phase whose `requires` tokens are not satisfied by any prior phase, the builder raises a `ValueError` with a descriptive message before any data flows. The resulting stage list is structurally identical to a manually assembled list — the builder is a construction-time tool only.
-
-See `cosmos_curate/core/interfaces/phase_interface.py` for the base classes. Phase configs and implementations live alongside the stages they wrap — for example `cosmos_curate/pipelines/video/captioning/phases.py`, `clipping/phases.py`, `embedding/phases.py`, etc.
+Each `build_*_stages()` function takes a config and returns a `list[CuratorStage | CuratorStageSpec]`. Configs and builders live alongside the stages they wrap — for example `cosmos_curate/pipelines/video/captioning/captioning_builders.py`, `clipping/clipping_builders.py`, `embedding/embedding_builders.py`, etc.
 
 ### Writing Artifacts in Multi-Node Clusters
 

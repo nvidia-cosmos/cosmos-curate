@@ -324,18 +324,18 @@ This benchmark is the gate for promoting Ray Data runner from experimental to de
 
 ---
 
-## Relationship to Composable Pipeline Design
+## Relationship to Stage Builder Functions
 
-The Composable Pipeline extension design introduces `CurationPhase` and `PipelineBuilder`. That
-design is **orthogonal to this one** — phases produce `list[CuratorStage | CuratorStageSpec]`, which both runners
-consume identically.
+The stage builder functions (e.g. `build_ingest_stages`, `build_transcode_stages`) produce
+`list[CuratorStage | CuratorStageSpec]`, which both runners consume identically. They are a
+construction-time convenience and do not participate in data flow at runtime.
 
-One synergy: Ray Data's `Dataset.materialize()` enables **phase-boundary checkpointing**. If the `PipelineBuilder`
-constructs the pipeline phase-by-phase, the `RayDataRunner` could optionally materialize between phases, enabling:
+One synergy: Ray Data's `Dataset.materialize()` could enable **group-boundary checkpointing**
+by materializing between logical groups of stages, enabling:
 
-- Resume from a failed phase without re-running earlier phases
-- Phase-level profiling and monitoring
-- Writing intermediate Lance checkpoints at phase boundaries
+- Resume from a failed group without re-running earlier groups
+- Group-level profiling and monitoring
+- Writing intermediate Lance checkpoints at group boundaries
 
 This is a future enhancement, not part of the initial implementation.
 
