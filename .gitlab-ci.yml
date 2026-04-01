@@ -44,21 +44,20 @@ variables:
   # Pytest configuration
   PYTEST_XDIST_WORKERS: 4
 
-  # NVCF configuration - use perf org for now
-  NGC_NVCF_ORG: "$PERF_NGC_NVCF_ORG_ID"  # instead of $NVCF_ORG_ID
+  NGC_NVCF_ORG: "$NVCF_ORG_ID"  # Fallback to PERF_NGC_NVCF_ORG_ID if needed manually
   # This happens later in the login script, after the value secrets are sourced
-  # NGC_NVCF_API_KEY: "$PERF_NGC_NVCF_API_KEY"  # instead of $NVCF_KEY
+  # NGC_NVCF_API_KEY: "$PERF_NGC_NVCF_API_KEY"  # override of $NVCF_KEY if needed
 
-  # GPU type/instance/cluster info - use perf org for now
+  # GPU type/instance/cluster info
   NVCF_GPU_TYPE:
     description: "GPU type for NVCF testing (e.g., L40S, H100)"
     value: "H100"
   NVCF_INSTANCE_TYPE:
     description: "Instance type for NVCF testing (e.g., OCI.GPU.L40S_1x, OCI.GPU.H100_1x)"
-    value: "GCP.GPU.H100_2x"
+    value: "OCI.GPU.H100_4x"
   NVCF_CUSTOM_BACKEND:
     description: "Custom NVCF backend for testing (overrides default GitLab CI/CD variable)"
-    value: "$PERF_NVCF_BACKEND"  # instead of $NVCF_BACKEND
+    value: "$NVCF_BACKEND"  # instead of $PERF_NVCF_BACKEND
 
   # Image names
   NVCF_DEV_BASE_IMAGE: "dev-cosmos-curator"  # Base name for NVCF dev images
@@ -82,8 +81,8 @@ variables:
   HELM_THANOS_RECEIVER_URL: "$HELM_THANOS_RECEIVER_URL"
   HELM_BYO_METRICS_RECEIVER_CLIENT_CRT: $HELM_BYO_METRICS_RECEIVER_CLIENT_CRT
   HELM_BYO_METRICS_RECEIVER_CLIENT_KEY: $HELM_BYO_METRICS_RECEIVER_CLIENT_KEY
-  HELM_GPU_REQUESTS: 2
-  HELM_GPU_LIMITS: 2
+  HELM_GPU_REQUESTS: 4
+  HELM_GPU_LIMITS: 4
   HELM_SHMEM_LIMIT: 500Gi
   HELM_IMAGE_TAG:
   TEST_END_TO_END:
@@ -245,6 +244,12 @@ stages:
     mkdir -p "${DOCKER_CONFIG}"
     docker login -u gitlab-ci-token -p ${CI_JOB_TOKEN} "${CI_REGISTRY}"
     echo "$NGC_REGISTRY_KEY" | docker login nvcr.io/${NVCF_ORG_ID} --username '$oauthtoken' --password-stdin
+
+  # Last one in wins when using the same host/port, need perf in a dedicated anchor
+  docker_login_perf: &docker_login_perf |
+    export DOCKER_CONFIG="${CI_PROJECT_DIR}/.docker"
+    mkdir -p "${DOCKER_CONFIG}"
+    docker login -u gitlab-ci-token -p ${CI_JOB_TOKEN} "${CI_REGISTRY}"
     echo "$PERF_REGISTRY_KEY" | docker login nvcr.io/${PERF_NGC_NVCF_ORG_ID} --username '$oauthtoken' --password-stdin
 
   # Set up micromamba environment for Python dependencies
@@ -288,7 +293,7 @@ stages:
 
   # Configure cosmos-curate nvcf CLI
   configure_nvcf_cli: &configure_nvcf_cli |
-    cosmos-curate nvcf config set --org $NGC_NVCF_ORG --key $PERF_NGC_NVCF_API_KEY
+    cosmos-curate nvcf config set --org $NGC_NVCF_ORG --key $NVCF_KEY
 
 ruff:
   stage: lint
@@ -778,7 +783,7 @@ nvcf_split_benchmark:
   before_script:
     - source .gitlab/vault/vault-auth.sh
   script:
-    - *docker_login
+    - *docker_login_perf
     - *setup_micromamba
     - *setup_curator
     - .gitlab/scripts/nvcf_split_benchmark.sh

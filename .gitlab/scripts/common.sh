@@ -92,10 +92,10 @@ setup_buildx_builder() {
 }
 
 # Canonical NGC credentials
-# NGC_NVCF_ORG is set in .gitlab-ci.yml (defaults to PERF org)
-# NGC_API_KEY defaults to PERF key (vault secrets not available at CI variable definition time)
-: "${NGC_API_KEY:=${PERF_NGC_NVCF_API_KEY:-}}"
-: "${NGC_ORG:=${NGC_NVCF_ORG:-${PERF_NGC_NVCF_ORG_ID:-}}}"
+# NGC_NVCF_ORG is set in .gitlab-ci.yml (defaults to DEV org)
+# NGC_API_KEY defaults to DEV key (vault secrets not available at CI variable definition time)
+: "${NGC_API_KEY:=${NVCF_KEY:-}}"
+: "${NGC_ORG:=${NGC_NVCF_ORG:-${NVCF_ORG_ID:-}}}"
 
 # Configure environment for NGC model downloads
 setup_ngc_model_download() {
