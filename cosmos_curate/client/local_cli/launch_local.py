@@ -16,6 +16,7 @@
 """CLI to launch commands."""
 
 import os
+import shlex
 import subprocess
 import sys
 import time
@@ -359,6 +360,19 @@ def _launch_in_docker_container(opts: LaunchDocker) -> None:
         ]
     )
 
+    # When pixi environments are bind-mounted from the host (--pixi-path), scripts
+    # in .pixi/envs/*/bin/ carry shebangs with the host's absolute path (e.g.
+    # #!/home/user/project/.pixi/envs/unified/bin/python3.12) which don't exist
+    # inside the container.  Create a symlink so the kernel can resolve them.
+    preamble_parts: list[str] = []
+    if opts.pixi_path is not None:
+        host_code_dir = Path(opts.pixi_path).resolve()
+        if host_code_dir != CONTAINER_PATHS_CODE_DIR:
+            host_parent = shlex.quote(str(host_code_dir.parent))
+            container = shlex.quote(str(CONTAINER_PATHS_CODE_DIR))
+            host = shlex.quote(str(host_code_dir))
+            preamble_parts.append(f"mkdir -p {host_parent} && ln -sfn {container} {host}")
+
     # Prepend slim-image environment warmup. When COSMOS_CURATE_SLIM_ENVS is set
     # (slim images only), install the declared environments before running the user command.
     # With --pixi-path this is a fast no-op since environments are already present.
@@ -368,7 +382,8 @@ def _launch_in_docker_container(opts: LaunchDocker) -> None:
         "pixi install --frozen -e ${COSMOS_CURATE_SLIM_ENVS//,/ -e }; "
         "fi"
     )
-    container_command = f"{_SLIM_WARMUP} && {opts.command}"
+    preamble_parts.append(_SLIM_WARMUP)
+    container_command = " && ".join(preamble_parts) + f" && {opts.command}"
 
     docker_command_to_print = " ".join([*docker_command, f'"{container_command}"'])
     logger.info(f"Docker command:\n{docker_command_to_print}")
