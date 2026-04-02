@@ -33,7 +33,6 @@ from cosmos_curate.core.interfaces.pipeline_interface import run_pipeline
 from cosmos_curate.core.interfaces.stage_interface import CuratorStage, CuratorStageSpec
 from cosmos_curate.core.utils.config import args_utils
 from cosmos_curate.core.utils.dataset import dimensions, webdataset_utils
-from cosmos_curate.core.utils.infra.profiling import profiling_scope
 from cosmos_curate.core.utils.misc import grouping
 from cosmos_curate.core.utils.storage.storage_client import StoragePrefix
 from cosmos_curate.core.utils.storage.storage_utils import (
@@ -43,11 +42,20 @@ from cosmos_curate.core.utils.storage.storage_utils import (
     get_storage_client,
     verify_path,
 )
+from cosmos_curate.pipelines.common_pipeline_settings import (
+    composite_from_namespace,
+    composite_profiling_scope,
+    sync_common_from_namespace,
+)
 from cosmos_curate.pipelines.pipeline_args import add_common_args
 from cosmos_curate.pipelines.video.captioning.captioning_stages import T5StageForShard
 from cosmos_curate.pipelines.video.read_write.download_stages import DownloadPackUpload
 from cosmos_curate.pipelines.video.read_write.summary_writers import write_shard_summary
-from cosmos_curate.pipelines.video.splitting_pipeline import ALL_CAPTION_ALGOS
+from cosmos_curate.pipelines.video.shard_pipeline_settings import (
+    MIN_CLIPS_PER_TAR_DEFAULT,
+    ShardPipelineSettings,
+    add_shard_args,
+)
 from cosmos_curate.pipelines.video.utils.data_model import (
     ClipSample,
     ShardPipeTask,
@@ -56,10 +64,6 @@ from cosmos_curate.pipelines.video.utils.video_pipe_input import (
     extract_shard_tasks,
     filter_shard_tasks_by_semantic_dedup,
 )
-
-_MAX_TARS_PER_PART = 100
-_TARGET_TAR_SIZE_BYTES = 500 * 1024 * 1024  # 500 MB
-_MIN_CLIPS_PER_TAR = 1
 
 
 def _group_samples_by_bin(
@@ -88,7 +92,7 @@ def _group_samples_by_size(
     target_size_bytes: int,
     *,
     drop_small_shards: bool,
-    min_clips_per_tar: int = _MIN_CLIPS_PER_TAR,
+    min_clips_per_tar: int = MIN_CLIPS_PER_TAR_DEFAULT,
 ) -> Generator[list[ClipSample], None, None]:
     current_size = 0
     out: list[ClipSample] = []
@@ -198,59 +202,61 @@ def shard(args: argparse.Namespace) -> None:
         args: Command line arguments.
 
     """
-    with profiling_scope(args):
-        _shard(args)
+    settings = composite_from_namespace(ShardPipelineSettings, args)
+    with composite_profiling_scope(settings) as profiling_ns:
+        _shard(settings, profiling_ns)
 
 
-def _shard(args: argparse.Namespace) -> None:
+def _shard(settings: ShardPipelineSettings, profiling_args_ns: argparse.Namespace) -> None:
     """Run the shard pipeline.
 
     This function orchestrates the entire pipeline, from input validation to output generation.
     It validates input arguments, builds input data, and executes the pipeline stages.
 
     Args:
-        args: Command line arguments.
+        settings: Validated shard pipeline settings.
+        profiling_args_ns: Flat CLI namespace for profiling (same field names as *settings*)
 
     """
     start_time = time.time()
     # validate input arguments
-    output_dataset_path = str(get_full_path(args.output_dataset_path, args.annotation_version))
-    verify_path(args.input_clip_path)
-    verify_path(args.output_dataset_path, level=1)
-    create_path(args.output_dataset_path)
+    output_dataset_path = str(get_full_path(settings.output_dataset_path, settings.annotation_version))
+    verify_path(settings.input_clip_path)
+    verify_path(settings.output_dataset_path, level=1)
+    create_path(settings.output_dataset_path)
 
     # get input samples
     samples = extract_shard_tasks(
-        args.input_clip_path,
+        settings.input_clip_path,
         output_dataset_path,
-        args.input_s3_profile_name,
-        args.output_s3_profile_name,
-        args.annotation_version,
-        verbose=args.verbose,
+        settings.common.input_s3_profile_name,
+        settings.common.output_s3_profile_name,
+        settings.annotation_version,
+        verbose=settings.common.verbose,
     )
-    logger.info(f"Found {len(samples)} samples under input path {args.input_clip_path}.")
+    logger.info(f"Found {len(samples)} samples under input path {settings.input_clip_path}.")
 
-    if args.input_semantic_dedup_path is not None:
+    if settings.input_semantic_dedup_path is not None:
         samples = filter_shard_tasks_by_semantic_dedup(
             samples,
-            args.input_semantic_dedup_path,
-            args.input_semantic_dedup_s3_profile_name,
-            args.semantic_dedup_epsilon,
-            verbose=args.verbose,
+            settings.input_semantic_dedup_path,
+            settings.input_semantic_dedup_s3_profile_name,
+            settings.semantic_dedup_epsilon,
+            verbose=settings.common.verbose,
         )
         logger.info(f"After semantic deduplication, {len(samples)} samples remain.")
 
     # Convert target tar size from MB to bytes
-    target_tar_size_bytes = args.target_tar_size_mb * 1024 * 1024
+    target_tar_size_bytes = settings.target_tar_size_mb * 1024 * 1024
 
     tasks, all_bins, num_dropped_samples = _group_samples_into_tasks(
         samples,
-        drop_small_shards=args.drop_small_shards,
-        max_tars_per_part=args.max_tars_per_part,
+        drop_small_shards=settings.drop_small_shards,
+        max_tars_per_part=settings.max_tars_per_part,
         target_tar_size_bytes=target_tar_size_bytes,
-        min_clips_per_tar=args.min_clips_per_tar,
+        min_clips_per_tar=settings.min_clips_per_tar,
         output_path=output_dataset_path,
-        output_s3_profile_name=args.output_s3_profile_name,
+        output_s3_profile_name=settings.common.output_s3_profile_name,
     )
     logger.info(f"Dropped {num_dropped_samples} samples during sharding process.")
     if len(tasks) == 0:
@@ -259,18 +265,18 @@ def _shard(args: argparse.Namespace) -> None:
 
     stages: list[CuratorStage | CuratorStageSpec] = [
         T5StageForShard(
-            caption_fields=[f"{args.captioning_algorithm}_caption"],
-            verbose=args.verbose,
-            log_stats=args.perf_profile,
+            caption_fields=[f"{settings.captioning_algorithm}_caption"],
+            verbose=settings.common.verbose,
+            log_stats=settings.common.perf_profile,
         ),
         CuratorStageSpec(
             DownloadPackUpload(
-                input_path=args.input_clip_path,
+                input_path=settings.input_clip_path,
                 output_path=output_dataset_path,
-                input_s3_profile_name=args.input_s3_profile_name,
-                output_s3_profile_name=args.output_s3_profile_name,
-                verbose=args.verbose,
-                log_stats=args.perf_profile,
+                input_s3_profile_name=settings.common.input_s3_profile_name,
+                output_s3_profile_name=settings.common.output_s3_profile_name,
+                verbose=settings.common.verbose,
+                log_stats=settings.common.perf_profile,
             ),
             num_workers_per_node=8,
         ),
@@ -279,9 +285,10 @@ def _shard(args: argparse.Namespace) -> None:
     output_packets: list[ShardPipeTask] = run_pipeline(
         tasks,
         stages,
-        args=args,
+        args=profiling_args_ns,
     )
-    if args.perf_profile:
+    sync_common_from_namespace(settings, profiling_args_ns)
+    if settings.common.perf_profile:
         total_object_size = 0
         for packet in output_packets:
             total_object_size += packet.get_major_size()
@@ -289,12 +296,12 @@ def _shard(args: argparse.Namespace) -> None:
 
     write_shard_summary(
         output_dataset_path,
-        args.output_dataset_path,
-        args.output_s3_profile_name,
+        settings.output_dataset_path,
+        settings.common.output_s3_profile_name,
         all_bins,
-        args.max_tars_per_part,
+        settings.max_tars_per_part,
         output_packets,
-        perf_profile=args.perf_profile,
+        perf_profile=settings.common.perf_profile,
     )
 
     elapsed_time = (time.time() - start_time) / 60
@@ -304,81 +311,13 @@ def _shard(args: argparse.Namespace) -> None:
 def _setup_parser(parser: argparse.ArgumentParser) -> None:
     """Set up the parser for the shard pipeline.
 
-    This function adds arguments to the parser for the shard pipeline.
+    Registers shard-only flags then shared flags (same order as settings construction in :func:`shard`).
 
     Args:
         parser: The parser to add arguments to.
 
     """
-    parser.add_argument(
-        "--input-clip-path",
-        type=str,
-        required=True,
-        help="S3 or local path which has input processed clips",
-    )
-    parser.add_argument(
-        "--output-dataset-path",
-        type=str,
-        required=True,
-        help="S3 or local path to store output webdataset",
-    )
-    parser.add_argument(
-        "--captioning-algorithm",
-        type=str,
-        default="qwen",
-        choices=sorted(ALL_CAPTION_ALGOS),
-        help="Captioning algorithm used in annotation pipeline.",
-    )
-    parser.add_argument(
-        "--annotation-version",
-        type=str,
-        default="v0",
-        help="Annotation version to use for clip metadata",
-    )
-    parser.add_argument(
-        "--input-semantic-dedup-path",
-        type=str,
-        default=None,
-        help="S3 or local path to parquet files containing semantically deduplicated clip IDs",
-    )
-    parser.add_argument(
-        "--input-semantic-dedup-s3-profile-name",
-        type=str,
-        default="default",
-        help="S3 profile name to use for input semantic dedup S3 path.",
-    )
-    parser.add_argument(
-        "--semantic-dedup-epsilon",
-        type=float,
-        default=0.01,
-        help="Epsilon threshold for semantic dedup (default: 0.01). "
-        "Clips with cosine similarity ≥ (1 - epsilon) will be considered duplicates.",
-    )
-    parser.add_argument(
-        "--max-tars-per-part",
-        type=int,
-        default=_MAX_TARS_PER_PART,
-        help=f"Maximum number of tar archives per part (default: {_MAX_TARS_PER_PART}).",
-    )
-    parser.add_argument(
-        "--target-tar-size-mb",
-        type=int,
-        default=_TARGET_TAR_SIZE_BYTES // (1024 * 1024),
-        help=f"Target size in MB for each tar archive (default: {_TARGET_TAR_SIZE_BYTES // (1024 * 1024)}).",
-    )
-    parser.add_argument(
-        "--min-clips-per-tar",
-        type=int,
-        default=_MIN_CLIPS_PER_TAR,
-        help=f"Minimum number of clips required per tar archive (default: {_MIN_CLIPS_PER_TAR}).",
-    )
-    parser.add_argument(
-        "--drop-small-shards",
-        action=argparse.BooleanOptionalAction,
-        default=False,
-        help="Drop shards that have fewer than --min-clips-per-tar clips (default: False).",
-    )
-    # add common args applicable to all pipelines
+    add_shard_args(parser)
     add_common_args(parser)
 
 

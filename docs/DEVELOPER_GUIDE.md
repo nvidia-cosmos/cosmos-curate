@@ -15,6 +15,7 @@
     - [Unit Tests](#unit-tests)
     - [Model and Stage Tests](#model-and-stage-tests)
     - [End-to-End Pipeline Tests](#end-to-end-pipeline-tests)
+  - [Pipeline CLI settings (attrs)](#pipeline-cli-settings-attrs)
   - [Best Practices](#best-practices)
   - [Environment Variables](#environment-variables)
   - [Contributing](#contributing)
@@ -215,6 +216,35 @@ tests/cosmos_curate/pipelines/video/filtering/aesthetics/test_aesthetic_filter.p
 Run the reference video pipeline based on instructions in [Run the Split-Annotate Pipeline](./client/END_USER_GUIDE.md#run-the-reference-video-pipeline) section to make sure everything works.
 
 The CI will test more scenarios.
+
+## Pipeline CLI settings (attrs)
+
+
+**Where it lives**
+
+- Shared flags (S3 profiles, execution mode, limit, model weights, profiling): [`cosmos_curate/pipelines/common_pipeline_settings.py`](../cosmos_curate/pipelines/common_pipeline_settings.py) — class `CommonPipelineSettings`, helpers `cli()`, `add_settings_cli_arguments`, and `CommonPipelineSettings.from_namespace`.
+- Shard-only flags: [`cosmos_curate/pipelines/video/shard_pipeline_settings.py`](../cosmos_curate/pipelines/video/shard_pipeline_settings.py) — class `ShardPipelineSettings`, `add_shard_args`.
+- Parser registration used by multiple entry points: [`cosmos_curate/pipelines/pipeline_args.py`](../cosmos_curate/pipelines/pipeline_args.py) (`add_common_args`, `add_profiling_args`).
+
+**How to add a new flag (shard example)**
+
+1. **Add an attrs field** on the right class (`ShardPipelineSettings` for shard-only, `CommonPipelineSettings` only if every consumer should see the flag).
+2. Put **validation** on the field with `validator=` (for example `validators.ge(1)`, `validators.in_(choices)`, `validators.min_len(1)`). This runs whenever the settings instance is constructed (CLI, NVCF JSON → `Namespace`, and any code path that builds the class explicitly).
+3. Attach CLI metadata with **`metadata=cli(...)`** on the same field. Typical keys are `help=`, `default=`, and when needed `arg_type=int` / `float`, `choices=frozenset(...)`, `required=True`, `action=` or `action=argparse.BooleanOptionalAction`, or a custom `flag="--my-name"`. The field name becomes argparse **`dest`** unless you override the flag string only (the dest stays the field name).
+4. **Register** flags by calling `add_settings_cli_arguments(parser, YourSettingsClass)` (or the thin wrappers `add_shard_args` / `add_common_args`). Do not add a second manual `add_argument` for the same option.
+5. **Build settings** at the pipeline entry point from the parsed `Namespace` (see `shard()` in [`sharding_pipeline.py`](../cosmos_curate/pipelines/video/sharding_pipeline.py): `CommonPipelineSettings.from_namespace(args)` plus shard fields keyed by field name). Pipeline logic should take **`ShardPipelineSettings`** (or the relevant settings type), not raw `args`, for the refactored paths.
+6. **attrs field order**: optional fields with defaults cannot appear before required fields. Keep pipeline-specific constraints in mind (see existing comments on `ShardPipelineSettings`).
+
+**NVCF and Slurm**
+
+- **NVCF** builds `argparse.Namespace(**args)` from JSON. Keys must use Python **dest** names (`input_clip_path`, not `--input-clip-path`). Values are **not** re-parsed through argparse’s `type=` / `choices=`, but **attrs validators still run** when settings are constructed. Put every constraint you need for cloud invokes on **`validator=`** (and keep `choices=` in `cli()` aligned for CLI users).
+- **Slurm** usually runs the same `python -m ... run_pipeline ...` CLI as local development, so argparse and attrs both apply.
+
+**Tests**
+
+- [`tests/cosmos_curate/pipelines/video/test_shard_pipeline_settings.py`](../tests/cosmos_curate/pipelines/video/test_shard_pipeline_settings.py) checks parser `dest` sets against settings fields and exercises attrs validation after parse.
+
+Other large pipelines may still use legacy patterns until migrated; follow the existing module when changing them.
 
 ## Best Practices
 
