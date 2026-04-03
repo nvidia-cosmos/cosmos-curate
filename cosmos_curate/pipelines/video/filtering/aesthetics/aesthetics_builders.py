@@ -20,6 +20,7 @@ import attrs
 
 from cosmos_curate.core.interfaces.stage_interface import CuratorStage, CuratorStageSpec
 from cosmos_curate.pipelines.video.filtering.aesthetics.aesthetic_filter_stages import AestheticFilterStage
+from cosmos_curate.pipelines.video.filtering.aesthetics.artificial_text_filter_stage import ArtificialTextFilterStage
 from cosmos_curate.pipelines.video.filtering.aesthetics.qwen_filter_stages import (
     QwenFilteringStage,
     QwenInputPreparationStageFiltering,
@@ -35,6 +36,23 @@ class AestheticFilterConfig:
     score_threshold: float
     reduction: Literal["mean", "min"] = "min"
     gpus_per_worker: float = 0.25
+    verbose: bool = False
+    perf_profile: bool = False
+
+
+@attrs.define(frozen=True)
+class ArtificialTextFilterConfig:
+    """Configuration for artificial text (overlay/post-production) filtering."""
+
+    gpus_per_worker: float = 0.25
+    use_corner_detection: bool = True
+    frame_interval: int = 3
+    min_duration_frames: int = 10
+    min_duration_frames_corner_ratio: float = 0.1
+    stability_iou_threshold: float = 0.9
+    ignore_corner_region: bool = False
+    corner_x_margin_norm: float = 0.1
+    corner_y_margin_norm: float = 0.1
     verbose: bool = False
     perf_profile: bool = False
 
@@ -101,6 +119,27 @@ def build_aesthetic_filter_stages(config: AestheticFilterConfig) -> list[Curator
             num_gpus_per_worker=config.gpus_per_worker,
             verbose=config.verbose,
             log_stats=config.perf_profile,
+        ),
+    ]
+
+
+def build_artificial_text_filter_stages(config: ArtificialTextFilterConfig) -> list[CuratorStage | CuratorStageSpec]:
+    """Construct and return the artificial text filter stage."""
+    return [
+        CuratorStageSpec(
+            ArtificialTextFilterStage(
+                num_gpus_per_worker=config.gpus_per_worker,
+                use_corner_detection=config.use_corner_detection,
+                frame_interval=config.frame_interval,
+                min_duration_frames=config.min_duration_frames,
+                min_duration_frames_corner_ratio=config.min_duration_frames_corner_ratio,
+                stability_iou_threshold=config.stability_iou_threshold,
+                ignore_corner_region=config.ignore_corner_region,
+                corner_x_margin_norm=config.corner_x_margin_norm,
+                corner_y_margin_norm=config.corner_y_margin_norm,
+                verbose=config.verbose,
+                log_stats=config.perf_profile,
+            ),
         ),
     ]
 

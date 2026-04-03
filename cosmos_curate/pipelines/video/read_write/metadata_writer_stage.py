@@ -747,6 +747,8 @@ class ClipWriterStage(CuratorStage):
             data["qwen_type_classification"] = clip.qwen_type_classification
         if clip.qwen_rejection_stage is not None:
             data["qwen_rejection_stage"] = clip.qwen_rejection_stage
+        if clip.has_artificial_text is not None:
+            data["post_production_text"] = bool(clip.has_artificial_text)
         if len(clip.errors) > 0:
             data["errors"] = list(clip.errors)
         has_caption = False
@@ -870,6 +872,7 @@ class ClipWriterStage(CuratorStage):
             "num_clips_filtered_by_aesthetic": video.clip_stats.num_filtered_by_aesthetic,
             "num_clips_filtered_by_qwen_classifier": video.clip_stats.num_filtered_by_qwen_classifier,
             "num_clips_filtered_by_qwen_semantic": video.clip_stats.num_filtered_by_qwen_semantic,
+            "num_clips_filtered_by_artificial_text": video.clip_stats.num_filtered_by_artificial_text,
             "num_clips_passed": video.clip_stats.num_passed,
             "num_clips_transcoded": video.clip_stats.num_transcoded,
             "num_clips_with_embeddings": video.clip_stats.num_with_embeddings,

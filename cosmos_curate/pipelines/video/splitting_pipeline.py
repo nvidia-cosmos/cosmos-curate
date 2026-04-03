@@ -88,9 +88,11 @@ from cosmos_curate.pipelines.video.embedding.embedding_builders import (
 )
 from cosmos_curate.pipelines.video.filtering.aesthetics.aesthetics_builders import (
     AestheticFilterConfig,
+    ArtificialTextFilterConfig,
     QwenFilterConfig,
     QwenVideoClassifierConfig,
     build_aesthetic_filter_stages,
+    build_artificial_text_filter_stages,
     build_qwen_filter_classifier_stages,
 )
 from cosmos_curate.pipelines.video.filtering.motion.motion_builders import (
@@ -427,6 +429,26 @@ def _assemble_stages(  # noqa: C901, PLR0912, PLR0915
                     score_threshold=args.aesthetic_threshold,
                     reduction=args.aesthetic_reduction,
                     gpus_per_worker=args.aesthetic_gpus_per_worker,
+                    verbose=args.verbose,
+                    perf_profile=args.perf_profile,
+                )
+            )
+        )
+
+    # --- Artificial text filter (optional) ---
+    if getattr(args, "artificial_text_filter", "disable") != "disable":
+        stages.extend(
+            build_artificial_text_filter_stages(
+                ArtificialTextFilterConfig(
+                    gpus_per_worker=args.artificial_text_gpus_per_worker,
+                    use_corner_detection=args.artificial_text_use_corner_detection,
+                    frame_interval=args.artificial_text_frame_interval,
+                    min_duration_frames=args.artificial_text_min_duration_frames,
+                    min_duration_frames_corner_ratio=args.artificial_text_corner_ratio,
+                    stability_iou_threshold=args.artificial_text_stability_iou_threshold,
+                    ignore_corner_region=args.artificial_text_ignore_corner_region,
+                    corner_x_margin_norm=args.artificial_text_corner_x_margin,
+                    corner_y_margin_norm=args.artificial_text_corner_y_margin,
                     verbose=args.verbose,
                     perf_profile=args.perf_profile,
                 )
@@ -1182,6 +1204,72 @@ def _setup_parser(parser: argparse.ArgumentParser) -> None:  # noqa: PLR0915
         type=float,
         default=0.25,
         help="Number of GPUs per worker allocated to aesthetic filter.",
+    )
+    parser.add_argument(
+        "--artificial-text-filter",
+        choices=["disable", "enable"],
+        default="disable",
+        help=(
+            "Whether to enable artificial text filtering for video clips.\n"
+            "  - disable: Disable artificial text filtering (default).\n"
+            "  - enable: Filter clips that contain overlay/artificial text (e.g. captions, logos)."
+        ),
+    )
+    parser.add_argument(
+        "--artificial-text-frame-interval",
+        type=int,
+        default=3,
+        help="Sample every N frames for artificial text detection (with --artificial-text-filter enable).",
+    )
+    parser.add_argument(
+        "--artificial-text-gpus-per-worker",
+        type=float,
+        default=0.25,
+        help="GPUs per worker for artificial text filter (with --artificial-text-filter enable).",
+    )
+    parser.add_argument(
+        "--no-artificial-text-corner-detection",
+        dest="artificial_text_use_corner_detection",
+        action="store_false",
+        default=True,
+        help="Ignore corner text (e.g. logos); only detect stable overlay text (with --artificial-text-filter).",
+    )
+    parser.add_argument(
+        "--ignore-artificial-text-corner-region",
+        dest="artificial_text_ignore_corner_region",
+        action="store_true",
+        default=False,
+        help="Drop detections in corner zones; only center/non-corner text can filter (with --artificial-text-filter).",
+    )
+    parser.add_argument(
+        "--artificial-text-corner-x-margin",
+        type=float,
+        default=0.1,
+        help="Normalized margin from left/right (0-1) for corner zone; default 0.1 (with --artificial-text-filter).",
+    )
+    parser.add_argument(
+        "--artificial-text-corner-y-margin",
+        type=float,
+        default=0.1,
+        help="Normalized margin from top/bottom (0-1) for corner zone; default 0.1 (with --artificial-text-filter).",
+    )
+    parser.add_argument(
+        "--artificial-text-min-duration-frames",
+        type=int,
+        default=10,
+        help="Min frames text must appear to count as overlay (with --artificial-text-filter).",
+    )
+    parser.add_argument(
+        "--artificial-text-corner-ratio",
+        type=float,
+        default=0.1,
+        help="Min fraction of frames with corner text (e.g. logo) to flag (with --artificial-text-filter).",
+    )
+    parser.add_argument(
+        "--artificial-text-stability-iou-threshold",
+        type=float,
+        default=0.9,
+        help="Stability threshold (0-1) for overlay; higher = only very fixed text (with --artificial-text-filter).",
     )
     parser.add_argument(
         "--qwen-filter",

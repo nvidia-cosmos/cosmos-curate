@@ -157,6 +157,11 @@ vllm = { version = "==0.17.1", index = "https://wheels.vllm.ai/0.17.1/cu130" } #
 einops = "*"
 transformers = "==4.55.4" # legacy models (cosmos-embed1, internvideo2) require older transformers
 
+# PaddleOCR for artificial text (overlay/post-production) detection. Isolated from unified's vllm dependencies.
+[feature.paddle-ocr.target.linux-64.pypi-dependencies]
+paddleocr = "*"
+
+
 # Distributed tracing (OpenTelemetry).
 # Included in ALL environments because the Ray tracing hook
 # (tracing_hook.py:setup_tracing) runs on every worker, regardless
@@ -189,6 +194,6 @@ cuml = ["cuml", "tracing"]
 default = ["core", "tracing", "profiling"]
 legacy-transformers = ["core", "legacy-transformers", "tracing", "profiling"]
 model-download = ["model-download", "tracing"]
-paddle-ocr = ["core", "tracing", "profiling"]
+paddle-ocr = ["core", "paddle-ocr", "tracing", "profiling"]
 transformers = ["core", "transformers", "tracing", "profiling"]
 unified = ["core", "transformers", "unified", "tracing", "profiling"]

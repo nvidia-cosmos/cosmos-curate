@@ -169,5 +169,19 @@
         "filelist": null,
         "precision": "FP32",
         "nvcf_model_id": "sn4kehead_transnetv2"
+    },
+    "paddle_ocr_det": {
+        "model_id": "PaddlePaddle/PP-OCRv4_mobile_det",
+        "version": "3cc09f3a5b424e8e010abc7a4271aea12999c2f7",
+        "filelist": null,
+        "precision": "FP32",
+        "nvcf_model_id": "paddle_ocr_det"
+    },
+    "paddle_ocr_rec": {
+        "model_id": "PaddlePaddle/PP-OCRv4_mobile_rec",
+        "version": "a2deb05cb05813be2da3365672881aa496d1452b",
+        "filelist": null,
+        "precision": "FP32",
+        "nvcf_model_id": "paddle_ocr_rec"
     }
 }

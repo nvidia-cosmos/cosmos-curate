@@ -176,6 +176,9 @@ class Clip:
     motion_score_per_patch_min_256: float | None = None
     # aesthetic
     aesthetic_score: float | None = None
+    # artificial text (overlay / post-production text filter)
+    has_artificial_text: bool | None = None
+    artificial_text_segments: list[dict[str, Any]] | None = None
     # embedding frames; wrapped in LazyData for API consistency and Phase 2
     # split-field ObjectRef potential (already numpy, so zero-copy via PEP 574).
     cosmos_embed1_frames: LazyData[npt.NDArray[np.float32]] = attrs.field(factory=LazyData, converter=LazyData.coerce)  # type: ignore[misc]
@@ -282,6 +285,7 @@ class ClipStats:
     num_filtered_by_aesthetic: int = 0
     num_filtered_by_qwen_classifier: int = 0
     num_filtered_by_qwen_semantic: int = 0
+    num_filtered_by_artificial_text: int = 0
     num_passed: int = 0
     num_transcoded: int = 0
     num_with_embeddings: int = 0
@@ -301,6 +305,7 @@ class ClipStats:
         self.num_filtered_by_aesthetic += other.num_filtered_by_aesthetic
         self.num_filtered_by_qwen_classifier += other.num_filtered_by_qwen_classifier
         self.num_filtered_by_qwen_semantic += other.num_filtered_by_qwen_semantic
+        self.num_filtered_by_artificial_text += other.num_filtered_by_artificial_text
         self.num_passed += other.num_passed
         self.num_transcoded += other.num_transcoded
         self.num_with_embeddings += other.num_with_embeddings
