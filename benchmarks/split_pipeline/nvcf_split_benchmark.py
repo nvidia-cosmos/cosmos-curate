@@ -208,6 +208,7 @@ def report_metrics(  # noqa: PLR0913
     gpus_per_node: int,
     *,
     caption: bool,
+    splitting_algorithm: str,
     kratos_metrics_endpoint: str | None = None,
     kratos_secrets: KratosSecrets | None = None,
     metrics_path: str | None = None,
@@ -220,6 +221,7 @@ def report_metrics(  # noqa: PLR0913
         num_nodes: Number of nodes used in the benchmark.
         gpus_per_node: Number of GPUs per node.
         caption: Whether captions are enabled.
+        splitting_algorithm: Splitting algorithm used.
         kratos_metrics_endpoint: Endpoint for sending metrics.
             Must be provided if reporting metrics to Kratos.
         kratos_secrets: Authentication secrets for metrics endpoint.
@@ -234,7 +236,9 @@ def report_metrics(  # noqa: PLR0913
     logger.info(f"Getting summary metrics from {summary_path}")
     summary_data = _read_summary_json(summary_path, transport_params)
 
-    summary_metrics = make_summary_metrics(summary_data, num_nodes, gpus_per_node, caption=caption, env="nvcf")
+    summary_metrics = make_summary_metrics(
+        summary_data, num_nodes, gpus_per_node, caption=caption, env="nvcf", splitting_algorithm=splitting_algorithm
+    )
 
     logger.info("Summary metrics:")
     print_json(json.dumps(summary_metrics, indent=2))
@@ -276,6 +280,7 @@ def nvcf_split_benchmark(  # noqa: PLR0913
     max_concurrency: int,
     limit: int,
     caption: int,
+    splitting_algorithm: str,
     num_nodes: int,
     gpus_per_node: int,
     kratos_metrics_endpoint: str,
@@ -315,6 +320,7 @@ def nvcf_split_benchmark(  # noqa: PLR0913
         {
             "input_video_path": s3_input_prefix,
             "captioning_algorithm": captioning_algorithm,
+            "splitting_algorithm": splitting_algorithm,
             "qwen_preprocess_dtype": "uint8" if caption == 1 else "float16",
             "generate_captions": caption == 1,
             "limit": limit,
@@ -350,7 +356,10 @@ aws_region = {s3_secrets.aws_region}
         )
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        logger.info(f"Benchmarking with {caption=} {num_nodes=}, input: {s3_input_prefix}, output: {s3_output_prefix}")
+        logger.info(
+            f"Benchmarking with {caption=} {num_nodes=} {splitting_algorithm=}, "
+            f"input: {s3_input_prefix}, output: {s3_output_prefix}"
+        )
         tmpdir_path = Path(tmpdir)
 
         deploy_config = tmpdir_path / "deploy.json"
@@ -398,6 +407,7 @@ aws_region = {s3_secrets.aws_region}
             num_nodes=num_nodes,
             gpus_per_node=gpus_per_node,
             caption=bool(caption),
+            splitting_algorithm=splitting_algorithm,
             kratos_secrets=kratos_secrets,
             kratos_metrics_endpoint=kratos_metrics_endpoint,
             metrics_path=metrics_path,
@@ -411,6 +421,13 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--funcid", type=str, required=True, help="Function ID to run.")
     parser.add_argument("--version", type=str, required=True, help="Function version to use.")
     parser.add_argument("--captioning-algorithm", type=str, required=True, help="Captioning algorithm to use")
+    parser.add_argument(
+        "--splitting-algorithm",
+        type=str,
+        required=True,
+        choices=["transnetv2", "fixed-stride"],
+        help="Splitting algorithm to use.",
+    )
     parser.add_argument(
         "--ngc-org-env",
         type=str,
@@ -577,6 +594,7 @@ def main() -> None:
         max_concurrency=args.max_concurrency,
         limit=args.limit,
         caption=args.caption,
+        splitting_algorithm=args.splitting_algorithm,
         num_nodes=args.num_nodes,
         gpus_per_node=args.gpus_per_node,
         kratos_metrics_endpoint=args.kratos_metrics_endpoint,

@@ -70,6 +70,7 @@ def test_report_metrics_happy_path(  # noqa: PLR0913
         num_nodes=test_num_nodes,
         gpus_per_node=test_gpus_per_node,
         caption=test_caption,
+        splitting_algorithm="transnetv2",
         kratos_metrics_endpoint=test_kratos_metrics_endpoint,
         kratos_secrets=test_kratos_secrets,
     )
@@ -77,7 +78,12 @@ def test_report_metrics_happy_path(  # noqa: PLR0913
     # Assert
     mock_json_load.assert_called_once()
     mock_make_summary_metrics.assert_called_once_with(
-        test_summary_data, test_num_nodes, test_gpus_per_node, caption=test_caption, env="nvcf"
+        test_summary_data,
+        test_num_nodes,
+        test_gpus_per_node,
+        caption=test_caption,
+        env="nvcf",
+        splitting_algorithm="transnetv2",
     )
     mock_make_cloudevent.assert_called_once_with(test_summary_metrics)
     mock_push_cloudevent.assert_called_once_with(test_cloudevent, test_kratos_metrics_endpoint, test_kratos_secrets)

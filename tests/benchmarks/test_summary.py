@@ -83,7 +83,14 @@ def test_make_summary_metrics(mock_video_calc: MagicMock, mock_datetime: MagicMo
     mock_video_calc.return_value = test_video_hours_per_day_per_gpu
 
     # Act
-    result = make_summary_metrics(test_summary, test_num_nodes, test_gpus_per_node, caption=caption, env=test_env)
+    result = make_summary_metrics(
+        test_summary,
+        test_num_nodes,
+        test_gpus_per_node,
+        caption=caption,
+        env=test_env,
+        splitting_algorithm="transnetv2",
+    )
 
     # Assert
     expected_result = {
@@ -92,7 +99,8 @@ def test_make_summary_metrics(mock_video_calc: MagicMock, mock_datetime: MagicMo
         "num_nodes": test_num_nodes,
         "time": test_timestamp,
         "video_hours_per_day_per_gpu": test_video_hours_per_day_per_gpu,
-        "caption": caption,
+        "caption": int(caption),
+        "splitting_algorithm": "transnetv2",
     }
 
     assert result == expected_result
@@ -109,7 +117,7 @@ def test_make_summary_metrics_missing_keys() -> None:
 
     # Act & Assert
     with pytest.raises(ValueError, match=r"Missing keys in summary\.json"):
-        make_summary_metrics(incomplete_summary, 1, 1, caption=True, env="test")
+        make_summary_metrics(incomplete_summary, 1, 1, caption=True, env="test", splitting_algorithm="transnetv2")
 
 
 @pytest.mark.parametrize(
@@ -148,4 +156,4 @@ def test_make_summary_metrics_specific_missing_key(missing_key: str) -> None:
 
     # Act & Assert
     with pytest.raises(ValueError, match=f"Missing keys in summary.json: \\['{missing_key}'\\]"):
-        make_summary_metrics(incomplete_summary, 1, 1, caption=True, env="test")
+        make_summary_metrics(incomplete_summary, 1, 1, caption=True, env="test", splitting_algorithm="transnetv2")

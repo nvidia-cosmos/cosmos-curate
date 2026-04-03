@@ -24,13 +24,19 @@ LIMIT_INPUT_VIDEOS=5000
 export RUST_BACKTRACE=1
 
 # Run benchmark
-for caption in 1 0 ; do
-  for num_nodes in 4 2 1; do
-    PERF_S3_OUTPUT_DIR="${PERF_S3_ROOT_DIR}/${date_str}_nodes_${num_nodes}_caption_${caption}";
+# Defaults: caption=1 (performance-critical path), nodes=4 2, algorithms=transnetv2 fixed-stride.
+# Override via env vars for targeted ad-hoc runs without editing the script.
+caption="${CAPTION:-1}"
+IFS=' ' read -ra _num_nodes_list      <<< "${NUM_NODES_LIST:-4 2}"
+IFS=' ' read -ra _splitting_algo_list <<< "${SPLITTING_ALGORITHM_LIST:-transnetv2 fixed-stride}"
+for num_nodes in "${_num_nodes_list[@]}"; do
+  for splitting_algorithm in "${_splitting_algo_list[@]}"; do
+    PERF_S3_OUTPUT_DIR="${PERF_S3_ROOT_DIR}/${date_str}_nodes_${num_nodes}_caption_${caption}_${splitting_algorithm}";
     echo "PERF_S3_OUTPUT_DIR: ${PERF_S3_OUTPUT_DIR}"
     micromamba run -n curator python benchmarks/split_pipeline/nvcf_split_benchmark.py \
       --num-nodes "${num_nodes}" \
       --caption "${caption}" \
+      --splitting-algorithm "${splitting_algorithm}" \
       --captioning-algorithm "qwen" \
       --funcid "${PERF_NVCF_FUNC_ID}" \
       --version "${PERF_NVCF_FUNC_VERSION}" \

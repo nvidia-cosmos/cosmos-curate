@@ -36,8 +36,8 @@ def video_hours_per_day_per_gpu(
     return (video_seconds * 24) / (60 * runtime_minutes * num_nodes * gpus_per_node)
 
 
-def make_summary_metrics(
-    summary: dict[str, Any], num_nodes: int, gpus_per_node: int, *, caption: bool, env: str
+def make_summary_metrics(  # noqa: PLR0913
+    summary: dict[str, Any], num_nodes: int, gpus_per_node: int, *, caption: bool, env: str, splitting_algorithm: str
 ) -> dict[str, Any]:
     """Get metrics from summary.json.
 
@@ -47,6 +47,7 @@ def make_summary_metrics(
         gpus_per_node: Number of GPUs per node.
         caption: Whether captions are enabled.
         env: Environment, nvcf or slurm.
+        splitting_algorithm: Splitting algorithm used.
 
     Returns:
         Summary metrics from the pipeline
@@ -96,6 +97,7 @@ def make_summary_metrics(
                 video_seconds, runtime_minutes, num_nodes, gpus_per_node
             ),
             "caption": int(caption),
+            "splitting_algorithm": splitting_algorithm,
         }
     )
 
