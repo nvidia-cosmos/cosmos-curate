@@ -35,7 +35,7 @@ get_image_tag() {
 }
 
 # Compute buildx registry cache references for --cache-from / --cache-to.
-# Mirrors the compute_cache_refs anchor in .gitlab-ci.yml.
+# Used by .build_curator_arch template in .gitlab-ci.yml.
 #
 # Args: image_repo, platform
 # Outputs: Exports CACHE_FROM_ARGS and CACHE_TO_ARG for use by callers.

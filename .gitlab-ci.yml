@@ -37,6 +37,7 @@ variables:
 
   # GitLab container registry
   CURATOR_IMAGE: ${CI_REGISTRY_IMAGE}/curator
+  CURATOR_SLIM_IMAGE: ${CI_REGISTRY_IMAGE}/curator-slim
   CI_BUILDER_IMAGE_REPO: ${CI_REGISTRY_IMAGE}/ci-builder
   CI_BUILDER_IMAGE: ${CI_BUILDER_IMAGE_REPO}:latest
   BUILDX_BUILDER_NAME: ci-cosmos-builder
@@ -222,16 +223,6 @@ stages:
     IMAGE_TAG="${BRANCH_PREFIX}_${CI_COMMIT_TIMESTAMP%%T*}_${CI_COMMIT_SHORT_SHA}"
     echo "Image tag: ${IMAGE_TAG}"
 
-  # Compute buildx registry cache references for --cache-from / --cache-to.
-  #
-  # Cache hierarchy and tags are defined in .gitlab/scripts/common.sh:get_cache_refs.
-  # This anchor only sources the script and materializes CACHE_FROM_ARGS/CACHE_TO_ARG.
-  compute_cache_refs: &compute_cache_refs |
-    source .gitlab/scripts/common.sh
-    get_cache_refs "${CURATOR_IMAGE}" "${PLATFORM}"
-    echo "Cache from: ${CACHE_FROM_ARGS}"
-    echo "Cache to: ${CACHE_TO_ARG}"
-
   # Set up persistent buildx builder (see .gitlab/scripts/common.sh for details).
   # Must run AFTER docker_login so the builder can reach the registry.
   setup_buildx_builder: &setup_buildx_builder |
@@ -353,7 +344,7 @@ unit_tests:
     max: 2
     when: always
 
-build_deploy_curator_arch:
+.build_curator_arch:
   stage: build
   parallel:
     matrix:
@@ -371,7 +362,6 @@ build_deploy_curator_arch:
     - source .gitlab/vault/vault-auth.sh
   script:
     - *compute_image_tag
-    - CURATOR_ARCH_IMAGE="${CURATOR_IMAGE}:${IMAGE_TAG}-${PLATFORM}"
     # For web triggers, this is a no-op since we use existing images
     - |
       if [[ "$CI_PIPELINE_SOURCE" == "web" ]]; then
@@ -380,27 +370,38 @@ build_deploy_curator_arch:
       fi
     # Set up environment
     - *docker_login
-    # Set up buildx builder with docker-container driver (required for registry cache)
     - *setup_buildx_builder
     - *setup_micromamba
     - *setup_curator_cli
-    - *compute_cache_refs
+    - source .gitlab/scripts/common.sh
+    - get_cache_refs "${BUILD_IMAGE_REPO}" "${PLATFORM}"
     # Build and push in a single step (BuildKit pushes directly to registry)
     - |
       cosmos-curate image build \
+      ${BUILD_EXTRA_ARGS:-} \
       --curator-path . \
-      --image-name ${CURATOR_IMAGE} \
+      --image-name ${BUILD_IMAGE_REPO} \
       --image-tag ${IMAGE_TAG}-${PLATFORM} \
       ${CACHE_FROM_ARGS} \
       ${CACHE_TO_ARG} \
       --push \
       --no-load
-    - echo "Built and pushed image ${CURATOR_ARCH_IMAGE} from curator commit [${CI_COMMIT_SHA}]"
-    # Cleanup (builder is kept alive for local cache persistence)
+    - echo "Built and pushed ${BUILD_IMAGE_REPO}:${IMAGE_TAG}-${PLATFORM} from curator commit [${CI_COMMIT_SHA}]"
     - *teardown_micromamba
   retry:
     max: 2
     when: always
+
+build_deploy_curator_arch:
+  extends: .build_curator_arch
+  variables:
+    BUILD_IMAGE_REPO: ${CURATOR_IMAGE}
+
+build_deploy_curator_slim_arch:
+  extends: .build_curator_arch
+  variables:
+    BUILD_IMAGE_REPO: ${CURATOR_SLIM_IMAGE}
+    BUILD_EXTRA_ARGS: "--slim"
 
 build_ci_builder_image_arch:
   stage: build
@@ -447,7 +448,7 @@ build_ci_builder_image:
     max: 2
     when: always
 
-build_deploy_curator:
+.build_curator_manifest:
   stage: build
   rules: *pre_post_merge_and_web_rules
   id_tokens:
@@ -455,13 +456,14 @@ build_deploy_curator:
       aud: ${VAULT_ADDR}
   before_script:
     - source .gitlab/vault/vault-auth.sh
-  needs:
-    - build_deploy_curator_arch
   script:
     - *compute_image_tag
-    - CURATOR_FULL_IMAGE="${CURATOR_IMAGE}:${IMAGE_TAG}"
-    # Export for downstream jobs via dotenv
-    - echo "CURATOR_FULL_IMAGE=${CURATOR_FULL_IMAGE}" >> build.env
+    - MANIFEST_IMAGE="${BUILD_IMAGE_REPO}:${IMAGE_TAG}"
+    # Export for downstream jobs via dotenv (when DOTENV_VAR_NAME is set)
+    - |
+      if [[ -n "${DOTENV_VAR_NAME:-}" ]]; then
+        echo "${DOTENV_VAR_NAME}=${MANIFEST_IMAGE}" >> build.env
+      fi
     # For web triggers, this is a no-op since we use existing images
     - |
       if [[ "$CI_PIPELINE_SOURCE" == "web" ]]; then
@@ -479,25 +481,39 @@ build_deploy_curator:
       fi
     - *docker_login
     - *setup_buildx_builder
-    - CURATOR_AMD64_IMAGE="${CURATOR_IMAGE}:${IMAGE_TAG}-amd64"
-    - CURATOR_ARM64_IMAGE="${CURATOR_IMAGE}:${IMAGE_TAG}-arm64"
+    - AMD64_IMAGE="${BUILD_IMAGE_REPO}:${IMAGE_TAG}-amd64"
+    - ARM64_IMAGE="${BUILD_IMAGE_REPO}:${IMAGE_TAG}-arm64"
+    - docker buildx imagetools create --builder "${BUILDX_BUILDER_NAME}" --tag "${MANIFEST_IMAGE}" "${AMD64_IMAGE}" "${ARM64_IMAGE}"
+    - echo "Created multi-arch image ${MANIFEST_IMAGE} from curator commit [${CI_COMMIT_SHA}]"
+    # Copy to NVCF registry (when NVCF_PUSH_IMAGE is set)
     - |
-      echo "Manifest details:"
-      echo "  Repository: ${NVCF_DEV_IMAGE}"
-      echo "  Final tag: ${IMAGE_TAG}"
-      echo "  AMD64 tag: ${IMAGE_TAG}-amd64"
-      echo "  ARM64 tag: ${IMAGE_TAG}-arm64"
-    - docker buildx imagetools create --builder "${BUILDX_BUILDER_NAME}" --tag "${CURATOR_FULL_IMAGE}" "${CURATOR_AMD64_IMAGE}" "${CURATOR_ARM64_IMAGE}"
-    - echo "Created multi-arch image ${CURATOR_FULL_IMAGE} from curator commit [${CI_COMMIT_SHA}]"
-    - NVCF_IMAGE=${NVCF_DEV_IMAGE}:${IMAGE_TAG}
-    - docker buildx imagetools create --builder "${BUILDX_BUILDER_NAME}" -t "${NVCF_IMAGE}" "${CURATOR_AMD64_IMAGE}" "${CURATOR_ARM64_IMAGE}"
-    - echo "Copied to image ${NVCF_IMAGE} from curator commit [${CI_COMMIT_SHA}]"
-  artifacts:
-    reports:
-      dotenv: build.env
+      if [[ -n "${NVCF_PUSH_IMAGE:-}" ]]; then
+        NVCF_TAG="${NVCF_PUSH_IMAGE}:${IMAGE_TAG}"
+        docker buildx imagetools create --builder "${BUILDX_BUILDER_NAME}" -t "${NVCF_TAG}" "${AMD64_IMAGE}" "${ARM64_IMAGE}"
+        echo "Copied to image ${NVCF_TAG} from curator commit [${CI_COMMIT_SHA}]"
+      fi
   retry:
     max: 2
     when: always
+
+build_deploy_curator:
+  extends: .build_curator_manifest
+  needs:
+    - build_deploy_curator_arch
+  variables:
+    BUILD_IMAGE_REPO: ${CURATOR_IMAGE}
+    DOTENV_VAR_NAME: CURATOR_FULL_IMAGE
+    NVCF_PUSH_IMAGE: ${NVCF_DEV_IMAGE}
+  artifacts:
+    reports:
+      dotenv: build.env
+
+build_deploy_curator_slim:
+  extends: .build_curator_manifest
+  needs:
+    - build_deploy_curator_slim_arch
+  variables:
+    BUILD_IMAGE_REPO: ${CURATOR_SLIM_IMAGE}
 
 # Run GPU tests on SLURM cluster
 gpu_tests:
