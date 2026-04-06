@@ -708,7 +708,7 @@ class ClipWriterStage(CuratorStage):
 
         return clip_stats
 
-    def _make_clip_metadata(  # noqa: C901, PLR0912
+    def _make_clip_metadata(  # noqa: C901, PLR0912, PLR0915
         self, clip: Clip, video_metadata: VideoMetadata, *, filtered: bool = False
     ) -> dict[str, Any]:
         data: dict[str, Any] = {
@@ -762,6 +762,8 @@ class ClipWriterStage(CuratorStage):
             if "qwen_rejection_reasons" in window.caption:
                 curr_filter_window["qwen_rejection_reasons"] = window.caption["qwen_rejection_reasons"]
             data["filtered_windows"].append(curr_filter_window)
+        total_prompt_tokens = 0
+        total_output_tokens = 0
         for window in clip.windows:
             curr_window: dict[str, Any] = {
                 "start_frame": window.start_frame,
@@ -771,12 +773,20 @@ class ClipWriterStage(CuratorStage):
                 if model in window.caption:
                     curr_window[f"{model}_caption"] = window.caption[model]
                     has_caption = True
+                if model in window.token_counts:
+                    counts = window.token_counts[model]
+                    curr_window[f"{model}_prompt_tokens"] = counts.prompt_tokens
+                    curr_window[f"{model}_output_tokens"] = counts.output_tokens
+                    total_prompt_tokens += counts.prompt_tokens
+                    total_output_tokens += counts.output_tokens
             for model in self._enhanced_caption_models:
                 if model in window.enhanced_caption:
                     curr_window[f"{model}_enhanced_caption"] = window.enhanced_caption[model]
             data["windows"].append(curr_window)
         data["valid"] = bool(clip.encoded_data and len(clip.windows) > 0)
         data["has_caption"] = has_caption
+        data["total_prompt_tokens"] = total_prompt_tokens
+        data["total_output_tokens"] = total_output_tokens
         embedding = self._get_clip_embedding(clip)
         if embedding is not None:
             data["embedding"] = embedding.reshape(-1).tolist()
@@ -805,6 +815,8 @@ class ClipWriterStage(CuratorStage):
             }
             self._write_json_data(data_to_write, dest, f"metadata {clip.uuid}", clip.source_video)
         clip_stats.num_with_caption += 1 if data.get("has_caption", False) else 0
+        clip_stats.total_prompt_tokens += data.get("total_prompt_tokens", 0)
+        clip_stats.total_output_tokens += data.get("total_output_tokens", 0)
         clip_duration = clip.span[1] - clip.span[0]
         clip_stats.total_clip_duration += clip_duration
         clip_stats.max_clip_duration = max(clip_stats.max_clip_duration, clip_duration)
@@ -880,6 +892,8 @@ class ClipWriterStage(CuratorStage):
             "num_clips_with_webp": video.clip_stats.num_with_webp,
             "total_clip_duration": video.clip_stats.total_clip_duration,
             "max_clip_duration": video.clip_stats.max_clip_duration,
+            "total_prompt_tokens": video.clip_stats.total_prompt_tokens,
+            "total_output_tokens": video.clip_stats.total_output_tokens,
             "clips": [str(clip.uuid) for clip in video.clips],
             "filtered_clips": [str(clip.uuid) for clip in video.filtered_clips],
             "all_windows": {},

@@ -45,6 +45,7 @@ from cosmos_curate.pipelines.video.captioning.vllm_async_config import VllmAsync
 from cosmos_curate.pipelines.video.utils.data_model import (
     Clip,
     SplitPipeTask,
+    TokenCounts,
     Window,
     get_video_from_task,
 )
@@ -997,11 +998,12 @@ class VllmAsyncCaptionStage(CuratorStage):
                     if rw.rendered_prompt is None:
                         msg = f"rendered_prompt is None for clip {rw.clip.uuid} window {rw.window_index}"
                         raise RuntimeError(msg)  # noqa: TRY301
-                    caption = await self._generate_caption_async(
+                    caption, tc = await self._generate_caption_async(
                         rw.rendered_prompt,
                         rw.sampling_params,
                         rw.frames_shape,
                     )
+                    rw.window.token_counts[self._model_variant] = tc
 
                     if self._stage2_caption and self._stage2_processor is not None:
                         stage2_queue.append((rw, caption))
@@ -1072,10 +1074,16 @@ class VllmAsyncCaptionStage(CuratorStage):
             )
             try:
                 async with semaphore:
-                    caption = await self._generate_caption_async(
+                    caption, s2_tc = await self._generate_caption_async(
                         stage2_rendered,
                         rw.sampling_params,
                         rw.frames_shape,
+                    )
+                    # Accumulate stage-2 tokens on top of stage-1 counts already stored
+                    existing = rw.window.token_counts.get(self._model_variant, TokenCounts())
+                    rw.window.token_counts[self._model_variant] = TokenCounts(
+                        existing.prompt_tokens + s2_tc.prompt_tokens,
+                        existing.output_tokens + s2_tc.output_tokens,
                     )
             finally:
                 del stage2_rendered
@@ -1127,8 +1135,13 @@ class VllmAsyncCaptionStage(CuratorStage):
         rendered_prompt: "ProcessorInputs",
         sampling_params: "SamplingParams",
         frames_shape: tuple[int, ...],
-    ) -> str:
-        """Submit a pre-rendered prompt to the ``AsyncLLM`` engine and return the caption."""
+    ) -> tuple[str, TokenCounts]:
+        """Submit a pre-rendered prompt to the ``AsyncLLM`` engine and return the caption.
+
+        Returns:
+            Tuple of (caption_text, token_counts).
+
+        """
         engine = self._require_engine()
 
         final_output = None
@@ -1143,20 +1156,20 @@ class VllmAsyncCaptionStage(CuratorStage):
             raise RuntimeError(msg)
         out0 = final_output.outputs[0]
         caption_text = out0.text
+        prompt_tokens = len(final_output.prompt_token_ids) if final_output.prompt_token_ids else 0
+        output_tokens = len(out0.token_ids) if out0.token_ids else 0
         if not caption_text or not caption_text.strip():
-            prompt_tokens = len(final_output.prompt_token_ids) if final_output.prompt_token_ids else 0
-            generated_tokens = len(out0.token_ids) if out0.token_ids else 0
             msg = (
                 f"AsyncLLM engine returned empty caption."
                 f" finish_reason={out0.finish_reason!r}"
                 f" prompt_tokens={prompt_tokens}"
-                f" generated_tokens={generated_tokens}"
+                f" output_tokens={output_tokens}"
                 f" min_tokens={sampling_params.min_tokens}"
                 f" cumulative_logprob={out0.cumulative_logprob}"
                 f" frames_shape={frames_shape}"
             )
             raise RuntimeError(msg)
-        return str(caption_text).strip()
+        return str(caption_text).strip(), TokenCounts(prompt_tokens, output_tokens)
 
     async def _process_all_tasks_async(self, tasks: list[SplitPipeTask]) -> None:
         """Submit all pre-rendered windows to the engine for GPU inference."""

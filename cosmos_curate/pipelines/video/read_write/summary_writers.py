@@ -117,7 +117,7 @@ def _worker_read_video_metadata(  # noqa: C901
     return all_video_data
 
 
-def _write_split_result_summary(  # noqa: PLR0913
+def _write_split_result_summary(  # noqa: PLR0913, C901
     input_path: str,
     input_videos_relative: list[str],
     num_input_videos_selected: int,
@@ -173,6 +173,8 @@ def _write_split_result_summary(  # noqa: PLR0913
         "pipeline_run_time": pipeline_run_time,
         "total_video_bytes": video_bytes,
         "num_remuxed_videos": num_remuxed_videos,
+        "total_prompt_tokens": 0,
+        "total_output_tokens": 0,
     }
 
     for key in clip_stats_keys:
@@ -211,7 +213,37 @@ def _write_split_result_summary(  # noqa: PLR0913
                 summary_data["max_clip_duration"],
                 clip_chunk.get("max_clip_duration", 0),
             )
+            summary_data["total_prompt_tokens"] += clip_chunk.get("total_prompt_tokens", 0)
+            summary_data["total_output_tokens"] += clip_chunk.get("total_output_tokens", 0)
         summary_data["total_video_duration"] += data.video_metadata.get("duration", 0)
+
+    # Compute and log captioning throughput metrics
+    total_output = summary_data["total_output_tokens"]
+    total_prompt = summary_data["total_prompt_tokens"]
+    num_captions = summary_data.get("total_num_clips_with_caption", 0)
+    if total_output > 0 and pipeline_run_time > 0:
+        tokens_per_s = round(total_output / (pipeline_run_time * 60), 1)
+        summary_data["output_tokens_per_s"] = tokens_per_s
+        avg_prompt = total_prompt // num_captions if num_captions else 0
+        avg_output = total_output // num_captions if num_captions else 0
+        logger.info(
+            "\n"
+            "  Captioning throughput\n"
+            "  ─────────────────────────────────────\n"
+            "  total prompt tokens:      {:>10,}\n"
+            "  total output tokens:      {:>10,}\n"
+            "  total windows:            {:>10,}\n"
+            "  avg prompt tokens/window: {:>10,}\n"
+            "  avg output tokens/window: {:>10,}\n"
+            "  output tokens/s:          {:>10,.1f}\n"
+            "  ─────────────────────────────────────",
+            total_prompt,
+            total_output,
+            num_captions,
+            avg_prompt,
+            avg_output,
+            tokens_per_s,
+        )
 
     def func_write_summary() -> None:
         summary_dest = get_full_path(output_path, "summary.json")

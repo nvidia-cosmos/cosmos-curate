@@ -27,6 +27,7 @@ from cosmos_curate.models.vllm_model_ids import _VLLM_MODELS
 from cosmos_curate.pipelines.video.utils.data_model import (
     Clip,
     SplitPipeTask,
+    TokenCounts,
     Video,
     VllmConfig,
     Window,
@@ -356,9 +357,11 @@ def test_scatter_captions(*, verbose: bool) -> None:
     captions = ["caption 1", "caption 2"]
     clip_uuids = ["clip_uuid_1", "clip_uuid_2"]
     model_variant = "test_variant"
-    _scatter_captions(windows, captions, clip_uuids, model_variant, verbose=verbose)
-    for window, caption, _ in zip(windows, captions, clip_uuids, strict=True):
+    token_counts = [TokenCounts(10, 5), TokenCounts(8, 3)]
+    _scatter_captions(windows, captions, clip_uuids, model_variant, token_counts, verbose=verbose)
+    for window, caption, tc in zip(windows, captions, token_counts, strict=True):
         assert window.caption[model_variant] == caption
+        assert window.token_counts[model_variant] == tc
 
 
 @pytest.mark.env("unified")

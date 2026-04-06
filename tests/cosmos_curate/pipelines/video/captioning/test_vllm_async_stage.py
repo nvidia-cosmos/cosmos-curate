@@ -57,6 +57,7 @@ from cosmos_curate.pipelines.video.captioning.vllm_async_stage import (
 from cosmos_curate.pipelines.video.utils.data_model import (
     Clip,
     SplitPipeTask,
+    TokenCounts,
     Video,
     VllmSamplingConfig,
     Window,
@@ -930,8 +931,10 @@ class TestVllmAsyncCaptionStage:
         mock_engine = MagicMock()
         out0 = MagicMock()
         out0.text = "  A beautiful sunset over the ocean.  \n"
+        out0.token_ids = [1, 2, 3, 4, 5]
         final_output = MagicMock()
         final_output.outputs = [out0]
+        final_output.prompt_token_ids = [10, 20, 30]
 
         async def _generate_ok(**_kwargs: object) -> AsyncIterator:
             yield final_output
@@ -939,14 +942,16 @@ class TestVllmAsyncCaptionStage:
         mock_engine.generate = _generate_ok
         stage._engine = mock_engine
 
-        result = asyncio.run(
+        caption, tc = asyncio.run(
             stage._generate_caption_async(
                 rendered_prompt=MagicMock(),
                 sampling_params=MagicMock(),
                 frames_shape=(4, 224, 224, 3),
             )
         )
-        assert result == "A beautiful sunset over the ocean."
+        assert caption == "A beautiful sunset over the ocean."
+        assert tc.prompt_tokens == 3
+        assert tc.output_tokens == 5
 
 
 class TestEngineDeath:
@@ -2187,7 +2192,9 @@ class TestStage2CaptionRefinement:
 
         stage2_queue: collections.deque[tuple[_RenderedWindow, str]] = collections.deque()
 
-        with patch.object(stage, "_generate_caption_async", return_value="A test caption") as mock_gen:
+        with patch.object(
+            stage, "_generate_caption_async", return_value=("A test caption", TokenCounts(10, 5))
+        ) as mock_gen:
             result = asyncio.run(stage._generate_and_assign(rw, asyncio.Semaphore(1), stage2_queue))
 
         assert result is None
@@ -2221,7 +2228,9 @@ class TestStage2CaptionRefinement:
 
         stage2_queue: collections.deque[tuple[_RenderedWindow, str]] = collections.deque()
 
-        with patch.object(stage, "_generate_caption_async", return_value="stage1 caption") as mock_gen:
+        with patch.object(
+            stage, "_generate_caption_async", return_value=("stage1 caption", TokenCounts(10, 5))
+        ) as mock_gen:
             asyncio.run(stage._generate_and_assign(rw, asyncio.Semaphore(1), stage2_queue))
 
         assert mock_gen.call_count == 1
@@ -2255,7 +2264,9 @@ class TestStage2CaptionRefinement:
 
         stage2_queue: collections.deque[tuple[_RenderedWindow, str]] = collections.deque()
 
-        with patch.object(stage, "_generate_caption_async", return_value="Only caption") as mock_gen:
+        with patch.object(
+            stage, "_generate_caption_async", return_value=("Only caption", TokenCounts(10, 5))
+        ) as mock_gen:
             asyncio.run(stage._generate_and_assign(rw, asyncio.Semaphore(1), stage2_queue))
 
         assert mock_gen.call_count == 1
@@ -2319,7 +2330,7 @@ class TestStage2CaptionRefinement:
 
         stage2_queue: collections.deque[tuple[_RenderedWindow, str]] = collections.deque()
 
-        with patch.object(stage, "_generate_caption_async", return_value="Cap1"):
+        with patch.object(stage, "_generate_caption_async", return_value=("Cap1", TokenCounts(10, 5))):
             asyncio.run(stage._generate_and_assign(rw, asyncio.Semaphore(1), stage2_queue))
 
         assert rw.rendered_prompt is None
@@ -2328,7 +2339,7 @@ class TestStage2CaptionRefinement:
 
         queued_rw, stage1_caption = stage2_queue[0]
         with (
-            patch.object(stage, "_generate_caption_async", return_value="Cap2"),
+            patch.object(stage, "_generate_caption_async", return_value=("Cap2", TokenCounts(10, 5))),
             patch(
                 "cosmos_curate.pipelines.video.captioning.vllm_async_stage.build_refinement_prompt_text",
                 return_value="<refined>",
@@ -2408,7 +2419,7 @@ class TestStage2CaptionRefinement:
         )
 
         with (
-            patch.object(stage, "_generate_caption_async", return_value="Refined caption"),
+            patch.object(stage, "_generate_caption_async", return_value=("Refined caption", TokenCounts(10, 5))),
             patch(
                 "cosmos_curate.pipelines.video.captioning.vllm_async_stage.build_refinement_prompt_text",
                 return_value="<rendered>",
@@ -2444,7 +2455,7 @@ class TestStage2CaptionRefinement:
         )
 
         with (
-            patch.object(stage, "_generate_caption_async", return_value="Refined caption"),
+            patch.object(stage, "_generate_caption_async", return_value=("Refined caption", TokenCounts(10, 5))),
             patch(
                 "cosmos_curate.pipelines.video.captioning.vllm_async_stage.build_refinement_prompt_text",
                 return_value="<rendered>",

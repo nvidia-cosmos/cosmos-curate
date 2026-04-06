@@ -47,6 +47,7 @@ from cosmos_curate.models.prompts import get_prompt, get_stage2_prompt
 from cosmos_curate.models.vllm_model_ids import get_vllm_model_id
 from cosmos_curate.pipelines.video.utils import windowing_utils
 from cosmos_curate.pipelines.video.utils.data_model import (
+    TokenCounts,
     Video,
     VllmConfig,
     Window,
@@ -119,21 +120,29 @@ def _get_stage2_prompts(vllm_config: VllmConfig, num_windows: int) -> list[str |
     return [None] * num_windows
 
 
-def _scatter_captions(
-    windows: list[Window], captions: list[str], clip_uuids: list[str], model_variant: str, *, verbose: bool
+def _scatter_captions(  # noqa: PLR0913
+    windows: list[Window],
+    captions: list[str],
+    clip_uuids: list[str],
+    model_variant: str,
+    token_counts: list[TokenCounts],
+    *,
+    verbose: bool,
 ) -> None:
-    """Scatter the captions back to the windows.
+    """Scatter the captions and token counts back to the windows.
 
     Args:
         windows: The windows to scatter the captions to.
         captions: The captions to scatter.
         clip_uuids: The clip uuids to scatter the captions to.
         model_variant: The variant of the model.
+        token_counts: Per-window TokenCounts.
         verbose: Whether to print verbose logs.
 
     """
-    for window, caption, clip_uuid in zip(windows, captions, clip_uuids, strict=True):
+    for window, caption, clip_uuid, tc in zip(windows, captions, clip_uuids, token_counts, strict=True):
         window.caption[model_variant] = caption
+        window.token_counts[model_variant] = tc
         if verbose:
             logger.info(f"Caption for clip {clip_uuid}: {caption}")
 
@@ -513,10 +522,12 @@ class VllmCaptionStage(CuratorStage):
         self._timer.reinit(self, major_size)
 
         @tenacity.retry(stop=tenacity.stop_after_attempt(self._vllm_config.max_retries), reraise=True)
-        def _vllm_caption(model_inputs: list[dict[str, Any]], stage2_prompts: list[str | None]) -> list[str]:
+        def _vllm_caption(
+            model_inputs: list[dict[str, Any]], stage2_prompts: list[str | None]
+        ) -> tuple[list[str], list[TokenCounts]]:
             try:
                 assert self._processor is not None
-                captions = vllm_caption(
+                captions, token_counts = vllm_caption(
                     model_inputs,
                     self._llm,
                     self._processor,
@@ -542,7 +553,7 @@ class VllmCaptionStage(CuratorStage):
                     video = get_video_from_task(task)
                     video.errors.pop("captioning", None)
 
-                return captions
+                return captions, token_counts
 
         with self._timer.time_process():
             # Gather model inputs and clip uuids
@@ -554,13 +565,16 @@ class VllmCaptionStage(CuratorStage):
 
             # Generate captions
             try:
-                captions = _vllm_caption(model_inputs, stage2_prompts)
+                captions, token_counts = _vllm_caption(model_inputs, stage2_prompts)
             except Exception:  # noqa: BLE001
                 logger.error(f"All {self._vllm_config.max_retries} retry attempts exhausted, returning empty captions")
                 captions = [""] * len(model_inputs)
+                token_counts = [TokenCounts()] * len(model_inputs)
 
             # Scatter captions back to windows
-            _scatter_captions(windows, captions, clip_uuids, self._vllm_config.model_variant, verbose=self._verbose)
+            _scatter_captions(
+                windows, captions, clip_uuids, self._vllm_config.model_variant, token_counts, verbose=self._verbose
+            )
 
             logger.info(f"Generated {len(captions)} captions for {len(tasks)} tasks")
 

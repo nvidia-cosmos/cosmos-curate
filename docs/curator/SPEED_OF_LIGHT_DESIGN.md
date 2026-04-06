@@ -118,7 +118,7 @@ Full architectural shift: vLLM behind Ray Serve, pipeline on Ray Data.
 
 ## Task List
 
-- [ ] **Instrument token counting** — extract output token counts from `RequestOutput` in `process_vllm_output()`,
+- [x] **Instrument token counting** — extract output token counts from `RequestOutput` in `process_vllm_output()`,
   accumulate, and write to `summary.json`.
 - [ ] **Export token metrics to Grafana** — emit cumulative input/output token counters as Ray Gauges from the
   captioning stage; add a tokens/s panel to the existing Grafana dashboard.

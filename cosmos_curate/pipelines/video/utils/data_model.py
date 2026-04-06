@@ -121,6 +121,14 @@ def get_major_size(obj: object) -> int:
 
 
 @attrs.define
+class TokenCounts:
+    """Token usage from a single vLLM inference (prompt + output)."""
+
+    prompt_tokens: int = 0
+    output_tokens: int = 0
+
+
+@attrs.define
 class Window:
     """Container for captioning window."""
 
@@ -136,6 +144,8 @@ class Window:
     # `caption: {model_name: caption}`
     caption: dict[str, str] = attrs.Factory(dict)
     enhanced_caption: dict[str, str] = attrs.Factory(dict)
+    # Token counts from vLLM inference: {model_variant: TokenCounts}
+    token_counts: dict[str, TokenCounts] = attrs.Factory(dict)
     # t5_xxl embeddings for this window
     t5_xxl_embedding: dict[str, npt.NDArray[np.int32]] = attrs.Factory(dict)
     # webp preview; wrapped in LazyData for zero-copy inter-stage transport
@@ -293,6 +303,8 @@ class ClipStats:
     num_with_webp: int = 0
     total_clip_duration: float = 0.0
     max_clip_duration: float = 0.0
+    total_prompt_tokens: int = 0
+    total_output_tokens: int = 0
 
     def combine(self, other: Self) -> None:
         """Combine two ClipStats objects.
@@ -313,6 +325,8 @@ class ClipStats:
         self.num_with_webp += other.num_with_webp
         self.total_clip_duration += other.total_clip_duration
         self.max_clip_duration = max(self.max_clip_duration, other.max_clip_duration)
+        self.total_prompt_tokens += other.total_prompt_tokens
+        self.total_output_tokens += other.total_output_tokens
 
 
 @attrs.define
@@ -947,3 +961,5 @@ class VllmCaptionRequest:
     inputs: dict[str, Any]
     caption: str | None = None
     stage2_prompt: str | None = None
+    prompt_tokens: int = 0
+    output_tokens: int = 0

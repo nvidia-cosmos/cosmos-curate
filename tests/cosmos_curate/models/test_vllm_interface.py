@@ -226,7 +226,7 @@ def test_caption_no_inflight_batching(*, stage2: bool) -> None:
     model_inputs = [{"a": 1}, {"b": 2}]
     stage2_prompts: list[str | None] = [None, None] if not stage2 else ["ref", "ref"]
 
-    captions = _caption_no_inflight_batching(
+    captions, token_counts = _caption_no_inflight_batching(
         model_inputs=model_inputs,
         llm=model,
         processor=processor,
@@ -242,6 +242,7 @@ def test_caption_no_inflight_batching(*, stage2: bool) -> None:
         expected_captions = [f"mock-caption-{i}" for i in range(len(model_inputs))]
 
     assert captions == expected_captions
+    assert len(token_counts) == len(model_inputs)
 
 
 @pytest.mark.env("unified")
@@ -286,7 +287,7 @@ def test_caption_no_inflight_batching_preserves_order(*, stage2: bool) -> None:
     else:
         stage2_prompts = [None] * num_inputs
 
-    captions = _caption_no_inflight_batching(
+    captions, token_counts = _caption_no_inflight_batching(
         model_inputs=model_inputs,
         llm=model,
         processor=processor,
@@ -296,6 +297,7 @@ def test_caption_no_inflight_batching_preserves_order(*, stage2: bool) -> None:
     )
 
     assert len(captions) == num_inputs
+    assert len(token_counts) == num_inputs
 
     # Extract the integer suffix from each "mock-caption-N" string.
     caption_indices = [int(c.split("-")[-1]) for c in captions]
@@ -328,7 +330,7 @@ def test_caption_inflight_batching(*, stage2: bool) -> None:
     model_inputs = [{"a": 1}, {"b": 2}]
     stage2_prompts: list[str | None] = [None, None] if not stage2 else ["ref", "ref"]
 
-    captions = _caption_inflight_batching(
+    captions, token_counts = _caption_inflight_batching(
         model_inputs=model_inputs,
         llm=model,
         processor=processor,
@@ -345,6 +347,7 @@ def test_caption_inflight_batching(*, stage2: bool) -> None:
         expected_captions = [f"mock-caption-{i}" for i in range(len(model_inputs))]
 
     assert captions == expected_captions
+    assert len(token_counts) == len(model_inputs)
 
 
 @pytest.mark.env("unified")
@@ -518,7 +521,7 @@ def test_caption_inflight_batching_preserves_order(*, stage2: bool) -> None:
     # This guarantees inputs 1-4 complete before input 0.
     model = MockLLM(steps_to_complete=lambda req_idx: 10 if req_idx == 0 else 1)
 
-    captions = _caption_inflight_batching(
+    captions, token_counts = _caption_inflight_batching(
         model_inputs=model_inputs,
         llm=model,  # type: ignore[arg-type]
         processor=processor,
@@ -529,6 +532,7 @@ def test_caption_inflight_batching_preserves_order(*, stage2: bool) -> None:
     )
 
     assert len(captions) == num_inputs
+    assert len(token_counts) == num_inputs
 
     # Extract the integer suffix from each "mock-caption-N" string.
     caption_indices = [int(c.split("-")[-1]) for c in captions]

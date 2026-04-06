@@ -114,6 +114,7 @@ from cosmos_curate.models.vllm_qwen import (
     VllmQwen7B,
 )
 from cosmos_curate.pipelines.video.utils.data_model import (
+    TokenCounts,
     VllmCaptionRequest,
     VllmConfig,
     VllmSamplingConfig,
@@ -426,6 +427,8 @@ def process_vllm_output(
         if out.finished:
             request = in_flight_requests[out.request_id]
             request.caption = vllm_plugin.decode(out)
+            request.prompt_tokens = len(out.prompt_token_ids) if out.prompt_token_ids else 0
+            request.output_tokens = len(out.outputs[0].token_ids) if out.outputs else 0
             finished.append(request)
 
     return finished
@@ -438,7 +441,7 @@ def _caption_no_inflight_batching(  # noqa: PLR0913
     sampling_params: SamplingParams,
     vllm_config: VllmConfig,
     stage2_prompts: list[str | None],
-) -> list[str]:
+) -> tuple[list[str], list[TokenCounts]]:
     """Caption the videos without inflight batching.
 
     Assumption:
@@ -455,7 +458,8 @@ def _caption_no_inflight_batching(  # noqa: PLR0913
            Assumed to be the same length as model_inputs.
 
     Returns:
-        Captions for each video.
+        Tuple of (captions, token_counts) where token_counts is a list of
+        TokenCounts, one per input.
 
     """
     vllm_plugin = _get_vllm_plugin(vllm_config.model_variant)
@@ -488,10 +492,13 @@ def _caption_no_inflight_batching(  # noqa: PLR0913
     finished_s1 = _process_requests(requests)
 
     results: dict[int, str] = {}
+    token_counts: dict[int, TokenCounts] = {}
     needs_stage2 = []
     for r in finished_s1:
+        idx = request_id_to_index[r.request_id]
+        token_counts[idx] = TokenCounts(r.prompt_tokens, r.output_tokens)
         if r.stage2_prompt is None:
-            results[request_id_to_index[r.request_id]] = r.caption or "Unknown caption"
+            results[idx] = r.caption or "Unknown caption"
         else:
             needs_stage2.append(r)
 
@@ -501,9 +508,16 @@ def _caption_no_inflight_batching(  # noqa: PLR0913
         request_id_to_index[refined_req.request_id] = request_id_to_index[orig_req.request_id]
 
     for r in _process_requests(refine_requests):
-        results[request_id_to_index[r.request_id]] = r.caption or "Unknown caption"
+        idx = request_id_to_index[r.request_id]
+        prev = token_counts.get(idx, TokenCounts())
+        token_counts[idx] = TokenCounts(prev.prompt_tokens + r.prompt_tokens, prev.output_tokens + r.output_tokens)
+        results[idx] = r.caption or "Unknown caption"
 
-    return [results[i] for i in range(len(requests))]
+    n = len(requests)
+    return (
+        [results[i] for i in range(n)],
+        [token_counts.get(i, TokenCounts()) for i in range(n)],
+    )
 
 
 def _caption_inflight_batching(  # noqa: PLR0913
@@ -514,7 +528,7 @@ def _caption_inflight_batching(  # noqa: PLR0913
     vllm_config: VllmConfig,
     max_inflight_requests: int,
     stage2_prompts: list[str | None],
-) -> list[str]:
+) -> tuple[list[str], list[TokenCounts]]:
     """Caption the videos using inflight batching.
 
     Assumption:
@@ -533,13 +547,15 @@ def _caption_inflight_batching(  # noqa: PLR0913
            Assumed to be the same length as model_inputs.
 
     Returns:
-        Captions for each video.
+        Tuple of (captions, token_counts) where token_counts is a list of
+        TokenCounts, one per input.
 
     """
     vllm_plugin = _get_vllm_plugin(vllm_config.model_variant)
     request_q: Deque[VllmCaptionRequest] = deque()  # noqa: UP006, remove noqa when python 3.10 support is dropped
     in_flight_requests: dict[str, VllmCaptionRequest] = {}
     results: dict[int, str] = {}
+    token_counts: dict[int, TokenCounts] = {}
 
     # Map request_id -> original input index so we can return captions in input order
     request_id_to_index: dict[str, int] = {}
@@ -578,8 +594,13 @@ def _caption_inflight_batching(  # noqa: PLR0913
             del in_flight_requests[request.request_id]
 
         for r in finished:
+            original_idx = request_id_to_index[r.request_id]
+            # Accumulate token counts (stage-1 + stage-2)
+            prev = token_counts.get(original_idx, TokenCounts())
+            token_counts[original_idx] = TokenCounts(
+                prev.prompt_tokens + r.prompt_tokens, prev.output_tokens + r.output_tokens
+            )
             if r.stage2_prompt is None:
-                original_idx = request_id_to_index[r.request_id]
                 results[original_idx] = r.caption or "Unknown caption"
 
         needs_stage2 = [r for r in finished if r.stage2_prompt is not None]
@@ -591,7 +612,10 @@ def _caption_inflight_batching(  # noqa: PLR0913
             # Propagate the original index to the refined request's new request_id
             request_id_to_index[refined_request.request_id] = original_idx
 
-    return [results[i] for i in range(total_requests)]
+    return (
+        [results[i] for i in range(total_requests)],
+        [token_counts.get(i, TokenCounts()) for i in range(total_requests)],
+    )
 
 
 def vllm_caption(  # noqa: PLR0913
@@ -604,14 +628,14 @@ def vllm_caption(  # noqa: PLR0913
     *,
     inflight_batching: bool,
     stage2_prompts: list[str | None] | None = None,
-) -> list[str]:
+) -> tuple[list[str], list[TokenCounts]]:
     """Caption the videos using the vLLM model.
 
     This is the main entry point for video captioning. It handles:
     1. Creating VllmCaptionRequest objects (each with unique ID)
     2. Batching and generating captions via vLLM
     3. Two-stage captioning if stage2_prompts provided
-    4. Returning final caption strings
+    4. Returning final caption strings with token counts
 
     Flow: This function → _caption_[no_]inflight_batching() → vllm_generate()
           → process_vllm_output() → plugin.decode() → captions
@@ -630,7 +654,8 @@ def vllm_caption(  # noqa: PLR0913
            Must be the same length as model_inputs.
 
     Returns:
-        Captions for each video.
+        Tuple of (captions, token_counts) where token_counts is a list of
+        TokenCounts, one per input.
 
     Raises:
         ValueError: If max_inflight_requests is negative.
