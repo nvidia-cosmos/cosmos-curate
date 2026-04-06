@@ -76,7 +76,7 @@ Stages specify `conda_env_name` property to run in specific environments, enabli
 **Commits**: Conventional Commits: `git commit -m "fix: description"`. MRs squash on merge, so commit early and often as checkpoints — individual commit messages don't need to be perfect.
 
 **Merge Requests**:
-- Create using `glab mr create` targeting branch `nvidia/main`, assign to author, enable "Delete source branch"
+- Create using `glab mr create` targeting branch `nvidia/main`, assign to author, with `--remove-source-branch --squash-before-merge`
 - Summarize intent, list validation commands, note doc/submodule updates, link issues
 - Do NOT include "Generated with Claude Code" in descriptions
 - Use GitLab MCP server (if available) to retrieve CodeRabbit and Greptile review comments
