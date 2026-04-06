@@ -112,6 +112,10 @@ from cosmos_curate.pipelines.video.read_write.read_write_builders import (
 from cosmos_curate.pipelines.video.read_write.summary_writers import (
     write_split_summary,
 )
+from cosmos_curate.pipelines.video.super_resolution.super_resolution_builders import (
+    SuperResolutionConfig,
+    build_super_resolution_stages,
+)
 from cosmos_curate.pipelines.video.utils.data_model import (
     SplitPipeTask,
     VllmConfig,
@@ -385,6 +389,30 @@ def _assemble_stages(  # noqa: C901, PLR0912, PLR0915
             )
         )
     )
+
+    # --- Super-resolution (optional) ---
+    if args.super_resolution:
+        stages.extend(
+            build_super_resolution_stages(
+                SuperResolutionConfig(
+                    variant=args.sr_variant,
+                    target_height=args.sr_target_height,
+                    target_width=args.sr_target_width,
+                    window_frames=args.sr_window_frames,
+                    overlap_frames=args.sr_overlap_frames,
+                    blend_overlap=not args.sr_no_blend_overlap,
+                    seed=args.sr_seed,
+                    cfg_scale=args.sr_cfg_scale,
+                    cfg_rescale=args.sr_cfg_rescale,
+                    sample_steps=args.sr_sample_steps,
+                    sp_size=args.sr_sp_size,
+                    out_fps=args.sr_out_fps,
+                    tmp_dir=args.sr_tmp_dir,
+                    verbose=args.verbose,
+                    perf_profile=args.perf_profile,
+                )
+            )
+        )
 
     # --- Motion filter (optional) ---
     if args.motion_filter != "disable":
@@ -1110,6 +1138,40 @@ def _setup_parser(parser: argparse.ArgumentParser) -> None:  # noqa: PLR0915
         default=32,
         help="Number of clips per chunk after transcoding stage.",
     )
+    # --- Super-resolution args ---
+    parser.add_argument(
+        "--super-resolution",
+        action="store_true",
+        default=False,
+        help="Enable SeedVR2 video super-resolution on clips after transcoding.",
+    )
+    parser.add_argument(
+        "--sr-variant",
+        type=str,
+        default="seedvr2_7b",
+        choices=["seedvr2_3b", "seedvr2_7b", "seedvr2_7b_sharp"],
+        help="SeedVR2 model variant.",
+    )
+    parser.add_argument("--sr-target-height", type=int, default=720, help="Target output height for SR.")
+    parser.add_argument("--sr-target-width", type=int, default=1280, help="Target output width for SR.")
+    parser.add_argument("--sr-window-frames", type=int, default=128, help="Frames per SR inference window.")
+    parser.add_argument("--sr-overlap-frames", type=int, default=64, help="Overlap frames between SR windows.")
+    parser.add_argument(
+        "--sr-no-blend-overlap",
+        action="store_true",
+        default=False,
+        help="Disable overlap blending (drop overlap frames from the later window instead).",
+    )
+    parser.add_argument("--sr-seed", type=int, default=666, help="Random seed for SR diffusion.")
+    parser.add_argument("--sr-cfg-scale", type=float, default=1.0, help="Classifier-free guidance scale for SR.")
+    parser.add_argument("--sr-cfg-rescale", type=float, default=0.0, help="CFG rescale factor for SR.")
+    parser.add_argument("--sr-sample-steps", type=int, default=1, help="Number of diffusion sampling steps for SR.")
+    parser.add_argument("--sr-sp-size", type=int, default=1, help="Sequence parallelism size for SR.")
+    parser.add_argument(
+        "--sr-out-fps", type=float, default=None, help="Output FPS for SR (None = preserve source FPS)."
+    )
+    parser.add_argument("--sr-tmp-dir", type=str, default=None, help="Temp directory for SR window segment files.")
+
     parser.add_argument(
         "--motion-filter",
         choices=["disable", "enable", "score-only"],

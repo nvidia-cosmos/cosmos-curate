@@ -41,6 +41,9 @@ def _get_default_models() -> list[str]:
         if model in {"gpt_oss_20b"}:
             # large and only for enhanced caption
             continue
+        if model.startswith("seedvr2"):
+            # large SR models, opt-in only
+            continue
         default_models_to_download.append(model)
     return default_models_to_download
 

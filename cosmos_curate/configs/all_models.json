@@ -151,6 +151,27 @@
         "precision": "FP8",
         "nvcf_model_id": "qwen3_vl_235b_a22b_instruct_fp8"
     },
+    "seedvr2_3b": {
+        "model_id": "ByteDance-Seed/SeedVR2-3B",
+        "version": "37255ff8cccfb01071b87f635a5948ca8d53117c",
+        "filelist": null,
+        "precision": "BF16",
+        "nvcf_model_id": "seedvr2_3b"
+    },
+    "seedvr2_7b": {
+        "model_id": "ByteDance-Seed/SeedVR2-7B",
+        "version": "eb0c4281d41ba3767d4f14370f0e37e9e9180c16",
+        "filelist": null,
+        "precision": "BF16",
+        "nvcf_model_id": "seedvr2_7b"
+    },
+    "seedvr2_7b_sharp": {
+        "model_id": "ByteDance-Seed/SeedVR2-7B",
+        "version": "eb0c4281d41ba3767d4f14370f0e37e9e9180c16",
+        "filelist": null,
+        "precision": "BF16",
+        "nvcf_model_id": "seedvr2_7b_sharp"
+    },
     "t5_xxl": {
         "model_id": "google-t5/t5-11b",
         "version": "90f37703b3334dfe9d2b009bfcbfbf1ac9d28ea3",

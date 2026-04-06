@@ -147,6 +147,20 @@ transformers = ">=4.57.1,<5.0.0" # Transformers v5 changes apply_chat_template t
 cuda-libraries-dev = "*"
 pycountry = "*"
 
+# SeedVR2 super-resolution dependencies.
+# SeedVR's own requirements.txt pins old versions (e.g. diffusers==0.29.1,
+# transformers==4.38.2) but the inference code works fine with newer releases.
+# We use unpinned versions to avoid conflicts with other environments.
+[feature.seedvr.dependencies]
+cuda-libraries-dev = "*"
+einops = "*"
+mediapy = "*"
+omegaconf = "*"
+
+[feature.seedvr.pypi-dependencies]
+diffusers = "*"
+rotary-embedding-torch = "*"
+
 [feature.unified.pypi-dependencies]
 cvcuda-cu13 = "*" # not available on conda-forge
 flashinfer-python = ">=0.4.0rc3" # not available on conda-forge; pre-release to avoid pynvml dependency
@@ -195,5 +209,6 @@ default = ["core", "tracing", "profiling"]
 legacy-transformers = ["core", "legacy-transformers", "tracing", "profiling"]
 model-download = ["model-download", "tracing"]
 paddle-ocr = ["core", "paddle-ocr", "tracing", "profiling"]
+seedvr = ["core", "transformers", "seedvr", "tracing", "profiling"]
 transformers = ["core", "transformers", "tracing", "profiling"]
 unified = ["core", "transformers", "unified", "tracing", "profiling"]

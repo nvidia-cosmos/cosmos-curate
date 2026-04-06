@@ -154,6 +154,7 @@ extend-select = ["I"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**/*.py" = ["INP001", "SLF001", "PLR2004"]
+"cosmos_curate/pipelines/video/super_resolution/inference_seedvr2_window.py" = ["ALL"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["cosmos_curate", "cosmos_xenna"]
@@ -186,6 +187,7 @@ exclude = [
     "cosmos-xenna/",
     "cosmos_curate/core/managers/postgres_cli.py",
     "cosmos_curate/models/internvideo2_multi_modality/",
+    "cosmos_curate/pipelines/video/super_resolution/inference_seedvr2_window.py",
     "cosmos_curate/pipelines/video/utils/vision_process.py",
     "cosmos_curate/pipelines/video/utils/nvcodec_utils.py",
 ]
