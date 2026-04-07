@@ -12,10 +12,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Artificial text (overlay/post-production) filter stage.
-
-Runs in the paddle-ocr env; uses built-in GPU startup/cleanup (torch) when available.
-"""
+"""Artificial text (overlay/post-production) filter stage."""
 
 from typing import cast
 
@@ -48,6 +45,7 @@ class ArtificialTextFilterStage(CuratorStage):
         self,
         num_gpus_per_worker: float = 0.25,
         *,
+        use_gpu: bool = True,
         use_corner_detection: bool = True,
         frame_interval: int = 3,
         min_duration_frames: int = MIN_DURATION_FRAMES,
@@ -62,6 +60,7 @@ class ArtificialTextFilterStage(CuratorStage):
         """Initialize the artificial text filter stage with optional corner detection."""
         self._timer = StageTimer(self)
         self._num_gpus_per_worker = num_gpus_per_worker
+        self._use_gpu = use_gpu
         self._use_corner_detection = use_corner_detection
         self._frame_interval = frame_interval
         self._ignore_corner_region = ignore_corner_region
@@ -72,7 +71,7 @@ class ArtificialTextFilterStage(CuratorStage):
         self._stability_iou_threshold = stability_iou_threshold
         self._verbose = verbose
         self._log_stats = log_stats
-        self._model = PaddleOCRModel(frame_interval=frame_interval)
+        self._model = PaddleOCRModel(frame_interval=frame_interval, use_gpu=use_gpu)
 
     @property
     def resources(self) -> CuratorStageResource:
@@ -81,13 +80,16 @@ class ArtificialTextFilterStage(CuratorStage):
 
     def stage_setup(self) -> None:
         """Load the PaddleOCR model once per actor; use built-in GPU startup/cleanup."""
-        gpu_stage_startup(self.__class__.__name__, self.resources.gpus, pre_setup=True)
+        if self._use_gpu:
+            gpu_stage_startup(self.__class__.__name__, self.resources.gpus, pre_setup=True)
         self._model.setup()
-        gpu_stage_startup(self.__class__.__name__, self.resources.gpus, pre_setup=False)
+        if self._use_gpu:
+            gpu_stage_startup(self.__class__.__name__, self.resources.gpus, pre_setup=False)
 
     def destroy(self) -> None:
         """Clean up when the actor is destroyed."""
-        gpu_stage_cleanup(self.__class__.__name__)
+        if self._use_gpu:
+            gpu_stage_cleanup(self.__class__.__name__)
 
     @property
     def model(self) -> ModelInterface:

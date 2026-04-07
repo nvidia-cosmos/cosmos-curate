@@ -32,9 +32,13 @@ from cosmos_curate.core.interfaces.model_interface import ModelInterface
 from cosmos_curate.core.utils.model import conda_utils
 
 if TYPE_CHECKING:
+    import paddle  # type: ignore[import-not-found]
+    import paddle.inference  # type: ignore[import-not-found]
     from paddleocr import PaddleOCR  # type: ignore[import-not-found]
 
-if conda_utils.is_running_in_env("paddle-ocr"):
+if conda_utils.is_running_in_env("paddle-ocr") or conda_utils.is_running_in_env("unified"):
+    import paddle  # type: ignore[import-not-found]
+    import paddle.inference  # type: ignore[import-not-found]
     from paddleocr import PaddleOCR
 
 
@@ -410,6 +414,34 @@ class ArtificialTextDetector:
         return all_segments
 
 
+_PADDLE_CPU_PATCHED: bool = False
+
+
+def _patch_paddle_cpu_inference() -> None:
+    """Apply workarounds needed for CPU paddlepaddle inference.
+
+    1. paddleocr unconditionally calls config.enable_memory_optim(True); wrap
+       create_predictor to force it False — the pass isn't present in CPU builds.
+    2. PIR executor (new in paddle 3.x) + OneDNN raises ConvertPirAttribute2RuntimeAttribute
+       even with enable_mkldnn=False; disable PIR entirely for CPU inference.
+
+    Guarded by a module-level flag so repeated calls (e.g. retries) don't stack wrappers.
+    """
+    global _PADDLE_CPU_PATCHED  # noqa: PLW0603
+    if _PADDLE_CPU_PATCHED:
+        return
+    paddle.set_flags({"FLAGS_enable_pir_api": False})
+    _orig = paddle.inference.create_predictor
+
+    def _patched(config: object) -> object:
+        if hasattr(config, "enable_memory_optim"):
+            config.enable_memory_optim(False)  # type: ignore[union-attr]  # noqa: FBT003
+        return _orig(config)
+
+    paddle.inference.create_predictor = _patched
+    _PADDLE_CPU_PATCHED = True
+
+
 class PaddleOCRModel(ModelInterface):
     """PaddleOCR detection-only model for post-production text detection.
 
@@ -421,17 +453,24 @@ class PaddleOCRModel(ModelInterface):
         self,
         target_longest_side: int | None = _TARGET_LONGEST_SIDE_DEFAULT,
         frame_interval: int = _FRAME_INTERVAL_DEFAULT,
+        *,
+        use_gpu: bool = True,
     ) -> None:
-        """Store target longest side and frame interval for detection."""
+        """Store target longest side, frame interval, and GPU flag for detection."""
         super().__init__()
         self._target_longest_side = target_longest_side
         self._frame_interval = frame_interval
+        self._use_gpu = use_gpu
         self._model: Any = None
 
     @property
     def conda_env_name(self) -> str:
-        """Return the conda environment name for this model (paddle-ocr env has paddlepaddle-gpu via post_install)."""
-        return "paddle-ocr"
+        """Return the conda environment name for this model.
+
+        GPU mode (default) runs in paddle-ocr (paddlepaddle-gpu via post_install).
+        CPU mode runs in unified (paddlepaddle CPU, no torch conflict).
+        """
+        return "paddle-ocr" if self._use_gpu else "unified"
 
     @property
     def model_id_names(self) -> list[str]:
@@ -452,8 +491,10 @@ class PaddleOCRModel(ModelInterface):
                 cls_model_dir,
             )
         model_root = Path(WEIGHTS_NAME_PREFIX)
+        if not self._use_gpu:
+            _patch_paddle_cpu_inference()
         self._model = PaddleOCR(
-            use_gpu=True,
+            use_gpu=self._use_gpu,
             det_model_dir=os.fspath(model_root / PADDLE_OCR_DET_MODEL_ID),
             rec_model_dir=os.fspath(model_root / PADDLE_OCR_REC_MODEL_ID),
             cls_model_dir=os.fspath(model_root / PADDLE_OCR_CLS_MODEL_ID),

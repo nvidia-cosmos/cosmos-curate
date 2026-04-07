@@ -468,6 +468,7 @@ def _assemble_stages(  # noqa: C901, PLR0912, PLR0915
         stages.extend(
             build_artificial_text_filter_stages(
                 ArtificialTextFilterConfig(
+                    use_gpu=not args.artificial_text_detection_use_cpu,
                     gpus_per_worker=args.artificial_text_gpus_per_worker,
                     use_corner_detection=args.artificial_text_use_corner_detection,
                     frame_interval=args.artificial_text_frame_interval,
@@ -1332,6 +1333,16 @@ def _setup_parser(parser: argparse.ArgumentParser) -> None:  # noqa: PLR0915
         type=float,
         default=0.9,
         help="Stability threshold (0-1) for overlay; higher = only very fixed text (with --artificial-text-filter).",
+    )
+    parser.add_argument(
+        "--artificial-text-detection-use-cpu",
+        dest="artificial_text_detection_use_cpu",
+        action="store_true",
+        default=False,
+        help=(
+            "Run artificial text detection on CPU (unified env) instead of GPU (paddle-ocr env).\n"
+            "Use this when the paddle-ocr environment is not installed (e.g. the main/unified image)."
+        ),
     )
     parser.add_argument(
         "--qwen-filter",

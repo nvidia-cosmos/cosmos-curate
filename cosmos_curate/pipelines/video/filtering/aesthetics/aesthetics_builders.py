@@ -44,6 +44,7 @@ class AestheticFilterConfig:
 class ArtificialTextFilterConfig:
     """Configuration for artificial text (overlay/post-production) filtering."""
 
+    use_gpu: bool = True
     gpus_per_worker: float = 0.25
     use_corner_detection: bool = True
     frame_interval: int = 3
@@ -128,7 +129,8 @@ def build_artificial_text_filter_stages(config: ArtificialTextFilterConfig) -> l
     return [
         CuratorStageSpec(
             ArtificialTextFilterStage(
-                num_gpus_per_worker=config.gpus_per_worker,
+                num_gpus_per_worker=config.gpus_per_worker if config.use_gpu else 0.0,
+                use_gpu=config.use_gpu,
                 use_corner_detection=config.use_corner_detection,
                 frame_interval=config.frame_interval,
                 min_duration_frames=config.min_duration_frames,
