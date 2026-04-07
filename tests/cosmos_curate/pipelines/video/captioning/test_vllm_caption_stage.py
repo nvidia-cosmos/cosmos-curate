@@ -24,6 +24,8 @@ import pytest
 
 from cosmos_curate.core.utils.model import conda_utils
 from cosmos_curate.models.vllm_model_ids import _VLLM_MODELS
+from cosmos_curate.models.vllm_sentinels import VLLM_UNKNOWN_CAPTION
+from cosmos_curate.pipelines.video.captioning.vllm_caption_stage import _scatter_captions
 from cosmos_curate.pipelines.video.utils.data_model import (
     Clip,
     SplitPipeTask,
@@ -362,6 +364,24 @@ def test_scatter_captions(*, verbose: bool) -> None:
     for window, caption, tc in zip(windows, captions, token_counts, strict=True):
         assert window.caption[model_variant] == caption
         assert window.token_counts[model_variant] == tc
+
+
+@pytest.mark.parametrize(
+    ("caption", "expected_status", "expected_reason"),
+    [
+        ("A well-formed caption.", "success", None),
+        ("", "failure", "empty"),
+        (VLLM_UNKNOWN_CAPTION, "failure", "exception"),
+    ],
+    ids=["success", "empty_failure", "sentinel_failure"],
+)
+def test_scatter_captions_sets_status(caption: str, expected_status: str, expected_reason: str | None) -> None:
+    """_scatter_captions writes caption_status and caption_failure_reason for each outcome."""
+    window = Window(start_frame=0, end_frame=10)
+    _scatter_captions([window], [caption], ["clip_1"], "qwen", [TokenCounts()], verbose=False)
+    assert window.caption["qwen"] == caption
+    assert window.caption_status == expected_status
+    assert window.caption_failure_reason == expected_reason
 
 
 @pytest.mark.env("unified")

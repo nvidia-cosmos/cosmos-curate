@@ -113,6 +113,7 @@ from cosmos_curate.models.vllm_qwen import (
     VllmQwen3VL235BFP8,
     VllmQwen7B,
 )
+from cosmos_curate.models.vllm_sentinels import VLLM_UNKNOWN_CAPTION
 from cosmos_curate.pipelines.video.utils.data_model import (
     TokenCounts,
     VllmCaptionRequest,
@@ -498,7 +499,7 @@ def _caption_no_inflight_batching(  # noqa: PLR0913
         idx = request_id_to_index[r.request_id]
         token_counts[idx] = TokenCounts(r.prompt_tokens, r.output_tokens)
         if r.stage2_prompt is None:
-            results[idx] = r.caption or "Unknown caption"
+            results[idx] = r.caption or VLLM_UNKNOWN_CAPTION
         else:
             needs_stage2.append(r)
 
@@ -511,7 +512,7 @@ def _caption_no_inflight_batching(  # noqa: PLR0913
         idx = request_id_to_index[r.request_id]
         prev = token_counts.get(idx, TokenCounts())
         token_counts[idx] = TokenCounts(prev.prompt_tokens + r.prompt_tokens, prev.output_tokens + r.output_tokens)
-        results[idx] = r.caption or "Unknown caption"
+        results[idx] = r.caption or VLLM_UNKNOWN_CAPTION
 
     n = len(requests)
     return (
@@ -601,7 +602,7 @@ def _caption_inflight_batching(  # noqa: PLR0913
                 prev.prompt_tokens + r.prompt_tokens, prev.output_tokens + r.output_tokens
             )
             if r.stage2_prompt is None:
-                results[original_idx] = r.caption or "Unknown caption"
+                results[original_idx] = r.caption or VLLM_UNKNOWN_CAPTION
 
         needs_stage2 = [r for r in finished if r.stage2_prompt is not None]
 

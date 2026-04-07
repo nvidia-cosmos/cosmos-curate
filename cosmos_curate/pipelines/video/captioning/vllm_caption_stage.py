@@ -45,6 +45,7 @@ from cosmos_curate.core.utils.model import conda_utils, model_utils
 from cosmos_curate.models.all_models import get_all_models_by_id
 from cosmos_curate.models.prompts import get_prompt, get_stage2_prompt
 from cosmos_curate.models.vllm_model_ids import get_vllm_model_id
+from cosmos_curate.models.vllm_sentinels import VLLM_UNKNOWN_CAPTION
 from cosmos_curate.pipelines.video.utils import windowing_utils
 from cosmos_curate.pipelines.video.utils.data_model import (
     TokenCounts,
@@ -143,6 +144,15 @@ def _scatter_captions(  # noqa: PLR0913
     for window, caption, clip_uuid, tc in zip(windows, captions, clip_uuids, token_counts, strict=True):
         window.caption[model_variant] = caption
         window.token_counts[model_variant] = tc
+        if caption == "":
+            window.caption_status = "failure"
+            window.caption_failure_reason = "empty"
+        elif caption == VLLM_UNKNOWN_CAPTION:
+            window.caption_status = "failure"
+            window.caption_failure_reason = "exception"
+        else:
+            window.caption_status = "success"
+            window.caption_failure_reason = None
         if verbose:
             logger.info(f"Caption for clip {clip_uuid}: {caption}")
 

@@ -151,6 +151,10 @@ class Window:
     # webp preview; wrapped in LazyData for zero-copy inter-stage transport
     # via PEP 574 (bytes auto-converted to numpy by LazyData.coerce).
     webp_bytes: LazyData[npt.NDArray[np.uint8]] = attrs.field(factory=LazyData, converter=LazyData.coerce)  # type: ignore[misc]
+    # caption outcome; set by caption stages that support status (vLLM only for now)
+    caption_status: Literal["success", "failure"] | None = None
+    # set only when caption_status == "failure": "empty" | "exception"
+    caption_failure_reason: Literal["empty", "exception"] | None = None
     # for debugging
     errors: dict[str, str] = attrs.Factory(dict)
 

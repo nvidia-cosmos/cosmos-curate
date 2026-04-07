@@ -29,6 +29,7 @@ import pytest
 
 from cosmos_curate.core.utils.data.bytes_transport import bytes_to_numpy
 from cosmos_curate.core.utils.storage import storage_client, storage_utils
+from cosmos_curate.models.vllm_sentinels import VLLM_UNKNOWN_CAPTION
 from cosmos_curate.pipelines.video.read_write.metadata_writer_stage import (
     ClipWriterStage,
     _archive_processed_sidecars,
@@ -785,3 +786,119 @@ def test_video_errors_written_to_error_path(tmp_path: Path) -> None:
     # Verify that video-level metadata is also NOT written (since errors exist)
     video_meta_path = output_dir / "processed_videos" / "video.mp4.json"
     assert not video_meta_path.exists()
+
+
+# ---------------------------------------------------------------------------
+# caption_status — Layer 1 (has_caption) and Layer 2 (num_with_caption) tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("caption_status", "caption_value", "expected_has_caption"),
+    [
+        ("success", "A great video.", True),  # vLLM success
+        ("failure", "", False),  # vLLM empty batch failure
+        ("failure", VLLM_UNKNOWN_CAPTION, False),  # vLLM sentinel failure
+        (None, "A great video.", True),  # legacy non-vLLM, non-empty
+        (None, None, False),  # legacy non-vLLM, no caption
+        (None, "", False),  # legacy non-vLLM, empty string — must not count as captioned
+    ],
+    ids=["vllm_success", "vllm_empty", "vllm_sentinel", "legacy_nonempty", "legacy_nocaption", "legacy_emptystr"],
+)
+def test_make_clip_metadata_has_caption(
+    tmp_path: Path,
+    caption_status: str | None,
+    caption_value: str | None,
+    *,
+    expected_has_caption: bool,
+) -> None:
+    """has_caption reflects caption_status (vLLM) or non-empty string (legacy)."""
+    stage = _create_stage(tmp_path / "out", tmp_path / "in")
+
+    caption = {"qwen": caption_value} if caption_value is not None else {}
+    window = Window(start_frame=0, end_frame=10, caption=caption, caption_status=caption_status)
+    clip = Clip(uuid=uuid.uuid4(), source_video="v.mp4", span=(0.0, 1.0), windows=[window])
+    video_meta = VideoMetadata(height=1080, width=1920, framerate=30.0, num_frames=30, duration=1.0, video_codec="h264")
+
+    data = stage._make_clip_metadata(clip, video_meta)
+    assert data["has_caption"] is expected_has_caption
+
+
+@pytest.mark.parametrize(
+    ("caption_status", "caption_value", "expected_count"),
+    [
+        ("success", "A great video.", 1),
+        ("failure", "", 0),
+        ("failure", VLLM_UNKNOWN_CAPTION, 0),
+        (None, "A great video.", 1),
+        (None, None, 0),
+        (None, "", 0),  # legacy non-vLLM, empty string — must not count as captioned
+    ],
+    ids=["vllm_success", "vllm_empty", "vllm_sentinel", "legacy_nonempty", "legacy_nocaption", "legacy_emptystr"],
+)
+def test_write_clip_metadata_num_with_caption(
+    tmp_path: Path,
+    caption_status: str | None,
+    caption_value: str | None,
+    expected_count: int,
+) -> None:
+    """num_with_caption metric matches has_caption, not raw caption-key presence."""
+    stage = _create_stage(tmp_path / "out", tmp_path / "in")
+
+    caption = {"qwen": caption_value} if caption_value is not None else {}
+    window = Window(start_frame=0, end_frame=10, caption=caption, caption_status=caption_status)
+    clip = Clip(uuid=uuid.uuid4(), source_video="v.mp4", span=(0.0, 1.0), windows=[window])
+    video_meta = VideoMetadata(height=1080, width=1920, framerate=30.0, num_frames=30, duration=1.0, video_codec="h264")
+
+    clip_stats = stage._write_clip_metadata(clip, video_meta)
+    assert clip_stats.num_with_caption == expected_count
+
+
+# ---------------------------------------------------------------------------
+# caption_status — Layer 3 (per-window export gate) tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("caption_status", "caption_value", "expect_export"),
+    [
+        ("success", "A great video.", True),
+        ("failure", "", False),
+        ("failure", VLLM_UNKNOWN_CAPTION, False),
+        (None, "A great video.", True),
+        (None, None, False),
+        (None, "", False),  # legacy non-vLLM, empty string — must not export
+    ],
+    ids=["vllm_success", "vllm_empty", "vllm_sentinel", "legacy_nonempty", "legacy_nocaption", "legacy_emptystr"],
+)
+def test_write_per_window_data_export_gate(
+    tmp_path: Path,
+    caption_status: str | None,
+    caption_value: str | None,
+    *,
+    expect_export: bool,
+) -> None:
+    """Windows without a usable caption are skipped; windows with one are exported."""
+    output_dir = tmp_path / "out"
+    stage = _create_stage(
+        output_dir,
+        tmp_path / "in",
+        generate_cosmos_predict_dataset="enable",
+    )
+
+    caption = {"qwen": caption_value} if caption_value is not None else {}
+    t5_embed = {"default": np.array([1, 2, 3], dtype=np.int32)}
+    window = Window(
+        start_frame=0,
+        end_frame=10,
+        mp4_bytes=b"mp4data",
+        caption=caption,
+        caption_status=caption_status,
+        t5_xxl_embedding=t5_embed,
+    )
+    clip = Clip(uuid=uuid.uuid4(), source_video="v.mp4", span=(0.0, 1.0), windows=[window])
+
+    stage._write_per_window_data(clip)
+
+    mp4_out = output_dir / "cosmos_predict2_video2world_dataset" / "videos" / f"{clip.uuid}_0_10.mp4"
+    assert mp4_out.exists() is expect_export
