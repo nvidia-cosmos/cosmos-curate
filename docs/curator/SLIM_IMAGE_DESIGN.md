@@ -50,9 +50,11 @@
 - GPU FFmpeg transcoding (`h264_nvenc`) retained for teams with NVENC-capable GPUs (e.g. RTX in data center). CPU
   `libopenh264` remains the default encoder for GPUs without NVENC hardware (A100, H100).
 
-**Shared environments (slim mode):** The `.pixi` directory (containing both the package cache and installed environments)
-is mounted on shared storage (PVC on k8s, Lustre on Slurm). A pre-warm step runs `pixi install --frozen` on the shared
-mount before Ray workers start — workers then use the pre-populated environments directly with no per-worker install.
+**Shared cache, local install (slim mode):** The pixi package cache is mounted from shared storage (Lustre on Slurm,
+PVC on k8s) so packages are downloaded once. Each container runs `pixi install --frozen` at startup, writing `.pixi` to
+the container's local writable overlay (RAM-backed on Slurm compute nodes). This gives fast sequential reads from the
+shared cache and fast metadata-heavy Python imports from local storage. Mounting `.pixi` itself from shared storage was
+tested but rejected — Lustre metadata latency made Python imports slower than the full image.
 
 ## Limitations and risks
 
@@ -73,9 +75,9 @@ mount before Ray workers start — workers then use the pre-populated environmen
    storage, and must complete successfully. Failures (network issues, disk full, permission errors) block the entire job.
    This is a new failure mode that doesn't exist with pre-built images.
 
-5. **Untested at scale.** Sharing `.pixi` across many concurrent workers has not been validated at the scale
-   cosmos-curate typically runs (hundreds of workers). File locking, NFS/Lustre metadata performance, and concurrent
-   access patterns are potential issues.
+5. **Per-container install overhead.** Each container installs its own `.pixi` from the shared cache at startup.
+   With a warm cache this takes ~1-2 minutes. For short-lived jobs this overhead may be significant; for typical
+   pipeline runs (10+ minutes) it is negligible and faster overall than pulling the full image.
 
 6. **Full mode doesn't solve the size problem.** For platforms that need pre-built images (NVCF, air-gapped), the
    image size remains large. Phases 1-2 (removing the FFmpeg source build) help, but the bulk of the image size comes
@@ -146,19 +148,23 @@ while `pynvc` is measurably faster. This removal is justified independently of t
     - With `--pixi-path`, environments are already present so the install is a fast no-op
     - Without `--pixi-path`, installs environments into the container's ephemeral filesystem
 
-- [ ] **3e. Configure shared `.pixi` mount for cluster deployments**
-    - Update `sbatch.sh.j2` to mount `.pixi` from shared storage (Lustre)
-    - Document shared storage setup for cluster deployments
+- [x] **3e. Mount pixi cache from shared storage for cluster deployments**
+    - Mount the pixi package cache (not `.pixi` itself) from Lustre into the container at `/pixi-cache`
+    - Set `PIXI_CACHE_DIR=/pixi-cache` so `pixi install` reads packages from the shared cache
+    - Mounting `.pixi` directly was tested but rejected — Lustre metadata latency made Python imports
+      slower than the full image
 
-- [ ] **3f. Add pre-warm step for Slurm**
-    - Add a head-node step in `sbatch.sh.j2` that runs `pixi install --frozen` for the envs listed in
-      `COSMOS_CURATE_SLIM_ENVS` before `srun` fans out workers
-    - Populates the shared `.pixi` directory before Ray starts
+- [x] **3f. Add auto-warmup to sbatch template**
+    - `sbatch.sh.j2` wraps the srun command with a conditional `pixi install --frozen` preamble
+    - Reads `COSMOS_CURATE_SLIM_ENVS` from the image; no-op when unset (full images)
+    - Installs environments inside the container's writable overlay (RAM-backed on compute nodes)
+    - Same pattern as `local launch` auto-warmup (3d)
 
-- [ ] **3g. Validate slim image on Slurm with shared storage**
-    - End-to-end test: slim image + shared `.pixi` mount + multi-node Ray cluster
-    - Measure cold-start time (empty cache) and warm-start time (pre-warmed)
-    - Verify workers use pre-populated environments with no per-worker install
+- [x] **3g. Validate slim image on Slurm CI**
+    - Switched `gpu_tests` and `slurm_end_to_end` CI jobs to the slim image
+    - Results (excluding Slurm queue wait): `gpu_tests` 7:15 vs 9:42 full (-25%),
+      `slurm_end_to_end` 14:30 vs 15:53 full (-9%)
+    - Faster than full image due to smaller image pull + fast local `.pixi` on RAM-backed overlay
 
 ### Phase 4: Cleanup and optimization
 

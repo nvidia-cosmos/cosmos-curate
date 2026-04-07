@@ -10,7 +10,7 @@ mkdir -p "${ENROOT_CONFIG_PATH}"
 echo "machine ${CI_REGISTRY/:5005/} login gitlab-ci-token password ${CI_JOB_TOKEN}" > "${ENROOT_CONFIG_PATH}/.credentials"
 
 IMAGE_TAG="$(get_image_tag)"
-FULL_IMAGE=${CURATOR_IMAGE}:${IMAGE_TAG}
+FULL_IMAGE=${CURATOR_SLIM_IMAGE}:${IMAGE_TAG}
 BUILD_IMAGE_NAME_SBATCH="${FULL_IMAGE/:5005\///}"
 
 DATA_DIR=/lustre/fsw/coreai_dlalgo_ci/datasets/nemo_curator/video
@@ -22,11 +22,13 @@ if [[ ! -e "${AWS_CREDS_PATH}" ]]; then
   exit 1
 fi
 
+PIXI_CACHE_DIR=/lustre/fsw/coreai_dlalgo_ci/nemo_video_curator/pixi/cache
 MOUNTS=(
   "${DATA_DIR}:/config/data"
   "${MODEL_DIR}:/config/models"
   "${AWS_CREDS_PATH}:/creds/s3_creds"
   "${CI_PROJECT_DIR}:/config/project"
+  "${PIXI_CACHE_DIR}:/pixi-cache"
 )
 MOUNTS_STR=$(IFS=, ; echo "${MOUNTS[*]}")
 
@@ -51,6 +53,8 @@ CONTAINER_ENV=(
   "SLURM_E2E_OUTPUT_CLIP_PATH=${SLURM_E2E_OUTPUT_CLIP_PATH}"
   "SLURM_E2E_OUTPUT_DEDUP_PATH=${SLURM_E2E_OUTPUT_DEDUP_PATH}"
   "SLURM_E2E_OUTPUT_DATASET_PATH=${SLURM_E2E_OUTPUT_DATASET_PATH}"
+  "PIXI_CACHE_DIR=/pixi-cache"
+  "CONDA_OVERRIDE_CUDA=13.0.2"
 )
 CONTAINER_ENV_STR=$(IFS=, ; echo "${CONTAINER_ENV[*]}")
 

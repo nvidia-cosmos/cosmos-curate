@@ -519,7 +519,7 @@ build_deploy_curator_slim:
 gpu_tests:
   stage: end-to-end
   rules: *pre_post_merge_rules
-  needs: ["build_deploy_curator"]
+  needs: ["build_deploy_curator_slim"]
   tags:
     - ${SLURM_RUNNER_TAG}
   variables:
@@ -530,23 +530,29 @@ gpu_tests:
     - mkdir -p "${ENROOT_CONFIG_PATH}"
     - echo "machine ${CI_REGISTRY/:5005/} login gitlab-ci-token password ${CI_JOB_TOKEN}" > $ENROOT_CONFIG_PATH/.credentials
 
-    # Pull the specific image version to test
+    # Pull the specific slim image version to test
     - *compute_image_tag
-    - FULL_IMAGE=${CURATOR_IMAGE}:${IMAGE_TAG}
+    - FULL_IMAGE=${CURATOR_SLIM_IMAGE}:${IMAGE_TAG}
     - BUILD_IMAGE_NAME_SBATCH="${FULL_IMAGE/:5005\///}"
-    # Submit SLURM job using the Docker image
+    # Submit SLURM job using the slim Docker image; mount pixi cache from
+    # Lustre so pixi install inside the container reads from cache (fast)
+    # but writes .pixi to local container storage (fast imports).
     - DATA_DIR=/lustre/fsw/coreai_dlalgo_ci/datasets/nemo_curator/video
     - MODEL_DIR=/lustre/fsw/coreai_dlalgo_ci/nemo_video_curator/models
     - WORKSPACE_DIR=/lustre/fsw/coreai_dlalgo_ci/nemo_video_curator/default_workspace
     - AWS_CREDS_PATH="/lustre/fsw/coreai_dlalgo_ci/datasets/nemo_curator/video/awscreds"
-    - MOUNTS="${DATA_DIR}:/config/data,${MODEL_DIR}:/config/models,${WORKSPACE_DIR}:/config/default_workspace,${AWS_CREDS_PATH}:/dev/shm/s3_creds_file,${CI_PROJECT_DIR}:/config/project"
+    - PIXI_CACHE=/lustre/fsw/coreai_dlalgo_ci/nemo_video_curator/pixi/cache
+    - MOUNTS="${DATA_DIR}:/config/data,${MODEL_DIR}:/config/models,${WORKSPACE_DIR}:/config/default_workspace,${AWS_CREDS_PATH}:/dev/shm/s3_creds_file,${CI_PROJECT_DIR}:/config/project,${PIXI_CACHE}:/pixi-cache"
     - NODES=1
     - export LOCAL_DOCKER_ENV_VAR_NAME=1
+    - export PIXI_CACHE_DIR=/pixi-cache
+    - export CONDA_OVERRIDE_CUDA=13.0.2
     # Run pytest for each environment; sleep 15 min before retry
     - >
       srun -A ${SLURM_ACCOUNT} \
            -p ${SLURM_PARTITION} \
            -N 1 \
+           --container-writable \
            --container-image ${BUILD_IMAGE_NAME_SBATCH} \
            --container-mounts ${MOUNTS} \
            -J ${SLURM_ACCOUNT}-cosmos_curator_test.${CI_JOB_ID} \
@@ -574,7 +580,7 @@ slurm_end_to_end:
   id_tokens:
     VAULT_JWT_TOKEN:
       aud: ${VAULT_ADDR}
-  needs: ["build_deploy_curator"]
+  needs: ["build_deploy_curator_slim"]
   rules: *merge_result_and_web_rules
   tags:
     - ${SLURM_RUNNER_TAG}

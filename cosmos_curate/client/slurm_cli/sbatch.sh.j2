@@ -113,6 +113,7 @@ srun \
   --no-container-remap-root \
   --container-image {{container_image}} \
   --container-mounts {{container_mounts}} \
-{% if env_keys %} --container-env {{env_keys}} {% endif %} {{command}}
+{% if env_keys %} --container-env {{env_keys}} {% endif %} \
+  bash -c 'if [ -n "${COSMOS_CURATE_SLIM_ENVS:-}" ]; then echo "Installing pixi environments: ${COSMOS_CURATE_SLIM_ENVS}" && pixi install --frozen -e ${COSMOS_CURATE_SLIM_ENVS//,/ -e }; fi && exec "$@"' _ {{command}}
 
 echo "$(date) - Srun called."
