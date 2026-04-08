@@ -14,7 +14,7 @@
 # limitations under the License.
 """Prompts and categories for Qwen-based filtering and video-type classification.
 
-Used by QwenFilteringStage (semantic filter) and QwenVideoClassifierStage (type allow/block).
+Used by VllmFilteringStage (semantic filter) and VllmVideoClassifierStage (type allow/block).
 """
 
 from loguru import logger
@@ -95,11 +95,13 @@ _PROMPTS = {
 }""",
     "type": (
         "Classify this video into the following categories. For each category, answer yes or no "
-        "depending on whether the video content matches that category.\n\n"
+        "depending on whether the video content matches that category. "
+        "Please provide text in the specified json format.\n\n"
         + "\n".join(f"Is this video: {label}?" for label in VIDEO_TYPE_LABELS)
-        + "\n\nAnswer format:\n{\n"
+        + "\n\nAnswer format: {\n"
         + ",\n".join(f'"{label}": "yes" or "no"' for label in VIDEO_TYPE_LABELS)
         + "\n}"
+        + "\n\nPlease provide text in the specified json format.\n\n"
     ),
 }
 

@@ -89,11 +89,11 @@ from cosmos_curate.pipelines.video.embedding.embedding_builders import (
 from cosmos_curate.pipelines.video.filtering.aesthetics.aesthetics_builders import (
     AestheticFilterConfig,
     ArtificialTextFilterConfig,
-    QwenFilterConfig,
-    QwenVideoClassifierConfig,
+    VideoClassifierConfig,
+    VlmFilterConfig,
     build_aesthetic_filter_stages,
     build_artificial_text_filter_stages,
-    build_qwen_filter_classifier_stages,
+    build_vllm_filter_classifier_stages,
 )
 from cosmos_curate.pipelines.video.filtering.motion.motion_builders import (
     MotionFilterConfig,
@@ -484,17 +484,17 @@ def _assemble_stages(  # noqa: C901, PLR0912, PLR0915
             )
         )
 
-    # --- Qwen semantic filter and/or video classifier (optional) ---
-    qwen_filter_cfg = (
-        QwenFilterConfig(
-            score_only=args.qwen_filter == "score-only",
-            model_variant=args.qwen_filter_model_variant,
-            filter_categories=args.qwen_filter_categories,
-            prompt_variant=args.qwen_filter_prompt_variant,
-            rejection_threshold=args.qwen_filter_rejection_threshold,
-            batch_size=args.qwen_filter_batch_size,
-            fp8_enable=args.qwen_filter_fp8_enable,
-            max_output_tokens=args.qwen_filter_max_output_tokens,
+    # --- VLM semantic filter and/or video classifier (optional) ---
+    vlm_filter_cfg = (
+        VlmFilterConfig(
+            score_only=args.vlm_filter == "score-only",
+            model_variant=args.vlm_filter_model_variant,
+            filter_categories=args.vlm_filter_categories,
+            prompt_variant=args.vlm_filter_prompt_variant,
+            rejection_threshold=args.vlm_filter_rejection_threshold,
+            batch_size=args.vlm_filter_batch_size,
+            fp8_enable=args.vlm_filter_fp8_enable,
+            max_output_tokens=args.vlm_filter_max_output_tokens,
             use_mmcache=args.qwen_use_vllm_mmcache,
             sampling_fps=args.captioning_sampling_fps,
             window_size=args.captioning_window_size,
@@ -505,16 +505,16 @@ def _assemble_stages(  # noqa: C901, PLR0912, PLR0915
             verbose=args.verbose,
             perf_profile=args.perf_profile,
         )
-        if args.qwen_filter != "disable"
+        if args.vlm_filter != "disable"
         else None
     )
-    qwen_classifier_cfg = (
-        QwenVideoClassifierConfig(
-            model_variant=args.qwen_video_classifier_model_variant,
-            rejection_threshold=args.qwen_video_classifier_rejection_threshold,
-            batch_size=args.qwen_video_classifier_batch_size,
-            fp8_enable=args.qwen_video_classifier_fp8_enable,
-            max_output_tokens=args.qwen_video_classifier_max_output_tokens,
+    video_classifier_cfg = (
+        VideoClassifierConfig(
+            model_variant=args.video_classifier_model_variant,
+            rejection_threshold=args.video_classifier_rejection_threshold,
+            batch_size=args.video_classifier_batch_size,
+            fp8_enable=args.video_classifier_fp8_enable,
+            max_output_tokens=args.video_classifier_max_output_tokens,
             use_mmcache=args.qwen_use_vllm_mmcache,
             sampling_fps=args.captioning_sampling_fps,
             window_size=args.captioning_window_size,
@@ -524,18 +524,20 @@ def _assemble_stages(  # noqa: C901, PLR0912, PLR0915
             generate_previews=args.generate_previews,
             verbose=args.verbose,
             perf_profile=args.perf_profile,
-            type_allow=",".join(args.qwen_video_classifier_allow) if args.qwen_video_classifier_allow else None,
-            type_block=",".join(args.qwen_video_classifier_block) if args.qwen_video_classifier_block else None,
-            custom_categories=args.qwen_video_classifier_use_custom_categories,
+            type_allow=",".join(args.video_classifier_allow) if args.video_classifier_allow else None,
+            type_block=",".join(args.video_classifier_block) if args.video_classifier_block else None,
+            custom_categories=args.video_classifier_use_custom_categories,
+            type_allow_file=args.video_classifier_allow_file,
+            type_block_file=args.video_classifier_block_file,
         )
-        if args.qwen_video_classifier != "disable"
+        if args.video_classifier != "disable"
         else None
     )
-    if qwen_filter_cfg is not None or qwen_classifier_cfg is not None:
+    if vlm_filter_cfg is not None or video_classifier_cfg is not None:
         stages.extend(
-            build_qwen_filter_classifier_stages(
-                filter_config=qwen_filter_cfg,
-                classifier_config=qwen_classifier_cfg,
+            build_vllm_filter_classifier_stages(
+                filter_config=vlm_filter_cfg,
+                classifier_config=video_classifier_cfg,
             )
         )
 
@@ -1345,27 +1347,33 @@ def _setup_parser(parser: argparse.ArgumentParser) -> None:  # noqa: PLR0915
         ),
     )
     parser.add_argument(
+        "--vlm-filter",
         "--qwen-filter",
+        dest="vlm_filter",
         choices=["enable", "disable", "score-only"],
         default="disable",
         help=(
-            "Whether to enable Qwen-based content filtering for video clips.\n"
-            "  - enable: Automatically filter clips based on Qwen-based content filtering.\n"
-            "  - disable: Disable Qwen-based content filtering.\n"
-            "  - score-only: Calculate Qwen-based content filtering results without filtering clips."
+            "Whether to enable VLM-based content filtering for video clips.\n"
+            "  - enable: Automatically filter clips based on VLM-based content filtering.\n"
+            "  - disable: Disable VLM-based content filtering.\n"
+            "  - score-only: Calculate VLM-based content filtering results without filtering clips."
         ),
     )
     parser.add_argument(
+        "--vlm-filter-prompt-variant",
         "--qwen-filter-prompt-variant",
+        dest="vlm_filter_prompt_variant",
         type=str,
         default="default",
         choices=[
             "default",
         ],
-        help="Prompt variant for Qwen semantic filtering stage.",
+        help="Prompt variant for VLM semantic filtering stage.",
     )
     parser.add_argument(
+        "--vlm-filter-categories",
         "--qwen-filter-categories",
+        dest="vlm_filter_categories",
         type=str,
         default=None,
         help=(
@@ -1374,50 +1382,70 @@ def _setup_parser(parser: argparse.ArgumentParser) -> None:  # noqa: PLR0915
         ),
     )
     parser.add_argument(
+        "--vlm-filter-rejection-threshold",
         "--qwen-filter-rejection-threshold",
+        dest="vlm_filter_rejection_threshold",
         type=float,
         default=0.5,
-        help="Threshold for Qwen filtering stage. If not provided, the default threshold of .5 will be used.",
+        help="Threshold for VLM filtering stage. If not provided, the default threshold of .5 will be used.",
     )
     parser.add_argument(
+        "--vlm-filter-batch-size",
         "--qwen-filter-batch-size",
+        dest="vlm_filter_batch_size",
         type=int,
         default=16,
-        help="Batch size for Qwen filtering stage.",
+        help="Batch size for VLM filtering stage.",
     )
     parser.add_argument(
+        "--vlm-filter-model-variant",
         "--qwen-filter-model-variant",
+        dest="vlm_filter_model_variant",
         type=str,
         default="qwen",
-        help="Model variant to use for Qwen filtering.",
+        help="Model variant to use for VLM filtering.",
     )
     parser.add_argument(
+        "--vlm-filter-fp8-enable",
         "--qwen-filter-fp8-enable",
+        dest="vlm_filter_fp8_enable",
         action="store_true",
         default=False,
-        help="Whether to use FP8 weights for Qwen filtering model.",
+        help="Whether to use FP8 weights for VLM filtering model.",
     )
     parser.add_argument(
+        "--vlm-filter-max-output-tokens",
         "--qwen-filter-max-output-tokens",
+        dest="vlm_filter_max_output_tokens",
         type=int,
-        default=512,
-        help="Max number of output tokens for Qwen filtering model.",
+        default=8192,
+        help="Max number of output tokens for VLM filtering model.",
     )
     parser.add_argument(
+        "--video-classifier",
         "--qwen-video-classifier",
-        dest="qwen_video_classifier",
+        dest="video_classifier",
         choices=["enable", "disable"],
         default="disable",
         help=(
-            "Whether to enable Qwen-based video classifier. "
+            "Whether to enable VLM-based video classifier. "
             "enable: filter by type allow/block lists; disable: do not run. "
-            "Set --qwen-video-classifier-allow and/or --qwen-video-classifier-block. "
-            "With --qwen-video-classifier-use-custom-categories, allow/block define the full category set."
+            "Set --video-classifier-allow and/or --video-classifier-block. "
+            "With --video-classifier-use-custom-categories, allow/block define the full category set."
         ),
     )
     parser.add_argument(
+        "--video-classifier-rejection-threshold",
+        "--qwen-video-classifier-rejection-threshold",
+        dest="video_classifier_rejection_threshold",
+        type=float,
+        default=0.5,
+        help="Threshold for VLM filtering stage. If not provided, the default threshold of .5 will be used.",
+    )
+    parser.add_argument(
+        "--video-classifier-use-custom-categories",
         "--qwen-video-classifier-use-custom-categories",
-        dest="qwen_video_classifier_use_custom_categories",
+        dest="video_classifier_use_custom_categories",
         action="store_true",
         default=False,
         help=(
@@ -1426,8 +1454,9 @@ def _setup_parser(parser: argparse.ArgumentParser) -> None:  # noqa: PLR0915
         ),
     )
     parser.add_argument(
+        "--video-classifier-allow",
         "--qwen-video-classifier-allow",
-        dest="qwen_video_classifier_allow",
+        dest="video_classifier_allow",
         type=str,
         action="append",
         default=None,
@@ -1435,55 +1464,75 @@ def _setup_parser(parser: argparse.ArgumentParser) -> None:  # noqa: PLR0915
         help=(
             "Video type(s) to keep (only clips with at least one window matching any pass). "
             "Default: 27 imaginaire taxonomy labels (underscores, no spaces). "
-            "With --qwen-video-classifier-use-custom-categories, any names; union with block defines categories."
+            "With --video-classifier-use-custom-categories, any names; union with block defines categories."
         ),
     )
     parser.add_argument(
+        "--video-classifier-block",
         "--qwen-video-classifier-block",
-        dest="qwen_video_classifier_block",
+        dest="video_classifier_block",
         type=str,
         action="append",
         default=None,
         metavar="TYPE",
         help=(
             "Video type(s) to reject (clips with too many windows matching any are filtered out). "
-            "With --qwen-video-classifier-use-custom-categories, any names; union with allow defines categories."
+            "With --video-classifier-use-custom-categories, any names; union with allow defines categories."
         ),
     )
     parser.add_argument(
-        "--qwen-video-classifier-rejection-threshold",
-        dest="qwen_video_classifier_rejection_threshold",
-        type=float,
-        default=0.5,
-        help="Block ratio threshold for Qwen video classifier (default 0.5).",
+        "--video-classifier-allow-file",
+        "--qwen-video-classifier-allow-file",
+        dest="video_classifier_allow_file",
+        type=str,
+        default=None,
+        help=(
+            "Path to a newline-separated .txt file of categories to allow. "
+            "Replaces the default category list; clips matching any allow category are kept."
+        ),
     )
     parser.add_argument(
+        "--video-classifier-block-file",
+        "--qwen-video-classifier-block-file",
+        dest="video_classifier_block_file",
+        type=str,
+        default=None,
+        help=(
+            "Path to a newline-separated .txt file of categories to block. "
+            "Replaces the default category list; clips matching any block category are rejected."
+        ),
+    )
+    parser.add_argument(
+        "--video-classifier-batch-size",
         "--qwen-video-classifier-batch-size",
-        dest="qwen_video_classifier_batch_size",
+        dest="video_classifier_batch_size",
         type=int,
         default=16,
-        help="Batch size for Qwen video classifier stage.",
+        help="Batch size for video classifier stage.",
     )
     parser.add_argument(
+        "--video-classifier-model-variant",
         "--qwen-video-classifier-model-variant",
-        dest="qwen_video_classifier_model_variant",
+        dest="video_classifier_model_variant",
         type=str,
         default="qwen",
-        help="Model variant for Qwen video classifier stage.",
+        help="Model variant for video classifier stage.",
     )
     parser.add_argument(
+        "--video-classifier-fp8-enable",
         "--qwen-video-classifier-fp8-enable",
-        dest="qwen_video_classifier_fp8_enable",
+        dest="video_classifier_fp8_enable",
         action="store_true",
         default=False,
-        help="Whether to use FP8 weights for Qwen video classifier model.",
+        help="Whether to use FP8 weights for video classifier model.",
     )
     parser.add_argument(
+        "--video-classifier-max-output-tokens",
         "--qwen-video-classifier-max-output-tokens",
-        dest="qwen_video_classifier_max_output_tokens",
+        dest="video_classifier_max_output_tokens",
         type=int,
-        default=512,
-        help="Max number of output tokens for Qwen video classifier model.",
+        default=8192,
+        help="Max number of output tokens for video classifier model.",
     )
     parser.add_argument(
         "--embedding-gpus-per-worker",

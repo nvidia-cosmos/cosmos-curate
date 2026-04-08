@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Test the QWEN filter and classifier stages."""
+"""Test the vLLM-based filter and classifier stages."""
 
 import pathlib
 import uuid
@@ -25,12 +25,12 @@ from cosmos_curate.core.interfaces.runner_interface import RunnerInterface
 from cosmos_curate.pipelines.video.clipping.clip_extraction_stages import (  # type: ignore[import-untyped]
     ClipTranscodingStage,
 )
-from cosmos_curate.pipelines.video.filtering.aesthetics.qwen_filter_prompts import VIDEO_TYPE_LABELS
-from cosmos_curate.pipelines.video.filtering.aesthetics.qwen_filter_stages import (  # type: ignore[import-untyped]
-    QwenFilteringStage,
-    QwenInputPreparationStageFiltering,
-    QwenVideoClassifierStage,
+from cosmos_curate.pipelines.video.filtering.aesthetics.aesthetics_builders import (
+    VideoClassifierConfig,
+    VlmFilterConfig,
+    build_vllm_filter_classifier_stages,
 )
+from cosmos_curate.pipelines.video.filtering.aesthetics.semantic_filter_prompts import VIDEO_TYPE_LABELS
 from cosmos_curate.pipelines.video.utils.data_model import Clip, SplitPipeTask, Video  # type: ignore[import-untyped]
 
 # Fill in after running the classifier GPU test manually to lock in expected classifications.
@@ -62,12 +62,11 @@ def sample_filtering_task(sample_video_data: bytes) -> SplitPipeTask:
 
 @pytest.mark.env("unified")
 def test_generate_embedding(sample_filtering_task: SplitPipeTask, sequential_runner: RunnerInterface) -> None:
-    """Test the QwenCaptioning result."""
+    """Test the vLLM filtering result."""
     filtering_prompt = "blue car"
     stages = [
         ClipTranscodingStage(encoder="libopenh264"),
-        QwenInputPreparationStageFiltering(sampling_fps=2.0, filter_categories=filtering_prompt),
-        QwenFilteringStage(verbose=True, user_prompt=filtering_prompt),
+        *build_vllm_filter_classifier_stages(filter_config=VlmFilterConfig(filter_categories=filtering_prompt)),
     ]
     tasks = run_pipeline([sample_filtering_task], stages, runner=sequential_runner)
 
@@ -90,7 +89,7 @@ def test_generate_embedding(sample_filtering_task: SplitPipeTask, sequential_run
 def test_qwen_video_classifier_classifications(
     sample_filtering_task: SplitPipeTask, sequential_runner: RunnerInterface
 ) -> None:
-    """Test that the Qwen video classifier sets qwen_type_classification on each clip.
+    """Test that the vLLM video classifier sets qwen_type_classification on each clip.
 
     Run with: cosmos-curate local launch --curator-path . -- pixi run --as-is -e unified pytest -m env
         tests/cosmos_curate/pipelines/video/filtering/aesthetics/test_qwen_filter.py
@@ -102,16 +101,7 @@ def test_qwen_video_classifier_classifications(
     """
     stages = [
         ClipTranscodingStage(encoder="libopenh264"),
-        QwenInputPreparationStageFiltering(
-            model_variant="qwen",
-            prompt_variant="type",
-            filter_categories=None,
-            sampling_fps=2.0,
-        ),
-        QwenVideoClassifierStage(
-            model_variant="qwen",
-            verbose=True,
-        ),
+        *build_vllm_filter_classifier_stages(classifier_config=VideoClassifierConfig()),
     ]
     tasks = run_pipeline([sample_filtering_task], stages, runner=sequential_runner)
 

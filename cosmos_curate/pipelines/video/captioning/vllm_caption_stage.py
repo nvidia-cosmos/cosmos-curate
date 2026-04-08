@@ -105,6 +105,31 @@ def _get_windows_from_tasks[T: PipelineTask](tasks: list[T]) -> tuple[list[Windo
     return windows, clip_uuids
 
 
+def _get_filter_windows_from_tasks[T: PipelineTask](tasks: list[T]) -> tuple[list[Window], list[str]]:
+    """Get the filter_windows from a list of tasks.
+
+    Args:
+        tasks: The tasks with video -> clips -> filter_windows.
+
+    Returns:
+        The filter_windows and clip uuids from the task.
+
+    """
+    windows: list[Window] = []
+    clip_uuids: list[str] = []
+    for task in tasks:
+        video = get_video_from_task(task)
+        for clip in video.clips:
+            if not clip.filter_windows:
+                logger.warning(f"Clip {clip.uuid} has no filter_windows")
+                clip.errors["clip_windowing"] = "empty"
+                continue
+            windows += clip.filter_windows
+            clip_uuids += [str(clip.uuid)] * len(clip.filter_windows)
+
+    return windows, clip_uuids
+
+
 def _get_stage2_prompts(vllm_config: VllmConfig, num_windows: int) -> list[str | None]:
     """Get the stage 2 prompts for the vLLM model.
 
@@ -209,7 +234,7 @@ class VllmModelInterface(ModelInterface):
 class VllmPrepStage(CuratorStage):
     """Stage that prepares cosmos-curate video data for vLLM multimodal model processing."""
 
-    def __init__(
+    def __init__(  # noqa: PLR0913
         self,
         vllm_config: VllmConfig,
         window_config: WindowConfig,
@@ -217,6 +242,7 @@ class VllmPrepStage(CuratorStage):
         keep_mp4: bool = False,
         verbose: bool = False,
         log_stats: bool = False,
+        use_filter_windows: bool = False,
     ) -> None:
         """Initialize the vLLM Preparation Stage.
 
@@ -226,6 +252,9 @@ class VllmPrepStage(CuratorStage):
             keep_mp4: Keep mp4 bytes for the clips in memory.
             verbose: Whether to print verbose logs.
             log_stats: Whether to log performance statistics.
+            use_filter_windows: If True, store windows in clip.filter_windows instead
+                of clip.windows. Use this when the stage is part of a filtering pipeline
+                rather than a captioning pipeline.
 
         """
         super().__init__()
@@ -237,6 +266,7 @@ class VllmPrepStage(CuratorStage):
         self._log_stats = log_stats
         self._processor: AutoProcessor | None = None
         self._keep_mp4 = keep_mp4
+        self._use_filter_windows = use_filter_windows
         self._model = VllmModelInterface(self._vllm_config)
 
     def secondary_name(self) -> str:
@@ -327,6 +357,11 @@ class VllmPrepStage(CuratorStage):
         for window, llm_input in zip(windows, llm_inputs, strict=True):
             window.model_input[self._vllm_config.model_variant] = llm_input
 
+        if self._use_filter_windows:
+            for clip in video.clips:
+                clip.filter_windows = clip.windows[:]
+                clip.windows = []
+
     @nvtx.annotate("VllmPrepStage")  # type: ignore[untyped-decorator]
     def process_data(self, tasks: list[T]) -> list[T]:
         """Prepare the data for the vLLM caption stage.
@@ -380,6 +415,7 @@ class VllmCaptionStage(CuratorStage):
         keep_mp4: bool = False,
         verbose: bool = False,
         log_stats: bool = False,
+        use_filter_windows: bool = False,
     ) -> None:
         """Initialize the vLLM caption stage.
 
@@ -392,6 +428,8 @@ class VllmCaptionStage(CuratorStage):
             keep_mp4: Whether to keep the mp4 bytes.
             verbose: Whether to print verbose logs.
             log_stats: Whether to log performance statistics.
+            use_filter_windows: If True, read windows from clip.filter_windows instead
+                of clip.windows. Use this when paired with VllmPrepStage(use_filter_windows=True).
 
         """
         super().__init__()
@@ -408,6 +446,7 @@ class VllmCaptionStage(CuratorStage):
         self._model = VllmModelInterface(self._vllm_config)
         self._max_inflight_requests = max_inflight_requests
         self._inflight_batching = inflight_batching
+        self._use_filter_windows = use_filter_windows
 
     def stage_setup_on_node(self) -> None:
         """Set up on a node by copying model weights if configured.
@@ -567,7 +606,10 @@ class VllmCaptionStage(CuratorStage):
 
         with self._timer.time_process():
             # Gather model inputs and clip uuids
-            windows, clip_uuids = _get_windows_from_tasks(tasks)
+            if self._use_filter_windows:
+                windows, clip_uuids = _get_filter_windows_from_tasks(tasks)
+            else:
+                windows, clip_uuids = _get_windows_from_tasks(tasks)
             model_inputs = [window.model_input[self._vllm_config.model_variant] for window in windows]
 
             # Set up stage 2 prompts if enabled
