@@ -514,6 +514,10 @@ build_deploy_curator_slim:
     - build_deploy_curator_slim_arch
   variables:
     BUILD_IMAGE_REPO: ${CURATOR_SLIM_IMAGE}
+    DOTENV_VAR_NAME: CURATOR_SLIM_FULL_IMAGE
+  artifacts:
+    reports:
+      dotenv: build.env
 
 # Run GPU tests on SLURM cluster
 gpu_tests:
@@ -816,8 +820,8 @@ k8s_gpu_tests:
   stage: end-to-end
   tags:
     - k8s-gpu
-  needs: ["build_deploy_curator"]
-  image: ${CURATOR_FULL_IMAGE}
+  needs: ["build_deploy_curator_slim"]
+  image: ${CURATOR_SLIM_FULL_IMAGE}
   timeout: 45 minutes
   allow_failure: true
   variables:
@@ -833,6 +837,13 @@ k8s_gpu_tests:
     - when: never
   before_script:
     - source .gitlab/vault/vault-auth.sh
+    # Install pixi environments into /opt/cosmos-curate (where the slim
+    # image has the source + lockfile) so Ray workers find them.
+    - export PIXI_CACHE_DIR=/cache/pixi
+    - export CONDA_OVERRIDE_CUDA=13.0.2
+    - pushd /opt/cosmos-curate
+    - pixi install --frozen -e default -e unified -e legacy-transformers -e model-download
+    - popd
   script:
     - .gitlab/scripts/k8s_gpu_tests.sh
   artifacts:

@@ -92,7 +92,7 @@ def test_qwen_video_classifier_classifications(
 ) -> None:
     """Test that the Qwen video classifier sets qwen_type_classification on each clip.
 
-    Run with: cosmos-curate local launch --curator-path . -- pixi run -e unified pytest -m env
+    Run with: cosmos-curate local launch --curator-path . -- pixi run --as-is -e unified pytest -m env
         tests/cosmos_curate/pipelines/video/filtering/aesthetics/test_qwen_filter.py
         -k test_qwen_video_classifier_classifications -v
 

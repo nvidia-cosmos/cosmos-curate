@@ -81,7 +81,7 @@ Example:
 
 ```bash
 cosmos-curate local launch --curator-path . -- \
-  pixi run python -m cosmos_curate.pipelines.video.run_pipeline split \
+  pixi run --as-is python -m cosmos_curate.pipelines.video.run_pipeline split \
     --input-video-path /config/test_data/raw_videos/ \
     --output-clip-path /config/test_data/output_clips/ \
     --profile-cpu --verbose
@@ -100,7 +100,7 @@ Example:
 
 ```bash
 cosmos-curate local launch --curator-path . -- \
-  pixi run python -m cosmos_curate.pipelines.video.run_pipeline split \
+  pixi run --as-is python -m cosmos_curate.pipelines.video.run_pipeline split \
     --input-video-path /config/test_data/raw_videos/ \
     --output-clip-path /config/test_data/output_clips/ \
     --profile-memory --verbose
@@ -112,7 +112,7 @@ to avoid the memray/pyinstrument `sys.setprofile` conflict:
 
 ```bash
 cosmos-curate local launch --curator-path . -- \
-  pixi run python -m cosmos_curate.pipelines.video.run_pipeline split \
+  pixi run --as-is python -m cosmos_curate.pipelines.video.run_pipeline split \
     --input-video-path /config/test_data/raw_videos/ \
     --output-clip-path /config/test_data/output_clips/ \
     --profile-cpu --profile-memory --verbose
@@ -134,7 +134,7 @@ Example:
 
 ```bash
 cosmos-curate local launch --curator-path . -- \
-  pixi run python -m cosmos_curate.pipelines.video.run_pipeline split \
+  pixi run --as-is python -m cosmos_curate.pipelines.video.run_pipeline split \
     --input-video-path /config/test_data/raw_videos/ \
     --output-clip-path /config/test_data/output_clips/ \
     --profile-gpu --verbose
@@ -160,7 +160,7 @@ to an OTLP collector (Jaeger, Grafana Tempo, etc.).
 
 ```bash
 cosmos-curate local launch --curator-path . -- \
-  pixi run python -m cosmos_curate.pipelines.video.run_pipeline split \
+  pixi run --as-is python -m cosmos_curate.pipelines.video.run_pipeline split \
     --input-video-path /config/test_data/raw_videos/ \
     --output-clip-path /config/test_data/output_clips/ \
     --profile-tracing --verbose

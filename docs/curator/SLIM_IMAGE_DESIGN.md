@@ -56,6 +56,14 @@ the container's local writable overlay (RAM-backed on Slurm compute nodes). This
 shared cache and fast metadata-heavy Python imports from local storage. Mounting `.pixi` itself from shared storage was
 tested but rejected — Lustre metadata latency made Python imports slower than the full image.
 
+**Runtime invariant — `pixi run --as-is`:** All runtime `pixi run` invocations use `--as-is`, which skips environment
+validation and assumes environments are already installed. This is a safety guarantee, not just a performance
+optimization: if an environment is missing, the command fails immediately instead of silently installing on the fly
+(which could hang, race with concurrent Ray workers, or produce non-reproducible results). The invariant holds for both
+image modes — full images pre-install at build time, slim images pre-install via the warmup step. The only exception is
+local dev commands outside a container (e.g. `pixi run -e unified python ...`), where environments may not yet be
+installed.
+
 ## Limitations and risks
 
 1. **Slim mode is unconventional.** The standard container practice — including pixi's own documentation — is to install
@@ -165,6 +173,26 @@ while `pynvc` is measurably faster. This removal is justified independently of t
     - Results (excluding Slurm queue wait): `gpu_tests` 7:15 vs 9:42 full (-25%),
       `slurm_end_to_end` 14:30 vs 15:53 full (-9%)
     - Faster than full image due to smaller image pull + fast local `.pixi` on RAM-backed overlay
+
+- [x] **3h. Validate slim image on k8s CI**
+    - Switched `k8s_gpu_tests` to the slim image with in-container `pixi install` from a persistent
+      hostPath cache (`/cache/pixi`)
+    - `pixi install` runs from `/opt/cosmos-curate` (where the slim image has source + lockfile),
+      not from the GitLab checkout directory
+    - Results: slim pod startup 9s + pixi install 37s = 46s overhead, total 7:43.
+      Full image pod startup varies widely depending on image layer caching: 7s (cached) to 4:40
+      (uncached), with 4 of 5 sampled runs uncached (2:19–4:40). Total full job durations:
+      7:25–11:18. The slim image matches a best-case cached pull and consistently avoids the
+      multi-minute uncached pulls
+
+- [x] **3i. Use `pixi run --as-is` to skip per-invocation environment validation**
+    - `pixi run --as-is` skips environment validation entirely — assumes environments are already
+      installed. Without it, each Ray worker spawn re-validates (and potentially re-installs)
+      environments, which caused worker spawn timeouts in k8s CI
+    - Applied to `PixiRuntimeEnv` (Ray actor spawns), CI scripts, Dockerfile post-install steps,
+      and all in-container docs examples
+    - Local dev commands (DEVELOPER_GUIDE.md) left without `--as-is` since envs may not be
+      pre-installed
 
 ### Phase 4: Cleanup and optimization
 

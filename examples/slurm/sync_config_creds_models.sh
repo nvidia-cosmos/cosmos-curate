@@ -49,6 +49,6 @@ else
     else
         echo "No local models found at ${LOCAL_MODELS}, skipping model sync."
         echo "Tip: large models (e.g. SeedVR2) are faster to download directly on the"
-        echo "cluster via: pixi run -e model-download python -m cosmos_curate.core.managers.model_cli download --models seedvr2_3b"
+        echo "cluster via: pixi run --as-is -e model-download python -m cosmos_curate.core.managers.model_cli download --models seedvr2_3b"
     fi
 fi

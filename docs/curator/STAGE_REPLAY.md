@@ -33,7 +33,7 @@ Add two flags to your pipeline command:
 
 ```bash
 cosmos-curate local launch --curator-path . -- \
-  pixi run python -m cosmos_curate.pipelines.video.splitting_pipeline \
+  pixi run --as-is python -m cosmos_curate.pipelines.video.splitting_pipeline \
   --input-video-path /path/to/videos \
   --output-clip-path /path/to/output \
   --stage-save VllmCaptionStage,MotionVectorDecodeStage \
@@ -60,7 +60,7 @@ Add one flag to your pipeline command: `--stage-replay`:
 
 ```bash
 cosmos-curate local launch --curator-path . -- \
-  pixi run python -m cosmos_curate.pipelines.video.splitting_pipeline \
+  pixi run --as-is python -m cosmos_curate.pipelines.video.splitting_pipeline \
   --input-video-path /path/to/videos \
   --output-clip-path /path/to/output \
   --stage-replay VllmCaptionStage \
@@ -92,7 +92,7 @@ First, run your full pipeline once to save inputs to the stage you want to debug
 
 ```bash
 cosmos-curate local launch --curator-path . -- \
-  pixi run python -m cosmos_curate.pipelines.video.splitting_pipeline \
+  pixi run --as-is python -m cosmos_curate.pipelines.video.splitting_pipeline \
   --input-video-path /data/raw_videos \
   --output-clip-path /data/output \
   --stage-save VllmCaptionStage \
@@ -136,7 +136,7 @@ Run only the modified stage using saved tasks:
 
 ```bash
 cosmos-curate local launch --curator-path . -- \
-  pixi run python -m cosmos_curate.pipelines.video.splitting_pipeline \
+  pixi run --as-is python -m cosmos_curate.pipelines.video.splitting_pipeline \
   --input-video-path /data/raw_videos \
   --output-clip-path /data/output \
   --stage-replay VllmCaptionStage \
@@ -282,13 +282,13 @@ You can save tasks from one pipeline configuration and replay with different set
 ```bash
 # Save tasks with original settings
 cosmos-curate local launch --curator-path . -- \
-  pixi run python -m cosmos_curate.pipelines.video.splitting_pipeline \
+  pixi run --as-is python -m cosmos_curate.pipelines.video.splitting_pipeline \
   --model Qwen2-VL-2B \
   --stage-save VllmPrepStage
 
 # Replay with experimental model
 cosmos-curate local launch --curator-path . -- \
-  pixi run python -m cosmos_curate.pipelines.video.splitting_pipeline \
+  pixi run --as-is python -m cosmos_curate.pipelines.video.splitting_pipeline \
   --model Qwen2-VL-7B \
   --stage-replay VllmCaptionStage
 ```
@@ -492,7 +492,7 @@ with open("/path/to/tasks/Stage/Stage/video_000.task.pkl", "rb") as f:
 ```bash
 # Run once to save prep stage outputs
 cosmos-curate local launch --curator-path . -- \
-  pixi run python -m cosmos_curate.pipelines.video.splitting_pipeline \
+  pixi run --as-is python -m cosmos_curate.pipelines.video.splitting_pipeline \
   --input-video-path /data/videos \
   --output-clip-path /data/output \
   --stage-save VllmPrepStage \
@@ -500,7 +500,7 @@ cosmos-curate local launch --curator-path . -- \
 
 # Iterate: Modify caption logic, then replay
 cosmos-curate local launch --curator-path . -- \
-  pixi run python -m cosmos_curate.pipelines.video.splitting_pipeline \
+  pixi run --as-is python -m cosmos_curate.pipelines.video.splitting_pipeline \
   --input-video-path /data/videos \
   --output-clip-path /data/output \
   --stage-replay VllmCaptionStage \
@@ -514,7 +514,7 @@ cosmos-curate local launch --curator-path . -- \
 ```bash
 # Save tasks
 cosmos-curate local launch --curator-path . -- \
-  pixi run python -m cosmos_curate.pipelines.video.splitting_pipeline \
+  pixi run --as-is python -m cosmos_curate.pipelines.video.splitting_pipeline \
   --input-video-path /data/videos \
   --output-clip-path /data/output \
   --stage-save MotionVectorDecodeStage \
@@ -522,13 +522,13 @@ cosmos-curate local launch --curator-path . -- \
 
 # Profile with different configurations
 time cosmos-curate local launch --curator-path . -- \
-  pixi run python -m cosmos_curate.pipelines.video.splitting_pipeline \
+  pixi run --as-is python -m cosmos_curate.pipelines.video.splitting_pipeline \
   --output-clip-path /data/output \
   --stage-replay MotionFilterStage \
   --batch-size 16
 
 time cosmos-curate local launch --curator-path . -- \
-  pixi run python -m cosmos_curate.pipelines.video.splitting_pipeline \
+  pixi run --as-is python -m cosmos_curate.pipelines.video.splitting_pipeline \
   --output-clip-path /data/output \
   --stage-replay MotionFilterStage \
   --batch-size 32
@@ -539,21 +539,21 @@ time cosmos-curate local launch --curator-path . -- \
 ```bash
 # Save tasks before filter stage
 cosmos-curate local launch --curator-path . -- \
-  pixi run python -m cosmos_curate.pipelines.video.splitting_pipeline \
+  pixi run --as-is python -m cosmos_curate.pipelines.video.splitting_pipeline \
   --input-video-path /data/videos \
   --output-clip-path /data/output_baseline \
   --stage-save MotionVectorDecodeStage
 
 # Test aggressive filtering
 cosmos-curate local launch --curator-path . -- \
-  pixi run python -m cosmos_curate.pipelines.video.splitting_pipeline \
+  pixi run --as-is python -m cosmos_curate.pipelines.video.splitting_pipeline \
   --output-clip-path /data/output_aggressive \
   --stage-replay MotionFilterStage \
   --motion-threshold 0.8
 
 # Test lenient filtering  
 cosmos-curate local launch --curator-path . -- \
-  pixi run python -m cosmos_curate.pipelines.video.splitting_pipeline \
+  pixi run --as-is python -m cosmos_curate.pipelines.video.splitting_pipeline \
   --output-clip-path /data/output_lenient \
   --stage-replay MotionFilterStage \
   --motion-threshold 0.3

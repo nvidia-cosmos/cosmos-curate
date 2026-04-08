@@ -31,7 +31,7 @@ echo "Output: ${K8S_OUTPUT_PATH}"
 
 # Run split pipeline with GPU stages (transnetv2 + embeddings + captions)
 # shellcheck disable=SC2046
-pixi run python -m cosmos_curate.pipelines.video.run_pipeline split \
+pixi run --as-is python -m cosmos_curate.pipelines.video.run_pipeline split \
   --input-video-path "${S3_INPUT_VIDEO_PATH}" \
   --output-clip-path "${K8S_OUTPUT_PATH}" \
   --limit 1 \

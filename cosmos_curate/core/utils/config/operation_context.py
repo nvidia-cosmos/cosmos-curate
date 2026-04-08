@@ -157,9 +157,9 @@ def check_if_running_in_pixi_env() -> None:
             "Error: Pipelines must be executed inside a Pixi environment.\n"
             "\n"
             "  To use the default environment:\n"
-            "    pixi run python -m <module> [args]\n"
+            "    pixi run --as-is python -m <module> [args]\n"
             "  To use a named environment:\n"
-            "    pixi run -e <env_name> python -m <module> [args]\n"
+            "    pixi run --as-is -e <env_name> python -m <module> [args]\n"
             "\n"
             "Run `pixi run --help` for more details.\n"
         )

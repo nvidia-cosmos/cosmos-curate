@@ -96,7 +96,7 @@ Below is a summary of the important options for the av-split-caption pipeline. T
 ```bash
 cosmos-curate local launch \
     --image-name cosmos-curate --image-tag 1.0.0 --curator-path . \
-    -- pixi run python3 -m cosmos_curate.pipelines.av.run_pipeline split --help
+    -- pixi run --as-is python3 -m cosmos_curate.pipelines.av.run_pipeline split --help
 ```
 
 **Options for Input/Output**

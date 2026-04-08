@@ -40,5 +40,5 @@ class PixiRuntimeEnv(RuntimeEnv):
         copied_env_vars = None if env_vars is None else dict(env_vars)
         super().__init__(
             env_vars=copied_env_vars,
-            py_executable=f"pixi run -e {env_name} python" if env_name else None,
+            py_executable=f"pixi run --as-is -e {env_name} python" if env_name else None,
         )

@@ -238,7 +238,7 @@ RUN --mount=type=bind,from=wheels-builder,source=/wheels-ready,target=/tmp/wheel
 COPY package/cosmos_curate/envs/ /tmp/cosmos_curate_build_envs
 {% for env in post_install_envs %}
 RUN cd {{code_dir_str}} && \
-    pixi run -e {{ env }} bash /tmp/cosmos_curate_build_envs/{{ env }}/post_install.sh
+    pixi run --as-is -e {{ env }} bash /tmp/cosmos_curate_build_envs/{{ env }}/post_install.sh
 {% endfor %}
 
 {% if 'seedvr' in envs %}
@@ -259,8 +259,8 @@ ENV SEEDVR_ROOT={{code_dir_str}}/SeedVR
 COPY cosmos-xenna /tmp/cosmos-xenna
 {% for env in envs %}
 RUN cd {{code_dir_str}} && \
-    pixi run -e {{ env }} pip uninstall -y cosmos-xenna && \
-    pixi run -e {{ env }} pip install /tmp/cosmos-xenna
+    pixi run --as-is -e {{ env }} pip uninstall -y cosmos-xenna && \
+    pixi run --as-is -e {{ env }} pip install /tmp/cosmos-xenna
 {% endfor %}
 {% endif %}
 
@@ -291,4 +291,4 @@ EXPOSE 8000 6379
 
 WORKDIR {{code_dir_str}}
 
-CMD ["pixi", "run", "python", "cosmos_curate/scripts/onto_nvcf.py", "--helm", "True"]
+CMD ["pixi", "run", "--as-is", "python", "cosmos_curate/scripts/onto_nvcf.py", "--helm", "True"]

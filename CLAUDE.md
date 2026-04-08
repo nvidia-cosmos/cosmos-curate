@@ -22,7 +22,7 @@ Pre-commit hooks run ruff automatically. A submodule-check hook warns before com
 
 **Testing**:
 - CPU tests: `pytest` (env-marked tests are excluded by default via `pytest.ini`)
-- GPU tests: `cosmos-curate local launch --curator-path . -- pixi run -e [default|unified] pytest -m env tests/`
+- GPU tests: `cosmos-curate local launch --curator-path . -- pixi run --as-is -e [default|unified] pytest -m env tests/`
 - Mark GPU tests with `@pytest.mark.env("unified")` (or other env name)
 - Place tests in `tests/` mirroring module paths. Uses `--import-mode=importlib`.
 

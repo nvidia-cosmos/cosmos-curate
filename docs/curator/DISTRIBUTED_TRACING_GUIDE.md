@@ -574,7 +574,7 @@ docker run -d --name jaeger \
 
 # Run pipeline with tracing
 cosmos-curate local launch --curator-path . -- \
-  pixi run python -m cosmos_curate.pipelines.video.run_pipeline split \
+  pixi run --as-is python -m cosmos_curate.pipelines.video.run_pipeline split \
     --input-video-path /config/test_data/raw_videos/ \
     --output-clip-path /config/test_data/output_clips/ \
     --profile-tracing --verbose

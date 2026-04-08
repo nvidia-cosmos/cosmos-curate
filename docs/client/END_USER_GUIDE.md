@@ -174,10 +174,10 @@ The steps below only shows how to run the pipeline.
 cosmos-curate image build --image-name cosmos-curate --image-tag hello-world --envs transformers
 
 # 2. Download the GPT-2 model weights
-cosmos-curate local launch --image-name cosmos-curate --image-tag hello-world -- pixi run python -m cosmos_curate.core.managers.model_cli download --models gpt2
+cosmos-curate local launch --image-name cosmos-curate --image-tag hello-world -- pixi run --as-is python -m cosmos_curate.core.managers.model_cli download --models gpt2
 
 # 3. Run the hello-world pipeline
-cosmos-curate local launch --image-name cosmos-curate --image-tag hello-world --curator-path . -- pixi run python -m cosmos_curate.pipelines.examples.hello_world_pipeline
+cosmos-curate local launch --image-name cosmos-curate --image-tag hello-world --curator-path . -- pixi run --as-is python -m cosmos_curate.pipelines.examples.hello_world_pipeline
 ```
 
 ### Run the Reference Video Pipeline
@@ -197,7 +197,7 @@ cosmos-curate image build --image-name cosmos-curate --image-tag 1.0.0
    - For the same reason as above, we need to download weights for a few more models and it will take 10+ minutes depends on your network condition.
 
 ```bash
-cosmos-curate local launch --image-name cosmos-curate --image-tag 1.0.0 -- pixi run python -m cosmos_curate.core.managers.model_cli download
+cosmos-curate local launch --image-name cosmos-curate --image-tag 1.0.0 -- pixi run --as-is python -m cosmos_curate.core.managers.model_cli download
 ```
 
 3. **Run the Split-Annotate Pipeline**
@@ -218,7 +218,7 @@ cosmos-curate local launch --image-name cosmos-curate --image-tag 1.0.0 -- pixi 
 ```bash
 cosmos-curate local launch \
     --image-name cosmos-curate --image-tag 1.0.0 --curator-path . \
-    -- pixi run python -m cosmos_curate.pipelines.video.run_pipeline split \
+    -- pixi run --as-is python -m cosmos_curate.pipelines.video.run_pipeline split \
     --input-video-path <local or s3 path containing input videos> \
     --output-clip-path <local or s3 path to store output clips and metadatas> \
     --limit 1
@@ -243,7 +243,7 @@ Cosmos-Curate can call the Google Gemini API instead of local captioning models.
 ```bash
 cosmos-curate local launch \
     --image-name cosmos-curate --image-tag 1.0.0 --curator-path . \
-    -- pixi run python -m cosmos_curate.pipelines.video.run_pipeline split \
+    -- pixi run --as-is python -m cosmos_curate.pipelines.video.run_pipeline split \
     --input-video-path <input path> \
     --output-clip-path <output path> \
     --captioning-algorithm gemini \
@@ -267,7 +267,7 @@ For a second-pass refinement of captions you can call the OpenAI API.
 ```bash
 cosmos-curate local launch \
     --image-name cosmos-curate --image-tag 1.0.0 --curator-path . \
-    -- pixi run python -m cosmos_curate.pipelines.video.run_pipeline split \
+    -- pixi run --as-is python -m cosmos_curate.pipelines.video.run_pipeline split \
     --input-video-path <input path> \
     --output-clip-path <output path> \
     --enhance-captions \
@@ -311,7 +311,7 @@ openai:
 ```bash
 cosmos-curate local launch \
     --image-name cosmos-curate --image-tag 1.0.0 --curator-path . \
-    -- pixi run python -m cosmos_curate.pipelines.video.run_pipeline split \
+    -- pixi run --as-is python -m cosmos_curate.pipelines.video.run_pipeline split \
     --input-video-path <input path> \
     --output-clip-path <output path> \
     --embedding-algorithm openai
@@ -326,7 +326,7 @@ First, launch the container with a service endpoint.
 ```bash
 cosmos-curate local launch \
    --image-name cosmos-curate --image-tag 1.0.0 --curator-path . \
-   -- pixi run python cosmos_curate/scripts/onto_nvcf.py --helm False
+   -- pixi run --as-is python cosmos_curate/scripts/onto_nvcf.py --helm False
 ```
 
 After `Application startup complete.` is printed in the log, you can invoke the split-annotate with a `curl` command.
@@ -392,7 +392,7 @@ cosmos-curate image build --slim --image-name cosmos-curate --image-tag slim
 # Launch with host source code and pixi environments mounted
 cosmos-curate local launch --image-name cosmos-curate --image-tag slim \
     --curator-path . --pixi-path . \
-    -- pixi run python -m cosmos_curate.pipelines.examples.hello_world_pipeline
+    -- pixi run --as-is python -m cosmos_curate.pipelines.examples.hello_world_pipeline
 ```
 
 The `--pixi-path .` option mounts the `.pixi` directory from the given path into the container, so the container

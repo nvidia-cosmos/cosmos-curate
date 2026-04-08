@@ -56,7 +56,7 @@ autoscale, `> 0` = fixed count).
 ### Basic
 
 ```bash
-cosmos-curate local launch --curator-path . -- pixi run python -m \
+cosmos-curate local launch --curator-path . -- pixi run --as-is python -m \
     cosmos_curate.pipelines.video.splitting_pipeline \
     --input-video-path /config/input \
     --output-clip-path /config/output \

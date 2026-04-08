@@ -77,7 +77,7 @@ submit_cmd=(
 if [[ -n "${SLURM_GRES:-}" ]]; then
   submit_cmd+=(--gres "${SLURM_GRES}")
 fi
-submit_cmd+=(-- pixi run bash /config/project/examples/slurm/ci_run_end_to_end.sh)
+submit_cmd+=(-- pixi run --as-is bash /config/project/examples/slurm/ci_run_end_to_end.sh)
 "${submit_cmd[@]}" | tee slurm_submit.log
 
 JOB_ID=$(awk '/Job submitted with ID:/{print $NF}' slurm_submit.log | tail -n 1)

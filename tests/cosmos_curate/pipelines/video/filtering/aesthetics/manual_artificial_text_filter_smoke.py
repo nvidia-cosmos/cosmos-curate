@@ -17,7 +17,7 @@
 Run manually from inside the Docker image with the paddle-ocr env. You must pass
 -m env so these tests are selected (default pytest addopts deselect env-marked tests):
 
-pixi run -e paddle-ocr pytest -m env  \
+pixi run --as-is -e paddle-ocr pytest -m env  \
 tests/cosmos_curate/pipelines/video/filtering/aesthetics/manual_artificial_text_filter_smoke.py
 
 Requires test_clip_10s.mp4 from tests/.../video/data/ (or sample_clip_data fixture).

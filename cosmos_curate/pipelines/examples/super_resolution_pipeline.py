@@ -21,7 +21,7 @@ upscaled videos to an output directory.
 
 Usage::
 
-    cosmos-curate local launch --curator-path . -- pixi run -e seedvr python -m \
+    cosmos-curate local launch --curator-path . -- pixi run --as-is -e seedvr python -m \
         cosmos_curate.pipelines.examples.super_resolution_pipeline \
         --input-dir /data/test_videos \
         --output-dir /data/sr_output \

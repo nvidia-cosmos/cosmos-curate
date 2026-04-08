@@ -78,7 +78,7 @@ docker tag cosmos-curate:1.0.0 nvcr.io/$NGC_NVCF_ORG/$NGC_NVCF_TEAM/cosmos-curat
 
 ```bash
 # download models from hugging face to local
-cosmos-curate local launch --image-name cosmos-curate --image-tag 1.0.0 --curator-path . -- pixi run python3 -m cosmos_curate.core.managers.model_cli download
+cosmos-curate local launch --image-name cosmos-curate --image-tag 1.0.0 --curator-path . -- pixi run --as-is python3 -m cosmos_curate.core.managers.model_cli download
 
 # sync to NVCF
 cosmos-curate nvcf model sync-models \

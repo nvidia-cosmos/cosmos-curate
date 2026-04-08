@@ -590,7 +590,7 @@ ensures artifacts survive even when workers are killed via SIGKILL.
 ```bash
 # Remote profiling: artifacts are staged locally, then uploaded to S3
 cosmos-curate local launch --curator-path . -- \
-  pixi run python -m cosmos_curate.pipelines.video.run_pipeline split \
+  pixi run --as-is python -m cosmos_curate.pipelines.video.run_pipeline split \
     --input-video-path s3://bucket/videos/ \
     --output-clip-path s3://bucket/output/ \
     --profile-cpu --profile-memory --verbose

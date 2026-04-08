@@ -620,7 +620,7 @@ except Exception:
 
 vLLM models require the **`unified`** Pixi environment:
 ```bash
-pixi run -e unified pytest -m env tests/
+pixi run --as-is -e unified pytest -m env tests/
 ```
 
 ## Testing Strategies

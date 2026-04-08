@@ -188,7 +188,7 @@ Launch the docker container locally and simply run `pytest` command:
 ```bash
 for conda_env in default legacy-transformers transformers unified; do
    cosmos-curate local launch --image-name cosmos-curate --image-tag 1.0.0 --curator-path . \
-   -- pixi run -e $conda_env pytest -m env tests/cosmos_curate/{pipelines,models}/;
+   -- pixi run --as-is -e $conda_env pytest -m env tests/cosmos_curate/{pipelines,models}/;
 done
 
 ================ test session starts ================

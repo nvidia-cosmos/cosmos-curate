@@ -600,7 +600,7 @@ pytest tests/models/test_vllm_mymodel.py -v
 
 # Integration tests (requires GPU and model weights)
 cosmos-curate local launch --curator-path . -- \
-    pixi run -e unified pytest tests/models/test_vllm_mymodel.py -m env -v
+    pixi run --as-is -e unified pytest tests/models/test_vllm_mymodel.py -m env -v
 ```
 
 ### Integration Test
@@ -927,7 +927,7 @@ Use this checklist to ensure your plugin is complete:
 **Error:** `FileNotFoundError: Model not found at path/to/model`
 
 **Solutions:**
-1. Download model weights: `pixi run -e model-download python -m cosmos_curate.models.download_model mymodel`
+1. Download model weights: `pixi run --as-is -e model-download python -m cosmos_curate.models.download_model mymodel`
 2. Check `vllm_model_ids.py` has correct HuggingFace ID
 3. Verify `model_path()` returns correct path
 

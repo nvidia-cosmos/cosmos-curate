@@ -12,7 +12,7 @@ pixi install --frozen "${ENV_ARGS[@]}"
 # Run tests for each environment with unique report files and coverage
 for env in "${ENVS[@]}"; do
   echo "Running tests for $env environment"
-  pixi run -e $env pytest -m env -n "${PYTEST_XDIST_WORKERS}" \
+  pixi run --as-is -e $env pytest -m env -n "${PYTEST_XDIST_WORKERS}" \
     --junitxml="/config/project/$env-report.xml" \
     --cov=cosmos_curate \
     --cov-report=term \
