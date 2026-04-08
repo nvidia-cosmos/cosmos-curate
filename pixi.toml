@@ -163,9 +163,9 @@ rotary-embedding-torch = "*"
 
 [feature.unified.pypi-dependencies]
 cvcuda-cu13 = "*" # not available on conda-forge
-flashinfer-python = ">=0.4.0rc3" # not available on conda-forge; pre-release to avoid pynvml dependency
+flashinfer-python = "==0.6.6" # not available on conda-forge; pinned to match vllm 0.19.0
 PyNvVideoCodec = "*" # not available on conda-forge
-vllm = { version = "==0.17.1", index = "https://wheels.vllm.ai/0.17.1/cu130" } # not available on conda-forge
+vllm = { version = "==0.19.0", index = "https://wheels.vllm.ai/0.19.0/cu130" } # not available on conda-forge
 paddlepaddle = { version = "==3.2.*", index = "https://www.paddlepaddle.org.cn/packages/stable/cpu/"} # CPU-only; no CUDA runtime conflict with torch (unlike paddlepaddle-gpu)
 paddleocr = "==2.10.*"
 
