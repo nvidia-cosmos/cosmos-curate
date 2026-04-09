@@ -1,5 +1,12 @@
 # Ray Data Runner Design and Plan
 
+## Summary
+
+This document defines the architecture and execution semantics for adding a `RayDataRunner` backend to Cosmos Curate.
+The goal is to let existing `CuratorStage` pipelines run on Ray Data without changing stage or task interfaces, while
+keeping Xenna as the default backend and Ray Data as an opt-in alternative. It also defines the first implementation
+slice: CLI runner selection and a runner-backed hello-world example.
+
 ## Scope
 
 ### In scope
@@ -8,7 +15,7 @@
   instead of Cosmos-Xenna.
 - Both runners coexist — Xenna remains the default, Ray Data is opt-in.
 - All existing stages run unmodified on either runner.
-- Pixi multi-environment support works identically on both runners.
+- Pixi multi-environment support is a target behavior on both runners.
 
 ### Out of scope
 
@@ -19,7 +26,7 @@
 
 ---
 
-## Why This Runner
+## Why Ray Data Runner
 
 Cosmos-Xenna implements a custom streaming execution engine — actor pools, queues, auto-scaling, backpressure, work
 stealing — on top of Ray Core primitives. This engine works but is proprietary, hard to debug externally, and does not
@@ -36,13 +43,13 @@ as a first-party Ray library. Moving to Ray Data means:
 
 ---
 
-## Architecture
+## Architecture Invariants
 
 ### What stays the same
 
 | Component                                           | Change?                                                                                        |
 |-----------------------------------------------------|------------------------------------------------------------------------------------------------|
-| `CuratorStage` interface                            | No change. `process_data(tasks) -> tasks` is the stable contract.                              |
+| `CuratorStage` interface                            | No change. `process_data(tasks) -> tasks \| None` is the stable contract.                      |
 | `CuratorStageSpec`                                  | No change. `RayDataRunner` reads resource/env fields, ignores Xenna-specific scheduling knobs. |
 | `PipelineTask` / `SplitPipeTask` / `Video` / `Clip` | No change. Data model stays as attrs objects.                                                  |
 | `run_pipeline()` in `pipeline_interface.py`         | No change. Already accepts `runner: RunnerInterface`.                                          |
@@ -50,18 +57,17 @@ as a first-party Ray library. Moving to Ray Data means:
 | `PixiRuntimeEnv`                                    | No change. Already a `ray.runtime_env.RuntimeEnv` subclass, works with Ray Data directly.      |
 | Model download                                      | No change. `_prepare_to_run_pipeline()` / `download_models()` are runner-independent.          |
 
-### What changes
+The stage builder functions (e.g. `build_ingest_stages`, `build_transcode_stages`) continue to produce
+`list[CuratorStage | CuratorStageSpec]`, which both runners consume identically. They remain a construction-time
+convenience and do not participate in data flow at runtime.
 
-**New file**: `cosmos_curate/core/interfaces/ray_data_runner.py`
+Runner selection is orthogonal to the Ray Data executor design above. Callers choose which `RunnerInterface`
+implementation to construct and pass into `run_pipeline()`; this document's First Implementation Slice defines the
+initial `--runner` wiring for the split pipeline.
 
-Contains `RayDataRunner(RunnerInterface)` — the primary production code change. Minimal CLI integration
-(wiring a `--runner` flag into `splitting_pipeline.split()` and `run_pipeline()` callers) is also required.
-
-**New file**: `cosmos_curate/pipelines/examples/hello_ray_data_runner_pipeline.py`
-
-Demonstrates running the existing hello world stages through the Ray Data runner, proving the adapter works end-to-end.
-
----
+One future synergy is group-boundary checkpointing. Ray Data's `Dataset.materialize()` could support materializing
+between logical groups of stages, enabling resume points, group-level monitoring, and intermediate Lance checkpoints.
+This is a future enhancement, not part of the initial runner design.
 
 ## Data Format: Why Not PyArrow Tables
 
@@ -86,9 +92,9 @@ The inter-stage data stays as Python objects (attrs-based `PipelineTask` instanc
 
 ---
 
-## RayDataRunner Design
+## Runner Design
 
-### The adapter pattern
+### `_StageActorWrapper` adapter pattern
 
 Each `CuratorStage` is wrapped in a callable class that Ray Data's `map_batches` can use with `ActorPoolStrategy`:
 
@@ -96,7 +102,7 @@ Each `CuratorStage` is wrapped in a callable class that Ray Data's `map_batches`
 class _StageActorWrapper:
     """Wraps a CuratorStage as a Ray Data map_batches callable."""
 
-    def __init__(self, stage: CuratorStage, num_setup_attempts: int = 3):
+    def __init__(self, stage: CuratorStage, num_setup_attempts: int):
         self._stage = stage
         self._destroyed = False
         for attempt in range(num_setup_attempts):
@@ -108,8 +114,8 @@ class _StageActorWrapper:
                     raise
                 logger.warning("stage_setup() failed (attempt %d/%d), retrying...", attempt + 1, num_setup_attempts, exc_info=True)
 
-    def __call__(self, batch: dict[str, list]) -> dict[str, list]:
-        tasks = batch["task"]
+    def __call__(self, batch: dict[str, np.ndarray]) -> dict[str, list]:
+        tasks = batch["task"].tolist()
         results = self._stage.process_data(tasks)
         if results is None:
             return {"task": []}
@@ -133,7 +139,7 @@ The wrapper is intentionally thin — it delegates everything to the existing `C
 fallback for force-kill scenarios. The `_destroyed` flag ensures `destroy()` is idempotent. The retry loop in `__init__`
 handles transient `stage_setup()` failures (see `num_setup_attempts_python` mapping below).
 
-### Mapping CuratorStageSpec to Ray Data
+### `CuratorStageSpec` to Ray Data mapping
 
 | CuratorStageSpec field      | Ray Data equivalent                                     |
 |-----------------------------|---------------------------------------------------------|
@@ -148,18 +154,20 @@ handles transient `stage_setup()` failures (see `num_setup_attempts_python` mapp
 | `num_run_attempts_python`   | `max_restarts_per_actor` on `ActorPoolStrategy`         |
 | `num_setup_attempts_python` | Retry loop around `stage_setup()` in `_StageActorWrapper.__init__` |
 
-### Batch size design
+### Batch size semantics
 
-All existing `CuratorStage` implementations use `stage_batch_size = 1` (the default). The runner passes this directly
-to `map_batches(batch_size=stage.stage_batch_size)`. This means Ray Data creates single-item batches, which has higher
-per-item task/serialization overhead compared to `batch_size=None` (block-level passing).
+`CuratorStage.stage_batch_size` defaults to `1`, which matches the behavior of most existing stages. Some stages
+intentionally override it, and the runner should pass `stage.stage_batch_size` directly to
+`map_batches(batch_size=stage.stage_batch_size)`. When the effective batch size is `1`, Ray Data creates single-item
+batches, which has higher per-item task/serialization overhead compared to `batch_size=None` (block-level passing).
 
 This trade-off is intentional:
 
-1. **Correctness first.** `batch_size=1` matches the current Xenna behavior exactly. Every stage's `process_data()`
-   receives a one-element list, which is how all 50+ stages are tested today.
-2. **Overhead is negligible for our workloads.** Stages perform heavy GPU inference (captioning, embedding) or I/O
-   (video decode, transcode). The per-batch dispatch overhead is dwarfed by actual processing time.
+1. **Correctness first.** The runner should pass `stage.stage_batch_size` through directly, matching Xenna's
+   per-stage batching behavior. For stages that keep the default batch size of `1`, `process_data()` receives
+   one-element task lists.
+2. **Overhead is often negligible for our workloads.** Many stages perform heavy GPU inference (captioning, embedding)
+   or I/O (video decode, transcode), where the per-batch dispatch overhead is dwarfed by actual processing time.
 3. **Future batching is opt-in.** When a stage overrides `stage_batch_size` to a value > 1, the runner will
    automatically pass larger batches to `map_batches`. No runner changes are needed — the stage just needs to handle
    multi-item input in `process_data()`.
@@ -184,6 +192,8 @@ dataset pipeline.
 ```python
 class RayDataRunner(RunnerInterface):
     def run(self, input_tasks, stage_specs, model_weights_prefix):
+        runner_owns_ray_session = False
+
         # 1. Download models (reuse existing logic).
         # _prepare_to_run_pipeline() returns ExecutionMode (STREAMING vs BATCH based on
         # GPU availability). Ray Data ignores this — it always streams and handles
@@ -191,17 +201,20 @@ class RayDataRunner(RunnerInterface):
         _prepare_to_run_pipeline(stage_specs, model_weights_prefix)
 
         try:
-            # 2. Run per-node setup for stages that need it
+            # 2. Connect to Ray if needed and record lifecycle ownership.
+            runner_owns_ray_session = self._ensure_ray_session()
+
+            # 3. Run per-node setup for stages that need it
             self._run_node_setup(stage_specs)
 
-            # 3. Build Ray Data pipeline
+            # 4. Build Ray Data pipeline
             ds = ray.data.from_items([{"task": t} for t in input_tasks])
 
             for spec in stage_specs:
                 stage = spec.stage
                 ds = ds.map_batches(
                     _StageActorWrapper,
-                    fn_constructor_args=(stage,),
+                    fn_constructor_args=(stage, spec.num_setup_attempts_python or 3),
                     batch_size=stage.stage_batch_size,
                     batch_format="numpy",
                     compute=self._actor_pool_strategy(spec),
@@ -210,12 +223,16 @@ class RayDataRunner(RunnerInterface):
                     runtime_env=self._build_runtime_env(stage),
                 )
 
-            # 4. Materialize and extract results
+            # 5. Materialize and extract results
             results = ds.materialize()
             return [row["task"] for row in results.iter_rows()]
         finally:
-            if ray.is_initialized():
+            if runner_owns_ray_session and ray.is_initialized():
                 shutdown_cluster()
+
+    def _ensure_ray_session(self) -> bool:
+        """Connect to Ray if needed and return whether this runner owns the session."""
+        ...
 
     def _run_node_setup(self, stage_specs):
         """Schedule one Ray task per node for stages with non-trivial stage_setup_on_node().
@@ -245,22 +262,23 @@ class RayDataRunner(RunnerInterface):
         ...
 ```
 
-### Handling stage output cardinality
+### Output cardinality and filtering behavior
 
 `CuratorStage.process_data()` can return a different number of tasks than it receives (dynamic chunking — e.g.,
-splitting a video into clips produces more tasks). It can also return `None` to drop tasks (filtering).
+splitting a video into clips produces more tasks). It can also return `None` for filtering behavior.
 
 Ray Data's `map_batches` supports this: the output batch can have a different size than the input batch. Returning a
-batch with zero rows (e.g., `{"task": []}`) drops those tasks. This maps directly to the wrapper's `__call__` behavior.
+batch with zero rows (e.g., `{"task": []}`) represents task dropping for that batch. The runner should preserve the
+intended filtering behavior of stages that return `None`.
 
-### Handling fractional GPUs
+### Fractional GPU handling
 
 Xenna supports fractional GPUs (e.g., `gpus=0.25`) for stages that share a GPU. Ray Data's `map_batches` also supports
 fractional `num_gpus`. No special handling needed.
 
 ---
 
-## What We Lose (and Whether It Matters)
+## Xenna vs Ray Data Behavioral Differences
 
 | Xenna feature                                       | Ray Data equivalent                               | Gap                                                                                         |
 |-----------------------------------------------------|---------------------------------------------------|---------------------------------------------------------------------------------------------|
@@ -272,100 +290,127 @@ fractional `num_gpus`. No special handling needed.
 
 The biggest behavioral difference: Xenna's streaming executor runs all stages concurrently with explicit backpressure
 control (`max_queued_multiplier=1.5`). Ray Data also streams with backpressure but uses its own heuristics. Pipeline
-throughput characteristics may differ and will need benchmarking.
+throughput characteristics may differ. Benchmarking is deferred to a separate follow-on effort.
+
+Xenna uses `_prepare_to_run_pipeline()` to choose between `STREAMING` and `BATCH` based on available GPUs. The Ray
+Data runner still reuses `_prepare_to_run_pipeline()` for model download and cluster preparation, but it does not adopt
+Xenna's execution-mode fallback semantics. Ray Data remains a streaming dataset pipeline and relies on resource queuing
+when GPUs are constrained.
 
 ---
 
-## CLI Integration
+## Must-Resolve Before Implementation
 
-A new flag selects the runner:
-
-```text
---runner {xenna,ray-data}    Execution backend (default: xenna)
-```
-
-This flag is added to `run_pipeline()` callers (e.g., `splitting_pipeline.split()`). It constructs the appropriate
-runner:
-
-```python
-runner = RayDataRunner() if args.runner == "ray-data" else XennaRunner()
-run_pipeline(input_tasks, stages, runner=runner, ...)
-```
-
-No changes to stage definitions, argparse stage flags, or pipeline assembly logic.
-
----
-
-## Testing Strategy
-
-### Unit tests
-
-- `test_stage_actor_wrapper.py`: Verify the wrapper correctly forwards `process_data`, handles `None` returns (
-  filtering), handles output cardinality changes (chunking).
-- `test_ray_data_runner.py`: Verify pipeline construction, resource mapping, runtime env mapping.
-- `test_node_setup.py`: Verify node setup runs exactly once per node per stage (not per actor), completes before actors
-  start processing (use synchronization primitives), and that failures abort pipeline construction.
-
-### Integration tests
-
-- Run `hello_world_pipeline` through both runners, assert identical outputs.
-- Run a minimal split pipeline (download → remux → fixed-stride → transcode → write) through both runners on a single
-  node with synthetic input. Compare output clips.
-
-### Benchmark
-
-- Run the full splitting pipeline on a representative dataset with both runners. Compare:
-    - Wall-clock time
-    - GPU utilization over time
-    - Peak memory usage
-    - Throughput (clips/sec)
-
-This benchmark is the gate for promoting Ray Data runner from experimental to default.
-
----
-
-## Relationship to Stage Builder Functions
-
-The stage builder functions (e.g. `build_ingest_stages`, `build_transcode_stages`) produce
-`list[CuratorStage | CuratorStageSpec]`, which both runners consume identically. They are a
-construction-time convenience and do not participate in data flow at runtime.
-
-One synergy: Ray Data's `Dataset.materialize()` could enable **group-boundary checkpointing**
-by materializing between logical groups of stages, enabling:
-
-- Resume from a failed group without re-running earlier groups
-- Group-level profiling and monitoring
-- Writing intermediate Lance checkpoints at group boundaries
-
-This is a future enhancement, not part of the initial implementation.
-
----
-
-## Implementation Plan
-
-Merge requests, ordered by dependency:
-
-- [ ] Add `RayDataRunner` with stage wrapper
-- [ ] Add node-setup pre-step
-- [ ] Add `--runner` CLI flag
-- [ ] Add hello world example
-- [ ] Integration test: minimal split pipeline
-- [ ] Benchmark on representative workload
-
-MRs 1-4 are pure additive code with no changes to existing files (except the CLI flag wiring in MR 3). MR 5 validates
-correctness. MR 6 gates promotion to default.
+- **Cluster lifecycle ownership**: `RayDataRunner` must track whether it initialized or connected to Ray and must only
+  shut down cluster state that it owns. Unconditional shutdown at the end of `run()` is not acceptable.
+- **Profiling / stage-save compatibility**: The first slice routes through `_build_pipeline_stage_specs()`, so
+  profiling and stage-save compatibility cannot be left implicit. Profiling compatibility must be verified before the
+  first slice is declared complete, either through code inspection or testing. Stage-save must be either verified for
+  the first slice or explicitly declared unsupported.
+- **Hello-world example contract**: The runner-backed hello-world example must call `run_pipeline()` directly with an
+  explicit `RayDataRunner` instance, reuse the same stages as `hello_world_pipeline.py`, and remain script-driven
+  rather than CLI-driven.
 
 ---
 
 ## Open Questions
 
+- **`num_workers_per_node` under Ray Data**: The current design assumes a global actor-pool size derived from per-node
+  intent, but it does not yet define how strictly per-node worker semantics are preserved. This is follow-on design
+  work under `CVC-799`.
 - **Ray Data version pinning**: Which minimum Ray version do we target? `ActorPoolStrategy` API has changed across Ray
   2.x releases. The current Ray version in `pixi.toml` should be checked.
-- **Profiling wrapper compatibility**: The existing `profiling_wrapper()` monkey-patches `process_data()` on
-  `CuratorStage`. This should work transparently with the Ray Data wrapper since it patches before the wrapper captures
-  the stage, but needs verification.
-- **`stage_save_wrapper` compatibility**: Same question — the replay/save wrapper patches `process_data()`. Should work
-  but needs a test.
 - **Multi-node data locality**: Xenna's queue system tracks which node produced each ObjectRef and tries to schedule
   downstream work on the same node. Ray Data has its own locality-aware scheduling but the heuristics differ. This may
   affect performance for large payloads (encoded video bytes).
+
+---
+
+## First Implementation Slice
+
+The first implementation slice exposes Ray Data as an opt-in backend through an existing pipeline entrypoint and
+proves the runner-backed path works end-to-end with the hello-world example. Broader runner validation and
+benchmarking remain deferred.
+
+This initial slice is intended to prove the single-node runner path and the first end-to-end integration path;
+multi-node worker-placement and node-setup semantics remain follow-on design work under `CVC-799`.
+
+### In-scope
+
+- `--runner {xenna,ray-data}` wiring
+- a runner-backed hello-world example
+
+This slice does not attempt to validate every `CuratorStage` behavior or claim full parity with Xenna across all
+pipelines. It establishes the first end-to-end integration path for selecting and exercising the Ray Data runner.
+
+### CLI integration
+
+Add an explicit runner-selection flag to `cosmos_curate.pipelines.video.splitting_pipeline.split()` for this slice:
+
+```text
+--runner {xenna,ray-data}    Execution backend (default: xenna)
+```
+
+Callers construct the appropriate runner and pass it into `run_pipeline(...)`. Stage definitions, stage assembly logic,
+and argparse stage-specific flags remain unchanged.
+
+### What changes in this slice
+
+This slice introduces the minimum implementation needed to exercise the Ray Data backend through the selected split
+pipeline entrypoint:
+
+- wire `--runner` through `cosmos_curate.pipelines.video.splitting_pipeline.split()`
+- construct `RayDataRunner()` when `args.runner == "ray-data"`
+- keep `XennaRunner()` as the default path
+- add `cosmos_curate/pipelines/examples/hello_ray_data_runner_pipeline.py` as a runner-backed hello-world example that
+  uses existing hello-world stages through the `RunnerInterface` path
+
+The old raw Ray Data proof-of-concept example in
+`cosmos_curate/pipelines/examples/hello_ray_data_pipeline.py` is not the target architecture for this slice and should
+not be used as the reference implementation pattern.
+
+### Acceptance criteria
+
+This slice is integration-first by design.
+
+Acceptance requires:
+
+- the selected CLI entrypoint accepts `--runner {xenna,ray-data}`
+- omitting `--runner` preserves the current Xenna default
+- selecting `--runner ray-data` routes execution through `RayDataRunner`
+- the runner-backed hello-world example executes successfully through the Ray Data path
+- the runner-backed hello-world example uses the existing stage model rather than a raw Ray Data table/row rewrite
+
+#### Hello-world equivalence
+
+Hello-world equivalence for this slice means behavioral parity at the example level, not byte-for-byte identical model
+output.
+
+The acceptance check is:
+
+- both backends run the same ordered hello-world stages
+- both backends complete successfully on the same input prompts
+- both backends perform the same prompt-lowercasing and prompt-printing behavior
+- both backends produce non-empty GPT-2 output and attach it to the task/output path expected by the example
+
+Exact string equality for generated GPT-2 text is not the acceptance gate for this slice.
+
+### Explicit non-goals for this slice
+
+This slice does not validate:
+
+- node-level setup behavior
+- Pixi multi-environment switching or parity with Xenna
+- broader stage compatibility across video/AV pipelines
+- throughput, resource efficiency, or benchmark parity
+
+### Deferred items
+
+The following remain outside this first implementation slice:
+
+- `_StageActorWrapper` unit tests
+- broader `RayDataRunner` unit tests
+- node setup validation
+- Pixi multi-environment validation
+- broader integration coverage beyond the hello-world path
+- benchmark planning and benchmark execution
