@@ -38,6 +38,7 @@ gpustat = "*"
 huggingface_hub = "*"
 jinja2 = "*"
 loguru = "*"
+mcap = ">=1.3.1,<2.0.0"
 numpy = ">2,<2.3" # opencv-python-headless requires >=2; numba 0.61.x requires <2.3
 nvidia-ml-py = "*"
 nvtx = "*"
