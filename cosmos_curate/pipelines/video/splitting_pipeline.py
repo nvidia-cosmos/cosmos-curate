@@ -136,6 +136,23 @@ MULTICAM_VIDEO_EXTENSIONS: set[str] = {".mp4"}
 QWEN3_VL_235B_HIGH_MEMORY_GPU_THRESHOLD_MB = 128_000
 
 
+def _clamp_num_gpus_for_qwen3_235b(model_variant: str, num_gpus: int) -> int:
+    """Warn and clamp num_gpus to the minimum required for large Qwen3-235B variants."""
+    _QWEN3_VL_235B_FP8_MIN_GPUS = 4
+    if model_variant == "qwen3_vl_235b":
+        min_gpus = _get_qwen3_vl_235b_min_gpus()
+        if num_gpus < min_gpus:
+            logger.warning(f"qwen3_vl_235b requires at least {min_gpus} GPUs, setting num_gpus to {min_gpus}")
+            return min_gpus
+    elif model_variant == "qwen3_vl_235b_fp8" and num_gpus < _QWEN3_VL_235B_FP8_MIN_GPUS:
+        logger.warning(
+            f"qwen3_vl_235b_fp8 requires at least {_QWEN3_VL_235B_FP8_MIN_GPUS} GPUs, "
+            f"setting num_gpus to {_QWEN3_VL_235B_FP8_MIN_GPUS}"
+        )
+        return _QWEN3_VL_235B_FP8_MIN_GPUS
+    return num_gpus
+
+
 def _get_qwen3_vl_235b_min_gpus() -> int:
     """Determine the minimum number of GPUs required for qwen3_vl_235b based on available hardware.
 
@@ -485,6 +502,10 @@ def _assemble_stages(  # noqa: C901, PLR0912, PLR0915
         )
 
     # --- VLM semantic filter and/or video classifier (optional) ---
+    vlm_filter_num_gpus = _clamp_num_gpus_for_qwen3_235b(args.vlm_filter_model_variant, args.vlm_filter_num_gpus)
+    video_classifier_num_gpus = _clamp_num_gpus_for_qwen3_235b(
+        args.video_classifier_model_variant, args.video_classifier_num_gpus
+    )
     vlm_filter_cfg = (
         VlmFilterConfig(
             score_only=args.vlm_filter == "score-only",
@@ -495,6 +516,7 @@ def _assemble_stages(  # noqa: C901, PLR0912, PLR0915
             batch_size=args.vlm_filter_batch_size,
             fp8_enable=args.vlm_filter_fp8_enable,
             max_output_tokens=args.vlm_filter_max_output_tokens,
+            num_gpus=vlm_filter_num_gpus,
             use_mmcache=args.qwen_use_vllm_mmcache,
             sampling_fps=args.captioning_sampling_fps,
             window_size=args.captioning_window_size,
@@ -515,6 +537,7 @@ def _assemble_stages(  # noqa: C901, PLR0912, PLR0915
             batch_size=args.video_classifier_batch_size,
             fp8_enable=args.video_classifier_fp8_enable,
             max_output_tokens=args.video_classifier_max_output_tokens,
+            num_gpus=video_classifier_num_gpus,
             use_mmcache=args.qwen_use_vllm_mmcache,
             sampling_fps=args.captioning_sampling_fps,
             window_size=args.captioning_window_size,
@@ -627,20 +650,7 @@ def _assemble_stages(  # noqa: C901, PLR0912, PLR0915
             window_config.preprocess_dtype = args.qwen_preprocess_dtype
             window_config.model_does_preprocess = args.qwen_model_does_preprocess
 
-            QWEN3_VL_235B_MIN_GPUS = _get_qwen3_vl_235b_min_gpus()
-            QWEN3_VL_235B_FP8_MIN_GPUS = 4
-            if caption_algo == "qwen3_vl_235b" and vllm_config.num_gpus < QWEN3_VL_235B_MIN_GPUS:
-                logger.warning(
-                    f"qwen3_vl_235b requires at least {QWEN3_VL_235B_MIN_GPUS} GPUs, "
-                    f"setting num_gpus to {QWEN3_VL_235B_MIN_GPUS}"
-                )
-                vllm_config.num_gpus = QWEN3_VL_235B_MIN_GPUS
-            elif caption_algo == "qwen3_vl_235b_fp8" and vllm_config.num_gpus < QWEN3_VL_235B_FP8_MIN_GPUS:
-                logger.warning(
-                    f"qwen3_vl_235b_fp8 requires at least {QWEN3_VL_235B_FP8_MIN_GPUS} GPUs, "
-                    f"setting num_gpus to {QWEN3_VL_235B_FP8_MIN_GPUS}"
-                )
-                vllm_config.num_gpus = QWEN3_VL_235B_FP8_MIN_GPUS
+            vllm_config.num_gpus = _clamp_num_gpus_for_qwen3_235b(caption_algo, vllm_config.num_gpus)
 
             if caption_algo not in QWEN2_CAPTION_ALGOS and not window_config.model_does_preprocess:
                 logger.warning(
@@ -1422,6 +1432,14 @@ def _setup_parser(parser: argparse.ArgumentParser) -> None:  # noqa: PLR0915
         help="Max number of output tokens for VLM filtering model.",
     )
     parser.add_argument(
+        "--vlm-filter-num-gpus",
+        "--qwen-filter-num-gpus",
+        dest="vlm_filter_num_gpus",
+        type=int,
+        default=1,
+        help="Number of GPUs per worker for VLM filtering model.",
+    )
+    parser.add_argument(
         "--video-classifier",
         "--qwen-video-classifier",
         dest="video_classifier",
@@ -1533,6 +1551,14 @@ def _setup_parser(parser: argparse.ArgumentParser) -> None:  # noqa: PLR0915
         type=int,
         default=8192,
         help="Max number of output tokens for video classifier model.",
+    )
+    parser.add_argument(
+        "--video-classifier-num-gpus",
+        "--qwen-video-classifier-num-gpus",
+        dest="video_classifier_num_gpus",
+        type=int,
+        default=1,
+        help="Number of GPUs per worker for video classifier model.",
     )
     parser.add_argument(
         "--embedding-gpus-per-worker",
