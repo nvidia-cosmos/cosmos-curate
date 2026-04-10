@@ -15,6 +15,7 @@
 
 """Data Model util."""
 
+import enum
 import pathlib
 import sys
 from collections import deque
@@ -128,6 +129,28 @@ class TokenCounts:
     output_tokens: int = 0
 
 
+class CaptionOutcome(enum.StrEnum):
+    """Normalized captioning outcomes written by caption backends."""
+
+    SUCCESS = "success"
+    TRUNCATED = "truncated"
+    BLOCKED = "blocked"
+    ERROR = "error"
+    SKIPPED = "skipped"
+
+
+type CaptionFailureReason = Literal["exception", "timeout"]
+
+
+@attrs.define
+class CaptionResult:
+    """Normalized caption result returned by backend adapters."""
+
+    outcome: CaptionOutcome
+    text: str | None = None
+    failure_reason: CaptionFailureReason | None = None
+
+
 @attrs.define
 class Window:
     """Container for captioning window."""
@@ -151,10 +174,10 @@ class Window:
     # webp preview; wrapped in LazyData for zero-copy inter-stage transport
     # via PEP 574 (bytes auto-converted to numpy by LazyData.coerce).
     webp_bytes: LazyData[npt.NDArray[np.uint8]] = attrs.field(factory=LazyData, converter=LazyData.coerce)  # type: ignore[misc]
-    # caption outcome; set by caption stages that support status (vLLM only for now)
-    caption_status: Literal["success", "failure"] | None = None
-    # set only when caption_status == "failure": "empty" | "exception"
-    caption_failure_reason: Literal["empty", "exception"] | None = None
+    # caption outcome; set by caption stages.
+    caption_status: Literal["success", "truncated", "blocked", "error", "skipped"] | None = None
+    # set only when caption_status == "error"
+    caption_failure_reason: CaptionFailureReason | None = None
     # for debugging
     errors: dict[str, str] = attrs.Factory(dict)
 
@@ -967,3 +990,4 @@ class VllmCaptionRequest:
     stage2_prompt: str | None = None
     prompt_tokens: int = 0
     output_tokens: int = 0
+    finish_reason: str | None = None

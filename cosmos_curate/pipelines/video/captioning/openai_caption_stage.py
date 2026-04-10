@@ -27,6 +27,9 @@ from cosmos_curate.core.utils.infra.performance_utils import StageTimer
 from cosmos_curate.core.utils.model import conda_utils
 from cosmos_curate.models.prompts import get_prompt
 from cosmos_curate.pipelines.video.utils.data_model import (
+    CaptionFailureReason,
+    CaptionOutcome,
+    CaptionResult,
     SplitPipeTask,
     Window,
 )
@@ -117,8 +120,70 @@ class OpenAICaptionStage(CuratorStage):
         self._client = openai.OpenAI(**client_kwargs)
         self._model_name = resolve_model_name_auto(self._client, self._model_name, endpoint_label="OpenAI caption")
 
-    def _generate_caption(self, window: Window) -> str:
-        """Generate a caption for a single window with retry logic."""
+    @staticmethod
+    def _error_result_from_exception_with_detail(exc: BaseException) -> tuple[CaptionResult, str]:
+        """Map an OpenAI exception to an error result and log detail."""
+        timeout_error = getattr(openai, "APITimeoutError", None)
+        failure_reason: CaptionFailureReason = (
+            "timeout" if timeout_error is not None and isinstance(exc, timeout_error) else "exception"
+        )
+        return CaptionResult(outcome=CaptionOutcome.ERROR, failure_reason=failure_reason), str(exc)
+
+    @staticmethod
+    def _write_caption_result(window: Window, model_variant: str, result: CaptionResult) -> None:
+        """Write an OpenAI caption result onto a window."""
+        if result.text is not None:
+            window.caption[model_variant] = result.text
+        window.caption_status = result.outcome.value
+        window.caption_failure_reason = result.failure_reason if result.outcome == CaptionOutcome.ERROR else None
+
+    @staticmethod
+    def _normalize_response_with_detail(response: object) -> tuple[CaptionResult, str | None]:
+        """Map an OpenAI chat completion response to a caption result."""
+        choices = getattr(response, "choices", None)
+        if not choices:
+            return (
+                CaptionResult(outcome=CaptionOutcome.ERROR, failure_reason="exception"),
+                "OpenAI-compatible API returned no choices.",
+            )
+
+        choice = choices[0]
+        finish_reason = getattr(choice, "finish_reason", None)
+        content = getattr(choice.message, "content", None)
+        text = content.strip() if isinstance(content, str) and content.strip() else None
+
+        if finish_reason == "content_filter":
+            return CaptionResult(outcome=CaptionOutcome.BLOCKED), None
+        if content is None:
+            return (
+                CaptionResult(outcome=CaptionOutcome.ERROR, failure_reason="exception"),
+                f"OpenAI-compatible API returned null content. finish_reason={finish_reason!r}",
+            )
+        if finish_reason == "length":
+            outcome = CaptionOutcome.TRUNCATED if text is not None else CaptionOutcome.ERROR
+            failure_reason: CaptionFailureReason | None = None if text is not None else "exception"
+            detail = None
+            if text is None:
+                detail = (
+                    "OpenAI-compatible API returned no caption text after truncation. "
+                    f"finish_reason={finish_reason!r}, content={content!r}"
+                )
+            return CaptionResult(outcome=outcome, text=text, failure_reason=failure_reason), detail
+        if text is not None:
+            return CaptionResult(outcome=CaptionOutcome.SUCCESS, text=text), None
+        return (
+            CaptionResult(outcome=CaptionOutcome.ERROR, failure_reason="exception"),
+            f"OpenAI-compatible API returned empty caption text. finish_reason={finish_reason!r}, content={content!r}",
+        )
+
+    @staticmethod
+    def _normalize_response(response: object) -> CaptionResult:
+        """Map an OpenAI chat completion response to a caption result."""
+        result, _detail = OpenAICaptionStage._normalize_response_with_detail(response)
+        return result
+
+    def _generate_caption_with_error_detail(self, window: Window) -> tuple[CaptionResult, str | None]:
+        """Generate a caption result for a single window with error detail when available."""
         client = self._client
         if client is None:
             msg = "OpenAI client not initialized; call stage_setup before generating captions."
@@ -126,8 +191,10 @@ class OpenAICaptionStage(CuratorStage):
 
         mp4_data = window.mp4_bytes.resolve()
         if mp4_data is None:
-            msg = "Window missing mp4 bytes; enable keep_mp4 in the prep stage."
-            raise RuntimeError(msg)
+            return (
+                CaptionResult(outcome=CaptionOutcome.ERROR, failure_reason="exception"),
+                "Window missing mp4 bytes; enable keep_mp4 in the prep stage.",
+            )
 
         video_b64 = base64.b64encode(bytes(mp4_data)).decode("utf-8")
         instruction = self._prompt.strip()
@@ -154,32 +221,28 @@ class OpenAICaptionStage(CuratorStage):
             ),
             reraise=True,
         )
-        def _call() -> str:
-            response = client.chat.completions.create(**request_kwargs)
-            if not response.choices:
-                msg = f"OpenAI-compatible API returned no choices (possible content filter). model={self._model_name!r}"
-                raise RuntimeError(msg)
-            choice = response.choices[0]
-            text: str | None = choice.message.content
-            if not text or not text.strip():
-                msg = (
-                    f"OpenAI-compatible API returned empty caption."
-                    f" finish_reason={choice.finish_reason!r},"
-                    f" content={choice.message.content!r}"
-                )
-                raise RuntimeError(msg)
-            result: str = text.strip()
-            return result
+        def _call() -> object:
+            return client.chat.completions.create(**request_kwargs)
 
-        return _call()
+        try:
+            response = _call()
+        except Exception as exc:  # noqa: BLE001
+            return self._error_result_from_exception_with_detail(exc)
+        return self._normalize_response_with_detail(response)
+
+    def _generate_caption(self, window: Window) -> CaptionResult:
+        """Generate a caption result for a single window."""
+        result, _detail = self._generate_caption_with_error_detail(window)
+        return result
 
     def _process_task(self, task: SplitPipeTask) -> None:
         """Process a single SplitPipeTask and populate captions."""
         for clip in task.video.clips:
             for window_index, window in enumerate(clip.windows):
                 try:
-                    caption = self._generate_caption(window)
+                    result, error_detail = self._generate_caption_with_error_detail(window)
                 except Exception as exc:  # noqa: BLE001
+                    result = CaptionResult(outcome=CaptionOutcome.ERROR, failure_reason="exception")
                     clip.errors[f"{self._model_variant}_caption_{window_index}"] = str(exc)
                     if self._verbose:
                         logger.exception(f"OpenAI API captioning failed for clip {clip.uuid} window {window_index}")
@@ -187,10 +250,20 @@ class OpenAICaptionStage(CuratorStage):
                         logger.warning(
                             f"OpenAI API captioning failed for clip {clip.uuid} window {window_index}: {exc}"
                         )
-                    continue
-                window.caption[self._model_variant] = caption
-                if self._verbose:
-                    logger.info(f"OpenAI API caption clip {clip.uuid} window {window_index}: {caption}")
+                else:
+                    if result.outcome == CaptionOutcome.ERROR:
+                        clip.errors[f"{self._model_variant}_caption_{window_index}"] = error_detail or (
+                            f"OpenAI API captioning failed: {result.failure_reason}"
+                        )
+                        logger.warning(
+                            f"OpenAI API captioning failed for clip {clip.uuid} window {window_index}: "
+                            f"{clip.errors[f'{self._model_variant}_caption_{window_index}']}"
+                        )
+                    elif result.outcome == CaptionOutcome.BLOCKED:
+                        logger.warning(f"OpenAI API captioning blocked for clip {clip.uuid} window {window_index}")
+                    elif self._verbose and result.text is not None:
+                        logger.info(f"OpenAI API caption clip {clip.uuid} window {window_index}: {result.text}")
+                self._write_caption_result(window, self._model_variant, result)
 
     @nvtx.annotate("OpenAICaptionStage")  # type: ignore[untyped-decorator]
     def process_data(self, tasks: list[SplitPipeTask]) -> list[SplitPipeTask]:

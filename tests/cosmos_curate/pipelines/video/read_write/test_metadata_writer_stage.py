@@ -29,7 +29,6 @@ import pytest
 
 from cosmos_curate.core.utils.data.bytes_transport import bytes_to_numpy
 from cosmos_curate.core.utils.storage import storage_client, storage_utils
-from cosmos_curate.models.vllm_sentinels import VLLM_UNKNOWN_CAPTION
 from cosmos_curate.pipelines.video.read_write.metadata_writer_stage import (
     ClipWriterStage,
     _archive_processed_sidecars,
@@ -193,6 +192,7 @@ def _stage_with_main_clip(tmp_path: Path) -> tuple[ClipWriterStage, SplitPipeTas
         start_frame=0,
         end_frame=30,
         caption={"qwen": "main caption"},
+        caption_status="success",
         enhanced_caption={"qwen_plus": "enhanced view"},
         webp_bytes=b"webp-content",
         t5_xxl_embedding={"default": np.array([1, 2, 3], dtype=np.int32)},
@@ -320,7 +320,7 @@ def test_single_cam_clip_path_uses_flat_structure(tmp_path: Path) -> None:
         source_video=video_path.as_posix(),
         span=(0.0, 2.0),
         encoded_data=bytes_to_numpy(b"clip-bytes"),
-        windows=[Window(start_frame=0, end_frame=30, caption={"qwen": "cap"})],
+        windows=[Window(start_frame=0, end_frame=30, caption={"qwen": "cap"}, caption_status="success")],
     )
     video = _build_video(video_path, clip, relative_path="")
     task = SplitPipeTask(session_id="test-session", video=video)
@@ -343,7 +343,7 @@ def test_multicam_style_clip_path_uses_subdir(tmp_path: Path) -> None:
         source_video=video_path.as_posix(),
         span=(0.0, 2.0),
         encoded_data=bytes_to_numpy(b"clip-bytes"),
-        windows=[Window(start_frame=0, end_frame=30, caption={"qwen": "cap"})],
+        windows=[Window(start_frame=0, end_frame=30, caption={"qwen": "cap"}, caption_status="success")],
     )
     video = _build_video(video_path, clip, relative_path="video")
     task = SplitPipeTask(session_id="test-session", video=video)
@@ -372,7 +372,7 @@ def test_multicam_primary_only_metadata_no_overwrite(tmp_path: Path) -> None:
         source_video=primary_path.as_posix(),
         span=(0.0, 2.0),
         encoded_data=bytes_to_numpy(b"primary-clip-bytes"),
-        windows=[Window(start_frame=0, end_frame=30, caption={"qwen": "primary caption"})],
+        windows=[Window(start_frame=0, end_frame=30, caption={"qwen": "primary caption"}, caption_status="success")],
     )
     primary_clip.intern_video_2_embedding = np.array([1.0, 2.0], dtype=np.float32)
 
@@ -381,7 +381,7 @@ def test_multicam_primary_only_metadata_no_overwrite(tmp_path: Path) -> None:
         source_video=secondary_path.as_posix(),
         span=(0.0, 2.0),
         encoded_data=bytes_to_numpy(b"secondary-clip-bytes"),
-        windows=[Window(start_frame=0, end_frame=30, caption={"qwen": "secondary caption"})],
+        windows=[Window(start_frame=0, end_frame=30, caption={"qwen": "secondary caption"}, caption_status="success")],
     )
     secondary_clip.intern_video_2_embedding = np.array([9.0, 9.0], dtype=np.float32)
 
@@ -428,6 +428,7 @@ def test_chunked_metadata_writes_group_jsonl(tmp_path: Path) -> None:
         start_frame=0,
         end_frame=15,
         caption={"qwen": "chunk caption"},
+        caption_status="success",
     )
     clip = Clip(
         uuid=uuid.uuid4(),
@@ -482,6 +483,7 @@ def test_chunked_metadata_writes_lance_dataset(tmp_path: Path) -> None:
         start_frame=5,
         end_frame=25,
         caption={"qwen": "lance caption"},
+        caption_status="success",
     )
     clip = Clip(
         uuid=uuid.uuid4(),
@@ -526,7 +528,7 @@ def test_lance_consolidation_is_idempotent(tmp_path: Path) -> None:
     )
 
     # First clip and consolidation
-    window1 = Window(start_frame=0, end_frame=10, caption={"qwen": "first caption"})
+    window1 = Window(start_frame=0, end_frame=10, caption={"qwen": "first caption"}, caption_status="success")
     clip1 = Clip(
         uuid=uuid.uuid4(),
         source_video=video_path.as_posix(),
@@ -550,7 +552,7 @@ def test_lance_consolidation_is_idempotent(tmp_path: Path) -> None:
     assert len(list(processed_dir.glob("*.json"))) == 1
 
     # Second clip (different chunk) and consolidation
-    window2 = Window(start_frame=10, end_frame=20, caption={"qwen": "second caption"})
+    window2 = Window(start_frame=10, end_frame=20, caption={"qwen": "second caption"}, caption_status="success")
     clip2 = Clip(
         uuid=uuid.uuid4(),
         source_video=video_path.as_posix(),
@@ -626,6 +628,7 @@ def test_per_window_dataset_assets_written(tmp_path: Path) -> None:
         end_frame=20,
         mp4_bytes=b"window-mp4",
         caption={"qwen": "dataset caption"},
+        caption_status="success",
         t5_xxl_embedding={"default": np.array([1, 2], dtype=np.int32)},
     )
     clip = Clip(
@@ -671,13 +674,14 @@ def test_filtered_clips_cleaned_up_after_processing(tmp_path: Path) -> None:
         source_video=video_path.as_posix(),
         span=(0.0, 2.0),
         encoded_data=bytes_to_numpy(b"kept-bytes"),
-        windows=[Window(start_frame=0, end_frame=30, caption={"qwen": "cap"})],
+        windows=[Window(start_frame=0, end_frame=30, caption={"qwen": "cap"}, caption_status="success")],
     )
     filtered_window = Window(
         start_frame=0,
         end_frame=30,
         mp4_bytes=b"filtered-window-mp4",
         caption={"qwen": "filtered caption"},
+        caption_status="success",
         enhanced_caption={"qwen_plus": "enhanced filtered"},
         webp_bytes=b"filtered-webp",
     )
@@ -796,14 +800,13 @@ def test_video_errors_written_to_error_path(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     ("caption_status", "caption_value", "expected_has_caption"),
     [
-        ("success", "A great video.", True),  # vLLM success
-        ("failure", "", False),  # vLLM empty batch failure
-        ("failure", VLLM_UNKNOWN_CAPTION, False),  # vLLM sentinel failure
-        (None, "A great video.", True),  # legacy non-vLLM, non-empty
-        (None, None, False),  # legacy non-vLLM, no caption
-        (None, "", False),  # legacy non-vLLM, empty string — must not count as captioned
+        ("success", "A great video.", True),
+        ("truncated", "A partial caption.", True),
+        ("blocked", "unexpected text", False),
+        ("error", "unexpected text", False),
+        ("error", None, False),
     ],
-    ids=["vllm_success", "vllm_empty", "vllm_sentinel", "legacy_nonempty", "legacy_nocaption", "legacy_emptystr"],
+    ids=["success", "truncated", "blocked", "error_with_text", "error_no_text"],
 )
 def test_make_clip_metadata_has_caption(
     tmp_path: Path,
@@ -812,7 +815,7 @@ def test_make_clip_metadata_has_caption(
     *,
     expected_has_caption: bool,
 ) -> None:
-    """has_caption reflects caption_status (vLLM) or non-empty string (legacy)."""
+    """has_caption depends on caption_status only."""
     stage = _create_stage(tmp_path / "out", tmp_path / "in")
 
     caption = {"qwen": caption_value} if caption_value is not None else {}
@@ -828,13 +831,12 @@ def test_make_clip_metadata_has_caption(
     ("caption_status", "caption_value", "expected_count"),
     [
         ("success", "A great video.", 1),
-        ("failure", "", 0),
-        ("failure", VLLM_UNKNOWN_CAPTION, 0),
-        (None, "A great video.", 1),
-        (None, None, 0),
-        (None, "", 0),  # legacy non-vLLM, empty string — must not count as captioned
+        ("truncated", "A partial caption.", 1),
+        ("blocked", "unexpected text", 0),
+        ("error", "unexpected text", 0),
+        ("error", None, 0),
     ],
-    ids=["vllm_success", "vllm_empty", "vllm_sentinel", "legacy_nonempty", "legacy_nocaption", "legacy_emptystr"],
+    ids=["success", "truncated", "blocked", "error_with_text", "error_no_text"],
 )
 def test_write_clip_metadata_num_with_caption(
     tmp_path: Path,
@@ -863,13 +865,12 @@ def test_write_clip_metadata_num_with_caption(
     ("caption_status", "caption_value", "expect_export"),
     [
         ("success", "A great video.", True),
-        ("failure", "", False),
-        ("failure", VLLM_UNKNOWN_CAPTION, False),
-        (None, "A great video.", True),
-        (None, None, False),
-        (None, "", False),  # legacy non-vLLM, empty string — must not export
+        ("truncated", "A partial caption.", True),
+        ("blocked", "unexpected text", False),
+        ("error", "unexpected text", False),
+        ("error", None, False),
     ],
-    ids=["vllm_success", "vllm_empty", "vllm_sentinel", "legacy_nonempty", "legacy_nocaption", "legacy_emptystr"],
+    ids=["success", "truncated", "blocked", "error_with_text", "error_no_text"],
 )
 def test_write_per_window_data_export_gate(
     tmp_path: Path,

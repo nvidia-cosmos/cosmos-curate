@@ -938,6 +938,17 @@ class VllmAsyncCaptionStage(CuratorStage):
 
         gpu_stage_startup(self.__class__.__name__, self.resources.gpus, pre_setup=False)
 
+    def _mark_window_success(self, window: Window, caption: str) -> None:
+        """Record a successful async caption result on a window."""
+        window.caption[self._model_variant] = caption
+        window.caption_status = "success"
+        window.caption_failure_reason = None
+
+    def _mark_window_error(self, window: Window) -> None:
+        """Record an async caption failure for downstream writer gating."""
+        window.caption_status = "error"
+        window.caption_failure_reason = "exception"
+
     def _extract_rendered_windows(
         self,
         tasks: list[SplitPipeTask],
@@ -972,6 +983,7 @@ class VllmAsyncCaptionStage(CuratorStage):
                         )
                     except Exception as exc:  # noqa: BLE001
                         clip.errors[f"{variant}_caption_{wi}"] = f"input extraction failed: {exc}"
+                        self._mark_window_error(window)
                         self._logger.warning(
                             "input extraction failed for clip {} window {} frames=[{}, {}]: {}",
                             clip.uuid,
@@ -1014,6 +1026,7 @@ class VllmAsyncCaptionStage(CuratorStage):
                     if isinstance(exc, EngineDeadError):
                         self._engine_dead = True
                     rw.clip.errors[f"{self._model_variant}_caption_{rw.window_index}"] = str(exc)
+                    self._mark_window_error(rw.window)
                     self._logger.warning(
                         "captioning failed for clip {} window {} frames=[{}, {}]: {}",
                         rw.clip.uuid,
@@ -1027,7 +1040,7 @@ class VllmAsyncCaptionStage(CuratorStage):
                 finally:
                     rw.rendered_prompt = None
 
-            rw.window.caption[self._model_variant] = caption
+            self._mark_window_success(rw.window, caption)
             if self._verbose:
                 self._logger.info(
                     "Caption for clip {} window {} frames=[{}, {}]: {}",
@@ -1057,14 +1070,15 @@ class VllmAsyncCaptionStage(CuratorStage):
                     rw.clip.uuid,
                     rw.window_index,
                 )
-                rw.window.caption[self._model_variant] = stage1_caption
+                self._mark_window_success(rw.window, stage1_caption)
                 return
             refined_prompt = build_refinement_prompt_text(
                 self._stage2_processor,
                 stage1_caption,
                 self._stage2_prompt_text,
             )
-            (stage2_rendered,) = await engine.renderer.render_cmpl_async(
+            renderer = engine.renderer  # type: ignore[attr-defined]
+            (stage2_rendered,) = await renderer.render_cmpl_async(
                 [
                     {
                         "prompt": refined_prompt,
@@ -1111,7 +1125,7 @@ class VllmAsyncCaptionStage(CuratorStage):
         finally:
             rw.raw_prompt_input = None
 
-        rw.window.caption[self._model_variant] = caption
+        self._mark_window_success(rw.window, caption)
         if self._verbose:
             self._logger.info(
                 "Caption for clip {} window {} frames=[{}, {}]: {}",

@@ -26,7 +26,7 @@ import pytest
 from cosmos_curate.core.utils.config.config import ConfigFileData, OpenAIConfig, OpenAIEndpointConfig
 from cosmos_curate.pipelines.video.captioning import openai_caption_stage
 from cosmos_curate.pipelines.video.captioning.openai_caption_stage import OpenAICaptionStage
-from cosmos_curate.pipelines.video.utils.data_model import Clip, SplitPipeTask, Video, Window
+from cosmos_curate.pipelines.video.utils.data_model import CaptionOutcome, Clip, SplitPipeTask, Video, Window
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -79,11 +79,15 @@ def _fake_openai_module() -> SimpleNamespace:
     class _BadRequestError(Exception):
         pass
 
+    class _APITimeoutError(Exception):
+        pass
+
     return SimpleNamespace(
         OpenAI=MagicMock,
         AuthenticationError=_AuthError,
         NotFoundError=_NotFoundError,
         BadRequestError=_BadRequestError,
+        APITimeoutError=_APITimeoutError,
     )
 
 
@@ -195,31 +199,74 @@ def test_generate_caption_returns_stripped_text(monkeypatch: pytest.MonkeyPatch)
     stage._client = mock_client
 
     result = stage._generate_caption(Window(start_frame=0, end_frame=1, mp4_bytes=b"\x00"))
-    assert result == "hello world"
+    assert result.outcome == CaptionOutcome.SUCCESS
+    assert result.text == "hello world"
 
 
-def test_generate_caption_raises_on_empty_choices(monkeypatch: pytest.MonkeyPatch) -> None:
-    """RuntimeError should be raised when the API returns no choices."""
+def test_generate_caption_returns_error_on_empty_choices(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An empty choices array maps to Error."""
     stage = _make_stage(monkeypatch)
 
     mock_client = MagicMock()
     mock_client.chat.completions.create.return_value = _FakeResponse([])
     stage._client = mock_client
 
-    with pytest.raises(RuntimeError, match="no choices"):
-        stage._generate_caption(Window(start_frame=0, end_frame=1, mp4_bytes=b"\x00"))
+    result = stage._generate_caption(Window(start_frame=0, end_frame=1, mp4_bytes=b"\x00"))
+    assert result.outcome == CaptionOutcome.ERROR
+    assert result.failure_reason == "exception"
 
 
-def test_generate_caption_raises_on_empty_content(monkeypatch: pytest.MonkeyPatch) -> None:
-    """RuntimeError should be raised when the caption text is empty."""
+def test_generate_caption_returns_error_on_empty_content(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Whitespace-only content maps to Error."""
     stage = _make_stage(monkeypatch)
 
     mock_client = MagicMock()
     mock_client.chat.completions.create.return_value = _FakeResponse([_FakeChoice("   ")])
     stage._client = mock_client
 
-    with pytest.raises(RuntimeError, match="empty caption"):
-        stage._generate_caption(Window(start_frame=0, end_frame=1, mp4_bytes=b"\x00"))
+    result = stage._generate_caption(Window(start_frame=0, end_frame=1, mp4_bytes=b"\x00"))
+    assert result.outcome == CaptionOutcome.ERROR
+    assert result.failure_reason == "exception"
+
+
+def test_generate_caption_returns_truncated_on_length(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A length finish reason with text maps to Truncated."""
+    stage = _make_stage(monkeypatch)
+
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = _FakeResponse([_FakeChoice("partial", finish_reason="length")])
+    stage._client = mock_client
+
+    result = stage._generate_caption(Window(start_frame=0, end_frame=1, mp4_bytes=b"\x00"))
+    assert result.outcome == CaptionOutcome.TRUNCATED
+    assert result.text == "partial"
+
+
+def test_generate_caption_returns_blocked_on_content_filter(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A content-filter response maps to Blocked even if text is unexpectedly present."""
+    stage = _make_stage(monkeypatch)
+
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = _FakeResponse(
+        [_FakeChoice("unexpected partial", finish_reason="content_filter")]
+    )
+    stage._client = mock_client
+
+    result = stage._generate_caption(Window(start_frame=0, end_frame=1, mp4_bytes=b"\x00"))
+    assert result.outcome == CaptionOutcome.BLOCKED
+
+
+def test_generate_caption_treats_null_content_without_content_filter_as_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Null content without an explicit content-filter finish reason maps to Error."""
+    stage = _make_stage(monkeypatch)
+
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = _FakeResponse([_FakeChoice(None, finish_reason="stop")])
+    stage._client = mock_client
+
+    result = stage._generate_caption(Window(start_frame=0, end_frame=1, mp4_bytes=b"\x00"))
+    assert result.outcome == CaptionOutcome.ERROR
+    assert result.failure_reason == "exception"
 
 
 def test_generate_caption_raises_when_client_not_initialized(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -231,13 +278,14 @@ def test_generate_caption_raises_when_client_not_initialized(monkeypatch: pytest
         stage._generate_caption(Window(start_frame=0, end_frame=1, mp4_bytes=b"\x00"))
 
 
-def test_generate_caption_raises_when_mp4_bytes_missing(monkeypatch: pytest.MonkeyPatch) -> None:
-    """RuntimeError should be raised when window has no mp4 bytes."""
+def test_generate_caption_returns_error_when_mp4_bytes_missing(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A missing MP4 maps to Error."""
     stage = _make_stage(monkeypatch)
     stage._client = MagicMock()
 
-    with pytest.raises(RuntimeError, match="missing mp4 bytes"):
-        stage._generate_caption(Window(start_frame=0, end_frame=1, mp4_bytes=None))
+    result = stage._generate_caption(Window(start_frame=0, end_frame=1, mp4_bytes=None))
+    assert result.outcome == CaptionOutcome.ERROR
+    assert result.failure_reason == "exception"
 
 
 # ---------------------------------------------------------------------------
@@ -258,6 +306,8 @@ def test_process_task_stores_caption_in_window(monkeypatch: pytest.MonkeyPatch) 
 
     window = task.video.clips[0].windows[0]
     assert window.caption["openai"] == "A nice caption"
+    assert window.caption_status == "success"
+    assert window.caption_failure_reason is None
 
 
 def test_process_task_records_error_on_failure(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -273,7 +323,10 @@ def test_process_task_records_error_on_failure(monkeypatch: pytest.MonkeyPatch) 
 
     clip = task.video.clips[0]
     assert "openai_caption_0" in clip.errors
+    assert clip.errors["openai_caption_0"] == "API down"
     assert "openai" not in clip.windows[0].caption
+    assert clip.windows[0].caption_status == "error"
+    assert clip.windows[0].caption_failure_reason == "exception"
 
 
 def test_process_task_continues_after_window_failure(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -293,6 +346,61 @@ def test_process_task_continues_after_window_failure(monkeypatch: pytest.MonkeyP
     clip = task.video.clips[0]
     assert "openai_caption_0" in clip.errors
     assert clip.windows[1].caption["openai"] == "ok"
+    assert clip.windows[0].caption_status == "error"
+    assert clip.windows[1].caption_status == "success"
+
+
+def test_process_task_writes_blocked_status(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Blocked responses should write caption_status without a caption payload."""
+    stage = _make_stage(monkeypatch)
+
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = _FakeResponse(
+        [_FakeChoice(None, finish_reason="content_filter")]
+    )
+    stage._client = mock_client
+
+    task = _make_task(b"\x00\x01")
+    stage.process_data([task])
+
+    window = task.video.clips[0].windows[0]
+    assert "openai" not in window.caption
+    assert window.caption_status == "blocked"
+    assert window.caption_failure_reason is None
+
+
+def test_process_task_writes_truncated_status(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Truncated responses should keep text and write truncated status."""
+    stage = _make_stage(monkeypatch)
+
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = _FakeResponse([_FakeChoice("partial", finish_reason="length")])
+    stage._client = mock_client
+
+    task = _make_task(b"\x00\x01")
+    stage.process_data([task])
+
+    window = task.video.clips[0].windows[0]
+    assert window.caption["openai"] == "partial"
+    assert window.caption_status == "truncated"
+    assert window.caption_failure_reason is None
+
+
+def test_process_task_records_detail_for_empty_choices(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Handled API errors should keep a descriptive message in clip.errors."""
+    stage = _make_stage(monkeypatch)
+
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = _FakeResponse([])
+    stage._client = mock_client
+
+    task = _make_task(b"\x00\x01")
+    stage.process_data([task])
+
+    clip = task.video.clips[0]
+    assert clip.errors["openai_caption_0"] == "OpenAI-compatible API returned no choices."
+    assert clip.windows[0].caption_status == "error"
+    assert clip.windows[0].caption_failure_reason == "exception"
 
 
 def test_process_data_returns_all_tasks(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -330,6 +438,8 @@ def test_generate_caption_does_not_retry_authentication_error(monkeypatch: pytes
 
     assert mock_client.chat.completions.create.call_count == 1
     assert "openai_caption_0" in task.video.clips[0].errors
+    assert task.video.clips[0].errors["openai_caption_0"] == "bad key"
+    assert task.video.clips[0].windows[0].caption_failure_reason == "exception"
 
 
 def test_generate_caption_does_not_retry_bad_request(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -347,6 +457,8 @@ def test_generate_caption_does_not_retry_bad_request(monkeypatch: pytest.MonkeyP
     stage.process_data([task])
 
     assert mock_client.chat.completions.create.call_count == 1
+    assert task.video.clips[0].errors["openai_caption_0"] == "invalid"
+    assert task.video.clips[0].windows[0].caption_failure_reason == "exception"
 
 
 def test_generate_caption_retries_on_transient_error(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -366,3 +478,19 @@ def test_generate_caption_retries_on_transient_error(monkeypatch: pytest.MonkeyP
 
     assert mock_client.chat.completions.create.call_count == 3
     assert task.video.clips[0].windows[0].caption["openai"] == "recovered"
+    assert task.video.clips[0].windows[0].caption_status == "success"
+
+
+def test_generate_caption_timeout_maps_to_timeout_failure_reason(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Exhausted API timeouts map to Error(timeout)."""
+    fake_openai = _fake_openai_module()
+    monkeypatch.setattr(openai_caption_stage, "openai", fake_openai, raising=False)
+
+    stage = OpenAICaptionStage(model_name="m", max_caption_retries=1, retry_delay_seconds=0)
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.side_effect = fake_openai.APITimeoutError("slow")
+    stage._client = mock_client
+
+    result = stage._generate_caption(Window(start_frame=0, end_frame=1, mp4_bytes=b"\x00"))
+    assert result.outcome == CaptionOutcome.ERROR
+    assert result.failure_reason == "timeout"

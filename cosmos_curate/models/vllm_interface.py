@@ -93,6 +93,7 @@ from typing import (  # noqa: UP035, remove noqa when we drop support for python
     cast,
 )
 
+import attrs
 import numpy as np
 import torch
 from loguru import logger
@@ -135,6 +136,24 @@ _VLLM_PLUGINS = {
 }
 
 T = TypeVar("T")
+
+
+@attrs.define
+class VllmWindowResult:
+    """Final vLLM caption result for a single window."""
+
+    text: str
+    finish_reason: str | None
+    token_counts: TokenCounts
+
+
+def _make_window_result(request: VllmCaptionRequest, token_counts: TokenCounts) -> VllmWindowResult:
+    """Assemble the terminal per-window vLLM result."""
+    return VllmWindowResult(
+        text=request.caption or VLLM_UNKNOWN_CAPTION,
+        finish_reason=request.finish_reason,
+        token_counts=token_counts,
+    )
 
 
 def _get_vllm_plugin(variant: str) -> VllmPlugin:
@@ -388,7 +407,7 @@ def vllm_generate(
 
     for batch_data in grouping.split_by_chunk_size(inputs, batch_size):
         # llm.generate can take a list of dicts, but does not advertize this in its type hints
-        outputs = llm.generate(batch_data, sampling_params=sampling_params, use_tqdm=False)
+        outputs = llm.generate(cast("Any", batch_data), sampling_params=sampling_params, use_tqdm=False)
         all_outputs.extend(outputs)
 
     # Change request ids from integer strings to the vllm_interface unique request ids.
@@ -430,6 +449,7 @@ def process_vllm_output(
             request.caption = vllm_plugin.decode(out)
             request.prompt_tokens = len(out.prompt_token_ids) if out.prompt_token_ids else 0
             request.output_tokens = len(out.outputs[0].token_ids) if out.outputs else 0
+            request.finish_reason = out.outputs[0].finish_reason if out.outputs else None
             finished.append(request)
 
     return finished
@@ -442,7 +462,7 @@ def _caption_no_inflight_batching(  # noqa: PLR0913
     sampling_params: SamplingParams,
     vllm_config: VllmConfig,
     stage2_prompts: list[str | None],
-) -> tuple[list[str], list[TokenCounts]]:
+) -> list[VllmWindowResult]:
     """Caption the videos without inflight batching.
 
     Assumption:
@@ -459,8 +479,7 @@ def _caption_no_inflight_batching(  # noqa: PLR0913
            Assumed to be the same length as model_inputs.
 
     Returns:
-        Tuple of (captions, token_counts) where token_counts is a list of
-        TokenCounts, one per input.
+        Final per-window results in input order.
 
     """
     vllm_plugin = _get_vllm_plugin(vllm_config.model_variant)
@@ -492,14 +511,14 @@ def _caption_no_inflight_batching(  # noqa: PLR0913
     # stage 1 captioning
     finished_s1 = _process_requests(requests)
 
-    results: dict[int, str] = {}
+    results: dict[int, VllmWindowResult] = {}
     token_counts: dict[int, TokenCounts] = {}
     needs_stage2 = []
     for r in finished_s1:
         idx = request_id_to_index[r.request_id]
         token_counts[idx] = TokenCounts(r.prompt_tokens, r.output_tokens)
         if r.stage2_prompt is None:
-            results[idx] = r.caption or VLLM_UNKNOWN_CAPTION
+            results[idx] = _make_window_result(r, token_counts[idx])
         else:
             needs_stage2.append(r)
 
@@ -512,13 +531,10 @@ def _caption_no_inflight_batching(  # noqa: PLR0913
         idx = request_id_to_index[r.request_id]
         prev = token_counts.get(idx, TokenCounts())
         token_counts[idx] = TokenCounts(prev.prompt_tokens + r.prompt_tokens, prev.output_tokens + r.output_tokens)
-        results[idx] = r.caption or VLLM_UNKNOWN_CAPTION
+        results[idx] = _make_window_result(r, token_counts[idx])
 
     n = len(requests)
-    return (
-        [results[i] for i in range(n)],
-        [token_counts.get(i, TokenCounts()) for i in range(n)],
-    )
+    return [results[i] for i in range(n)]
 
 
 def _caption_inflight_batching(  # noqa: PLR0913
@@ -529,7 +545,7 @@ def _caption_inflight_batching(  # noqa: PLR0913
     vllm_config: VllmConfig,
     max_inflight_requests: int,
     stage2_prompts: list[str | None],
-) -> tuple[list[str], list[TokenCounts]]:
+) -> list[VllmWindowResult]:
     """Caption the videos using inflight batching.
 
     Assumption:
@@ -548,14 +564,13 @@ def _caption_inflight_batching(  # noqa: PLR0913
            Assumed to be the same length as model_inputs.
 
     Returns:
-        Tuple of (captions, token_counts) where token_counts is a list of
-        TokenCounts, one per input.
+        Final per-window results in input order.
 
     """
     vllm_plugin = _get_vllm_plugin(vllm_config.model_variant)
     request_q: Deque[VllmCaptionRequest] = deque()  # noqa: UP006, remove noqa when python 3.10 support is dropped
     in_flight_requests: dict[str, VllmCaptionRequest] = {}
-    results: dict[int, str] = {}
+    results: dict[int, VllmWindowResult] = {}
     token_counts: dict[int, TokenCounts] = {}
 
     # Map request_id -> original input index so we can return captions in input order
@@ -579,10 +594,10 @@ def _caption_inflight_batching(  # noqa: PLR0913
         if request_q and (max_inflight_requests == 0 or len(in_flight_requests) < max_inflight_requests):
             request = request_q.popleft()
             # engine.add_request can accept a dictionary, but does not advertise this in its type hints
-            engine.add_request(request.request_id, request.inputs, sampling_params)
+            engine.add_request(request.request_id, cast("Any", request.inputs), sampling_params)
             in_flight_requests[request.request_id] = request
 
-        engine_output = engine.step()
+        engine_output = cast("list[RequestOutput] | list[PoolingRequestOutput[PoolingOutput]]", engine.step())
 
         # Finished requests are requests that have been completed by the vLLM engine and have a caption.
         # These requests may still need stage2 refinement.
@@ -602,7 +617,7 @@ def _caption_inflight_batching(  # noqa: PLR0913
                 prev.prompt_tokens + r.prompt_tokens, prev.output_tokens + r.output_tokens
             )
             if r.stage2_prompt is None:
-                results[original_idx] = r.caption or VLLM_UNKNOWN_CAPTION
+                results[original_idx] = _make_window_result(r, token_counts[original_idx])
 
         needs_stage2 = [r for r in finished if r.stage2_prompt is not None]
 
@@ -613,10 +628,7 @@ def _caption_inflight_batching(  # noqa: PLR0913
             # Propagate the original index to the refined request's new request_id
             request_id_to_index[refined_request.request_id] = original_idx
 
-    return (
-        [results[i] for i in range(total_requests)],
-        [token_counts.get(i, TokenCounts()) for i in range(total_requests)],
-    )
+    return [results[i] for i in range(total_requests)]
 
 
 def vllm_caption(  # noqa: PLR0913
@@ -629,7 +641,7 @@ def vllm_caption(  # noqa: PLR0913
     *,
     inflight_batching: bool,
     stage2_prompts: list[str | None] | None = None,
-) -> tuple[list[str], list[TokenCounts]]:
+) -> list[VllmWindowResult]:
     """Caption the videos using the vLLM model.
 
     This is the main entry point for video captioning. It handles:
@@ -655,8 +667,7 @@ def vllm_caption(  # noqa: PLR0913
            Must be the same length as model_inputs.
 
     Returns:
-        Tuple of (captions, token_counts) where token_counts is a list of
-        TokenCounts, one per input.
+        Final per-window results in input order.
 
     Raises:
         ValueError: If max_inflight_requests is negative.

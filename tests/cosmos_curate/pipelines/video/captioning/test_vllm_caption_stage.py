@@ -20,6 +20,7 @@ from typing import Any
 from unittest.mock import MagicMock, patch
 from uuid import UUID
 
+import attrs
 import pytest
 
 from cosmos_curate.core.utils.model import conda_utils
@@ -39,7 +40,7 @@ from cosmos_curate.pipelines.video.utils.data_model import (
 if conda_utils.is_running_in_env("unified"):
     import torch
 
-    from cosmos_curate.models.vllm_interface import _VLLM_PLUGINS
+    from cosmos_curate.models.vllm_interface import _VLLM_PLUGINS, VllmWindowResult
     from cosmos_curate.pipelines.video.captioning.vllm_caption_stage import (
         VllmCaptionStage,
         VllmModelInterface,
@@ -53,6 +54,15 @@ if conda_utils.is_running_in_env("unified"):
 
     VALID_VARIANTS = list(_VLLM_PLUGINS.keys())
 else:
+
+    @attrs.define
+    class VllmWindowResult:
+        """Fallback result shape used when the unified environment is unavailable."""
+
+        text: str
+        finish_reason: str | None
+        token_counts: TokenCounts
+
     VALID_VARIANTS = []
 
 
@@ -356,30 +366,39 @@ def test_get_stage2_prompts(stage2_prompt_text: str | None, *, stage2_caption: b
 def test_scatter_captions(*, verbose: bool) -> None:
     """Test _scatter_captions."""
     windows = [Window(start_frame=0, end_frame=10), Window(start_frame=10, end_frame=20)]
-    captions = ["caption 1", "caption 2"]
+    results = [
+        VllmWindowResult(text="caption 1", finish_reason="stop", token_counts=TokenCounts(10, 5)),
+        VllmWindowResult(text="caption 2", finish_reason="stop", token_counts=TokenCounts(8, 3)),
+    ]
     clip_uuids = ["clip_uuid_1", "clip_uuid_2"]
     model_variant = "test_variant"
-    token_counts = [TokenCounts(10, 5), TokenCounts(8, 3)]
-    _scatter_captions(windows, captions, clip_uuids, model_variant, token_counts, verbose=verbose)
-    for window, caption, tc in zip(windows, captions, token_counts, strict=True):
-        assert window.caption[model_variant] == caption
-        assert window.token_counts[model_variant] == tc
+    _scatter_captions(windows, results, clip_uuids, model_variant, verbose=verbose)
+    for window, result in zip(windows, results, strict=True):
+        assert window.caption[model_variant] == result.text
+        assert window.token_counts[model_variant] == result.token_counts
 
 
 @pytest.mark.parametrize(
-    ("caption", "expected_status", "expected_reason"),
+    ("result", "expect_caption", "expected_status", "expected_reason"),
     [
-        ("A well-formed caption.", "success", None),
-        ("", "failure", "empty"),
-        (VLLM_UNKNOWN_CAPTION, "failure", "exception"),
+        (VllmWindowResult("A well-formed caption.", "stop", TokenCounts()), True, "success", None),
+        (VllmWindowResult("Trimmed caption.  ", "length", TokenCounts()), True, "truncated", None),
+        (VllmWindowResult("", "length", TokenCounts()), False, "error", "exception"),
+        (VllmWindowResult("", "stop", TokenCounts()), False, "error", "exception"),
+        (VllmWindowResult(VLLM_UNKNOWN_CAPTION, "length", TokenCounts()), False, "error", "exception"),
     ],
-    ids=["success", "empty_failure", "sentinel_failure"],
+    ids=["success", "truncated", "empty_length_error", "empty_error", "sentinel_error"],
 )
-def test_scatter_captions_sets_status(caption: str, expected_status: str, expected_reason: str | None) -> None:
+def test_scatter_captions_sets_status(
+    result: VllmWindowResult, *, expect_caption: bool, expected_status: str, expected_reason: str | None
+) -> None:
     """_scatter_captions writes caption_status and caption_failure_reason for each outcome."""
     window = Window(start_frame=0, end_frame=10)
-    _scatter_captions([window], [caption], ["clip_1"], "qwen", [TokenCounts()], verbose=False)
-    assert window.caption["qwen"] == caption
+    _scatter_captions([window], [result], ["clip_1"], "qwen", verbose=False)
+    if expect_caption:
+        assert window.caption["qwen"] == result.text.strip()
+    else:
+        assert "qwen" not in window.caption
     assert window.caption_status == expected_status
     assert window.caption_failure_reason == expected_reason
 

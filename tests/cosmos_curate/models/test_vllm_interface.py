@@ -23,6 +23,7 @@ from PIL import Image
 
 from cosmos_curate.core.utils.model import conda_utils
 from cosmos_curate.pipelines.video.utils.data_model import (
+    TokenCounts,
     VllmCaptionRequest,
     VllmConfig,
     VllmSamplingConfig,
@@ -35,6 +36,7 @@ if conda_utils.is_running_in_env("unified"):
 
     from cosmos_curate.models.vllm_interface import (
         _VLLM_PLUGINS,
+        VllmWindowResult,
         _caption_inflight_batching,
         _caption_no_inflight_batching,
         _get_vllm_plugin,
@@ -193,6 +195,7 @@ def test_process_vllm_output() -> None:
     assert len(finished) == len(engine_output)
     assert [r.request_id for r in finished] == [r.request_id for r in engine_output]
     assert [r.caption for r in finished] == [vllm_plugin.decode(r) for r in engine_output]
+    assert all(r.finish_reason == "stop" for r in finished)
 
 
 @pytest.mark.env("unified")
@@ -226,7 +229,7 @@ def test_caption_no_inflight_batching(*, stage2: bool) -> None:
     model_inputs = [{"a": 1}, {"b": 2}]
     stage2_prompts: list[str | None] = [None, None] if not stage2 else ["ref", "ref"]
 
-    captions, token_counts = _caption_no_inflight_batching(
+    results = _caption_no_inflight_batching(
         model_inputs=model_inputs,
         llm=model,
         processor=processor,
@@ -241,8 +244,9 @@ def test_caption_no_inflight_batching(*, stage2: bool) -> None:
     else:
         expected_captions = [f"mock-caption-{i}" for i in range(len(model_inputs))]
 
-    assert captions == expected_captions
-    assert len(token_counts) == len(model_inputs)
+    assert [result.text for result in results] == expected_captions
+    assert len(results) == len(model_inputs)
+    assert all(result.finish_reason == "stop" for result in results)
 
 
 @pytest.mark.env("unified")
@@ -287,7 +291,7 @@ def test_caption_no_inflight_batching_preserves_order(*, stage2: bool) -> None:
     else:
         stage2_prompts = [None] * num_inputs
 
-    captions, token_counts = _caption_no_inflight_batching(
+    results = _caption_no_inflight_batching(
         model_inputs=model_inputs,
         llm=model,
         processor=processor,
@@ -296,11 +300,10 @@ def test_caption_no_inflight_batching_preserves_order(*, stage2: bool) -> None:
         stage2_prompts=stage2_prompts,
     )
 
-    assert len(captions) == num_inputs
-    assert len(token_counts) == num_inputs
+    assert len(results) == num_inputs
 
     # Extract the integer suffix from each "mock-caption-N" string.
-    caption_indices = [int(c.split("-")[-1]) for c in captions]
+    caption_indices = [int(result.text.split("-")[-1]) for result in results]
 
     # All captions must be unique (no duplicates from misordering).
     assert len(set(caption_indices)) == num_inputs
@@ -330,7 +333,7 @@ def test_caption_inflight_batching(*, stage2: bool) -> None:
     model_inputs = [{"a": 1}, {"b": 2}]
     stage2_prompts: list[str | None] = [None, None] if not stage2 else ["ref", "ref"]
 
-    captions, token_counts = _caption_inflight_batching(
+    results = _caption_inflight_batching(
         model_inputs=model_inputs,
         llm=model,
         processor=processor,
@@ -346,8 +349,9 @@ def test_caption_inflight_batching(*, stage2: bool) -> None:
     else:
         expected_captions = [f"mock-caption-{i}" for i in range(len(model_inputs))]
 
-    assert captions == expected_captions
-    assert len(token_counts) == len(model_inputs)
+    assert [result.text for result in results] == expected_captions
+    assert len(results) == len(model_inputs)
+    assert all(result.finish_reason == "stop" for result in results)
 
 
 @pytest.mark.env("unified")
@@ -393,8 +397,8 @@ def test_vllm_caption_dispatch(mock_no_ifb: MagicMock, mock_ifb: MagicMock, *, i
     1. runs without errors
     2. dispatches to the correct helper based on the inflight flag
     """
-    mock_no_ifb.return_value = ["no_ifb"]
-    mock_ifb.return_value = ["ifb"]
+    mock_no_ifb.return_value = [VllmWindowResult(text="no_ifb", finish_reason="stop", token_counts=TokenCounts())]
+    mock_ifb.return_value = [VllmWindowResult(text="ifb", finish_reason="stop", token_counts=TokenCounts())]
     out = vllm_caption(
         model_inputs=[{}],
         llm=MagicMock(),
@@ -404,7 +408,11 @@ def test_vllm_caption_dispatch(mock_no_ifb: MagicMock, mock_ifb: MagicMock, *, i
         max_inflight_requests=0,
         inflight_batching=inflight,
     )
-    assert out == (["ifb"] if inflight else ["no_ifb"])
+    assert out == (
+        [VllmWindowResult(text="ifb", finish_reason="stop", token_counts=TokenCounts())]
+        if inflight
+        else [VllmWindowResult(text="no_ifb", finish_reason="stop", token_counts=TokenCounts())]
+    )
 
 
 @pytest.mark.env("unified")
@@ -521,7 +529,7 @@ def test_caption_inflight_batching_preserves_order(*, stage2: bool) -> None:
     # This guarantees inputs 1-4 complete before input 0.
     model = MockLLM(steps_to_complete=lambda req_idx: 10 if req_idx == 0 else 1)
 
-    captions, token_counts = _caption_inflight_batching(
+    results = _caption_inflight_batching(
         model_inputs=model_inputs,
         llm=model,  # type: ignore[arg-type]
         processor=processor,
@@ -531,11 +539,10 @@ def test_caption_inflight_batching_preserves_order(*, stage2: bool) -> None:
         max_inflight_requests=0,
     )
 
-    assert len(captions) == num_inputs
-    assert len(token_counts) == num_inputs
+    assert len(results) == num_inputs
 
     # Extract the integer suffix from each "mock-caption-N" string.
-    caption_indices = [int(c.split("-")[-1]) for c in captions]
+    caption_indices = [int(result.text.split("-")[-1]) for result in results]
 
     # All captions must be unique (no duplicates from misordering).
     assert len(set(caption_indices)) == num_inputs
@@ -546,3 +553,62 @@ def test_caption_inflight_batching_preserves_order(*, stage2: bool) -> None:
     # Inputs 1-4 all complete in submission order (each needs 1 step),
     # so their caption indices must be consecutive and ascending.
     assert caption_indices[1:] == sorted(caption_indices[1:])
+
+
+@pytest.mark.env("unified")
+@patch("cosmos_curate.models.vllm_interface.process_vllm_output")
+@patch("cosmos_curate.models.vllm_interface.vllm_generate")
+def test_caption_no_inflight_batching_terminal_finish_reason_wins(
+    mock_vllm_generate: MagicMock, mock_process_vllm_output: MagicMock
+) -> None:
+    """Stage-2 finish_reason must overwrite stage-1 when assembling the final window result."""
+    vllm_config = VllmConfig(model_variant="mock")
+    request_batches: list[list[VllmCaptionRequest]] = []
+
+    def _fake_generate(
+        _llm: object,
+        _sampling_params: object,
+        requests: list[VllmCaptionRequest],
+        _batch_size: int,
+    ) -> list[object]:
+        request_batches.append(requests)
+        return []
+
+    def _fake_process(
+        _engine_output: list[object], in_flight_requests: dict[str, VllmCaptionRequest], _config: VllmConfig
+    ) -> list[VllmCaptionRequest]:
+        requests = list(in_flight_requests.values())
+        request = requests[0]
+        if request.stage2_prompt is not None:
+            request.caption = "stage1-caption"
+            request.prompt_tokens = 2
+            request.output_tokens = 3
+            request.finish_reason = "length"
+            return requests
+
+        request.caption = "stage2-caption"
+        request.prompt_tokens = 5
+        request.output_tokens = 7
+        request.finish_reason = "stop"
+        return requests
+
+    mock_vllm_generate.side_effect = _fake_generate
+    mock_process_vllm_output.side_effect = _fake_process
+
+    results = _caption_no_inflight_batching(
+        model_inputs=[{"idx": 0}],
+        llm=MagicMock(),
+        processor=MagicMock(),
+        sampling_params=MagicMock(),
+        vllm_config=vllm_config,
+        stage2_prompts=["refine"],
+    )
+
+    assert len(request_batches) == 2
+    assert results == [
+        VllmWindowResult(
+            text="stage2-caption",
+            finish_reason="stop",
+            token_counts=TokenCounts(prompt_tokens=7, output_tokens=10),
+        )
+    ]

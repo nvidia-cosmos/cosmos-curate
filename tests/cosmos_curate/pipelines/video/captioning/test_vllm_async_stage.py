@@ -742,6 +742,8 @@ class TestVllmAsyncCaptionStage:
 
         window = result[0].video.clips[0].windows[0]
         assert window.caption["vllm_async"] == "A cat video"
+        assert window.caption_status == "success"
+        assert window.caption_failure_reason is None
         assert not result[0].video.clips[0].errors
 
     def test_process_data_multiple_tasks_gathers_all_windows(self) -> None:
@@ -776,6 +778,8 @@ class TestVllmAsyncCaptionStage:
             for clip in task.video.clips:
                 for window in clip.windows:
                     assert window.caption.get("vllm_async") == "Caption"
+                    assert window.caption_status == "success"
+                    assert window.caption_failure_reason is None
                 assert not clip.errors
 
     def test_full_lifecycle_setup_caption_destroy(self) -> None:
@@ -2101,6 +2105,8 @@ class TestCaptionStageModelInputExtraction:
         assert len(result) == 0
         assert "vllm_async_caption_0" in clip.errors
         assert "VllmAsyncPromptRenderStage" in clip.errors["vllm_async_caption_0"]
+        assert clip.windows[0].caption_status == "error"
+        assert clip.windows[0].caption_failure_reason == "exception"
 
     def test_skips_missing_model_input(self) -> None:
         """Windows without model_input[variant] should be silently skipped."""
@@ -2112,7 +2118,7 @@ class TestCaptionStageModelInputExtraction:
         assert len(result) == 0
 
     def test_cleanup_pops_model_input(self) -> None:
-        """model_input[variant] should be popped after extraction (cleanup contract)."""
+        """model_input[variant] should be popped after extraction."""
         stage = self._make_stage()
         stage._sampling_params = MagicMock()
 
@@ -2200,6 +2206,8 @@ class TestStage2CaptionRefinement:
         assert result is None
         assert mock_gen.call_count == 1
         assert window.caption["vllm_async"] == "A test caption"
+        assert window.caption_status == "success"
+        assert window.caption_failure_reason is None
         assert rw.rendered_prompt is None
         assert rw.raw_prompt_input is None  # cleaned: uint8 frames released when no stage-2
         assert len(stage2_queue) == 0
@@ -2271,6 +2279,8 @@ class TestStage2CaptionRefinement:
 
         assert mock_gen.call_count == 1
         assert window.caption["vllm_async"] == "Only caption"
+        assert window.caption_status == "success"
+        assert window.caption_failure_reason is None
         assert len(stage2_queue) == 0
 
     def test_generate_and_assign_error_cleans_raw_prompt_input(self) -> None:
@@ -2303,6 +2313,8 @@ class TestStage2CaptionRefinement:
         assert rw.raw_prompt_input is None  # must be cleaned on error path too
         assert "vllm_async_caption_0" in clip.errors
         assert "vllm_async" not in window.caption
+        assert window.caption_status == "error"
+        assert window.caption_failure_reason == "exception"
 
     def test_rendered_window_cleanup_after_processing(self) -> None:
         """Full lifecycle: generate cleans rendered_prompt, stage2 cleans raw_prompt_input."""
@@ -2349,6 +2361,8 @@ class TestStage2CaptionRefinement:
 
         assert rw.rendered_prompt is None
         assert rw.raw_prompt_input is None
+        assert window.caption_status == "success"
+        assert window.caption_failure_reason is None
 
     def test_stage2_failure_falls_back_to_stage1_caption(self) -> None:
         """If stage-2 generate fails, _stage2_refine_and_assign falls back to stage-1 caption."""
@@ -2388,6 +2402,8 @@ class TestStage2CaptionRefinement:
             asyncio.run(stage._stage2_refine_and_assign(rw, "Stage-1 caption", mock_engine, asyncio.Semaphore(1)))
 
         assert window.caption["vllm_async"] == "Stage-1 caption"
+        assert window.caption_status == "success"
+        assert window.caption_failure_reason is None
         assert rw.raw_prompt_input is None
         err_key = f"{stage._model_variant}_caption_0"
         assert err_key in clip.errors
@@ -2429,6 +2445,8 @@ class TestStage2CaptionRefinement:
 
         mock_build.assert_called_once_with(stage._stage2_processor, "Stage-1 text", custom_prompt)
         assert window.caption["vllm_async"] == "Refined caption"
+        assert window.caption_status == "success"
+        assert window.caption_failure_reason is None
 
     def test_default_stage2_prompt_text_forwarded_as_none(self) -> None:
         """When no custom prompt is set, build_refinement_prompt_text receives None (uses default)."""
@@ -2465,6 +2483,8 @@ class TestStage2CaptionRefinement:
 
         mock_build.assert_called_once_with(stage._stage2_processor, "Stage-1 text", None)
         assert window.caption["vllm_async"] == "Refined caption"
+        assert window.caption_status == "success"
+        assert window.caption_failure_reason is None
 
     def test_stage2_skips_when_raw_prompt_input_is_none(self) -> None:
         """When raw_prompt_input is None, stage-2 should assign stage-1 caption and return early."""
@@ -2492,6 +2512,8 @@ class TestStage2CaptionRefinement:
         asyncio.run(stage._stage2_refine_and_assign(rw, "Stage-1 only", mock_engine, asyncio.Semaphore(1)))
 
         assert window.caption["vllm_async"] == "Stage-1 only"
+        assert window.caption_status == "success"
+        assert window.caption_failure_reason is None
         mock_engine.renderer.render_cmpl_async.assert_not_called()
 
     def test_stage2_engine_dead_error_sets_flag_and_falls_back(self) -> None:
@@ -2533,6 +2555,8 @@ class TestStage2CaptionRefinement:
 
         assert stage._engine_dead is True
         assert window.caption["vllm_async"] == "Fallback caption"
+        assert window.caption_status == "success"
+        assert window.caption_failure_reason is None
         err_key = f"{stage._model_variant}_caption_0"
         assert err_key in clip.errors
         assert "EngineDeadError during stage-2" in clip.errors[err_key]

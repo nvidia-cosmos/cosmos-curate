@@ -25,7 +25,14 @@ import pytest
 from cosmos_curate.core.utils.config.config import ConfigFileData, Gemini
 from cosmos_curate.pipelines.video.captioning import gemini_caption_stage
 from cosmos_curate.pipelines.video.captioning.gemini_caption_stage import ApiPrepStage, GeminiCaptionStage
-from cosmos_curate.pipelines.video.utils.data_model import Clip, SplitPipeTask, Video, Window, WindowConfig
+from cosmos_curate.pipelines.video.utils.data_model import (
+    CaptionOutcome,
+    Clip,
+    SplitPipeTask,
+    Video,
+    Window,
+    WindowConfig,
+)
 
 
 class _DummyModels:
@@ -106,6 +113,8 @@ def test_gemini_caption_stage_generates_captions(monkeypatch: pytest.MonkeyPatch
 
     window = result[0].video.clips[0].windows[0]
     assert window.caption["gemini"] == "dummy caption"
+    assert window.caption_status == "success"
+    assert window.caption_failure_reason is None
     assert dummy_models.last_kwargs is not None
     assert dummy_models.last_kwargs["model"] == "models/test"
 
@@ -126,6 +135,8 @@ def test_gemini_caption_stage_records_error_for_missing_mp4(monkeypatch: pytest.
     clip = task.video.clips[0]
     assert "gemini_caption_0" in clip.errors
     assert "gemini" not in clip.windows[0].caption
+    assert clip.windows[0].caption_status == "error"
+    assert clip.windows[0].caption_failure_reason == "exception"
 
 
 def test_stage_setup_loads_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -169,6 +180,7 @@ def test_gemini_caption_stage_logs_error_on_empty_response(monkeypatch: pytest.M
     stage.process_data([task])
     clip = task.video.clips[0]
     assert "gemini_caption_0" in clip.errors
+    assert clip.errors["gemini_caption_0"] == "Gemini response did not contain caption text."
 
 
 def test_stage_setup_requires_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -186,15 +198,30 @@ def test_stage_setup_requires_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
         GeminiCaptionStage()
 
 
-def test_extract_text_handles_block_reason() -> None:
-    """Report Gemini block reasons in error messages."""
+def test_normalize_response_handles_block_reason() -> None:
+    """Prompt block reasons map to Blocked."""
     response = SimpleNamespace(prompt_feedback=SimpleNamespace(block_reason="SAFETY"))
-    with pytest.raises(RuntimeError, match="Gemini request blocked: SAFETY"):
-        GeminiCaptionStage._extract_text(response)
+    result = GeminiCaptionStage._normalize_response(response)
+    assert result.outcome == CaptionOutcome.BLOCKED
 
 
-def test_extract_text_reports_finish_reason() -> None:
-    """Surface finish reasons when Gemini returns empty content."""
+def test_normalize_response_reports_truncated_finish_reason() -> None:
+    """MAX_TOKENS with text maps to Truncated."""
+    response = SimpleNamespace(
+        candidates=[
+            SimpleNamespace(
+                content=SimpleNamespace(parts=[SimpleNamespace(text="partial")]),
+                finish_reason="MAX_TOKENS",
+            )
+        ]
+    )
+    result = GeminiCaptionStage._normalize_response(response)
+    assert result.outcome == CaptionOutcome.TRUNCATED
+    assert result.text == "partial"
+
+
+def test_normalize_response_treats_empty_max_tokens_as_error() -> None:
+    """MAX_TOKENS without text maps to Error rather than Truncated."""
     response = SimpleNamespace(
         candidates=[
             SimpleNamespace(
@@ -203,8 +230,23 @@ def test_extract_text_reports_finish_reason() -> None:
             )
         ]
     )
-    with pytest.raises(RuntimeError, match="finish_reasons=\\['MAX_TOKENS'\\]"):
-        GeminiCaptionStage._extract_text(response)
+    result = GeminiCaptionStage._normalize_response(response)
+    assert result.outcome == CaptionOutcome.ERROR
+    assert result.failure_reason == "exception"
+
+
+def test_normalize_response_treats_recitation_as_blocked() -> None:
+    """RECITATION wins over unexpected text."""
+    response = SimpleNamespace(
+        candidates=[
+            SimpleNamespace(
+                content=SimpleNamespace(parts=[SimpleNamespace(text="unexpected")]),
+                finish_reason="RECITATION",
+            )
+        ]
+    )
+    result = GeminiCaptionStage._normalize_response(response)
+    assert result.outcome == CaptionOutcome.BLOCKED
 
 
 def test_gemini_caption_stage_does_not_retry_invalid_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -242,4 +284,88 @@ def test_gemini_caption_stage_does_not_retry_invalid_api_key(monkeypatch: pytest
 
     clip = task.video.clips[0]
     assert failing_models.calls == 1
-    assert "Gemini rejected the API key" in clip.errors["gemini_caption_0"]
+    assert clip.errors["gemini_caption_0"] == (
+        "Gemini rejected the API key (API_KEY_INVALID). Update the cosmos-curate config with a valid Gemini API key."
+    )
+    assert clip.windows[0].caption_failure_reason == "exception"
+
+
+def test_gemini_caption_stage_writes_truncated_status(monkeypatch: pytest.MonkeyPatch) -> None:
+    """MAX_TOKENS responses with text should write truncated status and keep text."""
+    monkeypatch.setattr(
+        gemini_caption_stage,
+        "load_config",
+        lambda: ConfigFileData(gemini=Gemini(api_key="dummy-key")),
+    )
+
+    class _TruncatedModels:
+        def generate_content(self, **_kwargs: object) -> SimpleNamespace:
+            return SimpleNamespace(
+                candidates=[
+                    SimpleNamespace(
+                        content=SimpleNamespace(parts=[SimpleNamespace(text="partial caption")]),
+                        finish_reason="MAX_TOKENS",
+                    )
+                ]
+            )
+
+    stage = GeminiCaptionStage()
+    stage._client = _DummyClient(_TruncatedModels())  # type: ignore[arg-type,assignment]
+
+    task = _make_task(b"\x00\x01")
+    stage.process_data([task])
+
+    window = task.video.clips[0].windows[0]
+    assert window.caption["gemini"] == "partial caption"
+    assert window.caption_status == "truncated"
+    assert window.caption_failure_reason is None
+
+
+def test_gemini_caption_stage_writes_blocked_status(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Safety-style Gemini responses should write blocked status without text."""
+    monkeypatch.setattr(
+        gemini_caption_stage,
+        "load_config",
+        lambda: ConfigFileData(gemini=Gemini(api_key="dummy-key")),
+    )
+
+    class _BlockedModels:
+        def generate_content(self, **_kwargs: object) -> SimpleNamespace:
+            return SimpleNamespace(prompt_feedback=SimpleNamespace(block_reason="SAFETY"))
+
+    stage = GeminiCaptionStage()
+    stage._client = _DummyClient(_BlockedModels())  # type: ignore[arg-type,assignment]
+
+    task = _make_task(b"\x00\x01")
+    stage.process_data([task])
+
+    window = task.video.clips[0].windows[0]
+    assert "gemini" not in window.caption
+    assert window.caption_status == "blocked"
+    assert window.caption_failure_reason is None
+
+
+def test_generate_caption_timeout_maps_to_timeout_failure_reason(monkeypatch: pytest.MonkeyPatch) -> None:
+    """DeadlineExceeded maps to Error(timeout) after retries exhaust."""
+    monkeypatch.setattr(
+        gemini_caption_stage,
+        "load_config",
+        lambda: ConfigFileData(gemini=Gemini(api_key="dummy-key")),
+    )
+
+    class _FakeDeadlineExceededError(Exception):
+        """Stand-in for Gemini timeout exceptions."""
+
+    class _TimeoutModels:
+        def generate_content(self, **_kwargs: object) -> SimpleNamespace:
+            msg = "slow"
+            raise _FakeDeadlineExceededError(msg)
+
+    monkeypatch.setattr(gemini_caption_stage, "DeadlineExceeded", _FakeDeadlineExceededError)
+
+    stage = GeminiCaptionStage(max_caption_retries=1, retry_delay_seconds=0)
+    stage._client = _DummyClient(_TimeoutModels())  # type: ignore[arg-type,assignment]
+
+    result = stage._generate_caption(Window(start_frame=0, end_frame=1, mp4_bytes=b"\x00"), 0, 0)
+    assert result.outcome == CaptionOutcome.ERROR
+    assert result.failure_reason == "timeout"

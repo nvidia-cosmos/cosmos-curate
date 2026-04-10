@@ -18,19 +18,23 @@ from cosmos_curate.pipelines.video.utils.data_model import VllmCaptionRequest, V
 # ruff: noqa: ARG002, D102, D107
 
 
-def make_request_output(request_id: str, text: str, *, finished: bool = True) -> RequestOutput:
+def make_request_output(
+    request_id: str, text: str, *, finished: bool = True, finish_reason: str | None = "stop"
+) -> RequestOutput:
     """Make an instance of vLLM's RequestOutput with a single CompletionOutput.
 
     Args:
         request_id: The request id.
         text: The text of the completion.
         finished: Whether the request is finished.
+        finish_reason: The completion finish reason to attach to the first output.
 
     Returns:
         An instance of vLLM's RequestOutput.
 
     """
     output = CompletionOutput(index=0, token_ids=[], cumulative_logprob=0.0, logprobs=[], text=text)
+    output.finish_reason = finish_reason
     return RequestOutput(
         request_id=request_id,
         outputs=[output],

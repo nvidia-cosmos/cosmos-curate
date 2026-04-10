@@ -48,6 +48,8 @@ from cosmos_curate.models.vllm_model_ids import get_vllm_model_id
 from cosmos_curate.models.vllm_sentinels import VLLM_UNKNOWN_CAPTION
 from cosmos_curate.pipelines.video.utils import windowing_utils
 from cosmos_curate.pipelines.video.utils.data_model import (
+    CaptionOutcome,
+    CaptionResult,
     TokenCounts,
     Video,
     VllmConfig,
@@ -62,6 +64,7 @@ if conda_utils.is_running_in_env("unified"):
         from vllm import LLM, SamplingParams
 
     from cosmos_curate.models.vllm_interface import (
+        VllmWindowResult,
         auto_processor,
         make_metadata,
         make_model_inputs,
@@ -146,12 +149,11 @@ def _get_stage2_prompts(vllm_config: VllmConfig, num_windows: int) -> list[str |
     return [None] * num_windows
 
 
-def _scatter_captions(  # noqa: PLR0913
+def _scatter_captions(
     windows: list[Window],
-    captions: list[str],
+    results: list["VllmWindowResult"],
     clip_uuids: list[str],
     model_variant: str,
-    token_counts: list[TokenCounts],
     *,
     verbose: bool,
 ) -> None:
@@ -159,27 +161,35 @@ def _scatter_captions(  # noqa: PLR0913
 
     Args:
         windows: The windows to scatter the captions to.
-        captions: The captions to scatter.
+        results: The per-window vLLM results to scatter.
         clip_uuids: The clip uuids to scatter the captions to.
         model_variant: The variant of the model.
-        token_counts: Per-window TokenCounts.
         verbose: Whether to print verbose logs.
 
     """
-    for window, caption, clip_uuid, tc in zip(windows, captions, clip_uuids, token_counts, strict=True):
-        window.caption[model_variant] = caption
-        window.token_counts[model_variant] = tc
-        if caption == "":
-            window.caption_status = "failure"
-            window.caption_failure_reason = "empty"
-        elif caption == VLLM_UNKNOWN_CAPTION:
-            window.caption_status = "failure"
-            window.caption_failure_reason = "exception"
-        else:
-            window.caption_status = "success"
-            window.caption_failure_reason = None
+    for window, raw_result, clip_uuid in zip(windows, results, clip_uuids, strict=True):
+        result = _normalize_vllm_result(raw_result)
+        if result.text is not None:
+            window.caption[model_variant] = result.text
+        window.token_counts[model_variant] = raw_result.token_counts
+        window.caption_status = result.outcome.value
+        window.caption_failure_reason = result.failure_reason if result.outcome == CaptionOutcome.ERROR else None
         if verbose:
-            logger.info(f"Caption for clip {clip_uuid}: {caption}")
+            logger.info(f"Caption for clip {clip_uuid}: {raw_result.text}")
+
+
+def _normalize_vllm_result(result: "VllmWindowResult") -> CaptionResult:
+    """Map a raw vLLM interface result to a caption result."""
+    text = result.text.strip()
+    if result.text == VLLM_UNKNOWN_CAPTION:
+        return CaptionResult(outcome=CaptionOutcome.ERROR, failure_reason="exception")
+    if result.finish_reason == "length":
+        if text:
+            return CaptionResult(outcome=CaptionOutcome.TRUNCATED, text=text)
+        return CaptionResult(outcome=CaptionOutcome.ERROR, failure_reason="exception")
+    if text:
+        return CaptionResult(outcome=CaptionOutcome.SUCCESS, text=text)
+    return CaptionResult(outcome=CaptionOutcome.ERROR, failure_reason="exception")
 
 
 def _free_vllm_inputs(windows: list[Window], model_variant: str, *, keep_mp4: bool = False) -> None:
@@ -567,20 +577,23 @@ class VllmCaptionStage(CuratorStage):
             msg = "Processor not initialized, call stage_setup() first"
             raise RuntimeError(msg)
 
+        llm = self._llm
+        sampling_params = self._sampling_params
+        processor = self._processor
+
         major_size = sum(task.get_major_size() for task in tasks)
         self._timer.reinit(self, major_size)
 
         @tenacity.retry(stop=tenacity.stop_after_attempt(self._vllm_config.max_retries), reraise=True)
         def _vllm_caption(
             model_inputs: list[dict[str, Any]], stage2_prompts: list[str | None]
-        ) -> tuple[list[str], list[TokenCounts]]:
+        ) -> list["VllmWindowResult"]:
             try:
-                assert self._processor is not None
-                captions, token_counts = vllm_caption(
+                results = vllm_caption(
                     model_inputs,
-                    self._llm,
-                    self._processor,
-                    self._sampling_params,
+                    llm,
+                    processor,
+                    sampling_params,
                     self._vllm_config,
                     inflight_batching=self._inflight_batching,
                     max_inflight_requests=self._max_inflight_requests,
@@ -602,7 +615,7 @@ class VllmCaptionStage(CuratorStage):
                     video = get_video_from_task(task)
                     video.errors.pop("captioning", None)
 
-                return captions, token_counts
+                return results
 
         with self._timer.time_process():
             # Gather model inputs and clip uuids
@@ -617,18 +630,17 @@ class VllmCaptionStage(CuratorStage):
 
             # Generate captions
             try:
-                captions, token_counts = _vllm_caption(model_inputs, stage2_prompts)
+                results = _vllm_caption(model_inputs, stage2_prompts)
             except Exception:  # noqa: BLE001
-                logger.error(f"All {self._vllm_config.max_retries} retry attempts exhausted, returning empty captions")
-                captions = [""] * len(model_inputs)
-                token_counts = [TokenCounts()] * len(model_inputs)
+                logger.error(f"All {self._vllm_config.max_retries} retry attempts exhausted; captioning failed")
+                results = [
+                    VllmWindowResult(text="", finish_reason=None, token_counts=TokenCounts()) for _ in model_inputs
+                ]
 
             # Scatter captions back to windows
-            _scatter_captions(
-                windows, captions, clip_uuids, self._vllm_config.model_variant, token_counts, verbose=self._verbose
-            )
+            _scatter_captions(windows, results, clip_uuids, self._vllm_config.model_variant, verbose=self._verbose)
 
-            logger.info(f"Generated {len(captions)} captions for {len(tasks)} tasks")
+            logger.info(f"Generated {len(results)} captions for {len(tasks)} tasks")
 
         if self._log_stats:
             # Because there's a single call to caption all tasks, just log the first task's stage_perf.

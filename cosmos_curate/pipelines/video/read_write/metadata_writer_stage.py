@@ -775,10 +775,7 @@ class ClipWriterStage(CuratorStage):
             for model in self._caption_models:
                 if model in window.caption:
                     curr_window[f"{model}_caption"] = window.caption[model]
-                    if window.caption_status is not None:
-                        if window.caption_status == "success":
-                            has_caption = True
-                    elif window.caption[model]:
+                    if window.caption_status in {"success", "truncated"}:
                         has_caption = True
                 if model in window.token_counts:
                     counts = window.token_counts[model]
@@ -848,7 +845,7 @@ class ClipWriterStage(CuratorStage):
                             "model_name": str(self._embedding_algorithm),
                             "model_version": str(self._embedding_model_version),
                             "source_video_location": str(clip.source_video),
-                            # Raw observability join — may include failed captions ("" or sentinel).
+                            # Raw observability join — may omit failed captions when no caption text was written.
                             # Gating on caption_status is a downstream policy decision.
                             "caption": " | ".join(clip.get_all_captions()),
                         }
@@ -915,7 +912,8 @@ class ClipWriterStage(CuratorStage):
             for window in clip.windows:
                 window_key = f"{window.start_frame}_{window.end_frame}"
                 # Raw observability dump — writes caption text regardless of caption_status;
-                # may include failed captions ("" or sentinel). Gating on status is a downstream policy decision.
+                # failed captions may be absent when no caption text was written. Gating on status is a downstream
+                # policy decision.
                 for model in self._caption_models:
                     if model in window.caption:
                         data["all_windows"][clip_uuid][window_key] = window.caption[model]
@@ -948,11 +946,7 @@ class ClipWriterStage(CuratorStage):
                     f"from {clip.source_video} has no mp4 bytes, skip uploading to dataset",
                 )
                 continue
-            caption_ok = (
-                window.caption_status == "success"
-                if window.caption_status is not None
-                else any(window.caption.values())
-            )
+            caption_ok = window.caption_status in {"success", "truncated"}
             if not caption_ok:
                 logger.error(
                     f"Clip {clip.uuid} window [{window.start_frame}, {window.end_frame}] "
