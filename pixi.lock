@@ -8,6 +8,8 @@ environments:
     indexes:
     - https://pypi.org/simple
     - https://pypi.nvidia.com/
+    options:
+      pypi-prerelease-mode: if-necessary-or-explicit
     packages:
       linux-64:
       - conda: https://conda.anaconda.org/conda-forge/linux-64/_openmp_mutex-4.5-20_gnu.conda
@@ -355,7 +357,7 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/0d/76/941cc9f73529988688a665a5c0ecff1112b3d95ab48f81db5f7606f522d3/pydantic_core-2.41.5-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/9e/7b/0eb1f7522c8324c3248862d9de308f1f04cc787b53a6a70cb1687498b2c7/pylance-2.0.1-cp39-abi3-manylinux_2_28_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/06/54/82a6e2ef37f0f23dccac604b9585bdcbd0698604feb64807dcb72853693e/python_discovery-1.1.0-py3-none-any.whl
-      - pypi: https://files.pythonhosted.org/packages/9e/b9/cc5ea8460c3dc602e6b7198277a7c59ba2b8929374ab22efa8df9f3deac8/ray-2.54.0-cp312-cp312-manylinux2014_x86_64.whl
+      - pypi: https://files.pythonhosted.org/packages/8a/1f/b33d5006823f8c1c8760887cf1190194f4b06de858b3d17e37bd930a6a62/ray-2.54.1-cp312-cp312-manylinux2014_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/2c/58/ca301544e1fa93ed4f80d724bf5b194f6e4b945841c5bfd555878eea9fcb/referencing-0.37.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/3f/51/d4db610ef29373b879047326cbf6fa98b6c1969d6f6dc423279de2b1be2c/requests_toolbelt-1.0.0-py2.py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/60/1b/6f8f29f3f995c7ffdde46a626ddccd7c63aefc0efae881dc13b6e5d5bb16/rpds_py-0.30.0-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
@@ -717,7 +719,7 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/68/b8/a01b53cb0e59139fbc9e4fda3e9724ede8de279097179be4ff31f1abb65a/pydantic_core-2.41.5-cp312-cp312-manylinux_2_17_aarch64.manylinux2014_aarch64.whl
       - pypi: https://files.pythonhosted.org/packages/8d/a4/e0928a866d45dd2eced31ba84db44ea80c05055c4ff105fc754262c1159d/pylance-2.0.1-cp39-abi3-manylinux_2_28_aarch64.whl
       - pypi: https://files.pythonhosted.org/packages/06/54/82a6e2ef37f0f23dccac604b9585bdcbd0698604feb64807dcb72853693e/python_discovery-1.1.0-py3-none-any.whl
-      - pypi: https://files.pythonhosted.org/packages/60/ad/e07aca3637e9c3ec4857ec4366208099cf8488ece8061a9925ba29b66382/ray-2.54.0-cp312-cp312-manylinux2014_aarch64.whl
+      - pypi: https://files.pythonhosted.org/packages/51/6f/bf1b7a6d4424c19add99eb17398c7522473502193540b679f8b94fbf2d72/ray-2.54.1-cp312-cp312-manylinux2014_aarch64.whl
       - pypi: https://files.pythonhosted.org/packages/2c/58/ca301544e1fa93ed4f80d724bf5b194f6e4b945841c5bfd555878eea9fcb/referencing-0.37.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/3f/51/d4db610ef29373b879047326cbf6fa98b6c1969d6f6dc423279de2b1be2c/requests_toolbelt-1.0.0-py2.py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/65/1c/ae157e83a6357eceff62ba7e52113e3ec4834a84cfe07fa4b0757a7d105f/rpds_py-0.30.0-cp312-cp312-manylinux_2_17_aarch64.manylinux2014_aarch64.whl
@@ -740,6 +742,8 @@ environments:
     indexes:
     - https://pypi.org/simple
     - https://pypi.nvidia.com/
+    options:
+      pypi-prerelease-mode: if-necessary-or-explicit
     packages:
       linux-64:
       - conda: https://conda.anaconda.org/conda-forge/linux-64/_openmp_mutex-4.5-20_gnu.conda
@@ -1166,7 +1170,7 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/91/4d/2ca3ca9906ce6e05070f431c54d54ccbaf57a980cfa58032d35b0b0ac1f8/pyinstrument-5.1.2-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/9e/7b/0eb1f7522c8324c3248862d9de308f1f04cc787b53a6a70cb1687498b2c7/pylance-2.0.1-cp39-abi3-manylinux_2_28_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/06/54/82a6e2ef37f0f23dccac604b9585bdcbd0698604feb64807dcb72853693e/python_discovery-1.1.0-py3-none-any.whl
-      - pypi: https://files.pythonhosted.org/packages/9e/b9/cc5ea8460c3dc602e6b7198277a7c59ba2b8929374ab22efa8df9f3deac8/ray-2.54.0-cp312-cp312-manylinux2014_x86_64.whl
+      - pypi: https://files.pythonhosted.org/packages/8a/1f/b33d5006823f8c1c8760887cf1190194f4b06de858b3d17e37bd930a6a62/ray-2.54.1-cp312-cp312-manylinux2014_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/2c/58/ca301544e1fa93ed4f80d724bf5b194f6e4b945841c5bfd555878eea9fcb/referencing-0.37.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/3f/51/d4db610ef29373b879047326cbf6fa98b6c1969d6f6dc423279de2b1be2c/requests_toolbelt-1.0.0-py2.py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/60/1b/6f8f29f3f995c7ffdde46a626ddccd7c63aefc0efae881dc13b6e5d5bb16/rpds_py-0.30.0-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
@@ -1615,7 +1619,7 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/9b/78/c45f0b668fb3c8c0d32058a451a8e1d34737cd7586387982185e12df1977/pyinstrument-5.1.2-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl
       - pypi: https://files.pythonhosted.org/packages/8d/a4/e0928a866d45dd2eced31ba84db44ea80c05055c4ff105fc754262c1159d/pylance-2.0.1-cp39-abi3-manylinux_2_28_aarch64.whl
       - pypi: https://files.pythonhosted.org/packages/06/54/82a6e2ef37f0f23dccac604b9585bdcbd0698604feb64807dcb72853693e/python_discovery-1.1.0-py3-none-any.whl
-      - pypi: https://files.pythonhosted.org/packages/60/ad/e07aca3637e9c3ec4857ec4366208099cf8488ece8061a9925ba29b66382/ray-2.54.0-cp312-cp312-manylinux2014_aarch64.whl
+      - pypi: https://files.pythonhosted.org/packages/51/6f/bf1b7a6d4424c19add99eb17398c7522473502193540b679f8b94fbf2d72/ray-2.54.1-cp312-cp312-manylinux2014_aarch64.whl
       - pypi: https://files.pythonhosted.org/packages/2c/58/ca301544e1fa93ed4f80d724bf5b194f6e4b945841c5bfd555878eea9fcb/referencing-0.37.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/3f/51/d4db610ef29373b879047326cbf6fa98b6c1969d6f6dc423279de2b1be2c/requests_toolbelt-1.0.0-py2.py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/65/1c/ae157e83a6357eceff62ba7e52113e3ec4834a84cfe07fa4b0757a7d105f/rpds_py-0.30.0-cp312-cp312-manylinux_2_17_aarch64.manylinux2014_aarch64.whl
@@ -1642,6 +1646,8 @@ environments:
     indexes:
     - https://pypi.org/simple
     - https://pypi.nvidia.com/
+    options:
+      pypi-prerelease-mode: if-necessary-or-explicit
     packages:
       linux-64:
       - conda: https://conda.anaconda.org/conda-forge/linux-64/_openmp_mutex-4.5-20_gnu.conda
@@ -2078,7 +2084,7 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/91/4d/2ca3ca9906ce6e05070f431c54d54ccbaf57a980cfa58032d35b0b0ac1f8/pyinstrument-5.1.2-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/9e/7b/0eb1f7522c8324c3248862d9de308f1f04cc787b53a6a70cb1687498b2c7/pylance-2.0.1-cp39-abi3-manylinux_2_28_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/06/54/82a6e2ef37f0f23dccac604b9585bdcbd0698604feb64807dcb72853693e/python_discovery-1.1.0-py3-none-any.whl
-      - pypi: https://files.pythonhosted.org/packages/9e/b9/cc5ea8460c3dc602e6b7198277a7c59ba2b8929374ab22efa8df9f3deac8/ray-2.54.0-cp312-cp312-manylinux2014_x86_64.whl
+      - pypi: https://files.pythonhosted.org/packages/8a/1f/b33d5006823f8c1c8760887cf1190194f4b06de858b3d17e37bd930a6a62/ray-2.54.1-cp312-cp312-manylinux2014_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/2c/58/ca301544e1fa93ed4f80d724bf5b194f6e4b945841c5bfd555878eea9fcb/referencing-0.37.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/3f/51/d4db610ef29373b879047326cbf6fa98b6c1969d6f6dc423279de2b1be2c/requests_toolbelt-1.0.0-py2.py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/60/1b/6f8f29f3f995c7ffdde46a626ddccd7c63aefc0efae881dc13b6e5d5bb16/rpds_py-0.30.0-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
@@ -2535,7 +2541,7 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/9b/78/c45f0b668fb3c8c0d32058a451a8e1d34737cd7586387982185e12df1977/pyinstrument-5.1.2-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl
       - pypi: https://files.pythonhosted.org/packages/8d/a4/e0928a866d45dd2eced31ba84db44ea80c05055c4ff105fc754262c1159d/pylance-2.0.1-cp39-abi3-manylinux_2_28_aarch64.whl
       - pypi: https://files.pythonhosted.org/packages/06/54/82a6e2ef37f0f23dccac604b9585bdcbd0698604feb64807dcb72853693e/python_discovery-1.1.0-py3-none-any.whl
-      - pypi: https://files.pythonhosted.org/packages/60/ad/e07aca3637e9c3ec4857ec4366208099cf8488ece8061a9925ba29b66382/ray-2.54.0-cp312-cp312-manylinux2014_aarch64.whl
+      - pypi: https://files.pythonhosted.org/packages/51/6f/bf1b7a6d4424c19add99eb17398c7522473502193540b679f8b94fbf2d72/ray-2.54.1-cp312-cp312-manylinux2014_aarch64.whl
       - pypi: https://files.pythonhosted.org/packages/2c/58/ca301544e1fa93ed4f80d724bf5b194f6e4b945841c5bfd555878eea9fcb/referencing-0.37.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/3f/51/d4db610ef29373b879047326cbf6fa98b6c1969d6f6dc423279de2b1be2c/requests_toolbelt-1.0.0-py2.py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/65/1c/ae157e83a6357eceff62ba7e52113e3ec4834a84cfe07fa4b0757a7d105f/rpds_py-0.30.0-cp312-cp312-manylinux_2_17_aarch64.manylinux2014_aarch64.whl
@@ -2560,6 +2566,8 @@ environments:
     indexes:
     - https://pypi.org/simple
     - https://pypi.nvidia.com/
+    options:
+      pypi-prerelease-mode: if-necessary-or-explicit
     packages:
       linux-64:
       - conda: https://conda.anaconda.org/conda-forge/linux-64/_openmp_mutex-4.5-20_gnu.conda
@@ -2753,7 +2761,7 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/5a/87/b70ad306ebb6f9b585f114d0ac2137d792b48be34d732d60e597c2f8465a/pydantic-2.12.5-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/0d/76/941cc9f73529988688a665a5c0ecff1112b3d95ab48f81db5f7606f522d3/pydantic_core-2.41.5-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/06/54/82a6e2ef37f0f23dccac604b9585bdcbd0698604feb64807dcb72853693e/python_discovery-1.1.0-py3-none-any.whl
-      - pypi: https://files.pythonhosted.org/packages/9e/b9/cc5ea8460c3dc602e6b7198277a7c59ba2b8929374ab22efa8df9f3deac8/ray-2.54.0-cp312-cp312-manylinux2014_x86_64.whl
+      - pypi: https://files.pythonhosted.org/packages/8a/1f/b33d5006823f8c1c8760887cf1190194f4b06de858b3d17e37bd930a6a62/ray-2.54.1-cp312-cp312-manylinux2014_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/2c/58/ca301544e1fa93ed4f80d724bf5b194f6e4b945841c5bfd555878eea9fcb/referencing-0.37.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/3f/51/d4db610ef29373b879047326cbf6fa98b6c1969d6f6dc423279de2b1be2c/requests_toolbelt-1.0.0-py2.py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/60/1b/6f8f29f3f995c7ffdde46a626ddccd7c63aefc0efae881dc13b6e5d5bb16/rpds_py-0.30.0-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
@@ -2959,7 +2967,7 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/5a/87/b70ad306ebb6f9b585f114d0ac2137d792b48be34d732d60e597c2f8465a/pydantic-2.12.5-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/68/b8/a01b53cb0e59139fbc9e4fda3e9724ede8de279097179be4ff31f1abb65a/pydantic_core-2.41.5-cp312-cp312-manylinux_2_17_aarch64.manylinux2014_aarch64.whl
       - pypi: https://files.pythonhosted.org/packages/06/54/82a6e2ef37f0f23dccac604b9585bdcbd0698604feb64807dcb72853693e/python_discovery-1.1.0-py3-none-any.whl
-      - pypi: https://files.pythonhosted.org/packages/60/ad/e07aca3637e9c3ec4857ec4366208099cf8488ece8061a9925ba29b66382/ray-2.54.0-cp312-cp312-manylinux2014_aarch64.whl
+      - pypi: https://files.pythonhosted.org/packages/51/6f/bf1b7a6d4424c19add99eb17398c7522473502193540b679f8b94fbf2d72/ray-2.54.1-cp312-cp312-manylinux2014_aarch64.whl
       - pypi: https://files.pythonhosted.org/packages/2c/58/ca301544e1fa93ed4f80d724bf5b194f6e4b945841c5bfd555878eea9fcb/referencing-0.37.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/3f/51/d4db610ef29373b879047326cbf6fa98b6c1969d6f6dc423279de2b1be2c/requests_toolbelt-1.0.0-py2.py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/65/1c/ae157e83a6357eceff62ba7e52113e3ec4834a84cfe07fa4b0757a7d105f/rpds_py-0.30.0-cp312-cp312-manylinux_2_17_aarch64.manylinux2014_aarch64.whl
@@ -2981,6 +2989,8 @@ environments:
     indexes:
     - https://pypi.org/simple
     - https://pypi.nvidia.com/
+    options:
+      pypi-prerelease-mode: if-necessary-or-explicit
     packages:
       linux-64:
       - conda: https://conda.anaconda.org/conda-forge/linux-64/_openmp_mutex-4.5-20_gnu.conda
@@ -3423,7 +3433,7 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/06/54/82a6e2ef37f0f23dccac604b9585bdcbd0698604feb64807dcb72853693e/python_discovery-1.1.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/d0/00/1e03a4989fa5795da308cd774f05b704ace555a70f9bf9d3be057b680bcf/python_docx-1.2.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/30/83/80d22997acd928eda7deadc19ccd15883904622396d6571e935993e0453a/rapidfuzz-3.14.3-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl
-      - pypi: https://files.pythonhosted.org/packages/9e/b9/cc5ea8460c3dc602e6b7198277a7c59ba2b8929374ab22efa8df9f3deac8/ray-2.54.0-cp312-cp312-manylinux2014_x86_64.whl
+      - pypi: https://files.pythonhosted.org/packages/8a/1f/b33d5006823f8c1c8760887cf1190194f4b06de858b3d17e37bd930a6a62/ray-2.54.1-cp312-cp312-manylinux2014_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/2c/58/ca301544e1fa93ed4f80d724bf5b194f6e4b945841c5bfd555878eea9fcb/referencing-0.37.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/3f/51/d4db610ef29373b879047326cbf6fa98b6c1969d6f6dc423279de2b1be2c/requests_toolbelt-1.0.0-py2.py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/60/1b/6f8f29f3f995c7ffdde46a626ddccd7c63aefc0efae881dc13b6e5d5bb16/rpds_py-0.30.0-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
@@ -3879,7 +3889,7 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/9b/78/c45f0b668fb3c8c0d32058a451a8e1d34737cd7586387982185e12df1977/pyinstrument-5.1.2-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl
       - pypi: https://files.pythonhosted.org/packages/8d/a4/e0928a866d45dd2eced31ba84db44ea80c05055c4ff105fc754262c1159d/pylance-2.0.1-cp39-abi3-manylinux_2_28_aarch64.whl
       - pypi: https://files.pythonhosted.org/packages/06/54/82a6e2ef37f0f23dccac604b9585bdcbd0698604feb64807dcb72853693e/python_discovery-1.1.0-py3-none-any.whl
-      - pypi: https://files.pythonhosted.org/packages/60/ad/e07aca3637e9c3ec4857ec4366208099cf8488ece8061a9925ba29b66382/ray-2.54.0-cp312-cp312-manylinux2014_aarch64.whl
+      - pypi: https://files.pythonhosted.org/packages/51/6f/bf1b7a6d4424c19add99eb17398c7522473502193540b679f8b94fbf2d72/ray-2.54.1-cp312-cp312-manylinux2014_aarch64.whl
       - pypi: https://files.pythonhosted.org/packages/2c/58/ca301544e1fa93ed4f80d724bf5b194f6e4b945841c5bfd555878eea9fcb/referencing-0.37.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/3f/51/d4db610ef29373b879047326cbf6fa98b6c1969d6f6dc423279de2b1be2c/requests_toolbelt-1.0.0-py2.py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/65/1c/ae157e83a6357eceff62ba7e52113e3ec4834a84cfe07fa4b0757a7d105f/rpds_py-0.30.0-cp312-cp312-manylinux_2_17_aarch64.manylinux2014_aarch64.whl
@@ -3906,6 +3916,8 @@ environments:
     indexes:
     - https://pypi.org/simple
     - https://pypi.nvidia.com/
+    options:
+      pypi-prerelease-mode: if-necessary-or-explicit
     packages:
       linux-64:
       - conda: https://conda.anaconda.org/conda-forge/linux-64/_openmp_mutex-4.5-20_gnu.conda
@@ -4422,7 +4434,7 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/91/4d/2ca3ca9906ce6e05070f431c54d54ccbaf57a980cfa58032d35b0b0ac1f8/pyinstrument-5.1.2-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/66/e6/53e0713440685b1c76e20d72755eca2e531cc182ea9a612b4cb6a15abe50/pylance-4.0.0-cp39-abi3-manylinux_2_28_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/67/0f/019d3949a40280f6193b62bc010177d4ce702d0fce424322286488569cd3/python_discovery-1.2.1-py3-none-any.whl
-      - pypi: https://files.pythonhosted.org/packages/9e/b9/cc5ea8460c3dc602e6b7198277a7c59ba2b8929374ab22efa8df9f3deac8/ray-2.54.0-cp312-cp312-manylinux2014_x86_64.whl
+      - pypi: https://files.pythonhosted.org/packages/8a/1f/b33d5006823f8c1c8760887cf1190194f4b06de858b3d17e37bd930a6a62/ray-2.54.1-cp312-cp312-manylinux2014_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/2c/58/ca301544e1fa93ed4f80d724bf5b194f6e4b945841c5bfd555878eea9fcb/referencing-0.37.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/3f/51/d4db610ef29373b879047326cbf6fa98b6c1969d6f6dc423279de2b1be2c/requests_toolbelt-1.0.0-py2.py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/94/21/05e319ebef4a8194f9c4cc09f9c3213ab846da200fa6e88699cdb7e9679a/rotary_embedding_torch-0.8.9-py3-none-any.whl
@@ -4949,7 +4961,7 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/9b/78/c45f0b668fb3c8c0d32058a451a8e1d34737cd7586387982185e12df1977/pyinstrument-5.1.2-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl
       - pypi: https://files.pythonhosted.org/packages/52/f3/8d8369c756c4173ea070f6964213f9b622ac278bd04a058c48d00a549177/pylance-4.0.0-cp39-abi3-manylinux_2_28_aarch64.whl
       - pypi: https://files.pythonhosted.org/packages/67/0f/019d3949a40280f6193b62bc010177d4ce702d0fce424322286488569cd3/python_discovery-1.2.1-py3-none-any.whl
-      - pypi: https://files.pythonhosted.org/packages/60/ad/e07aca3637e9c3ec4857ec4366208099cf8488ece8061a9925ba29b66382/ray-2.54.0-cp312-cp312-manylinux2014_aarch64.whl
+      - pypi: https://files.pythonhosted.org/packages/51/6f/bf1b7a6d4424c19add99eb17398c7522473502193540b679f8b94fbf2d72/ray-2.54.1-cp312-cp312-manylinux2014_aarch64.whl
       - pypi: https://files.pythonhosted.org/packages/2c/58/ca301544e1fa93ed4f80d724bf5b194f6e4b945841c5bfd555878eea9fcb/referencing-0.37.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/3f/51/d4db610ef29373b879047326cbf6fa98b6c1969d6f6dc423279de2b1be2c/requests_toolbelt-1.0.0-py2.py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/94/21/05e319ebef4a8194f9c4cc09f9c3213ab846da200fa6e88699cdb7e9679a/rotary_embedding_torch-0.8.9-py3-none-any.whl
@@ -4974,6 +4986,8 @@ environments:
     indexes:
     - https://pypi.org/simple
     - https://pypi.nvidia.com/
+    options:
+      pypi-prerelease-mode: if-necessary-or-explicit
     packages:
       linux-64:
       - conda: https://conda.anaconda.org/conda-forge/linux-64/_openmp_mutex-4.5-20_gnu.conda
@@ -5403,7 +5417,7 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/91/4d/2ca3ca9906ce6e05070f431c54d54ccbaf57a980cfa58032d35b0b0ac1f8/pyinstrument-5.1.2-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/9e/7b/0eb1f7522c8324c3248862d9de308f1f04cc787b53a6a70cb1687498b2c7/pylance-2.0.1-cp39-abi3-manylinux_2_28_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/06/54/82a6e2ef37f0f23dccac604b9585bdcbd0698604feb64807dcb72853693e/python_discovery-1.1.0-py3-none-any.whl
-      - pypi: https://files.pythonhosted.org/packages/9e/b9/cc5ea8460c3dc602e6b7198277a7c59ba2b8929374ab22efa8df9f3deac8/ray-2.54.0-cp312-cp312-manylinux2014_x86_64.whl
+      - pypi: https://files.pythonhosted.org/packages/8a/1f/b33d5006823f8c1c8760887cf1190194f4b06de858b3d17e37bd930a6a62/ray-2.54.1-cp312-cp312-manylinux2014_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/2c/58/ca301544e1fa93ed4f80d724bf5b194f6e4b945841c5bfd555878eea9fcb/referencing-0.37.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/3f/51/d4db610ef29373b879047326cbf6fa98b6c1969d6f6dc423279de2b1be2c/requests_toolbelt-1.0.0-py2.py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/60/1b/6f8f29f3f995c7ffdde46a626ddccd7c63aefc0efae881dc13b6e5d5bb16/rpds_py-0.30.0-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
@@ -5854,7 +5868,7 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/9b/78/c45f0b668fb3c8c0d32058a451a8e1d34737cd7586387982185e12df1977/pyinstrument-5.1.2-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl
       - pypi: https://files.pythonhosted.org/packages/8d/a4/e0928a866d45dd2eced31ba84db44ea80c05055c4ff105fc754262c1159d/pylance-2.0.1-cp39-abi3-manylinux_2_28_aarch64.whl
       - pypi: https://files.pythonhosted.org/packages/06/54/82a6e2ef37f0f23dccac604b9585bdcbd0698604feb64807dcb72853693e/python_discovery-1.1.0-py3-none-any.whl
-      - pypi: https://files.pythonhosted.org/packages/60/ad/e07aca3637e9c3ec4857ec4366208099cf8488ece8061a9925ba29b66382/ray-2.54.0-cp312-cp312-manylinux2014_aarch64.whl
+      - pypi: https://files.pythonhosted.org/packages/51/6f/bf1b7a6d4424c19add99eb17398c7522473502193540b679f8b94fbf2d72/ray-2.54.1-cp312-cp312-manylinux2014_aarch64.whl
       - pypi: https://files.pythonhosted.org/packages/2c/58/ca301544e1fa93ed4f80d724bf5b194f6e4b945841c5bfd555878eea9fcb/referencing-0.37.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/3f/51/d4db610ef29373b879047326cbf6fa98b6c1969d6f6dc423279de2b1be2c/requests_toolbelt-1.0.0-py2.py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/65/1c/ae157e83a6357eceff62ba7e52113e3ec4834a84cfe07fa4b0757a7d105f/rpds_py-0.30.0-cp312-cp312-manylinux_2_17_aarch64.manylinux2014_aarch64.whl
@@ -5880,6 +5894,8 @@ environments:
     indexes:
     - https://pypi.org/simple
     - https://pypi.nvidia.com/
+    options:
+      pypi-prerelease-mode: if-necessary-or-explicit
     packages:
       linux-64:
       - conda: https://conda.anaconda.org/conda-forge/linux-64/_openmp_mutex-4.5-20_gnu.conda
@@ -6417,7 +6433,7 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/f8/9b/c108cdb55560eaf253f0cbdb61b29971e9fb34d9c3499b0e96e4e60ed8a5/pyzmq-27.1.0-cp312-abi3-manylinux_2_26_x86_64.manylinux_2_28_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/10/8d/3c3858c5415e76baab6f17a1325eda2d649d3895728dc2d1d6d551cb9fea/quack_kernels-0.3.3-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/79/72/97a9728c711c7c1b06e107d3f0623880fb4ef90e147ed13c551a1730e7cc/rapidfuzz-3.14.5-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl
-      - pypi: https://files.pythonhosted.org/packages/9e/b9/cc5ea8460c3dc602e6b7198277a7c59ba2b8929374ab22efa8df9f3deac8/ray-2.54.0-cp312-cp312-manylinux2014_x86_64.whl
+      - pypi: https://files.pythonhosted.org/packages/8a/1f/b33d5006823f8c1c8760887cf1190194f4b06de858b3d17e37bd930a6a62/ray-2.54.1-cp312-cp312-manylinux2014_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/2c/58/ca301544e1fa93ed4f80d724bf5b194f6e4b945841c5bfd555878eea9fcb/referencing-0.37.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/3f/51/d4db610ef29373b879047326cbf6fa98b6c1969d6f6dc423279de2b1be2c/requests_toolbelt-1.0.0-py2.py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/60/1b/6f8f29f3f995c7ffdde46a626ddccd7c63aefc0efae881dc13b6e5d5bb16/rpds_py-0.30.0-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
@@ -6985,7 +7001,7 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/f8/e5/b0b2504cb4e903a74dcf1ebae157f9e20ebb6ea76095f6cfffea28c42ecd/pyzmq-27.1.0-cp312-abi3-manylinux_2_26_aarch64.manylinux_2_28_aarch64.whl
       - pypi: https://files.pythonhosted.org/packages/10/8d/3c3858c5415e76baab6f17a1325eda2d649d3895728dc2d1d6d551cb9fea/quack_kernels-0.3.3-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/88/37/a3eb7ff6121ed3a5f199a8c38cc86c8e481816f879cb0e0b738b078c9a7e/rapidfuzz-3.14.5-cp312-cp312-manylinux_2_26_aarch64.manylinux_2_28_aarch64.whl
-      - pypi: https://files.pythonhosted.org/packages/60/ad/e07aca3637e9c3ec4857ec4366208099cf8488ece8061a9925ba29b66382/ray-2.54.0-cp312-cp312-manylinux2014_aarch64.whl
+      - pypi: https://files.pythonhosted.org/packages/51/6f/bf1b7a6d4424c19add99eb17398c7522473502193540b679f8b94fbf2d72/ray-2.54.1-cp312-cp312-manylinux2014_aarch64.whl
       - pypi: https://files.pythonhosted.org/packages/2c/58/ca301544e1fa93ed4f80d724bf5b194f6e4b945841c5bfd555878eea9fcb/referencing-0.37.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/3f/51/d4db610ef29373b879047326cbf6fa98b6c1969d6f6dc423279de2b1be2c/requests_toolbelt-1.0.0-py2.py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/65/1c/ae157e83a6357eceff62ba7e52113e3ec4834a84cfe07fa4b0757a7d105f/rpds_py-0.30.0-cp312-cp312-manylinux_2_17_aarch64.manylinux2014_aarch64.whl
@@ -23412,10 +23428,10 @@ packages:
   license: Apache-2.0
   size: 225119
   timestamp: 1759854009923
-- pypi: https://files.pythonhosted.org/packages/60/ad/e07aca3637e9c3ec4857ec4366208099cf8488ece8061a9925ba29b66382/ray-2.54.0-cp312-cp312-manylinux2014_aarch64.whl
+- pypi: https://files.pythonhosted.org/packages/51/6f/bf1b7a6d4424c19add99eb17398c7522473502193540b679f8b94fbf2d72/ray-2.54.1-cp312-cp312-manylinux2014_aarch64.whl
   name: ray
-  version: 2.54.0
-  sha256: 795ae21d6b764245d3f521bc5833446d58569e7dfde9c5777417eb285d87450f
+  version: 2.54.1
+  sha256: cd452b61ae2e0daf9271f5a554614397429cc2731681bae10fe72316dadc2749
   requires_dist:
   - click>=7.0
   - filelock
@@ -23448,25 +23464,25 @@ packages:
   - smart-open ; extra == 'default'
   - virtualenv>=20.0.24,!=20.21.1 ; extra == 'default'
   - memray ; sys_platform != 'win32' and extra == 'observability'
-  - virtualenv>=20.0.24,!=20.21.1 ; extra == 'serve'
   - pydantic!=2.0.*,!=2.1.*,!=2.2.*,!=2.3.*,!=2.4.*,!=2.5.*,!=2.6.*,!=2.7.*,!=2.8.*,!=2.9.*,!=2.10.*,!=2.11.*,<3 ; extra == 'serve'
+  - opencensus ; extra == 'serve'
   - requests ; extra == 'serve'
-  - py-spy>=0.2.0 ; python_full_version < '3.12' and extra == 'serve'
+  - virtualenv>=20.0.24,!=20.21.1 ; extra == 'serve'
   - colorful ; extra == 'serve'
-  - aiohttp>=3.13.3 ; extra == 'serve'
+  - py-spy>=0.2.0 ; python_full_version < '3.12' and extra == 'serve'
+  - fastapi ; extra == 'serve'
+  - opentelemetry-sdk>=1.30.0 ; extra == 'serve'
+  - prometheus-client>=0.7.1 ; extra == 'serve'
+  - smart-open ; extra == 'serve'
+  - aiohttp-cors ; extra == 'serve'
+  - opentelemetry-exporter-prometheus ; extra == 'serve'
   - watchfiles ; extra == 'serve'
+  - aiohttp>=3.13.3 ; extra == 'serve'
+  - starlette ; extra == 'serve'
+  - uvicorn[standard] ; extra == 'serve'
+  - grpcio>=1.42.0 ; extra == 'serve'
   - opentelemetry-proto ; extra == 'serve'
   - py-spy>=0.4.0 ; python_full_version >= '3.12' and extra == 'serve'
-  - opentelemetry-exporter-prometheus ; extra == 'serve'
-  - prometheus-client>=0.7.1 ; extra == 'serve'
-  - starlette ; extra == 'serve'
-  - fastapi ; extra == 'serve'
-  - opencensus ; extra == 'serve'
-  - uvicorn[standard] ; extra == 'serve'
-  - smart-open ; extra == 'serve'
-  - opentelemetry-sdk>=1.30.0 ; extra == 'serve'
-  - grpcio>=1.42.0 ; extra == 'serve'
-  - aiohttp-cors ; extra == 'serve'
   - pandas ; extra == 'tune'
   - pydantic!=2.0.*,!=2.1.*,!=2.2.*,!=2.3.*,!=2.4.*,!=2.5.*,!=2.6.*,!=2.7.*,!=2.8.*,!=2.9.*,!=2.10.*,!=2.11.*,<3 ; extra == 'tune'
   - tensorboardx>=1.9 ; extra == 'tune'
@@ -23474,47 +23490,47 @@ packages:
   - pyarrow>=9.0.0 ; extra == 'tune'
   - fsspec ; extra == 'tune'
   - cupy-cuda12x ; sys_platform != 'darwin' and extra == 'adag'
-  - virtualenv>=20.0.24,!=20.21.1 ; extra == 'serve-grpc'
   - pydantic!=2.0.*,!=2.1.*,!=2.2.*,!=2.3.*,!=2.4.*,!=2.5.*,!=2.6.*,!=2.7.*,!=2.8.*,!=2.9.*,!=2.10.*,!=2.11.*,<3 ; extra == 'serve-grpc'
+  - opencensus ; extra == 'serve-grpc'
   - requests ; extra == 'serve-grpc'
-  - py-spy>=0.2.0 ; python_full_version < '3.12' and extra == 'serve-grpc'
+  - virtualenv>=20.0.24,!=20.21.1 ; extra == 'serve-grpc'
   - colorful ; extra == 'serve-grpc'
-  - aiohttp>=3.13.3 ; extra == 'serve-grpc'
-  - pyopenssl ; extra == 'serve-grpc'
+  - py-spy>=0.2.0 ; python_full_version < '3.12' and extra == 'serve-grpc'
+  - fastapi ; extra == 'serve-grpc'
+  - opentelemetry-sdk>=1.30.0 ; extra == 'serve-grpc'
+  - prometheus-client>=0.7.1 ; extra == 'serve-grpc'
+  - smart-open ; extra == 'serve-grpc'
+  - aiohttp-cors ; extra == 'serve-grpc'
+  - opentelemetry-exporter-prometheus ; extra == 'serve-grpc'
   - watchfiles ; extra == 'serve-grpc'
+  - aiohttp>=3.13.3 ; extra == 'serve-grpc'
+  - starlette ; extra == 'serve-grpc'
+  - uvicorn[standard] ; extra == 'serve-grpc'
+  - grpcio>=1.42.0 ; extra == 'serve-grpc'
+  - pyopenssl ; extra == 'serve-grpc'
   - opentelemetry-proto ; extra == 'serve-grpc'
   - py-spy>=0.4.0 ; python_full_version >= '3.12' and extra == 'serve-grpc'
-  - opentelemetry-exporter-prometheus ; extra == 'serve-grpc'
-  - prometheus-client>=0.7.1 ; extra == 'serve-grpc'
-  - starlette ; extra == 'serve-grpc'
-  - fastapi ; extra == 'serve-grpc'
-  - opencensus ; extra == 'serve-grpc'
-  - uvicorn[standard] ; extra == 'serve-grpc'
-  - smart-open ; extra == 'serve-grpc'
-  - opentelemetry-sdk>=1.30.0 ; extra == 'serve-grpc'
-  - grpcio>=1.42.0 ; extra == 'serve-grpc'
-  - aiohttp-cors ; extra == 'serve-grpc'
-  - virtualenv>=20.0.24,!=20.21.1 ; extra == 'serve-async-inference'
   - pydantic!=2.0.*,!=2.1.*,!=2.2.*,!=2.3.*,!=2.4.*,!=2.5.*,!=2.6.*,!=2.7.*,!=2.8.*,!=2.9.*,!=2.10.*,!=2.11.*,<3 ; extra == 'serve-async-inference'
+  - opencensus ; extra == 'serve-async-inference'
   - requests ; extra == 'serve-async-inference'
-  - py-spy>=0.2.0 ; python_full_version < '3.12' and extra == 'serve-async-inference'
+  - virtualenv>=20.0.24,!=20.21.1 ; extra == 'serve-async-inference'
   - colorful ; extra == 'serve-async-inference'
-  - aiohttp>=3.13.3 ; extra == 'serve-async-inference'
+  - py-spy>=0.2.0 ; python_full_version < '3.12' and extra == 'serve-async-inference'
+  - fastapi ; extra == 'serve-async-inference'
+  - opentelemetry-sdk>=1.30.0 ; extra == 'serve-async-inference'
+  - prometheus-client>=0.7.1 ; extra == 'serve-async-inference'
+  - smart-open ; extra == 'serve-async-inference'
+  - aiohttp-cors ; extra == 'serve-async-inference'
+  - opentelemetry-exporter-prometheus ; extra == 'serve-async-inference'
   - watchfiles ; extra == 'serve-async-inference'
+  - aiohttp>=3.13.3 ; extra == 'serve-async-inference'
+  - starlette ; extra == 'serve-async-inference'
+  - uvicorn[standard] ; extra == 'serve-async-inference'
+  - grpcio>=1.42.0 ; extra == 'serve-async-inference'
   - opentelemetry-proto ; extra == 'serve-async-inference'
   - py-spy>=0.4.0 ; python_full_version >= '3.12' and extra == 'serve-async-inference'
-  - opentelemetry-exporter-prometheus ; extra == 'serve-async-inference'
-  - prometheus-client>=0.7.1 ; extra == 'serve-async-inference'
-  - starlette ; extra == 'serve-async-inference'
-  - fastapi ; extra == 'serve-async-inference'
-  - opencensus ; extra == 'serve-async-inference'
   - celery ; extra == 'serve-async-inference'
-  - uvicorn[standard] ; extra == 'serve-async-inference'
-  - smart-open ; extra == 'serve-async-inference'
-  - opentelemetry-sdk>=1.30.0 ; extra == 'serve-async-inference'
-  - grpcio>=1.42.0 ; extra == 'serve-async-inference'
-  - aiohttp-cors ; extra == 'serve-async-inference'
-  - ray-cpp==2.54.0 ; extra == 'cpp'
+  - ray-cpp==2.54.1 ; extra == 'cpp'
   - pandas ; extra == 'rllib'
   - pydantic!=2.0.*,!=2.1.*,!=2.2.*,!=2.3.*,!=2.4.*,!=2.5.*,!=2.6.*,!=2.7.*,!=2.8.*,!=2.9.*,!=2.10.*,!=2.11.*,<3 ; extra == 'rllib'
   - tensorboardx>=1.9 ; extra == 'rllib'
@@ -23534,145 +23550,145 @@ packages:
   - pyarrow>=9.0.0 ; extra == 'train'
   - fsspec ; extra == 'train'
   - pydantic!=2.0.*,!=2.1.*,!=2.2.*,!=2.3.*,!=2.4.*,!=2.5.*,!=2.6.*,!=2.7.*,!=2.8.*,!=2.9.*,!=2.10.*,!=2.11.*,<3 ; extra == 'train'
-  - virtualenv>=20.0.24,!=20.21.1 ; extra == 'air'
   - pydantic!=2.0.*,!=2.1.*,!=2.2.*,!=2.3.*,!=2.4.*,!=2.5.*,!=2.6.*,!=2.7.*,!=2.8.*,!=2.9.*,!=2.10.*,!=2.11.*,<3 ; extra == 'air'
-  - pyarrow>=9.0.0 ; extra == 'air'
-  - pandas ; extra == 'air'
+  - opencensus ; extra == 'air'
   - requests ; extra == 'air'
-  - py-spy>=0.2.0 ; python_full_version < '3.12' and extra == 'air'
+  - fsspec ; extra == 'air'
+  - virtualenv>=20.0.24,!=20.21.1 ; extra == 'air'
   - colorful ; extra == 'air'
-  - aiohttp>=3.13.3 ; extra == 'air'
+  - py-spy>=0.2.0 ; python_full_version < '3.12' and extra == 'air'
+  - fastapi ; extra == 'air'
+  - pandas ; extra == 'air'
+  - opentelemetry-sdk>=1.30.0 ; extra == 'air'
+  - prometheus-client>=0.7.1 ; extra == 'air'
+  - smart-open ; extra == 'air'
+  - aiohttp-cors ; extra == 'air'
+  - opentelemetry-exporter-prometheus ; extra == 'air'
+  - pyarrow>=9.0.0 ; extra == 'air'
   - watchfiles ; extra == 'air'
+  - pandas>=1.3 ; extra == 'air'
+  - aiohttp>=3.13.3 ; extra == 'air'
+  - starlette ; extra == 'air'
+  - uvicorn[standard] ; extra == 'air'
+  - numpy>=1.20 ; extra == 'air'
+  - grpcio>=1.42.0 ; extra == 'air'
+  - tensorboardx>=1.9 ; extra == 'air'
   - opentelemetry-proto ; extra == 'air'
   - py-spy>=0.4.0 ; python_full_version >= '3.12' and extra == 'air'
-  - opentelemetry-exporter-prometheus ; extra == 'air'
-  - prometheus-client>=0.7.1 ; extra == 'air'
-  - pandas>=1.3 ; extra == 'air'
-  - starlette ; extra == 'air'
-  - fastapi ; extra == 'air'
-  - opencensus ; extra == 'air'
-  - numpy>=1.20 ; extra == 'air'
-  - tensorboardx>=1.9 ; extra == 'air'
-  - uvicorn[standard] ; extra == 'air'
-  - smart-open ; extra == 'air'
-  - fsspec ; extra == 'air'
-  - opentelemetry-sdk>=1.30.0 ; extra == 'air'
-  - grpcio>=1.42.0 ; extra == 'air'
-  - aiohttp-cors ; extra == 'air'
-  - virtualenv>=20.0.24,!=20.21.1 ; extra == 'all'
-  - scipy ; extra == 'all'
-  - pyarrow>=9.0.0 ; extra == 'all'
+  - ormsgpack>=1.7.0 ; extra == 'all'
   - pydantic!=2.0.*,!=2.1.*,!=2.2.*,!=2.3.*,!=2.4.*,!=2.5.*,!=2.6.*,!=2.7.*,!=2.8.*,!=2.9.*,!=2.10.*,!=2.11.*,<3 ; extra == 'all'
+  - grpcio ; extra == 'all'
+  - lz4 ; extra == 'all'
+  - opencensus ; extra == 'all'
+  - cupy-cuda12x ; sys_platform != 'darwin' and extra == 'all'
   - requests ; extra == 'all'
-  - pandas ; extra == 'all'
-  - py-spy>=0.2.0 ; python_full_version < '3.12' and extra == 'all'
+  - fsspec ; extra == 'all'
+  - virtualenv>=20.0.24,!=20.21.1 ; extra == 'all'
+  - grpcio!=1.56.0 ; sys_platform == 'darwin' and extra == 'all'
   - colorful ; extra == 'all'
-  - aiohttp>=3.13.3 ; extra == 'all'
-  - memray ; sys_platform != 'win32' and extra == 'all'
-  - pyopenssl ; extra == 'all'
+  - py-spy>=0.2.0 ; python_full_version < '3.12' and extra == 'all'
+  - fastapi ; extra == 'all'
+  - pandas ; extra == 'all'
+  - opentelemetry-sdk>=1.30.0 ; extra == 'all'
+  - scipy ; extra == 'all'
+  - prometheus-client>=0.7.1 ; extra == 'all'
+  - dm-tree ; extra == 'all'
+  - smart-open ; extra == 'all'
+  - pyyaml ; extra == 'all'
+  - aiohttp-cors ; extra == 'all'
+  - opentelemetry-exporter-prometheus ; extra == 'all'
+  - pyarrow>=9.0.0 ; extra == 'all'
   - watchfiles ; extra == 'all'
+  - pandas>=1.3 ; extra == 'all'
+  - aiohttp>=3.13.3 ; extra == 'all'
+  - starlette ; extra == 'all'
+  - uvicorn[standard] ; extra == 'all'
+  - numpy>=1.20 ; extra == 'all'
+  - grpcio>=1.42.0 ; extra == 'all'
   - gymnasium==1.2.2 ; extra == 'all'
+  - memray ; sys_platform != 'win32' and extra == 'all'
+  - tensorboardx>=1.9 ; extra == 'all'
+  - pyopenssl ; extra == 'all'
   - opentelemetry-proto ; extra == 'all'
   - py-spy>=0.4.0 ; python_full_version >= '3.12' and extra == 'all'
-  - lz4 ; extra == 'all'
-  - opentelemetry-exporter-prometheus ; extra == 'all'
-  - pandas>=1.3 ; extra == 'all'
-  - prometheus-client>=0.7.1 ; extra == 'all'
-  - starlette ; extra == 'all'
-  - fastapi ; extra == 'all'
-  - dm-tree ; extra == 'all'
-  - opencensus ; extra == 'all'
-  - grpcio ; extra == 'all'
   - celery ; extra == 'all'
-  - numpy>=1.20 ; extra == 'all'
-  - tensorboardx>=1.9 ; extra == 'all'
-  - uvicorn[standard] ; extra == 'all'
-  - smart-open ; extra == 'all'
-  - ormsgpack>=1.7.0 ; extra == 'all'
-  - pyyaml ; extra == 'all'
-  - fsspec ; extra == 'all'
-  - opentelemetry-sdk>=1.30.0 ; extra == 'all'
-  - cupy-cuda12x ; sys_platform != 'darwin' and extra == 'all'
-  - grpcio>=1.42.0 ; extra == 'all'
-  - aiohttp-cors ; extra == 'all'
-  - grpcio!=1.56.0 ; sys_platform == 'darwin' and extra == 'all'
-  - virtualenv>=20.0.24,!=20.21.1 ; extra == 'all-cpp'
-  - scipy ; extra == 'all-cpp'
-  - pydantic!=2.0.*,!=2.1.*,!=2.2.*,!=2.3.*,!=2.4.*,!=2.5.*,!=2.6.*,!=2.7.*,!=2.8.*,!=2.9.*,!=2.10.*,!=2.11.*,<3 ; extra == 'all-cpp'
-  - pyarrow>=9.0.0 ; extra == 'all-cpp'
-  - requests ; extra == 'all-cpp'
-  - pandas ; extra == 'all-cpp'
-  - py-spy>=0.2.0 ; python_full_version < '3.12' and extra == 'all-cpp'
-  - colorful ; extra == 'all-cpp'
-  - aiohttp>=3.13.3 ; extra == 'all-cpp'
-  - memray ; sys_platform != 'win32' and extra == 'all-cpp'
-  - pyopenssl ; extra == 'all-cpp'
-  - watchfiles ; extra == 'all-cpp'
-  - gymnasium==1.2.2 ; extra == 'all-cpp'
-  - ray-cpp==2.54.0 ; extra == 'all-cpp'
-  - opentelemetry-proto ; extra == 'all-cpp'
-  - py-spy>=0.4.0 ; python_full_version >= '3.12' and extra == 'all-cpp'
-  - lz4 ; extra == 'all-cpp'
-  - opentelemetry-exporter-prometheus ; extra == 'all-cpp'
-  - pandas>=1.3 ; extra == 'all-cpp'
-  - prometheus-client>=0.7.1 ; extra == 'all-cpp'
-  - starlette ; extra == 'all-cpp'
-  - fastapi ; extra == 'all-cpp'
-  - dm-tree ; extra == 'all-cpp'
-  - opencensus ; extra == 'all-cpp'
-  - grpcio ; extra == 'all-cpp'
-  - celery ; extra == 'all-cpp'
-  - numpy>=1.20 ; extra == 'all-cpp'
-  - tensorboardx>=1.9 ; extra == 'all-cpp'
-  - uvicorn[standard] ; extra == 'all-cpp'
-  - smart-open ; extra == 'all-cpp'
   - ormsgpack>=1.7.0 ; extra == 'all-cpp'
-  - pyyaml ; extra == 'all-cpp'
-  - fsspec ; extra == 'all-cpp'
-  - opentelemetry-sdk>=1.30.0 ; extra == 'all-cpp'
+  - pydantic!=2.0.*,!=2.1.*,!=2.2.*,!=2.3.*,!=2.4.*,!=2.5.*,!=2.6.*,!=2.7.*,!=2.8.*,!=2.9.*,!=2.10.*,!=2.11.*,<3 ; extra == 'all-cpp'
+  - grpcio ; extra == 'all-cpp'
+  - lz4 ; extra == 'all-cpp'
+  - opencensus ; extra == 'all-cpp'
   - cupy-cuda12x ; sys_platform != 'darwin' and extra == 'all-cpp'
-  - grpcio>=1.42.0 ; extra == 'all-cpp'
-  - aiohttp-cors ; extra == 'all-cpp'
+  - requests ; extra == 'all-cpp'
+  - fsspec ; extra == 'all-cpp'
+  - virtualenv>=20.0.24,!=20.21.1 ; extra == 'all-cpp'
   - grpcio!=1.56.0 ; sys_platform == 'darwin' and extra == 'all-cpp'
-  - virtualenv>=20.0.24,!=20.21.1 ; extra == 'llm'
-  - transformers>=4.57.3 ; extra == 'llm'
-  - pybind11 ; extra == 'llm'
-  - pyarrow>=9.0.0 ; extra == 'llm'
-  - ninja ; extra == 'llm'
+  - colorful ; extra == 'all-cpp'
+  - py-spy>=0.2.0 ; python_full_version < '3.12' and extra == 'all-cpp'
+  - fastapi ; extra == 'all-cpp'
+  - pandas ; extra == 'all-cpp'
+  - opentelemetry-sdk>=1.30.0 ; extra == 'all-cpp'
+  - ray-cpp==2.54.1 ; extra == 'all-cpp'
+  - dm-tree ; extra == 'all-cpp'
+  - prometheus-client>=0.7.1 ; extra == 'all-cpp'
+  - smart-open ; extra == 'all-cpp'
+  - pyyaml ; extra == 'all-cpp'
+  - aiohttp-cors ; extra == 'all-cpp'
+  - opentelemetry-exporter-prometheus ; extra == 'all-cpp'
+  - pyarrow>=9.0.0 ; extra == 'all-cpp'
+  - watchfiles ; extra == 'all-cpp'
+  - py-spy>=0.4.0 ; python_full_version >= '3.12' and extra == 'all-cpp'
+  - pandas>=1.3 ; extra == 'all-cpp'
+  - aiohttp>=3.13.3 ; extra == 'all-cpp'
+  - starlette ; extra == 'all-cpp'
+  - uvicorn[standard] ; extra == 'all-cpp'
+  - numpy>=1.20 ; extra == 'all-cpp'
+  - grpcio>=1.42.0 ; extra == 'all-cpp'
+  - gymnasium==1.2.2 ; extra == 'all-cpp'
+  - memray ; sys_platform != 'win32' and extra == 'all-cpp'
+  - tensorboardx>=1.9 ; extra == 'all-cpp'
+  - pyopenssl ; extra == 'all-cpp'
+  - opentelemetry-proto ; extra == 'all-cpp'
+  - scipy ; extra == 'all-cpp'
+  - celery ; extra == 'all-cpp'
+  - vllm[audio]>=0.15.0 ; extra == 'llm'
+  - nixl>=0.6.1 ; extra == 'llm'
   - pydantic!=2.0.*,!=2.1.*,!=2.2.*,!=2.3.*,!=2.4.*,!=2.5.*,!=2.6.*,!=2.7.*,!=2.8.*,!=2.9.*,!=2.10.*,!=2.11.*,<3 ; extra == 'llm'
+  - jsonschema ; extra == 'llm'
+  - opencensus ; extra == 'llm'
   - requests ; extra == 'llm'
-  - py-spy>=0.2.0 ; python_full_version < '3.12' and extra == 'llm'
+  - jsonref>=1.1.0 ; extra == 'llm'
+  - fsspec ; extra == 'llm'
+  - virtualenv>=20.0.24,!=20.21.1 ; extra == 'llm'
+  - meson ; extra == 'llm'
   - colorful ; extra == 'llm'
-  - aiohttp>=3.13.3 ; extra == 'llm'
+  - py-spy>=0.2.0 ; python_full_version < '3.12' and extra == 'llm'
+  - fastapi ; extra == 'llm'
+  - hf-transfer ; extra == 'llm'
+  - opentelemetry-sdk>=1.30.0 ; extra == 'llm'
+  - prometheus-client>=0.7.1 ; extra == 'llm'
+  - ninja ; extra == 'llm'
+  - smart-open ; extra == 'llm'
+  - aiohttp-cors ; extra == 'llm'
+  - opentelemetry-exporter-prometheus ; extra == 'llm'
+  - pyarrow>=9.0.0 ; extra == 'llm'
   - watchfiles ; extra == 'llm'
+  - pandas>=1.3 ; extra == 'llm'
+  - aiohttp>=3.13.3 ; extra == 'llm'
+  - starlette ; extra == 'llm'
+  - uvicorn[standard] ; extra == 'llm'
+  - numpy>=1.20 ; extra == 'llm'
+  - async-timeout ; python_full_version < '3.11' and extra == 'llm'
+  - pybind11 ; extra == 'llm'
+  - transformers>=4.57.3 ; extra == 'llm'
+  - grpcio>=1.42.0 ; extra == 'llm'
   - opentelemetry-proto ; extra == 'llm'
   - py-spy>=0.4.0 ; python_full_version >= '3.12' and extra == 'llm'
-  - jsonref>=1.1.0 ; extra == 'llm'
-  - async-timeout ; python_full_version < '3.11' and extra == 'llm'
-  - hf-transfer ; extra == 'llm'
-  - pandas>=1.3 ; extra == 'llm'
-  - opentelemetry-exporter-prometheus ; extra == 'llm'
-  - prometheus-client>=0.7.1 ; extra == 'llm'
-  - starlette ; extra == 'llm'
-  - fastapi ; extra == 'llm'
-  - opencensus ; extra == 'llm'
-  - jsonschema ; extra == 'llm'
-  - meson ; extra == 'llm'
-  - numpy>=1.20 ; extra == 'llm'
-  - uvicorn[standard] ; extra == 'llm'
-  - vllm[audio]>=0.15.0 ; extra == 'llm'
-  - smart-open ; extra == 'llm'
-  - fsspec ; extra == 'llm'
-  - opentelemetry-sdk>=1.30.0 ; extra == 'llm'
-  - grpcio>=1.42.0 ; extra == 'llm'
   - typer ; extra == 'llm'
-  - nixl>=0.6.1 ; extra == 'llm'
-  - aiohttp-cors ; extra == 'llm'
   requires_python: '>=3.10'
-- pypi: https://files.pythonhosted.org/packages/9e/b9/cc5ea8460c3dc602e6b7198277a7c59ba2b8929374ab22efa8df9f3deac8/ray-2.54.0-cp312-cp312-manylinux2014_x86_64.whl
+- pypi: https://files.pythonhosted.org/packages/8a/1f/b33d5006823f8c1c8760887cf1190194f4b06de858b3d17e37bd930a6a62/ray-2.54.1-cp312-cp312-manylinux2014_x86_64.whl
   name: ray
-  version: 2.54.0
-  sha256: a972afd5aa3dda99d0b2f369b5f62e5dd95865ab7d37bf2e0a0e0d2cfbd9b325
+  version: 2.54.1
+  sha256: 4c6f7e23dda62a32f94083141c3f97e9c4246e3ae4ae2bc488bcd8fd0311f54a
   requires_dist:
   - click>=7.0
   - filelock
@@ -23705,25 +23721,25 @@ packages:
   - smart-open ; extra == 'default'
   - virtualenv>=20.0.24,!=20.21.1 ; extra == 'default'
   - memray ; sys_platform != 'win32' and extra == 'observability'
-  - opentelemetry-sdk>=1.30.0 ; extra == 'serve'
-  - watchfiles ; extra == 'serve'
-  - py-spy>=0.2.0 ; python_full_version < '3.12' and extra == 'serve'
-  - opencensus ; extra == 'serve'
-  - smart-open ; extra == 'serve'
-  - starlette ; extra == 'serve'
-  - aiohttp>=3.13.3 ; extra == 'serve'
   - requests ; extra == 'serve'
-  - uvicorn[standard] ; extra == 'serve'
-  - fastapi ; extra == 'serve'
+  - smart-open ; extra == 'serve'
   - grpcio>=1.42.0 ; extra == 'serve'
+  - opentelemetry-sdk>=1.30.0 ; extra == 'serve'
   - colorful ; extra == 'serve'
-  - aiohttp-cors ; extra == 'serve'
-  - prometheus-client>=0.7.1 ; extra == 'serve'
-  - opentelemetry-exporter-prometheus ; extra == 'serve'
+  - aiohttp>=3.13.3 ; extra == 'serve'
+  - uvicorn[standard] ; extra == 'serve'
   - pydantic!=2.0.*,!=2.1.*,!=2.2.*,!=2.3.*,!=2.4.*,!=2.5.*,!=2.6.*,!=2.7.*,!=2.8.*,!=2.9.*,!=2.10.*,!=2.11.*,<3 ; extra == 'serve'
+  - opencensus ; extra == 'serve'
   - py-spy>=0.4.0 ; python_full_version >= '3.12' and extra == 'serve'
-  - virtualenv>=20.0.24,!=20.21.1 ; extra == 'serve'
+  - aiohttp-cors ; extra == 'serve'
+  - opentelemetry-exporter-prometheus ; extra == 'serve'
+  - starlette ; extra == 'serve'
+  - watchfiles ; extra == 'serve'
+  - fastapi ; extra == 'serve'
   - opentelemetry-proto ; extra == 'serve'
+  - virtualenv>=20.0.24,!=20.21.1 ; extra == 'serve'
+  - py-spy>=0.2.0 ; python_full_version < '3.12' and extra == 'serve'
+  - prometheus-client>=0.7.1 ; extra == 'serve'
   - pandas ; extra == 'tune'
   - pydantic!=2.0.*,!=2.1.*,!=2.2.*,!=2.3.*,!=2.4.*,!=2.5.*,!=2.6.*,!=2.7.*,!=2.8.*,!=2.9.*,!=2.10.*,!=2.11.*,<3 ; extra == 'tune'
   - tensorboardx>=1.9 ; extra == 'tune'
@@ -23731,47 +23747,47 @@ packages:
   - pyarrow>=9.0.0 ; extra == 'tune'
   - fsspec ; extra == 'tune'
   - cupy-cuda12x ; sys_platform != 'darwin' and extra == 'adag'
-  - opentelemetry-sdk>=1.30.0 ; extra == 'serve-grpc'
-  - watchfiles ; extra == 'serve-grpc'
-  - py-spy>=0.2.0 ; python_full_version < '3.12' and extra == 'serve-grpc'
-  - opencensus ; extra == 'serve-grpc'
-  - smart-open ; extra == 'serve-grpc'
-  - starlette ; extra == 'serve-grpc'
-  - pyopenssl ; extra == 'serve-grpc'
-  - aiohttp>=3.13.3 ; extra == 'serve-grpc'
   - requests ; extra == 'serve-grpc'
-  - uvicorn[standard] ; extra == 'serve-grpc'
-  - fastapi ; extra == 'serve-grpc'
+  - smart-open ; extra == 'serve-grpc'
   - grpcio>=1.42.0 ; extra == 'serve-grpc'
+  - opentelemetry-sdk>=1.30.0 ; extra == 'serve-grpc'
   - colorful ; extra == 'serve-grpc'
-  - aiohttp-cors ; extra == 'serve-grpc'
-  - prometheus-client>=0.7.1 ; extra == 'serve-grpc'
-  - opentelemetry-exporter-prometheus ; extra == 'serve-grpc'
+  - aiohttp>=3.13.3 ; extra == 'serve-grpc'
+  - pyopenssl ; extra == 'serve-grpc'
+  - uvicorn[standard] ; extra == 'serve-grpc'
   - pydantic!=2.0.*,!=2.1.*,!=2.2.*,!=2.3.*,!=2.4.*,!=2.5.*,!=2.6.*,!=2.7.*,!=2.8.*,!=2.9.*,!=2.10.*,!=2.11.*,<3 ; extra == 'serve-grpc'
+  - opencensus ; extra == 'serve-grpc'
   - py-spy>=0.4.0 ; python_full_version >= '3.12' and extra == 'serve-grpc'
-  - virtualenv>=20.0.24,!=20.21.1 ; extra == 'serve-grpc'
+  - aiohttp-cors ; extra == 'serve-grpc'
+  - opentelemetry-exporter-prometheus ; extra == 'serve-grpc'
+  - starlette ; extra == 'serve-grpc'
+  - watchfiles ; extra == 'serve-grpc'
+  - fastapi ; extra == 'serve-grpc'
   - opentelemetry-proto ; extra == 'serve-grpc'
-  - opentelemetry-sdk>=1.30.0 ; extra == 'serve-async-inference'
-  - watchfiles ; extra == 'serve-async-inference'
-  - py-spy>=0.2.0 ; python_full_version < '3.12' and extra == 'serve-async-inference'
-  - opencensus ; extra == 'serve-async-inference'
-  - smart-open ; extra == 'serve-async-inference'
-  - starlette ; extra == 'serve-async-inference'
-  - aiohttp>=3.13.3 ; extra == 'serve-async-inference'
+  - virtualenv>=20.0.24,!=20.21.1 ; extra == 'serve-grpc'
+  - py-spy>=0.2.0 ; python_full_version < '3.12' and extra == 'serve-grpc'
+  - prometheus-client>=0.7.1 ; extra == 'serve-grpc'
   - requests ; extra == 'serve-async-inference'
-  - uvicorn[standard] ; extra == 'serve-async-inference'
-  - fastapi ; extra == 'serve-async-inference'
-  - celery ; extra == 'serve-async-inference'
+  - smart-open ; extra == 'serve-async-inference'
   - grpcio>=1.42.0 ; extra == 'serve-async-inference'
+  - opentelemetry-sdk>=1.30.0 ; extra == 'serve-async-inference'
+  - celery ; extra == 'serve-async-inference'
   - colorful ; extra == 'serve-async-inference'
-  - aiohttp-cors ; extra == 'serve-async-inference'
-  - prometheus-client>=0.7.1 ; extra == 'serve-async-inference'
-  - opentelemetry-exporter-prometheus ; extra == 'serve-async-inference'
+  - aiohttp>=3.13.3 ; extra == 'serve-async-inference'
+  - uvicorn[standard] ; extra == 'serve-async-inference'
   - pydantic!=2.0.*,!=2.1.*,!=2.2.*,!=2.3.*,!=2.4.*,!=2.5.*,!=2.6.*,!=2.7.*,!=2.8.*,!=2.9.*,!=2.10.*,!=2.11.*,<3 ; extra == 'serve-async-inference'
+  - opencensus ; extra == 'serve-async-inference'
   - py-spy>=0.4.0 ; python_full_version >= '3.12' and extra == 'serve-async-inference'
-  - virtualenv>=20.0.24,!=20.21.1 ; extra == 'serve-async-inference'
+  - aiohttp-cors ; extra == 'serve-async-inference'
+  - opentelemetry-exporter-prometheus ; extra == 'serve-async-inference'
+  - starlette ; extra == 'serve-async-inference'
+  - watchfiles ; extra == 'serve-async-inference'
+  - fastapi ; extra == 'serve-async-inference'
   - opentelemetry-proto ; extra == 'serve-async-inference'
-  - ray-cpp==2.54.0 ; extra == 'cpp'
+  - virtualenv>=20.0.24,!=20.21.1 ; extra == 'serve-async-inference'
+  - py-spy>=0.2.0 ; python_full_version < '3.12' and extra == 'serve-async-inference'
+  - prometheus-client>=0.7.1 ; extra == 'serve-async-inference'
+  - ray-cpp==2.54.1 ; extra == 'cpp'
   - pandas ; extra == 'rllib'
   - pydantic!=2.0.*,!=2.1.*,!=2.2.*,!=2.3.*,!=2.4.*,!=2.5.*,!=2.6.*,!=2.7.*,!=2.8.*,!=2.9.*,!=2.10.*,!=2.11.*,<3 ; extra == 'rllib'
   - tensorboardx>=1.9 ; extra == 'rllib'
@@ -23791,140 +23807,140 @@ packages:
   - pyarrow>=9.0.0 ; extra == 'train'
   - fsspec ; extra == 'train'
   - pydantic!=2.0.*,!=2.1.*,!=2.2.*,!=2.3.*,!=2.4.*,!=2.5.*,!=2.6.*,!=2.7.*,!=2.8.*,!=2.9.*,!=2.10.*,!=2.11.*,<3 ; extra == 'train'
-  - opentelemetry-sdk>=1.30.0 ; extra == 'air'
-  - watchfiles ; extra == 'air'
-  - pandas>=1.3 ; extra == 'air'
-  - py-spy>=0.2.0 ; python_full_version < '3.12' and extra == 'air'
-  - opencensus ; extra == 'air'
-  - tensorboardx>=1.9 ; extra == 'air'
-  - smart-open ; extra == 'air'
-  - starlette ; extra == 'air'
-  - aiohttp>=3.13.3 ; extra == 'air'
   - requests ; extra == 'air'
-  - uvicorn[standard] ; extra == 'air'
-  - fastapi ; extra == 'air'
-  - fsspec ; extra == 'air'
+  - smart-open ; extra == 'air'
   - grpcio>=1.42.0 ; extra == 'air'
-  - numpy>=1.20 ; extra == 'air'
-  - pyarrow>=9.0.0 ; extra == 'air'
+  - opentelemetry-sdk>=1.30.0 ; extra == 'air'
+  - fsspec ; extra == 'air'
+  - pandas>=1.3 ; extra == 'air'
   - colorful ; extra == 'air'
-  - aiohttp-cors ; extra == 'air'
-  - prometheus-client>=0.7.1 ; extra == 'air'
-  - opentelemetry-exporter-prometheus ; extra == 'air'
+  - numpy>=1.20 ; extra == 'air'
+  - aiohttp>=3.13.3 ; extra == 'air'
+  - uvicorn[standard] ; extra == 'air'
   - pydantic!=2.0.*,!=2.1.*,!=2.2.*,!=2.3.*,!=2.4.*,!=2.5.*,!=2.6.*,!=2.7.*,!=2.8.*,!=2.9.*,!=2.10.*,!=2.11.*,<3 ; extra == 'air'
+  - tensorboardx>=1.9 ; extra == 'air'
+  - opencensus ; extra == 'air'
   - py-spy>=0.4.0 ; python_full_version >= '3.12' and extra == 'air'
+  - aiohttp-cors ; extra == 'air'
   - pandas ; extra == 'air'
-  - virtualenv>=20.0.24,!=20.21.1 ; extra == 'air'
+  - opentelemetry-exporter-prometheus ; extra == 'air'
+  - starlette ; extra == 'air'
+  - watchfiles ; extra == 'air'
+  - fastapi ; extra == 'air'
   - opentelemetry-proto ; extra == 'air'
-  - opentelemetry-sdk>=1.30.0 ; extra == 'all'
-  - watchfiles ; extra == 'all'
-  - pandas>=1.3 ; extra == 'all'
-  - py-spy>=0.2.0 ; python_full_version < '3.12' and extra == 'all'
-  - opencensus ; extra == 'all'
-  - tensorboardx>=1.9 ; extra == 'all'
-  - smart-open ; extra == 'all'
-  - starlette ; extra == 'all'
-  - gymnasium==1.2.2 ; extra == 'all'
-  - pyopenssl ; extra == 'all'
-  - scipy ; extra == 'all'
-  - aiohttp>=3.13.3 ; extra == 'all'
-  - lz4 ; extra == 'all'
+  - virtualenv>=20.0.24,!=20.21.1 ; extra == 'air'
+  - py-spy>=0.2.0 ; python_full_version < '3.12' and extra == 'air'
+  - pyarrow>=9.0.0 ; extra == 'air'
+  - prometheus-client>=0.7.1 ; extra == 'air'
   - requests ; extra == 'all'
-  - ormsgpack>=1.7.0 ; extra == 'all'
-  - uvicorn[standard] ; extra == 'all'
-  - fastapi ; extra == 'all'
-  - celery ; extra == 'all'
-  - fsspec ; extra == 'all'
-  - grpcio>=1.42.0 ; extra == 'all'
-  - numpy>=1.20 ; extra == 'all'
-  - pyarrow>=9.0.0 ; extra == 'all'
-  - dm-tree ; extra == 'all'
-  - colorful ; extra == 'all'
-  - memray ; sys_platform != 'win32' and extra == 'all'
+  - smart-open ; extra == 'all'
   - cupy-cuda12x ; sys_platform != 'darwin' and extra == 'all'
-  - pyyaml ; extra == 'all'
+  - grpcio>=1.42.0 ; extra == 'all'
+  - scipy ; extra == 'all'
+  - gymnasium==1.2.2 ; extra == 'all'
+  - dm-tree ; extra == 'all'
+  - opentelemetry-sdk>=1.30.0 ; extra == 'all'
+  - fsspec ; extra == 'all'
+  - pandas>=1.3 ; extra == 'all'
+  - celery ; extra == 'all'
+  - colorful ; extra == 'all'
+  - numpy>=1.20 ; extra == 'all'
+  - aiohttp>=3.13.3 ; extra == 'all'
+  - pyopenssl ; extra == 'all'
+  - lz4 ; extra == 'all'
   - grpcio ; extra == 'all'
-  - aiohttp-cors ; extra == 'all'
-  - prometheus-client>=0.7.1 ; extra == 'all'
-  - opentelemetry-exporter-prometheus ; extra == 'all'
+  - uvicorn[standard] ; extra == 'all'
   - pydantic!=2.0.*,!=2.1.*,!=2.2.*,!=2.3.*,!=2.4.*,!=2.5.*,!=2.6.*,!=2.7.*,!=2.8.*,!=2.9.*,!=2.10.*,!=2.11.*,<3 ; extra == 'all'
+  - tensorboardx>=1.9 ; extra == 'all'
+  - opencensus ; extra == 'all'
   - py-spy>=0.4.0 ; python_full_version >= '3.12' and extra == 'all'
+  - ormsgpack>=1.7.0 ; extra == 'all'
+  - aiohttp-cors ; extra == 'all'
+  - opentelemetry-exporter-prometheus ; extra == 'all'
   - pandas ; extra == 'all'
-  - grpcio!=1.56.0 ; sys_platform == 'darwin' and extra == 'all'
-  - virtualenv>=20.0.24,!=20.21.1 ; extra == 'all'
+  - starlette ; extra == 'all'
+  - memray ; sys_platform != 'win32' and extra == 'all'
+  - watchfiles ; extra == 'all'
+  - fastapi ; extra == 'all'
   - opentelemetry-proto ; extra == 'all'
-  - opentelemetry-sdk>=1.30.0 ; extra == 'all-cpp'
-  - watchfiles ; extra == 'all-cpp'
-  - pandas>=1.3 ; extra == 'all-cpp'
-  - py-spy>=0.2.0 ; python_full_version < '3.12' and extra == 'all-cpp'
-  - opencensus ; extra == 'all-cpp'
-  - tensorboardx>=1.9 ; extra == 'all-cpp'
-  - smart-open ; extra == 'all-cpp'
-  - starlette ; extra == 'all-cpp'
-  - gymnasium==1.2.2 ; extra == 'all-cpp'
-  - pyopenssl ; extra == 'all-cpp'
-  - scipy ; extra == 'all-cpp'
-  - aiohttp>=3.13.3 ; extra == 'all-cpp'
-  - lz4 ; extra == 'all-cpp'
+  - virtualenv>=20.0.24,!=20.21.1 ; extra == 'all'
+  - grpcio!=1.56.0 ; sys_platform == 'darwin' and extra == 'all'
+  - py-spy>=0.2.0 ; python_full_version < '3.12' and extra == 'all'
+  - pyarrow>=9.0.0 ; extra == 'all'
+  - prometheus-client>=0.7.1 ; extra == 'all'
+  - pyyaml ; extra == 'all'
   - requests ; extra == 'all-cpp'
-  - ormsgpack>=1.7.0 ; extra == 'all-cpp'
-  - uvicorn[standard] ; extra == 'all-cpp'
-  - fastapi ; extra == 'all-cpp'
-  - celery ; extra == 'all-cpp'
-  - fsspec ; extra == 'all-cpp'
-  - grpcio>=1.42.0 ; extra == 'all-cpp'
-  - numpy>=1.20 ; extra == 'all-cpp'
-  - pyarrow>=9.0.0 ; extra == 'all-cpp'
-  - dm-tree ; extra == 'all-cpp'
-  - colorful ; extra == 'all-cpp'
-  - memray ; sys_platform != 'win32' and extra == 'all-cpp'
+  - smart-open ; extra == 'all-cpp'
   - cupy-cuda12x ; sys_platform != 'darwin' and extra == 'all-cpp'
-  - pyyaml ; extra == 'all-cpp'
+  - grpcio>=1.42.0 ; extra == 'all-cpp'
+  - scipy ; extra == 'all-cpp'
+  - gymnasium==1.2.2 ; extra == 'all-cpp'
+  - dm-tree ; extra == 'all-cpp'
+  - opentelemetry-sdk>=1.30.0 ; extra == 'all-cpp'
+  - fsspec ; extra == 'all-cpp'
+  - pandas>=1.3 ; extra == 'all-cpp'
+  - celery ; extra == 'all-cpp'
+  - colorful ; extra == 'all-cpp'
+  - numpy>=1.20 ; extra == 'all-cpp'
+  - aiohttp>=3.13.3 ; extra == 'all-cpp'
+  - pyopenssl ; extra == 'all-cpp'
+  - lz4 ; extra == 'all-cpp'
   - grpcio ; extra == 'all-cpp'
-  - aiohttp-cors ; extra == 'all-cpp'
-  - prometheus-client>=0.7.1 ; extra == 'all-cpp'
-  - opentelemetry-exporter-prometheus ; extra == 'all-cpp'
+  - uvicorn[standard] ; extra == 'all-cpp'
   - pydantic!=2.0.*,!=2.1.*,!=2.2.*,!=2.3.*,!=2.4.*,!=2.5.*,!=2.6.*,!=2.7.*,!=2.8.*,!=2.9.*,!=2.10.*,!=2.11.*,<3 ; extra == 'all-cpp'
+  - tensorboardx>=1.9 ; extra == 'all-cpp'
+  - ray-cpp==2.54.1 ; extra == 'all-cpp'
+  - opencensus ; extra == 'all-cpp'
   - py-spy>=0.4.0 ; python_full_version >= '3.12' and extra == 'all-cpp'
+  - ormsgpack>=1.7.0 ; extra == 'all-cpp'
+  - aiohttp-cors ; extra == 'all-cpp'
+  - opentelemetry-exporter-prometheus ; extra == 'all-cpp'
   - pandas ; extra == 'all-cpp'
-  - grpcio!=1.56.0 ; sys_platform == 'darwin' and extra == 'all-cpp'
-  - virtualenv>=20.0.24,!=20.21.1 ; extra == 'all-cpp'
+  - starlette ; extra == 'all-cpp'
+  - memray ; sys_platform != 'win32' and extra == 'all-cpp'
+  - watchfiles ; extra == 'all-cpp'
+  - fastapi ; extra == 'all-cpp'
   - opentelemetry-proto ; extra == 'all-cpp'
-  - ray-cpp==2.54.0 ; extra == 'all-cpp'
-  - hf-transfer ; extra == 'llm'
-  - opentelemetry-sdk>=1.30.0 ; extra == 'llm'
-  - nixl>=0.6.1 ; extra == 'llm'
-  - watchfiles ; extra == 'llm'
-  - pandas>=1.3 ; extra == 'llm'
-  - py-spy>=0.2.0 ; python_full_version < '3.12' and extra == 'llm'
-  - opencensus ; extra == 'llm'
-  - smart-open ; extra == 'llm'
-  - starlette ; extra == 'llm'
-  - vllm[audio]>=0.15.0 ; extra == 'llm'
-  - async-timeout ; python_full_version < '3.11' and extra == 'llm'
-  - aiohttp>=3.13.3 ; extra == 'llm'
+  - virtualenv>=20.0.24,!=20.21.1 ; extra == 'all-cpp'
+  - grpcio!=1.56.0 ; sys_platform == 'darwin' and extra == 'all-cpp'
+  - py-spy>=0.2.0 ; python_full_version < '3.12' and extra == 'all-cpp'
+  - pyarrow>=9.0.0 ; extra == 'all-cpp'
+  - prometheus-client>=0.7.1 ; extra == 'all-cpp'
+  - pyyaml ; extra == 'all-cpp'
   - requests ; extra == 'llm'
-  - ninja ; extra == 'llm'
-  - meson ; extra == 'llm'
-  - typer ; extra == 'llm'
-  - uvicorn[standard] ; extra == 'llm'
-  - fastapi ; extra == 'llm'
-  - pybind11 ; extra == 'llm'
-  - fsspec ; extra == 'llm'
+  - smart-open ; extra == 'llm'
   - grpcio>=1.42.0 ; extra == 'llm'
-  - numpy>=1.20 ; extra == 'llm'
-  - pyarrow>=9.0.0 ; extra == 'llm'
+  - typer ; extra == 'llm'
+  - async-timeout ; python_full_version < '3.11' and extra == 'llm'
+  - opentelemetry-sdk>=1.30.0 ; extra == 'llm'
+  - fsspec ; extra == 'llm'
+  - ninja ; extra == 'llm'
+  - pandas>=1.3 ; extra == 'llm'
   - colorful ; extra == 'llm'
+  - numpy>=1.20 ; extra == 'llm'
   - transformers>=4.57.3 ; extra == 'llm'
-  - aiohttp-cors ; extra == 'llm'
-  - prometheus-client>=0.7.1 ; extra == 'llm'
-  - opentelemetry-exporter-prometheus ; extra == 'llm'
-  - pydantic!=2.0.*,!=2.1.*,!=2.2.*,!=2.3.*,!=2.4.*,!=2.5.*,!=2.6.*,!=2.7.*,!=2.8.*,!=2.9.*,!=2.10.*,!=2.11.*,<3 ; extra == 'llm'
-  - jsonschema ; extra == 'llm'
-  - py-spy>=0.4.0 ; python_full_version >= '3.12' and extra == 'llm'
+  - aiohttp>=3.13.3 ; extra == 'llm'
   - jsonref>=1.1.0 ; extra == 'llm'
-  - virtualenv>=20.0.24,!=20.21.1 ; extra == 'llm'
+  - hf-transfer ; extra == 'llm'
+  - jsonschema ; extra == 'llm'
+  - uvicorn[standard] ; extra == 'llm'
+  - pydantic!=2.0.*,!=2.1.*,!=2.2.*,!=2.3.*,!=2.4.*,!=2.5.*,!=2.6.*,!=2.7.*,!=2.8.*,!=2.9.*,!=2.10.*,!=2.11.*,<3 ; extra == 'llm'
+  - opencensus ; extra == 'llm'
+  - py-spy>=0.4.0 ; python_full_version >= '3.12' and extra == 'llm'
+  - aiohttp-cors ; extra == 'llm'
+  - opentelemetry-exporter-prometheus ; extra == 'llm'
+  - nixl>=0.6.1 ; extra == 'llm'
+  - starlette ; extra == 'llm'
+  - watchfiles ; extra == 'llm'
+  - fastapi ; extra == 'llm'
   - opentelemetry-proto ; extra == 'llm'
+  - virtualenv>=20.0.24,!=20.21.1 ; extra == 'llm'
+  - vllm[audio]>=0.15.0 ; extra == 'llm'
+  - meson ; extra == 'llm'
+  - pybind11 ; extra == 'llm'
+  - py-spy>=0.2.0 ; python_full_version < '3.12' and extra == 'llm'
+  - pyarrow>=9.0.0 ; extra == 'llm'
+  - prometheus-client>=0.7.1 ; extra == 'llm'
   requires_python: '>=3.10'
 - conda: https://conda.anaconda.org/conda-forge/linux-64/rdma-core-61.0-h192683f_0.conda
   sha256: 8e0b7962cf8bec9a016cd91a6c6dc1f9ebc8e7e316b1d572f7b9047d0de54717
