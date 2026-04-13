@@ -36,20 +36,21 @@ on the same model and GPU configuration. The gap is the pipeline overhead.
    alongside the caption text as output metadata — token counts are a property of the generated data (useful for cost
    accounting, quality analysis, downstream filtering), not ephemeral perf instrumentation.
 
-2. **Report in summary.json.** Aggregate the per-caption token counts into the existing summary output:
-   ```json
-   {
-     "captioning": {
-       "total_output_tokens": 1842037,
-       "total_prompt_tokens": 512000,
-       "caption_wall_time_s": 245.3,
-       "output_tokens_per_s": 7510.3
-     }
-   }
-   ```
+2. **Report in summary.json.** Aggregate the per-caption token counts into the existing summary output.
 
-3. **Console output.** When captioning is enabled, print `output_tokens_per_s` at the end of every pipeline run so the
-   metric is immediately visible without digging into `summary.json`.
+3. **Console output.** When captioning is enabled, print a throughput summary at the end of every pipeline run so the
+   metric is immediately visible without digging into `summary.json`:
+   ```
+   Captioning throughput
+   ─────────────────────────────────────
+   total prompt tokens:       2,220,560
+   total output tokens:         220,134
+   total windows:                   444
+   avg prompt tokens/window:      5,001
+   avg output tokens/window:        495
+   output tokens/s:               506.0
+   ─────────────────────────────────────
+   ```
 
 4. **Time-series monitoring.** Xenna already exports per-stage metrics (progress, queue depths, actor utilization,
    process time) as Ray Gauges scraped by Prometheus and visualized in a pre-built Grafana dashboard. Emit token counts
@@ -60,8 +61,20 @@ on the same model and GPU configuration. The gap is the pipeline overhead.
    throughput points to vision-encoder / prefill bottlenecks, while a drop in output throughput points to decode-side
    stalls.
 
-5. **Baseline benchmark.** Run the same model standalone with vLLM's `benchmark_throughput.py` on the same hardware to
-   establish the ceiling. The ratio `pipeline_tokens_per_s / baseline_tokens_per_s` is the pipeline efficiency.
+5. **Baseline benchmark.** Run `vllm bench throughput` on a single GPU to establish the per-GPU throughput ceiling.
+   Use the pipeline's actual average prompt and output token sizes (reported in the captioning throughput summary) as
+   the benchmark parameters so the workload profile matches. Scale linearly by GPU count to get the multi-GPU
+   baseline:
+   ```bash
+   vllm bench throughput \
+     --model <model_path> \
+     --dataset-name random \
+     --random-input-len <avg_prompt_tokens_per_window> \
+     --random-output-len <avg_output_tokens_per_window> \
+     --num-prompts 1000
+   ```
+   The ratio `pipeline_output_tokens_per_s / baseline_output_tokens_per_s` is the pipeline efficiency — the gap is
+   the overhead from pipeline orchestration (batch barriers, queue stalls, data transfer).
 
 ## Approaches
 
@@ -122,8 +135,9 @@ Full architectural shift: vLLM behind Ray Serve, pipeline on Ray Data.
   accumulate, and write to `summary.json`.
 - [ ] **Export token metrics to Grafana** — emit cumulative input/output token counters as Ray Gauges from the
   captioning stage; add a tokens/s panel to the existing Grafana dashboard.
-- [ ] **Establish baseline** — run `benchmark_throughput.py` for each supported captioning model on target hardware (
-  e.g., 4x 8xH100).
+- [ ] **Establish baseline** — run `vllm bench throughput` on a single GPU for each supported captioning model, using
+  `--random-input-len` / `--random-output-len` from the pipeline's avg prompt/output tokens per window; scale
+  linearly by GPU count.
 - [ ] **Measure current gap** — run a representative pipeline (e.g., 4k videos, 4 nodes) and compare
   `output_tokens_per_s` against the baseline.
 - [ ] **Tune async stage saturation** — experiment with `max_inflight_requests`, `stage_batch_size`, and upstream
