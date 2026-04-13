@@ -24,6 +24,7 @@ from scipy.spatial.distance import cosine
 
 from cosmos_curate.core.interfaces.pipeline_interface import run_pipeline
 from cosmos_curate.core.interfaces.runner_interface import RunnerInterface
+from cosmos_curate.models.vllm_sentinels import VLLM_UNKNOWN_CAPTION
 from cosmos_curate.pipelines.video.captioning.vllm_caption_stage import (
     VllmCaptionStage,
     VllmPrepStage,
@@ -274,3 +275,64 @@ def test_vllm_caption_generation(
                 f"Caption similarity {similarity:.3f} below threshold for clip {clip_idx} window {window_idx}: "
                 f"[{generated_caption}] vs. [{expected_caption}]"
             )
+
+
+@pytest.mark.env("unified")
+def test_vllm_caption_regression_signals(
+    sample_captioning_task: SplitPipeTask,
+    sequential_runner: RunnerInterface,
+) -> None:
+    """Smoke-test rollout caption health signals on one real vLLM inference path."""
+    vllm_config = VllmConfig(
+        model_variant="qwen",
+        prompt_variant="default",
+        prompt_text=None,
+        fp8=False,
+        preprocess=False,
+        stage2_caption=False,
+        sampling_config=VllmSamplingConfig(
+            temperature=0.1,
+            top_p=0.001,
+            top_k=0,
+            repetition_penalty=1.05,
+            presence_penalty=0.0,
+            frequency_penalty=0.0,
+            min_p=0.0,
+            min_tokens=16,
+            max_tokens=8192,
+        ),
+    )
+    window_config = WindowConfig(
+        sampling_fps=2.0,
+        window_size=256,
+        remainder_threshold=128,
+        model_does_preprocess=False,
+    )
+    stages = [
+        VllmPrepStage(vllm_config=vllm_config, window_config=window_config),
+        VllmCaptionStage(vllm_config=vllm_config),
+    ]
+    tasks = run_pipeline([sample_captioning_task], stages, runner=sequential_runner)
+
+    assert tasks is not None
+    assert len(tasks) == 1
+
+    clips = tasks[0].video.clips
+    assert len(clips) == 1
+
+    windows = clips[0].windows
+    assert len(windows) == 1
+
+    window = windows[0]
+    assert "qwen" in window.caption
+
+    caption = window.caption["qwen"]
+    assert caption.strip()
+    assert caption != VLLM_UNKNOWN_CAPTION
+    assert window.caption_status == "success"
+    assert window.caption_failure_reason is None
+
+    assert "qwen" in window.token_counts
+    token_counts = window.token_counts["qwen"]
+    assert token_counts.prompt_tokens > 0
+    assert token_counts.output_tokens > 0
