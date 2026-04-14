@@ -526,6 +526,13 @@ def _assemble_stages(  # noqa: C901, PLR0912, PLR0915
             generate_previews=args.generate_previews,
             verbose=args.verbose,
             perf_profile=args.perf_profile,
+            endpoint=args.vlm_filter_endpoint,
+            openai_model_name=args.vlm_filter_openai_model_name,
+            openai_max_caption_retries=args.vlm_filter_openai_retries,
+            openai_retry_delay_seconds=args.vlm_filter_openai_retry_delay_seconds,
+            gemini_model_name=args.vlm_filter_gemini_model_name,
+            gemini_max_caption_retries=args.vlm_filter_gemini_retries,
+            gemini_retry_delay_seconds=args.vlm_filter_gemini_retry_delay_seconds,
         )
         if args.vlm_filter != "disable"
         else None
@@ -552,6 +559,13 @@ def _assemble_stages(  # noqa: C901, PLR0912, PLR0915
             custom_categories=args.video_classifier_use_custom_categories,
             type_allow_file=args.video_classifier_allow_file,
             type_block_file=args.video_classifier_block_file,
+            endpoint=args.video_classifier_endpoint,
+            openai_model_name=args.video_classifier_openai_model_name,
+            openai_max_caption_retries=args.video_classifier_openai_retries,
+            openai_retry_delay_seconds=args.video_classifier_openai_retry_delay_seconds,
+            gemini_model_name=args.video_classifier_gemini_model_name,
+            gemini_max_caption_retries=args.video_classifier_gemini_retries,
+            gemini_retry_delay_seconds=args.video_classifier_gemini_retry_delay_seconds,
         )
         if args.video_classifier != "disable"
         else None
@@ -1440,6 +1454,64 @@ def _setup_parser(parser: argparse.ArgumentParser) -> None:  # noqa: PLR0915
         help="Number of GPUs per worker for VLM filtering model.",
     )
     parser.add_argument(
+        "--vlm-filter-endpoint",
+        "--qwen-filter-endpoint",
+        dest="vlm_filter_endpoint",
+        choices=["local", "openai", "gemini"],
+        default="local",
+        help="Inference backend for VLM filtering. 'local' runs vLLM in-process; 'openai' calls an external "
+        "OpenAI-compatible endpoint configured under openai.filter in ~/.config/cosmos_curate/config.yaml; "
+        "'gemini' calls the Google Gemini API configured under gemini in the config.",
+    )
+    parser.add_argument(
+        "--vlm-filter-openai-model-name",
+        "--qwen-filter-openai-model-name",
+        dest="vlm_filter_openai_model_name",
+        type=str,
+        default="auto",
+        help="Model name for the OpenAI-compatible filter endpoint. Use 'auto' to query /v1/models.",
+    )
+    parser.add_argument(
+        "--vlm-filter-openai-retries",
+        "--qwen-filter-openai-retries",
+        dest="vlm_filter_openai_retries",
+        type=int,
+        default=3,
+        help="Max retries per window for the OpenAI-compatible filter endpoint.",
+    )
+    parser.add_argument(
+        "--vlm-filter-openai-retry-delay-seconds",
+        "--qwen-filter-openai-retry-delay-seconds",
+        dest="vlm_filter_openai_retry_delay_seconds",
+        type=float,
+        default=1.0,
+        help="Delay in seconds between retries for the OpenAI-compatible filter endpoint.",
+    )
+    parser.add_argument(
+        "--vlm-filter-gemini-model-name",
+        "--qwen-filter-gemini-model-name",
+        dest="vlm_filter_gemini_model_name",
+        type=str,
+        default="models/gemini-2.5-pro",
+        help="Gemini model name for the filter endpoint.",
+    )
+    parser.add_argument(
+        "--vlm-filter-gemini-retries",
+        "--qwen-filter-gemini-retries",
+        dest="vlm_filter_gemini_retries",
+        type=int,
+        default=3,
+        help="Max retries per window for the Gemini filter endpoint.",
+    )
+    parser.add_argument(
+        "--vlm-filter-gemini-retry-delay-seconds",
+        "--qwen-filter-gemini-retry-delay-seconds",
+        dest="vlm_filter_gemini_retry_delay_seconds",
+        type=float,
+        default=1.0,
+        help="Delay in seconds between retries for the Gemini filter endpoint.",
+    )
+    parser.add_argument(
         "--video-classifier",
         "--qwen-video-classifier",
         dest="video_classifier",
@@ -1559,6 +1631,64 @@ def _setup_parser(parser: argparse.ArgumentParser) -> None:  # noqa: PLR0915
         type=int,
         default=1,
         help="Number of GPUs per worker for video classifier model.",
+    )
+    parser.add_argument(
+        "--video-classifier-endpoint",
+        "--qwen-video-classifier-endpoint",
+        dest="video_classifier_endpoint",
+        choices=["local", "openai", "gemini"],
+        default="local",
+        help="Inference backend for video classifier. 'local' runs vLLM in-process; 'openai' calls an external "
+        "OpenAI-compatible endpoint configured under openai.classifier in ~/.config/cosmos_curate/config.yaml; "
+        "'gemini' calls the Google Gemini API configured under gemini in the config.",
+    )
+    parser.add_argument(
+        "--video-classifier-openai-model-name",
+        "--qwen-video-classifier-openai-model-name",
+        dest="video_classifier_openai_model_name",
+        type=str,
+        default="auto",
+        help="Model name for the OpenAI-compatible classifier endpoint. Use 'auto' to query /v1/models.",
+    )
+    parser.add_argument(
+        "--video-classifier-openai-retries",
+        "--qwen-video-classifier-openai-retries",
+        dest="video_classifier_openai_retries",
+        type=int,
+        default=3,
+        help="Max retries per window for the OpenAI-compatible classifier endpoint.",
+    )
+    parser.add_argument(
+        "--video-classifier-openai-retry-delay-seconds",
+        "--qwen-video-classifier-openai-retry-delay-seconds",
+        dest="video_classifier_openai_retry_delay_seconds",
+        type=float,
+        default=1.0,
+        help="Delay in seconds between retries for the OpenAI-compatible classifier endpoint.",
+    )
+    parser.add_argument(
+        "--video-classifier-gemini-model-name",
+        "--qwen-video-classifier-gemini-model-name",
+        dest="video_classifier_gemini_model_name",
+        type=str,
+        default="models/gemini-2.5-pro",
+        help="Gemini model name for the classifier endpoint.",
+    )
+    parser.add_argument(
+        "--video-classifier-gemini-retries",
+        "--qwen-video-classifier-gemini-retries",
+        dest="video_classifier_gemini_retries",
+        type=int,
+        default=3,
+        help="Max retries per window for the Gemini classifier endpoint.",
+    )
+    parser.add_argument(
+        "--video-classifier-gemini-retry-delay-seconds",
+        "--qwen-video-classifier-gemini-retry-delay-seconds",
+        dest="video_classifier_gemini_retry_delay_seconds",
+        type=float,
+        default=1.0,
+        help="Delay in seconds between retries for the Gemini classifier endpoint.",
     )
     parser.add_argument(
         "--embedding-gpus-per-worker",

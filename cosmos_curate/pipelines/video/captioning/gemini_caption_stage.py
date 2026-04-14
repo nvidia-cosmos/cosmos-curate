@@ -45,12 +45,13 @@ TTask = TypeVar("TTask", bound=PipelineTask)
 class ApiPrepStage(CuratorStage):
     """Stage that prepares windows for remote API captioning."""
 
-    def __init__(
+    def __init__(  # noqa: PLR0913
         self,
         window_config: WindowConfig,
         *,
         model_variant: str = "gemini",
         num_cpus_for_prepare: float = 1.0,
+        use_filter_windows: bool = False,
         verbose: bool = False,
         log_stats: bool = False,
     ) -> None:
@@ -60,6 +61,7 @@ class ApiPrepStage(CuratorStage):
         self._window_config = window_config
         self._model_variant = model_variant
         self._num_cpus_for_prepare = num_cpus_for_prepare
+        self._use_filter_windows = use_filter_windows
         self._verbose = verbose
         self._log_stats = log_stats
 
@@ -89,6 +91,10 @@ class ApiPrepStage(CuratorStage):
         )
         if self._verbose:
             logger.debug(f"Prepared {len(windows)} windows for {video.input_video}")
+        if self._use_filter_windows:
+            for clip in video.clips:
+                clip.filter_windows = clip.windows[:]
+                clip.windows = []
 
     @nvtx.annotate("ApiPrepStage")  # type: ignore[untyped-decorator]
     def process_data(self, tasks: list[TTask]) -> list[TTask]:
@@ -129,6 +135,7 @@ class GeminiCaptionStage(CuratorStage):
         max_caption_retries: int = 3,
         retry_delay_seconds: float = 1.0,
         max_video_size_bytes: int = 20 * 1024 * 1024,
+        use_filter_windows: bool = False,
         verbose: bool = False,
         log_stats: bool = False,
     ) -> None:
@@ -143,6 +150,7 @@ class GeminiCaptionStage(CuratorStage):
             max_caption_retries: Number of retries per window before giving up.
             retry_delay_seconds: Delay between retries.
             max_video_size_bytes: Maximum inline video size supported by the API.
+            use_filter_windows: If True, iterate clip.filter_windows instead of clip.windows.
             verbose: Emit verbose logging.
             log_stats: Whether to record stage performance statistics.
 
@@ -151,6 +159,7 @@ class GeminiCaptionStage(CuratorStage):
         self._timer = StageTimer(self)
         self._model_variant = model_variant
         self._model_name = model_name
+        self._use_filter_windows = use_filter_windows
         self._prompt_variant = prompt_variant
         self._prompt_text = prompt_text
         self._prompt = get_prompt(prompt_variant, prompt_text, verbose=verbose)
@@ -336,7 +345,8 @@ class GeminiCaptionStage(CuratorStage):
     def _process_task(self, task: SplitPipeTask) -> None:
         """Process a single SplitPipeTask and populate captions."""
         for clip_index, clip in enumerate(task.video.clips):
-            for window_index, window in enumerate(clip.windows):
+            window_source = clip.filter_windows if self._use_filter_windows else clip.windows
+            for window_index, window in enumerate(window_source):
                 try:
                     self._validate_window(window)
                     result, error_detail = self._generate_caption_with_error_detail(window, clip_index, window_index)

@@ -19,6 +19,8 @@ from typing import Literal
 import attrs
 
 from cosmos_curate.core.interfaces.stage_interface import CuratorStage, CuratorStageSpec
+from cosmos_curate.pipelines.video.captioning.gemini_caption_stage import ApiPrepStage, GeminiCaptionStage
+from cosmos_curate.pipelines.video.captioning.openai_caption_stage import OpenAICaptionStage
 from cosmos_curate.pipelines.video.captioning.vllm_caption_stage import VllmCaptionStage, VllmPrepStage
 from cosmos_curate.pipelines.video.filtering.aesthetics.aesthetic_filter_stages import AestheticFilterStage
 from cosmos_curate.pipelines.video.filtering.aesthetics.artificial_text_filter_stage import ArtificialTextFilterStage
@@ -93,6 +95,13 @@ class VlmFilterConfig:
     generate_previews: bool = False
     verbose: bool = False
     perf_profile: bool = False
+    endpoint: Literal["local", "openai", "gemini"] = "local"
+    openai_model_name: str = "auto"
+    openai_max_caption_retries: int = 3
+    openai_retry_delay_seconds: float = 1.0
+    gemini_model_name: str = "models/gemini-2.5-pro"
+    gemini_max_caption_retries: int = 3
+    gemini_retry_delay_seconds: float = 1.0
 
 
 @attrs.define(frozen=True)
@@ -125,6 +134,13 @@ class VideoClassifierConfig:
     custom_categories: bool = False
     type_allow_file: str | None = None
     type_block_file: str | None = None
+    endpoint: Literal["local", "openai", "gemini"] = "local"
+    openai_model_name: str = "auto"
+    openai_max_caption_retries: int = 3
+    openai_retry_delay_seconds: float = 1.0
+    gemini_model_name: str = "models/gemini-2.5-pro"
+    gemini_max_caption_retries: int = 3
+    gemini_retry_delay_seconds: float = 1.0
 
 
 def build_aesthetic_filter_stages(config: AestheticFilterConfig) -> list[CuratorStage | CuratorStageSpec]:
@@ -189,8 +205,74 @@ def _make_window_config(config: VlmFilterConfig | VideoClassifierConfig) -> Wind
     )
 
 
+def _build_external_classifier_stages(cc: VideoClassifierConfig) -> list[CuratorStage | CuratorStageSpec]:
+    """Build ApiPrepStage + caption stage + VllmVideoClassifierStage for external endpoints."""
+    type_allow = cc.type_allow or read_categories_file(cc.type_allow_file)
+    type_block = cc.type_block or read_categories_file(cc.type_block_file)
+    has_custom = cc.custom_categories or bool(cc.type_allow_file or cc.type_block_file)
+    prompt_text = get_qwen_filter_prompt(
+        "type",
+        custom_categories_union(type_allow, type_block) if has_custom else None,
+    )
+    window_config = _make_window_config(cc)
+    model_variant = cc.endpoint  # "openai" or "gemini"
+
+    caption_stage: CuratorStage
+    if cc.endpoint == "openai":
+        caption_stage = OpenAICaptionStage(
+            model_name=cc.openai_model_name,
+            model_variant=model_variant,
+            prompt_variant="type",
+            prompt_text=prompt_text,
+            max_output_tokens=cc.max_output_tokens,
+            use_filter_windows=True,
+            endpoint_key="classifier",
+            max_caption_retries=cc.openai_max_caption_retries,
+            retry_delay_seconds=cc.openai_retry_delay_seconds,
+            verbose=cc.verbose,
+            log_stats=cc.perf_profile,
+        )
+    else:
+        caption_stage = GeminiCaptionStage(
+            model_variant=model_variant,
+            model_name=cc.gemini_model_name,
+            prompt_variant="type",
+            prompt_text=prompt_text,
+            max_output_tokens=cc.max_output_tokens,
+            use_filter_windows=True,
+            max_caption_retries=cc.gemini_max_caption_retries,
+            retry_delay_seconds=cc.gemini_retry_delay_seconds,
+            verbose=cc.verbose,
+            log_stats=cc.perf_profile,
+        )
+
+    return [
+        ApiPrepStage(
+            window_config=window_config,
+            model_variant=model_variant,
+            use_filter_windows=True,
+            verbose=cc.verbose,
+            log_stats=cc.perf_profile,
+        ),
+        caption_stage,
+        CuratorStageSpec(
+            VllmVideoClassifierStage(
+                model_variant=model_variant,
+                rejection_threshold=cc.rejection_threshold,
+                type_allow=type_allow,
+                type_block=type_block,
+                custom_categories=has_custom,
+                verbose=cc.verbose,
+                log_stats=cc.perf_profile,
+            )
+        ),
+    ]
+
+
 def _build_vllm_classifier_stages(cc: VideoClassifierConfig) -> list[CuratorStage | CuratorStageSpec]:
     """Build prep + inference + classifier post-processing stages using VllmCaptionStage."""
+    if cc.endpoint != "local":
+        return _build_external_classifier_stages(cc)
     type_allow = cc.type_allow or read_categories_file(cc.type_allow_file)
     type_block = cc.type_block or read_categories_file(cc.type_block_file)
     has_custom = cc.custom_categories or bool(cc.type_allow_file or cc.type_block_file)
@@ -232,8 +314,68 @@ def _build_vllm_classifier_stages(cc: VideoClassifierConfig) -> list[CuratorStag
     ]
 
 
+def _build_external_filter_stages(fc: VlmFilterConfig) -> list[CuratorStage | CuratorStageSpec]:
+    """Build ApiPrepStage + caption stage + VllmFilteringStage for external endpoints."""
+    window_config = _make_window_config(fc)
+    prompt_text = get_qwen_filter_prompt(fc.prompt_variant, fc.filter_categories)
+    model_variant = fc.endpoint  # "openai" or "gemini"
+
+    caption_stage: CuratorStage
+    if fc.endpoint == "openai":
+        caption_stage = OpenAICaptionStage(
+            model_name=fc.openai_model_name,
+            model_variant=model_variant,
+            prompt_variant=fc.prompt_variant,
+            prompt_text=prompt_text,
+            max_output_tokens=fc.max_output_tokens,
+            use_filter_windows=True,
+            endpoint_key="filter",
+            max_caption_retries=fc.openai_max_caption_retries,
+            retry_delay_seconds=fc.openai_retry_delay_seconds,
+            verbose=fc.verbose,
+            log_stats=fc.perf_profile,
+        )
+    else:
+        caption_stage = GeminiCaptionStage(
+            model_variant=model_variant,
+            model_name=fc.gemini_model_name,
+            prompt_variant=fc.prompt_variant,
+            prompt_text=prompt_text,
+            max_output_tokens=fc.max_output_tokens,
+            use_filter_windows=True,
+            max_caption_retries=fc.gemini_max_caption_retries,
+            retry_delay_seconds=fc.gemini_retry_delay_seconds,
+            verbose=fc.verbose,
+            log_stats=fc.perf_profile,
+        )
+
+    return [
+        ApiPrepStage(
+            window_config=window_config,
+            model_variant=model_variant,
+            use_filter_windows=True,
+            verbose=fc.verbose,
+            log_stats=fc.perf_profile,
+        ),
+        caption_stage,
+        CuratorStageSpec(
+            VllmFilteringStage(
+                model_variant=model_variant,
+                user_prompt=fc.filter_categories,
+                filter_variant=fc.prompt_variant,
+                rejection_threshold=fc.rejection_threshold,
+                score_only=fc.score_only,
+                verbose=fc.verbose,
+                log_stats=fc.perf_profile,
+            )
+        ),
+    ]
+
+
 def _build_vllm_filter_stages(fc: VlmFilterConfig) -> list[CuratorStage | CuratorStageSpec]:
     """Build prep + inference + filter post-processing stages using VllmCaptionStage."""
+    if fc.endpoint != "local":
+        return _build_external_filter_stages(fc)
     prompt_text = get_qwen_filter_prompt(fc.prompt_variant, fc.filter_categories)
     vllm_config = _make_vllm_config(fc, prompt_text)
     window_config = _make_window_config(fc)

@@ -38,11 +38,13 @@ class OpenAIEndpointConfig:
 
 @attrs.define
 class OpenAIConfig:
-    """Configuration for OpenAI API access with separate caption, enhance, and embedding endpoints."""
+    """Configuration for OpenAI API access with separate endpoints per use case."""
 
     caption: OpenAIEndpointConfig | None = None
     enhance: OpenAIEndpointConfig | None = None
     embedding: OpenAIEndpointConfig | None = None
+    filter: OpenAIEndpointConfig | None = None
+    classifier: OpenAIEndpointConfig | None = None
 
 
 @attrs.define
@@ -94,6 +96,12 @@ class ConfigFileData:
         embedding:
             api_key: "xyz"
             base_url: "https://embedding.endpoint/v1"
+        filter:
+            api_key: "xyz"
+            base_url: "https://filter.endpoint/v1"
+        classifier:
+            api_key: "xyz"
+            base_url: "https://classifier.endpoint/v1"
     gemini:
         api_key: "xyz"
     huggingface:

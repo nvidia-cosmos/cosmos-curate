@@ -15,7 +15,7 @@
 """OpenAI-compatible API captioning stage for remote VLM inference (e.g. vLLM serving)."""
 
 import base64
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 import nvtx  # type: ignore[import-untyped]
 import tenacity
@@ -60,6 +60,8 @@ class OpenAICaptionStage(CuratorStage):
         max_output_tokens: int = 8192,
         max_caption_retries: int = 3,
         retry_delay_seconds: float = 1.0,
+        use_filter_windows: bool = False,
+        endpoint_key: Literal["caption", "enhance", "embedding", "filter", "classifier"] = "caption",
         verbose: bool = False,
         log_stats: bool = False,
     ) -> None:
@@ -73,6 +75,9 @@ class OpenAICaptionStage(CuratorStage):
             max_output_tokens: Maximum output tokens requested from the API.
             max_caption_retries: Number of retries per window before giving up.
             retry_delay_seconds: Delay between retries.
+            use_filter_windows: If True, iterate clip.filter_windows instead of clip.windows.
+            endpoint_key: Key under config.openai to read credentials from; must be one of the
+                fields defined on OpenAIConfig ("caption", "enhance", "embedding", "filter", "classifier").
             verbose: Emit verbose logging.
             log_stats: Whether to record stage performance statistics.
 
@@ -85,6 +90,8 @@ class OpenAICaptionStage(CuratorStage):
         self._max_output_tokens = max_output_tokens
         self._max_caption_retries = max_caption_retries
         self._retry_delay_seconds = retry_delay_seconds
+        self._use_filter_windows = use_filter_windows
+        self._endpoint_key = endpoint_key
         self._verbose = verbose
         self._log_stats = log_stats
         self._client: openai.OpenAI | None = None
@@ -106,11 +113,15 @@ class OpenAICaptionStage(CuratorStage):
     def stage_setup(self) -> None:
         """Create the OpenAI API client using credentials from the config file."""
         config = maybe_load_config()
-        endpoint = config.openai.caption if config is not None and config.openai is not None else None
+        endpoint = (
+            getattr(config.openai, self._endpoint_key, None)
+            if config is not None and config.openai is not None
+            else None
+        )
         if endpoint is None or not endpoint.api_key:
             error_msg = (
-                "OpenAI caption configuration not found. "
-                "Provide openai.caption.api_key in ~/.config/cosmos_curate/config.yaml"
+                f"OpenAI {self._endpoint_key} configuration not found. "
+                f"Provide openai.{self._endpoint_key}.api_key in ~/.config/cosmos_curate/config.yaml"
             )
             raise RuntimeError(error_msg)
 
@@ -118,7 +129,9 @@ class OpenAICaptionStage(CuratorStage):
         if endpoint.base_url:
             client_kwargs["base_url"] = endpoint.base_url
         self._client = openai.OpenAI(**client_kwargs)
-        self._model_name = resolve_model_name_auto(self._client, self._model_name, endpoint_label="OpenAI caption")
+        self._model_name = resolve_model_name_auto(
+            self._client, self._model_name, endpoint_label=f"OpenAI {self._endpoint_key}"
+        )
 
     @staticmethod
     def _error_result_from_exception_with_detail(exc: BaseException) -> tuple[CaptionResult, str]:
@@ -238,7 +251,8 @@ class OpenAICaptionStage(CuratorStage):
     def _process_task(self, task: SplitPipeTask) -> None:
         """Process a single SplitPipeTask and populate captions."""
         for clip in task.video.clips:
-            for window_index, window in enumerate(clip.windows):
+            window_source = clip.filter_windows if self._use_filter_windows else clip.windows
+            for window_index, window in enumerate(window_source):
                 try:
                     result, error_detail = self._generate_caption_with_error_detail(window)
                 except Exception as exc:  # noqa: BLE001
