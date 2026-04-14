@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -13,86 +13,53 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Example Hello World using Ray Data."""
+"""Example Hello World using Ray Data.
 
-import time
+Demonstrates two Ray Data patterns:
+- Column expressions for lightweight transforms (lowercasing)
+- ``map_batches`` with a stateful class for GPU inference (GPT-2)
+"""
 
 import pyarrow as pa  # type: ignore[import-untyped]
-import pyarrow.compute as pc  # type: ignore[import-untyped]
 import ray
-from loguru import logger
 from ray.data import ActorPoolStrategy
-from ray.runtime_env import RuntimeEnv
+from ray.data.expressions import col
 
+from cosmos_curate.core.utils.arrow_utils import with_column
 from cosmos_curate.core.utils.pixi_runtime_envs import PixiRuntimeEnv
 from cosmos_curate.models.gpt2 import GPT2
-from cosmos_curate.pipelines.examples.hello_world_pipeline import EXAMPLE_PROMPTS, get_processing_log_str
+
+EXAMPLE_PROMPTS = ["The KEY TO A CREATING GOOD art is", "Once upon a time"]
 
 
-def _ensure_ray_initialized() -> None:
-    if not ray.is_initialized():
-        ray.init(ignore_reinit_error=True)
+class _GPT2Predictor:
+    """Stateful GPT-2 predictor for Ray Data actor pool."""
 
-
-def _lowercase_batch(batch: pa.Table) -> pa.Table:
-    for prompt in batch["prompt"].to_pylist():
-        logger.debug(get_processing_log_str("LowerCaseStage", prompt))
-    lowered = pc.utf8_lower(batch["prompt"])
-    column_index = batch.schema.get_field_index("prompt")
-    return batch.set_column(column_index, "prompt", lowered)
-
-
-def _print_row(row: dict[str, str]) -> dict[str, str]:
-    prompt = row["prompt"]
-    logger.debug(get_processing_log_str("PrintStage", prompt))
-    print(prompt)  # noqa: T201
-    return row
-
-
-class _GPT2BatchPredictor:
     def __init__(self) -> None:
         self._model = GPT2()
         self._model.setup()
 
     def __call__(self, batch: pa.Table) -> pa.Table:
-        outputs: list[str] = []
-        for prompt in batch["prompt"].to_pylist():
-            logger.debug(get_processing_log_str(self.__class__.__name__, prompt))
-            output = self._model.generate(prompt)
-            outputs.append(output)
-            print(" ".join(output.split()))  # noqa: T201
-            time.sleep(1)
-        return batch.append_column("output", pa.array(outputs))
-
-    @classmethod
-    def runtime_env(cls) -> RuntimeEnv:
-        return PixiRuntimeEnv(GPT2().conda_env_name)
+        outputs = [self._model.generate(p) for p in batch["prompt"].to_pylist()]
+        return with_column(batch, "output", pa.array(outputs))
 
 
 def main() -> None:
-    """Run the hello world Ray Data pipeline with example prompts."""
-    _ensure_ray_initialized()
+    """Run the hello world pipeline on Ray Data."""
+    if not ray.is_initialized():
+        ray.init(ignore_reinit_error=True)
 
-    rows = [{"prompt": prompt} for prompt in EXAMPLE_PROMPTS]
-    logger.info(f"Number of input tasks: {len(rows)}")
-
-    materialized_dataset = ray.data.from_items(rows)
-
-    # Ray Data builds a lazy DAG of transforms: batch lowercasing in Arrow,
-    # per-row logging, then batched GPT-2 inference via a single GPU actor.
-    dataset = materialized_dataset.map_batches(_lowercase_batch, batch_format="pyarrow")
-    dataset = dataset.map(_print_row)
-    dataset = dataset.map_batches(
-        _GPT2BatchPredictor,
+    ds: ray.data.Dataset = ray.data.from_items([{"prompt": p} for p in EXAMPLE_PROMPTS])
+    ds = ds.with_column("prompt", col("prompt").str.lower())
+    ds = ds.map_batches(
+        _GPT2Predictor,
+        batch_size=1,
         batch_format="pyarrow",
-        batch_size=2,
-        compute=ActorPoolStrategy(size=1),
         num_gpus=0.8,
-        runtime_env=_GPT2BatchPredictor.runtime_env(),
+        compute=ActorPoolStrategy(size=1),
+        runtime_env=PixiRuntimeEnv("transformers"),
     )
-
-    dataset.materialize()
-    logger.info("Pipeline completed")
+    ds.show()
 
 
 if __name__ == "__main__":
