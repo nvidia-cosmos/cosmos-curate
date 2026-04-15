@@ -279,6 +279,7 @@ LABEL cosmos-curate.slim="true"
 COPY --chown=1000:1000 cosmos_curate {{code_dir_str}}/cosmos_curate
 COPY --chown=1000:1000 tests {{code_dir_str}}/tests
 COPY --chown=1000:1000 pytest.ini .coveragerc {{code_dir_str}}/
+COPY --chown=1000:1000 README.md ATTRIBUTIONS.md {{code_dir_str}}/
 
 # Copy additional code paths into the container
 {% for code_path in code_paths %}
