@@ -82,7 +82,7 @@ class McapCameraSensor:
     :mod:`cosmos_curate.core.sensors.scripts.make_mcap_from_mp4`.
 
     - MCAP timestamps are stored in nanoseconds in log_time
-    - canonical_timestamps_ns comes from log_time
+    - sensor_timestamps_ns comes from log_time
     - pts_stream is also reported in nanoseconds for MCAP-backed sensors, so
       unlike CameraSensor it is not a separate stream-native unit
 
@@ -236,8 +236,8 @@ class McapCameraSensor:
             empty_ts = np.empty(0, dtype=np.int64)
             empty_frames = np.empty((0, metadata.height, metadata.width, _RGB_CHANNELS), dtype=np.uint8)
             self._empty_camera_data = CameraData(
-                timestamps_ns=empty_ts,
-                canonical_timestamps_ns=empty_ts,
+                align_timestamps_ns=empty_ts,
+                sensor_timestamps_ns=empty_ts,
                 pts_stream=empty_ts,
                 frames=empty_frames,
                 metadata=metadata,
@@ -263,13 +263,13 @@ class McapCameraSensor:
             return self._get_empty_camera_data()
 
         frames = _decode_payload_rows(payloads, indices, width=width, height=height)
-        timestamps_ns = window[:-1]
-        canonical_timestamps_ns = log_times_ns[indices]
-        canonical_timestamps_ns.flags.writeable = False
+        align_timestamps_ns = window[:-1]
+        sensor_timestamps_ns = log_times_ns[indices]
+        sensor_timestamps_ns.flags.writeable = False
         return CameraData(
-            timestamps_ns=timestamps_ns,
-            canonical_timestamps_ns=canonical_timestamps_ns,
-            pts_stream=canonical_timestamps_ns,
+            align_timestamps_ns=align_timestamps_ns,
+            sensor_timestamps_ns=sensor_timestamps_ns,
+            pts_stream=sensor_timestamps_ns,
             frames=frames,
             metadata=self.video_metadata,
         )

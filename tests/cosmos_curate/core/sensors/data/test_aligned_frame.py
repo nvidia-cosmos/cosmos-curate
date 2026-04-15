@@ -32,8 +32,8 @@ from cosmos_curate.core.sensors.data.video import VideoMetadata
 class _FakeSensorData:
     """Minimal SensorData implementation for AlignedFrame invariant tests."""
 
-    timestamps_ns: npt.NDArray[np.int64]
-    canonical_timestamps_ns: npt.NDArray[np.int64]
+    align_timestamps_ns: npt.NDArray[np.int64]
+    sensor_timestamps_ns: npt.NDArray[np.int64]
 
 
 def _make_camera_data() -> CameraData:
@@ -52,26 +52,26 @@ def _make_camera_data() -> CameraData:
     timestamps = np.array([1], dtype=np.int64)
     frames = np.zeros((1, 1, 1, 3), dtype=np.uint8)
     return CameraData(
-        timestamps_ns=timestamps,
-        canonical_timestamps_ns=timestamps.copy(),
+        align_timestamps_ns=timestamps,
+        sensor_timestamps_ns=timestamps.copy(),
         pts_stream=timestamps.copy(),
         frames=frames,
         metadata=metadata,
     )
 
 
-def _make_fake_sensor_data(*, timestamps_len: int, canonical_len: int) -> SensorData:
+def _make_fake_sensor_data(*, timestamps_len: int, sensor_timestamps_len: int) -> SensorData:
     """Build a minimal SensorData with independently controlled lengths."""
     return _FakeSensorData(
-        timestamps_ns=np.arange(timestamps_len, dtype=np.int64),
-        canonical_timestamps_ns=np.arange(canonical_len, dtype=np.int64),
+        align_timestamps_ns=np.arange(timestamps_len, dtype=np.int64),
+        sensor_timestamps_ns=np.arange(sensor_timestamps_len, dtype=np.int64),
     )
 
 
 def test_aligned_frame_sensor_data_is_immutable() -> None:
     """AlignedFrame should not expose a mutable sensor_data mapping."""
     frame = AlignedFrame(
-        timestamps_ns=np.array([1], dtype=np.int64),
+        align_timestamps_ns=np.array([1], dtype=np.int64),
         sensor_data={"cam0": cast("SensorData", _make_camera_data())},
     )
 
@@ -83,7 +83,7 @@ def test_aligned_frame_contains_and_getitem() -> None:
     """AlignedFrame should support membership checks and keyed access."""
     camera_data = cast("SensorData", _make_camera_data())
     frame = AlignedFrame(
-        timestamps_ns=np.array([1], dtype=np.int64),
+        align_timestamps_ns=np.array([1], dtype=np.int64),
         sensor_data={"cam0": camera_data},
     )
 
@@ -95,7 +95,7 @@ def test_aligned_frame_contains_and_getitem() -> None:
 def test_aligned_frame_getitem_missing_key_raises_keyerror() -> None:
     """AlignedFrame should raise KeyError for missing sensor ids."""
     frame = AlignedFrame(
-        timestamps_ns=np.array([1], dtype=np.int64),
+        align_timestamps_ns=np.array([1], dtype=np.int64),
         sensor_data={"cam0": cast("SensorData", _make_camera_data())},
     )
 
@@ -103,28 +103,28 @@ def test_aligned_frame_getitem_missing_key_raises_keyerror() -> None:
         _ = frame["missing"]
 
 
-def test_aligned_frame_raises_on_sensor_timestamps_length_mismatch() -> None:
+def test_aligned_frame_raises_on_align_timestamps_length_mismatch() -> None:
     """AlignedFrame should reject sensor payloads with the wrong batch length."""
-    with pytest.raises(ValueError, match=r"sensor 'cam0' timestamps_ns length 1 != aligned frame length 2"):
+    with pytest.raises(ValueError, match=r"sensor 'cam0' align_timestamps_ns length 1 != aligned frame length 2"):
         AlignedFrame(
-            timestamps_ns=np.array([1, 2], dtype=np.int64),
-            sensor_data={"cam0": _make_fake_sensor_data(timestamps_len=1, canonical_len=1)},
+            align_timestamps_ns=np.array([1, 2], dtype=np.int64),
+            sensor_data={"cam0": _make_fake_sensor_data(timestamps_len=1, sensor_timestamps_len=1)},
         )
 
 
-def test_aligned_frame_raises_on_sensor_canonical_timestamps_length_mismatch() -> None:
-    """AlignedFrame should reject sensor payloads whose canonical timestamps length mismatches."""
+def test_aligned_frame_raises_on_sensor_timestamp_length_mismatch() -> None:
+    """AlignedFrame should reject sensor payloads whose sensor timestamp length mismatches."""
     sensor_data = _FakeSensorData(
-        timestamps_ns=np.array([1, 2], dtype=np.int64),
-        canonical_timestamps_ns=np.array([0], dtype=np.int64),
+        align_timestamps_ns=np.array([1, 2], dtype=np.int64),
+        sensor_timestamps_ns=np.array([0], dtype=np.int64),
     )
 
     with pytest.raises(
         ValueError,
-        match=r"sensor 'cam0' canonical_timestamps_ns length 1 != aligned frame length 2",
+        match=r"sensor 'cam0' sensor_timestamps_ns length 1 != aligned frame length 2",
     ):
         AlignedFrame(
-            timestamps_ns=np.array([1, 2], dtype=np.int64),
+            align_timestamps_ns=np.array([1, 2], dtype=np.int64),
             sensor_data={"cam0": cast("SensorData", sensor_data)},
         )
 
@@ -132,16 +132,16 @@ def test_aligned_frame_raises_on_sensor_canonical_timestamps_length_mismatch() -
 def test_aligned_frame_raises_when_sensor_reference_timestamps_do_not_match() -> None:
     """AlignedFrame should reject sensor payloads sampled on the wrong reference timestamps."""
     sensor_data = _FakeSensorData(
-        timestamps_ns=np.array([10, 30], dtype=np.int64),
-        canonical_timestamps_ns=np.array([11, 31], dtype=np.int64),
+        align_timestamps_ns=np.array([10, 30], dtype=np.int64),
+        sensor_timestamps_ns=np.array([11, 31], dtype=np.int64),
     )
 
     with pytest.raises(
         ValueError,
-        match=r"sensor 'cam0' timestamps_ns must exactly match aligned frame timestamps_ns",
+        match=r"sensor 'cam0' align_timestamps_ns must exactly match aligned frame align_timestamps_ns",
     ):
         AlignedFrame(
-            timestamps_ns=np.array([10, 20], dtype=np.int64),
+            align_timestamps_ns=np.array([10, 20], dtype=np.int64),
             sensor_data={"cam0": cast("SensorData", sensor_data)},
         )
 
@@ -149,35 +149,35 @@ def test_aligned_frame_raises_when_sensor_reference_timestamps_do_not_match() ->
 def test_aligned_frame_timestamps_are_readonly() -> None:
     """AlignedFrame should expose a read-only reference timestamp array."""
     frame = AlignedFrame(
-        timestamps_ns=np.array([1], dtype=np.int64),
+        align_timestamps_ns=np.array([1], dtype=np.int64),
         sensor_data={"cam0": cast("SensorData", _make_camera_data())},
     )
 
     with pytest.raises(ValueError, match="assignment destination is read-only"):
-        frame.timestamps_ns[0] = 2
+        frame.align_timestamps_ns[0] = 2
 
 
 @pytest.mark.parametrize(
-    ("timestamps_ns", "match"),
+    ("align_timestamps_ns", "match"),
     [
-        (np.array([[1]], dtype=np.int64), r"timestamps_ns must be 1-D"),
+        (np.array([[1]], dtype=np.int64), r"align_timestamps_ns must be 1-D"),
         (
             np.array([2, 1], dtype=np.int64),
-            r"timestamps_ns must be strictly sorted in ascending order with no duplicates",
+            r"align_timestamps_ns must be strictly sorted in ascending order with no duplicates",
         ),
         (
             np.array([1, 1], dtype=np.int64),
-            r"timestamps_ns must be strictly sorted in ascending order with no duplicates",
+            r"align_timestamps_ns must be strictly sorted in ascending order with no duplicates",
         ),
     ],
 )
 def test_aligned_frame_rejects_invalid_reference_timeline(
-    timestamps_ns: npt.NDArray[np.int64],
+    align_timestamps_ns: npt.NDArray[np.int64],
     match: str,
 ) -> None:
     """AlignedFrame should require a 1-D strictly increasing reference timeline."""
     with pytest.raises(ValueError, match=match):
         AlignedFrame(
-            timestamps_ns=timestamps_ns,
+            align_timestamps_ns=align_timestamps_ns,
             sensor_data={"cam0": cast("SensorData", _make_camera_data())},
         )

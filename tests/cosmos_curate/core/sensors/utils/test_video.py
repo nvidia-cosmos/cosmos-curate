@@ -609,6 +609,7 @@ def test_video_index_raises_on_unsorted_keyframe_timestamps() -> None:
 @pytest.mark.parametrize(
     ("field", "value", "match"),
     [
+        ("offset", np.array([[0, 10]], dtype=np.int64), r"offset must be 1-D"),
         ("pts_ns", np.array([0, 1], dtype=np.int32), r"pts_ns must have dtype int64"),
         ("pts_stream", np.array([0, 1], dtype=np.int32), r"pts_stream must have dtype int64"),
         ("is_keyframe", np.array([1, 0], dtype=np.int64), r"is_keyframe must have dtype bool"),

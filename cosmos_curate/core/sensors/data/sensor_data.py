@@ -25,10 +25,12 @@ class SensorData(Protocol):
     """Minimum interface for all sensor data structures.
 
     Attributes:
-        timestamps_ns: 1-D reference timeline (ns) each sample row is aligned to; same length as canonical_timestamps_ns
-        canonical_timestamps_ns: 1-D sensor-reported times (ns); may differ from timestamps_ns (resampling/grid)
+        align_timestamps_ns: 1-D alignment timeline (ns) each row is aligned to;
+            same length as ``sensor_timestamps_ns``
+        sensor_timestamps_ns: 1-D sensor-reported times (ns); may differ from
+            ``align_timestamps_ns`` due to resampling/grid alignment
 
     """
 
-    timestamps_ns: npt.NDArray[np.int64]
-    canonical_timestamps_ns: npt.NDArray[np.int64]
+    align_timestamps_ns: npt.NDArray[np.int64]
+    sensor_timestamps_ns: npt.NDArray[np.int64]

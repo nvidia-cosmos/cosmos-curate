@@ -24,7 +24,7 @@ import numpy.typing as npt
 
 from cosmos_curate.core.sensors.data.sensor_data import SensorData
 from cosmos_curate.core.sensors.utils.helpers import make_numpy_fields_readonly
-from cosmos_curate.core.sensors.utils.validation import require_strictly_increasing
+from cosmos_curate.core.sensors.utils.validation import strictly_increasing_int64_array
 
 
 @attrs.define(hash=False, frozen=True)
@@ -32,42 +32,42 @@ class AlignedFrame:
     """Single bundle of sensor data aligned to a reference timeline.
 
     Attributes:
-        timestamps_ns: shared 1-D reference timestamps (ns); each sensor's timestamps_ns must match this array exactly
+        align_timestamps_ns: shared 1-D alignment timestamps (ns); each sensor's
+            ``align_timestamps_ns`` must match this array exactly
         sensor_data: a mapping of sensor data by sensor id
 
     """
 
     __hash__ = None  # type: ignore[assignment]
 
-    timestamps_ns: npt.NDArray[np.int64]  # sampled timestamps, shape (N,) nanoseconds
-    sensor_data: Mapping[str, SensorData]
+    align_timestamps_ns: npt.NDArray[np.int64] = attrs.field(validator=strictly_increasing_int64_array)
+    sensor_data: Mapping[str, SensorData] = attrs.field()
 
-    def __attrs_post_init__(self) -> None:
-        """Post-initialization."""
-        if self.timestamps_ns.ndim != 1:
-            msg = f"timestamps_ns must be 1-D, got ndim={self.timestamps_ns.ndim}"
-            raise ValueError(msg)
-        require_strictly_increasing("timestamps_ns", self.timestamps_ns)
-        make_numpy_fields_readonly(self)
-        expected_len = len(self.timestamps_ns)
-        sensor_data = dict(self.sensor_data)
-        for sensor_id, data in sensor_data.items():
-            if len(data.timestamps_ns) != expected_len:
+    @sensor_data.validator
+    def _validate_sensor_alignment(self, _attribute: object, value: Mapping[str, SensorData]) -> None:
+        """Validate that each sensor payload matches the aligned frame timeline."""
+        expected_len = len(self.align_timestamps_ns)
+        for sensor_id, data in value.items():
+            if len(data.align_timestamps_ns) != expected_len:
                 msg = (
-                    f"sensor {sensor_id!r} timestamps_ns length {len(data.timestamps_ns)} "
+                    f"sensor {sensor_id!r} align_timestamps_ns length {len(data.align_timestamps_ns)} "
                     f"!= aligned frame length {expected_len}"
                 )
                 raise ValueError(msg)
-            if not np.array_equal(data.timestamps_ns, self.timestamps_ns):
-                msg = f"sensor {sensor_id!r} timestamps_ns must exactly match aligned frame timestamps_ns"
+            if not np.array_equal(data.align_timestamps_ns, self.align_timestamps_ns):
+                msg = f"sensor {sensor_id!r} align_timestamps_ns must exactly match aligned frame align_timestamps_ns"
                 raise ValueError(msg)
-            if len(data.canonical_timestamps_ns) != expected_len:
+            if len(data.sensor_timestamps_ns) != expected_len:
                 msg = (
-                    f"sensor {sensor_id!r} canonical_timestamps_ns length "
-                    f"{len(data.canonical_timestamps_ns)} != aligned frame length {expected_len}"
+                    f"sensor {sensor_id!r} sensor_timestamps_ns length "
+                    f"{len(data.sensor_timestamps_ns)} != aligned frame length {expected_len}"
                 )
                 raise ValueError(msg)
 
+    def __attrs_post_init__(self) -> None:
+        """Post-initialization."""
+        make_numpy_fields_readonly(self)
+        sensor_data = dict(self.sensor_data)
         # Make sensor_data immutable
         object.__setattr__(self, "sensor_data", MappingProxyType(sensor_data))
 

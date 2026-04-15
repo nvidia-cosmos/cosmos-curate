@@ -45,8 +45,8 @@ def _make_camera_data() -> CameraData:
     timestamps = np.array([1], dtype=np.int64)
     frames = np.zeros((1, 1, 1, 3), dtype=np.uint8)
     return CameraData(
-        timestamps_ns=timestamps,
-        canonical_timestamps_ns=timestamps.copy(),
+        align_timestamps_ns=timestamps,
+        sensor_timestamps_ns=timestamps.copy(),
         pts_stream=timestamps.copy(),
         frames=frames,
         metadata=_make_metadata(),
@@ -66,8 +66,8 @@ def test_camera_data_raises_on_motion_vector_length_mismatch() -> None:
 
     with pytest.raises(ValueError, match=r"motion_vectors\.frames length 2 != frames length 1"):
         CameraData(
-            timestamps_ns=timestamps,
-            canonical_timestamps_ns=timestamps.copy(),
+            align_timestamps_ns=timestamps,
+            sensor_timestamps_ns=timestamps.copy(),
             pts_stream=timestamps.copy(),
             frames=frames,
             metadata=_make_metadata(),
@@ -79,8 +79,8 @@ def test_camera_data_raises_on_array_length_mismatch() -> None:
     """CameraData should reject payloads whose arrays disagree on batch length."""
     with pytest.raises(ValueError, match=r"All arrays must be the same length"):
         CameraData(
-            timestamps_ns=np.array([1, 2], dtype=np.int64),
-            canonical_timestamps_ns=np.array([1], dtype=np.int64),
+            align_timestamps_ns=np.array([1, 2], dtype=np.int64),
+            sensor_timestamps_ns=np.array([1], dtype=np.int64),
             pts_stream=np.array([1], dtype=np.int64),
             frames=np.zeros((1, 1, 1, 3), dtype=np.uint8),
             metadata=_make_metadata(),
@@ -92,10 +92,10 @@ def test_camera_data_arrays_are_readonly() -> None:
     camera_data = _make_camera_data()
 
     with pytest.raises(ValueError, match="assignment destination is read-only"):
-        camera_data.timestamps_ns[0] = 2
+        camera_data.align_timestamps_ns[0] = 2
 
     with pytest.raises(ValueError, match="assignment destination is read-only"):
-        camera_data.canonical_timestamps_ns[0] = 2
+        camera_data.sensor_timestamps_ns[0] = 2
 
     with pytest.raises(ValueError, match="assignment destination is read-only"):
         camera_data.pts_stream[0] = 2
@@ -105,16 +105,16 @@ def test_camera_data_arrays_are_readonly() -> None:
 
 
 def test_camera_data_allows_repeated_canonical_and_pts_stream_values() -> None:
-    """Repeated sampled camera frames should still form a valid CameraData batch."""
+    """Repeated sensor timestamps and pts_stream values should still form a valid CameraData batch."""
     camera_data = CameraData(
-        timestamps_ns=np.array([100, 200, 300], dtype=np.int64),
-        canonical_timestamps_ns=np.array([110, 110, 310], dtype=np.int64),
+        align_timestamps_ns=np.array([100, 200, 300], dtype=np.int64),
+        sensor_timestamps_ns=np.array([110, 110, 310], dtype=np.int64),
         pts_stream=np.array([10, 10, 30], dtype=np.int64),
         frames=np.zeros((3, 1, 1, 3), dtype=np.uint8),
         metadata=_make_metadata(),
     )
 
-    np.testing.assert_array_equal(camera_data.canonical_timestamps_ns, np.array([110, 110, 310], dtype=np.int64))
+    np.testing.assert_array_equal(camera_data.sensor_timestamps_ns, np.array([110, 110, 310], dtype=np.int64))
     np.testing.assert_array_equal(camera_data.pts_stream, np.array([10, 10, 30], dtype=np.int64))
 
 
@@ -150,8 +150,8 @@ def test_camera_data_accepts_matching_motion_vectors() -> None:
     )
 
     camera_data = CameraData(
-        timestamps_ns=np.array([1, 2], dtype=np.int64),
-        canonical_timestamps_ns=np.array([1, 2], dtype=np.int64),
+        align_timestamps_ns=np.array([1, 2], dtype=np.int64),
+        sensor_timestamps_ns=np.array([1, 2], dtype=np.int64),
         pts_stream=np.array([1, 2], dtype=np.int64),
         frames=np.zeros((2, 1, 1, 3), dtype=np.uint8),
         metadata=_make_metadata(),
@@ -162,22 +162,32 @@ def test_camera_data_accepts_matching_motion_vectors() -> None:
 
 
 @pytest.mark.parametrize(
-    ("timestamps_ns", "canonical_timestamps_ns", "pts_stream", "match"),
+    ("align_timestamps_ns", "sensor_timestamps_ns", "pts_stream", "match"),
     [
-        (np.zeros((1, 1), dtype=np.int64), np.zeros(1, dtype=np.int64), np.zeros(1, dtype=np.int64), r"timestamps_ns"),
-        (np.zeros(1, dtype=np.int64), np.zeros((1, 1), dtype=np.int64), np.zeros(1, dtype=np.int64), r"canonical"),
+        (
+            np.zeros((1, 1), dtype=np.int64),
+            np.zeros(1, dtype=np.int64),
+            np.zeros(1, dtype=np.int64),
+            r"align_timestamps_ns",
+        ),
+        (
+            np.zeros(1, dtype=np.int64),
+            np.zeros((1, 1), dtype=np.int64),
+            np.zeros(1, dtype=np.int64),
+            r"sensor_timestamps_ns",
+        ),
         (np.zeros(1, dtype=np.int64), np.zeros(1, dtype=np.int64), np.zeros((1, 1), dtype=np.int64), r"pts_stream"),
         (
             np.zeros(1, dtype=np.int32),
             np.zeros(1, dtype=np.int64),
             np.zeros(1, dtype=np.int64),
-            r"timestamps_ns must have dtype int64",
+            r"align_timestamps_ns must have dtype int64",
         ),
         (
             np.zeros(1, dtype=np.int64),
             np.zeros(1, dtype=np.int32),
             np.zeros(1, dtype=np.int64),
-            r"canonical_timestamps_ns must have dtype int64",
+            r"sensor_timestamps_ns must have dtype int64",
         ),
         (
             np.zeros(1, dtype=np.int64),
@@ -188,16 +198,16 @@ def test_camera_data_accepts_matching_motion_vectors() -> None:
     ],
 )
 def test_camera_data_rejects_non_1d_timestamp_arrays(
-    timestamps_ns: npt.NDArray[np.int64],
-    canonical_timestamps_ns: npt.NDArray[np.int64],
+    align_timestamps_ns: npt.NDArray[np.int64],
+    sensor_timestamps_ns: npt.NDArray[np.int64],
     pts_stream: npt.NDArray[np.int64],
     match: str,
 ) -> None:
     """CameraData should reject timestamp arrays with invalid shape or dtype."""
     with pytest.raises(ValueError, match=match):
         CameraData(
-            timestamps_ns=timestamps_ns,
-            canonical_timestamps_ns=canonical_timestamps_ns,
+            align_timestamps_ns=align_timestamps_ns,
+            sensor_timestamps_ns=sensor_timestamps_ns,
             pts_stream=pts_stream,
             frames=np.zeros((1, 1, 1, 3), dtype=np.uint8),
             metadata=_make_metadata(),
@@ -205,19 +215,19 @@ def test_camera_data_rejects_non_1d_timestamp_arrays(
 
 
 @pytest.mark.parametrize(
-    ("timestamps_ns", "canonical_timestamps_ns", "pts_stream", "match"),
+    ("align_timestamps_ns", "sensor_timestamps_ns", "pts_stream", "match"),
     [
         (
             np.array([2, 1], dtype=np.int64),
             np.array([1, 1], dtype=np.int64),
             np.array([1, 1], dtype=np.int64),
-            r"timestamps_ns must be strictly sorted in ascending order with no duplicates",
+            r"align_timestamps_ns must be strictly sorted in ascending order with no duplicates",
         ),
         (
             np.array([1, 2], dtype=np.int64),
             np.array([2, 1], dtype=np.int64),
             np.array([1, 1], dtype=np.int64),
-            r"canonical_timestamps_ns must be sorted in ascending order",
+            r"sensor_timestamps_ns must be sorted in ascending order",
         ),
         (
             np.array([1, 2], dtype=np.int64),
@@ -228,16 +238,16 @@ def test_camera_data_rejects_non_1d_timestamp_arrays(
     ],
 )
 def test_camera_data_rejects_nonmonotonic_timestamp_fields(
-    timestamps_ns: npt.NDArray[np.int64],
-    canonical_timestamps_ns: npt.NDArray[np.int64],
+    align_timestamps_ns: npt.NDArray[np.int64],
+    sensor_timestamps_ns: npt.NDArray[np.int64],
     pts_stream: npt.NDArray[np.int64],
     match: str,
 ) -> None:
     """CameraData should enforce its temporal ordering contract."""
     with pytest.raises(ValueError, match=match):
         CameraData(
-            timestamps_ns=timestamps_ns,
-            canonical_timestamps_ns=canonical_timestamps_ns,
+            align_timestamps_ns=align_timestamps_ns,
+            sensor_timestamps_ns=sensor_timestamps_ns,
             pts_stream=pts_stream,
             frames=np.zeros((2, 1, 1, 3), dtype=np.uint8),
             metadata=_make_metadata(),
@@ -260,8 +270,8 @@ def test_camera_data_rejects_invalid_frame_tensor(
     """CameraData should validate frame rank, shape, and dtype."""
     with pytest.raises(ValueError, match=match):
         CameraData(
-            timestamps_ns=np.array([1], dtype=np.int64),
-            canonical_timestamps_ns=np.array([1], dtype=np.int64),
+            align_timestamps_ns=np.array([1], dtype=np.int64),
+            sensor_timestamps_ns=np.array([1], dtype=np.int64),
             pts_stream=np.array([1], dtype=np.int64),
             frames=frames,
             metadata=_make_metadata(),

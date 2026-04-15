@@ -225,8 +225,8 @@ def test_mcap_camera_sensor_samples_window_and_reports_nanosecond_pts_stream(
     assert len(sampling_calls) == 1
     np.testing.assert_array_equal(sampling_calls[0][0], np.array([100, 300], dtype=np.int64))
     np.testing.assert_array_equal(sampling_calls[0][1], np.array([100, 200, 300, 301], dtype=np.int64))
-    np.testing.assert_array_equal(batch.timestamps_ns, np.array([100, 200, 300], dtype=np.int64))
-    np.testing.assert_array_equal(batch.canonical_timestamps_ns, np.array([100, 100, 300], dtype=np.int64))
+    np.testing.assert_array_equal(batch.align_timestamps_ns, np.array([100, 200, 300], dtype=np.int64))
+    np.testing.assert_array_equal(batch.sensor_timestamps_ns, np.array([100, 100, 300], dtype=np.int64))
     np.testing.assert_array_equal(batch.pts_stream, np.array([100, 100, 300], dtype=np.int64))
     assert batch.frames.shape == (3, 2, 2, 3)
 
@@ -279,8 +279,8 @@ def test_mcap_camera_sensor_returns_empty_batch_when_window_has_no_messages(
 
     batch = next(sensor.sample(SamplingSpec(grid=grid)))
 
-    assert batch.timestamps_ns.shape == (0,)
-    assert batch.canonical_timestamps_ns.shape == (0,)
+    assert batch.align_timestamps_ns.shape == (0,)
+    assert batch.sensor_timestamps_ns.shape == (0,)
     assert batch.pts_stream.shape == (0,)
     assert batch.frames.shape == (0, 2, 2, 3)
 
@@ -624,7 +624,7 @@ def test_mcap_camera_sensor_sample_window_returns_empty_when_sampler_selects_no_
         spec=SamplingSpec(grid=SamplingGrid(np.array([100, 200], dtype=np.int64), 1_000, 1_000)),
     )
 
-    assert batch.timestamps_ns.shape == (0,)
+    assert batch.align_timestamps_ns.shape == (0,)
     assert batch.frames.shape == (0, 2, 2, 3)
 
 
@@ -658,8 +658,8 @@ def test_mcap_camera_sensor_sample_yields_empty_batch_for_empty_window(
 
     batch = next(sensor.sample(spec))  # type: ignore[arg-type]
 
-    assert batch.timestamps_ns.shape == (0,)
-    assert batch.canonical_timestamps_ns.shape == (0,)
+    assert batch.align_timestamps_ns.shape == (0,)
+    assert batch.sensor_timestamps_ns.shape == (0,)
     assert batch.pts_stream.shape == (0,)
     assert batch.frames.shape == (0, 2, 2, 3)
 

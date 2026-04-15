@@ -22,7 +22,7 @@ import numpy as np
 import numpy.typing as npt
 
 from cosmos_curate.core.sensors.utils.helpers import make_numpy_fields_readonly
-from cosmos_curate.core.sensors.utils.validation import require_strictly_increasing
+from cosmos_curate.core.sensors.utils.validation import bool_array, int64_array, strictly_increasing_int64_array
 
 VIDEO_METADATA_VERSION = "1"
 
@@ -77,14 +77,14 @@ class VideoIndex:
 
     __hash__ = None  # type: ignore[assignment]
 
-    offset: npt.NDArray[np.int64]
-    size: npt.NDArray[np.int64]
-    pts_ns: npt.NDArray[np.int64]
-    pts_stream: npt.NDArray[np.int64]
-    is_keyframe: npt.NDArray[np.bool_]
-    is_discard: npt.NDArray[np.bool_]
-    kf_pts_ns: npt.NDArray[np.int64]
-    kf_pts_stream: npt.NDArray[np.int64]
+    offset: npt.NDArray[np.int64] = attrs.field(validator=int64_array)
+    size: npt.NDArray[np.int64] = attrs.field(validator=int64_array)
+    pts_ns: npt.NDArray[np.int64] = attrs.field(validator=strictly_increasing_int64_array)
+    pts_stream: npt.NDArray[np.int64] = attrs.field(validator=strictly_increasing_int64_array)
+    is_keyframe: npt.NDArray[np.bool_] = attrs.field(validator=bool_array)
+    is_discard: npt.NDArray[np.bool_] = attrs.field(validator=bool_array)
+    kf_pts_ns: npt.NDArray[np.int64] = attrs.field(validator=strictly_increasing_int64_array)
+    kf_pts_stream: npt.NDArray[np.int64] = attrs.field(validator=strictly_increasing_int64_array)
     time_base: Fraction
     _display_mask: npt.NDArray[np.bool_] = attrs.field(init=False, repr=False, eq=False)
     _display_pts_ns: npt.NDArray[np.int64] = attrs.field(init=False, repr=False, eq=False)
@@ -92,23 +92,6 @@ class VideoIndex:
 
     def __attrs_post_init__(self) -> None:
         """Post-initialization checks."""
-        for name, arr, dtype in (
-            ("offset", self.offset, np.int64),
-            ("size", self.size, np.int64),
-            ("pts_ns", self.pts_ns, np.int64),
-            ("pts_stream", self.pts_stream, np.int64),
-            ("is_keyframe", self.is_keyframe, np.bool_),
-            ("is_discard", self.is_discard, np.bool_),
-            ("kf_pts_ns", self.kf_pts_ns, np.int64),
-            ("kf_pts_stream", self.kf_pts_stream, np.int64),
-        ):
-            if arr.ndim != 1:
-                msg = f"{name} must be 1-D, got ndim={arr.ndim}"
-                raise ValueError(msg)
-            if arr.dtype != dtype:
-                msg = f"{name} must have dtype {np.dtype(dtype).name}, got {arr.dtype}"
-                raise ValueError(msg)
-
         lens = (
             len(self.offset),
             len(self.size),
@@ -135,11 +118,6 @@ class VideoIndex:
         if len(self.kf_pts_ns) != int(self.is_keyframe.sum()):
             error_msg = "kf_pts_ns length must equal number of keyframes in is_keyframe"
             raise ValueError(error_msg)
-
-        require_strictly_increasing("pts_ns", self.pts_ns)
-        require_strictly_increasing("pts_stream", self.pts_stream)
-        require_strictly_increasing("kf_pts_ns", self.kf_pts_ns)
-        require_strictly_increasing("kf_pts_stream", self.kf_pts_stream)
 
         expected_kf_pts_ns = self.pts_ns[self.is_keyframe]
         if not np.array_equal(self.kf_pts_ns, expected_kf_pts_ns):

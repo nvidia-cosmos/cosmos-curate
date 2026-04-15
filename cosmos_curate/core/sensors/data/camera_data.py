@@ -21,7 +21,11 @@ import numpy.typing as npt
 
 from cosmos_curate.core.sensors.data.video import VideoMetadata
 from cosmos_curate.core.sensors.utils.helpers import make_numpy_fields_readonly
-from cosmos_curate.core.sensors.utils.validation import require_nondecreasing, require_strictly_increasing
+from cosmos_curate.core.sensors.utils.validation import (
+    nondecreasing_int64_array,
+    strictly_increasing_int64_array,
+    uint8_frame_batch,
+)
 
 _MOTION_VECTOR_FRAME_NDIM = 2
 _MOTION_VECTOR_COLUMNS = 10
@@ -67,13 +71,13 @@ class CameraData:
     Satisfies ``SensorData`` (``cosmos_curate.core.sensors.data.sensor_data``).
 
     Attributes:
-        timestamps_ns: 1-D reference timeline (ns) each sample row is aligned to; length ``N``,
+        align_timestamps_ns: 1-D alignment timeline (ns) each sample row is aligned to; length ``N``,
             row ``i`` with ``frames[i]``
-        canonical_timestamps_ns: 1-D sensor-reported times (ns); may differ from ``timestamps_ns``
+        sensor_timestamps_ns: 1-D sensor-reported times (ns); may differ from ``align_timestamps_ns``
             (resampling/grid); length ``N``
         pts_stream: 1-D presentation timestamps in producer-specific int units, length ``N``;
             ``CameraSensor`` uses stream-native ``time_base`` for exact seeks; ``McapCameraSensor``
-            uses nanoseconds matching ``canonical_timestamps_ns`` (example sensor only; production
+            uses nanoseconds matching ``sensor_timestamps_ns`` (example sensor only; production
             ``pts_stream`` is expected to follow the ``CameraSensor`` contract)
         frames: decoded RGB, shape ``(N, H, W, 3)``, ``uint8``; row ``i`` is the image at index ``i``
         metadata: stream geometry and related fields (``VideoMetadata``)
@@ -82,52 +86,30 @@ class CameraData:
     """
 
     __hash__ = None  # type: ignore[assignment]
-    timestamps_ns: npt.NDArray[np.int64]  # (N,) reference sample times, nanoseconds
-    canonical_timestamps_ns: npt.NDArray[np.int64]  # (N,) actual frame times, nanoseconds
-    pts_stream: npt.NDArray[np.int64]  # (N,) sensor-specific frame PTS units; see class docstring
+    align_timestamps_ns: npt.NDArray[np.int64] = attrs.field(validator=strictly_increasing_int64_array)
+    sensor_timestamps_ns: npt.NDArray[np.int64] = attrs.field(validator=nondecreasing_int64_array)
+    pts_stream: npt.NDArray[np.int64] = attrs.field(validator=nondecreasing_int64_array)
 
-    frames: npt.NDArray[np.uint8]  # (N, H, W, 3) RGB
+    frames: npt.NDArray[np.uint8] = attrs.field(validator=uint8_frame_batch)
     metadata: VideoMetadata
     motion_vectors: MotionVectorData | None = None  # optional; requires decoder with export_mvs
 
     def __attrs_post_init__(self) -> None:
         """Post-initialization checks."""
-        for name, arr in (
-            ("timestamps_ns", self.timestamps_ns),
-            ("canonical_timestamps_ns", self.canonical_timestamps_ns),
-            ("pts_stream", self.pts_stream),
-        ):
-            if arr.ndim != 1:
-                msg = f"{name} must be 1-D, got ndim={arr.ndim}"
-                raise ValueError(msg)
-            if arr.dtype != np.int64:
-                msg = f"{name} must have dtype int64, got {arr.dtype}"
-                raise ValueError(msg)
-
-        require_strictly_increasing("timestamps_ns", self.timestamps_ns)
-        require_nondecreasing("canonical_timestamps_ns", self.canonical_timestamps_ns)
-        require_nondecreasing("pts_stream", self.pts_stream)
-
-        if self.frames.ndim != _CAMERA_FRAME_NDIM:
-            msg = f"frames must be 4-D with shape (N, H, W, 3), got ndim={self.frames.ndim}"
-            raise ValueError(msg)
         if self.frames.shape[1:] != (self.metadata.height, self.metadata.width, _RGB_CHANNELS):
             msg = (
                 "frames must have shape "
                 f"(N, {self.metadata.height}, {self.metadata.width}, {_RGB_CHANNELS}), got {self.frames.shape}"
             )
             raise ValueError(msg)
-        if self.frames.dtype != np.uint8:
-            msg = f"frames must have dtype uint8, got {self.frames.dtype}"
-            raise ValueError(msg)
 
         if not (
-            len(self.timestamps_ns) == len(self.canonical_timestamps_ns) == len(self.pts_stream) == len(self.frames)
+            len(self.align_timestamps_ns) == len(self.sensor_timestamps_ns) == len(self.pts_stream) == len(self.frames)
         ):
             error_msg = (
                 "All arrays must be the same length: "
-                f"timestamps_ns={len(self.timestamps_ns)} "
-                f"canonical_timestamps_ns={len(self.canonical_timestamps_ns)} "
+                f"align_timestamps_ns={len(self.align_timestamps_ns)} "
+                f"sensor_timestamps_ns={len(self.sensor_timestamps_ns)} "
                 f"pts_stream={len(self.pts_stream)} "
                 f"frames={len(self.frames)}"
             )

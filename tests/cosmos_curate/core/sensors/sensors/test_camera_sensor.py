@@ -226,10 +226,10 @@ def test_sample_boundary_timestamp_belongs_to_next_window(synthetic_video: io.By
     batches = list(sensor.sample(spec))
     assert len(batches) == 2
 
-    np.testing.assert_array_equal(batches[0].timestamps_ns, pts[:3])
-    np.testing.assert_array_equal(batches[1].timestamps_ns, pts[3:6])
-    np.testing.assert_array_equal(batches[0].canonical_timestamps_ns, pts[:3])
-    np.testing.assert_array_equal(batches[1].canonical_timestamps_ns, pts[3:6])
+    np.testing.assert_array_equal(batches[0].align_timestamps_ns, pts[:3])
+    np.testing.assert_array_equal(batches[1].align_timestamps_ns, pts[3:6])
+    np.testing.assert_array_equal(batches[0].sensor_timestamps_ns, pts[:3])
+    np.testing.assert_array_equal(batches[1].sensor_timestamps_ns, pts[3:6])
 
 
 def test_sample_singleton_window_is_boundary_only() -> None:
@@ -255,8 +255,8 @@ def test_sample_singleton_window_is_boundary_only() -> None:
 
     batches = list(sensor.sample(spec))
     assert len(batches) == 1
-    assert batches[0].timestamps_ns.shape == (0,)
-    assert batches[0].canonical_timestamps_ns.shape == (0,)
+    assert batches[0].align_timestamps_ns.shape == (0,)
+    assert batches[0].sensor_timestamps_ns.shape == (0,)
     assert batches[0].pts_stream.shape == (0,)
     assert batches[0].frames.shape == (0, 16, 16, 3)
 
@@ -352,8 +352,8 @@ def test_camera_sensor_uses_only_displayable_frames(
     batches = list(sensor.sample(spec))
 
     assert len(batches) == 1
-    np.testing.assert_array_equal(batches[0].timestamps_ns, np.array([100, 200, 300], dtype=np.int64))
-    np.testing.assert_array_equal(batches[0].canonical_timestamps_ns, np.array([10, 10, 30], dtype=np.int64))
+    np.testing.assert_array_equal(batches[0].align_timestamps_ns, np.array([100, 200, 300], dtype=np.int64))
+    np.testing.assert_array_equal(batches[0].sensor_timestamps_ns, np.array([10, 10, 30], dtype=np.int64))
     np.testing.assert_array_equal(batches[0].pts_stream, np.array([10, 10, 30], dtype=np.int64))
     assert batches[0].frames.shape == (3, 2, 2, 3)
     assert decode_calls == [[(10, [(10, 2), (30, 1)])]]
@@ -517,12 +517,15 @@ def test_camera_sensor_expands_repeated_picks_into_aligned_rows(
 
     batch = next(sensor.sample(SamplingSpec(grid=grid)))
 
-    np.testing.assert_array_equal(batch.timestamps_ns, np.array([100, 200, 300], dtype=np.int64))
-    np.testing.assert_array_equal(batch.canonical_timestamps_ns, np.array([10, 10, 30], dtype=np.int64))
+    np.testing.assert_array_equal(batch.align_timestamps_ns, np.array([100, 200, 300], dtype=np.int64))
+    np.testing.assert_array_equal(batch.sensor_timestamps_ns, np.array([10, 10, 30], dtype=np.int64))
     np.testing.assert_array_equal(batch.pts_stream, np.array([10, 10, 30], dtype=np.int64))
     assert batch.frames.shape == (3, 2, 2, 3)
     assert (
-        len(batch.timestamps_ns) == len(batch.canonical_timestamps_ns) == len(batch.pts_stream) == batch.frames.shape[0]
+        len(batch.align_timestamps_ns)
+        == len(batch.sensor_timestamps_ns)
+        == len(batch.pts_stream)
+        == batch.frames.shape[0]
     )
     assert decode_calls == [[(10, [(10, 2), (30, 1)])]]
 
@@ -587,8 +590,8 @@ def test_camera_sensor_returns_empty_when_window_has_no_displayable_matches(
 
     batch = next(sensor.sample(SamplingSpec(grid=grid)))
 
-    assert batch.timestamps_ns.shape == (0,)
-    assert batch.canonical_timestamps_ns.shape == (0,)
+    assert batch.align_timestamps_ns.shape == (0,)
+    assert batch.sensor_timestamps_ns.shape == (0,)
     assert batch.pts_stream.shape == (0,)
     assert batch.frames.shape == (0, 2, 2, 3)
     assert decode_calls == []
@@ -718,7 +721,7 @@ def test_camera_sensor_uses_display_pts_stream_sidecar_alignment(
     batch = next(sensor.sample(SamplingSpec(grid=grid)))
 
     np.testing.assert_array_equal(batch.pts_stream, np.array([10, 30], dtype=np.int64))
-    np.testing.assert_array_equal(batch.canonical_timestamps_ns, np.array([10, 30], dtype=np.int64))
+    np.testing.assert_array_equal(batch.sensor_timestamps_ns, np.array([10, 30], dtype=np.int64))
     assert 20 not in batch.pts_stream.tolist()
 
 
@@ -815,4 +818,4 @@ def test_camera_sensor_sample_supports_gpu_decode_config(
     assert gpu_open_calls[0][1] == 0
     assert gpu_open_calls[0][2] is decode_config
     assert gpu_open_calls[0][3] is None
-    np.testing.assert_array_equal(batch.timestamps_ns, np.array([100, 200], dtype=np.int64))
+    np.testing.assert_array_equal(batch.align_timestamps_ns, np.array([100, 200], dtype=np.int64))

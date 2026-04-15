@@ -174,8 +174,8 @@ class CameraSensor:
             empty_frames = np.empty((0, self._video_metadata.height, self._video_metadata.width, 3), dtype=np.uint8)
             empty_ts = np.empty(0, dtype=np.int64)
             self._empty_camera_data = CameraData(
-                timestamps_ns=empty_ts,
-                canonical_timestamps_ns=empty_ts,
+                align_timestamps_ns=empty_ts,
+                sensor_timestamps_ns=empty_ts,
                 pts_stream=empty_ts,
                 frames=empty_frames,
                 metadata=self._video_metadata,
@@ -241,8 +241,8 @@ class CameraSensor:
                 pts_stream_expanded = np.repeat(sampled_pts_stream, counts)
 
                 yield CameraData(
-                    timestamps_ns=window[:-1],
-                    canonical_timestamps_ns=pts_to_ns(pts_stream_expanded, decoder.time_base),
+                    align_timestamps_ns=window[:-1],
+                    sensor_timestamps_ns=pts_to_ns(pts_stream_expanded, decoder.time_base),
                     pts_stream=pts_stream_expanded,
                     frames=frames,
                     metadata=self._video_metadata,

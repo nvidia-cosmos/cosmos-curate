@@ -43,7 +43,7 @@ Examples of packets:
 
 **Avoid sensor-specific frame indices.** When a camera drops a frame, its frame indices no longer align with other cameras—e.g., primary frame 30 and left frame 29 may both correspond to t=1.0s. Downstream consumers that assume "index N = same moment across cameras" get off-by-one or off-by-few errors.
 
-**Use timestamps as the canonical identifier.** Each `AlignedFrame` carries `timestamps_ns` `(N,)` for the batch and per-sensor `canonical_timestamps_ns` inside each payload (e.g. `frame[sensor_id]`). Downstream code aligns on those arrays, not on opaque frame indices. For stream position (e.g., progress bars), use `enumerate(sensor_group.sample(spec))` with a **`SamplingSpec`** (see below).
+**Use timestamps as the canonical identifier.** Each `AlignedFrame` carries `align_timestamps_ns` `(N,)` for the batch and per-sensor `sensor_timestamps_ns` inside each payload (e.g. `frame[sensor_id]`). Downstream code aligns on those arrays, not on opaque frame indices. For stream position (e.g., progress bars), use `enumerate(sensor_group.sample(spec))` with a **`SamplingSpec`** (see below).
 
 ### Streaming Design
 
@@ -98,13 +98,13 @@ This library:
   │  - Each step: ``window`` from ``for window in spec.grid``, (N,)             │
   │  - Each sensor: next batch from ``sensor.sample(spec)`` (same spec)         │
   │  - ``spec.policy`` supplies tolerance / overlap rules for alignment QC      │
-  │  - ``AlignedFrame(timestamps_ns=window, sensor_data={id → …})``             │
+  │  - ``AlignedFrame(align_timestamps_ns=window[:-1], sensor_data={id → …})``  │
   └─────────────────────────────────────────────────────────────────────────────┘
                                           │
                                           ▼
   ┌─────────────────────────────────────────────────────────────────────────────┐
   │  AlignedFrame (batch, SoA)                                                  │
-  │  - timestamps_ns: (N,) reference timestamps (= that window)                 │
+  │  - align_timestamps_ns: (N,) alignment timestamps (= active window)         │
   │  - sensor_data: dict[str, SensorData] e.g. CameraData (SoA, len=N)          │
   └─────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -328,10 +328,10 @@ Concrete sensors implement **`sample(spec)`** as a **generator**. For each
 - the batch size is **`N = len(window) - 1`**
 
 - **Reference times** — Row ``i`` is requested at reference time
-  ``window[:-1][i]``. For ``CameraData``, ``timestamps_ns`` should match those
+  ``window[:-1][i]``. For ``CameraData``, ``align_timestamps_ns`` should match those
   active reference times.
-- **Canonical times** — ``canonical_timestamps_ns`` has shape ``(N,)``;
-  ``canonical_timestamps_ns[i]`` is the actual capture / message time chosen
+- **Sensor times** — ``sensor_timestamps_ns`` has shape ``(N,)``;
+  ``sensor_timestamps_ns[i]`` is the actual capture / message time chosen
   for row ``i`` (for example, the nearest neighbour to the active reference
   timestamp in the source stream).
 - **Payloads** — For cameras, ``frames`` has shape ``(N, H, W, 3)`` for RGB
@@ -340,8 +340,8 @@ Concrete sensors implement **`sample(spec)`** as a **generator**. For each
   with ``make_mcap_from_mp4``, **``H``** and **``W``** are read from the
   channel metadata on that topic.
 
-So **`len(window) - 1`**, **`len(timestamps_ns)`**,
-**`len(canonical_timestamps_ns)`**, and **`frames.shape[0]`** are the same
+So **`len(window) - 1`**, **`len(align_timestamps_ns)`**,
+**`len(sensor_timestamps_ns)`**, and **`frames.shape[0]`** are the same
 **`N`** for each yield. Supersampling (denser reference grid than the source
 rate) **duplicates rows** when multiple reference times map to the same source
 sample; subsampling uses a smaller **`N`** per window because the active
@@ -415,7 +415,7 @@ spec = SamplingSpec(grid=grid, policy=policy)  # optional policy; sole handle fo
 # Each frame will contain 1 or more sensor sources
 # Data from each sensor source will be aligned to the same reference timestamps
 for frame in sensor_group.sample(spec):
-    frame.timestamps_ns  # (N,) active reference timestamps for this batch
+    frame.align_timestamps_ns  # (N,) active alignment timestamps for this batch
     frame["cam0"]   # CameraData: frames (N, H, W, 3) uint8 RGB
     frame["cam1"]   # CameraData: same layout; H, W from stream metadata
     frame["imu0"]   # ImuData, SoA, preintegrated
@@ -428,8 +428,8 @@ for frame in sensor_group.sample(spec):
 On **`SamplingGrid`**, `timestamps_ns`, `stride_ns`, and `duration_ns` are
 `int` **nanoseconds** — aligned with MCAP's `log_time` / `publish_time`
 (uint64 on the wire) convention. On **`SamplingPolicy`**, `tolerance_ns` and
-similar fields use the same nanosecond unit so comparisons to reference and
-canonical times stay exact.
+similar fields use the same nanosecond unit so comparisons to alignment and
+sensor times stay exact.
 
 ### Dtype conventions
 
@@ -461,8 +461,8 @@ passes, so it is not a supported input to this library.
 - **Binary Parsers**: Parse binary data, like vendor-specific lidar data, or h265 encoded video packets, into easily handled Pythonic data formats like CameraData, LidarData, ImuData, etc.
 - **Sensors**: One per data source (CameraSensor, ImuSensor, GpsSensor, LidarSensor, etc.). Expose `start_ns`, `end_ns`, and **`sample(spec)`** — a generator over **`spec.grid`** **windows**. Each yield returns SoA with batch dimension **`N`**. Uses **`spec.policy`** when validating matches (e.g. tolerance). Each sensor type implements its own sampling strategy (nearest, interpolate, preintegrate, bucket).
 - **SensorGroup**: Group of sensors. Holds `sensors`; provides `start_ns`, `end_ns` from sensor bounds. Call `.sample(spec)` to iterate.
-- **SensorGroup.sample()**: Takes **`spec: SamplingSpec`**. Walks **`spec.grid`** in window order (`for window in spec.grid`). For each **`window`**, that `(N,)` array is the reference batch; each sensor’s **`sample(spec)`** is advanced in lockstep so every payload has batch dimension `N`. Uses **`spec.policy`** for cross-sensor checks (e.g. minimum temporal overlap, tolerance). Assembles `AlignedFrame(timestamps_ns=window, sensor_data=…)`.
-- **AlignedFrame**: Batch of timestamp-aligned data (SoA). Fields: `timestamps_ns` `(N,)` (that **window’s** reference times from the `SamplingGrid`), and `sensor_data: dict[str, SensorData]` (e.g. `CameraData` with `timestamps_ns`, `canonical_timestamps_ns`, `frames` each of length `N`). Index with `frame[sensor_id]` or `frame.sensor_data[sensor_id]`. See `cosmos_curate/core/sensors/data/aligned_frame.py`.
+- **SensorGroup.sample()**: Takes **`spec: SamplingSpec`**. Walks **`spec.grid`** in window order (`for window in spec.grid`). For each **`window`**, that `(N,)` active slice is the alignment batch; each sensor’s **`sample(spec)`** is advanced in lockstep so every payload has batch dimension `N`. Uses **`spec.policy`** for cross-sensor checks (e.g. minimum temporal overlap, tolerance). Assembles `AlignedFrame(align_timestamps_ns=window[:-1], sensor_data=…)`.
+- **AlignedFrame**: Batch of timestamp-aligned data (SoA). Fields: `align_timestamps_ns` `(N,)` (that window’s active alignment times from the `SamplingGrid`), and `sensor_data: dict[str, SensorData]` (e.g. `CameraData` with `align_timestamps_ns`, `sensor_timestamps_ns`, `frames` each of length `N`). Index with `frame[sensor_id]` or `frame.sensor_data[sensor_id]`. See `cosmos_curate/core/sensors/data/aligned_frame.py`.
 
 ## Module Layout
 
@@ -504,8 +504,8 @@ cosmos_curate
 
 ## Timestamp Dtype and Units
 
-All timestamps throughout this library — reference grids, canonical sensor
-timestamps, and `AlignedFrame` fields — are `int64` **nanoseconds**.
+All timestamps throughout this library — reference grids, sensor timestamps,
+and `AlignedFrame` fields — are `int64` **nanoseconds**.
 
 Represents this many seconds and hours, this is expected to be sufficiently
 large, sensor sessions are expected to be less than 10 hours.
