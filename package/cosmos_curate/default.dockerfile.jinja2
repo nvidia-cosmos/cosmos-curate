@@ -41,6 +41,14 @@ RUN --mount=type=cache,id=pixi-nvidia-wheels,target=/pixi-cache/nvidia-wheels \
     done && \
     echo "=== Pre-downloaded $(ls -1 /pixi-cache/nvidia-wheels/*.whl 2>/dev/null | wc -l) NVIDIA wheels ===" && \
     touch /wheels-ready
+{% if 'seedvr' in envs %}
+# SeedVR tarball: fetch here so the main image does not need curl (libcurl pulls krb5).
+ARG SEEDVR_COMMIT=e4de8c2
+RUN mkdir -p /opt/seedvr-artifacts \
+    && curl -fsSL --retry 5 --retry-delay 3 --max-time 300 "https://github.com/ByteDance-Seed/SeedVR/archive/${SEEDVR_COMMIT}.tar.gz" \
+        | tar xz -C /tmp \
+    && mv /tmp/SeedVR-${SEEDVR_COMMIT}* /opt/seedvr-artifacts/SeedVR
+{% endif %}
 {% endif %}
 
 # ---------------------------------------------------------------------------
@@ -56,7 +64,6 @@ RUN apt-get update \
     && apt-get install --no-install-recommends --option=Dpkg::Options::=--force-confdef -y \
     # Needed because the certs age out sometimes?
     ca-certificates \
-    curl \
 {%- if nsight %}
     # Needed for cuda profiling
     nsight-systems-2025.3.2 \
@@ -242,12 +249,7 @@ RUN cd {{code_dir_str}} && \
 {% endfor %}
 
 {% if 'seedvr' in envs %}
-# Download SeedVR source (pinned commit) for super-resolution inference.
-# SeedVR is not pip-installable; we need the full repo on sys.path.
-ARG SEEDVR_COMMIT=e4de8c2
-RUN curl -fsSL --retry 5 --retry-delay 3 --max-time 300 "https://github.com/ByteDance-Seed/SeedVR/archive/${SEEDVR_COMMIT}.tar.gz" \
-    | tar xz -C /tmp \
-    && mv /tmp/SeedVR-${SEEDVR_COMMIT}* {{code_dir_str}}/SeedVR
+COPY --chown=1000:1000 --from=wheels-builder /opt/seedvr-artifacts/SeedVR {{code_dir_str}}/SeedVR
 COPY cosmos_curate/pipelines/video/super_resolution/color_fix.py \
      {{code_dir_str}}/SeedVR/projects/video_diffusion_sr/color_fix.py
 ENV SEEDVR_ROOT={{code_dir_str}}/SeedVR
