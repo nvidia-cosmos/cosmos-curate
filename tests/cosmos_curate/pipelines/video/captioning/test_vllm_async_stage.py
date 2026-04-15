@@ -375,6 +375,40 @@ class TestBuildEngineArgs:
         assert "attention_backend" not in mock_engine_args_cls.call_args.kwargs
 
 
+class TestVllmAsyncGpuTraceAttributes:
+    """Tests for _vllm_async_collect_gpu_trace_attributes (OTel GPU metadata)."""
+
+    def test_visible_gpu_ids_from_cuda_visible_devices(self) -> None:
+        """Xenna env parser should populate visible_gpu_ids and cuda_visible_devices."""
+        stage = MagicMock()
+        stage.resources.gpus = 2.0
+        with (
+            patch.dict(os.environ, {"CUDA_VISIBLE_DEVICES": "0,1"}),
+            patch.object(vllm_async_stage.ray, "is_initialized", return_value=False),
+        ):
+            d = vllm_async_stage._vllm_async_collect_gpu_trace_attributes(stage)
+        assert d["stage.requested_gpus"] == 2.0
+        assert d["stage.cuda_visible_devices"] == "0,1"
+        assert d["stage.visible_gpu_ids"] == "0,1"
+
+    def test_ray_fallback_when_no_visible_ids_from_env(self) -> None:
+        """When CUDA env parses to no IDs, use ray.get_gpu_ids() if Ray is up."""
+        stage = MagicMock()
+        stage.resources.gpus = 1.0
+        rt = MagicMock()
+        rt.get_node_id.return_value = None
+        with (
+            patch.dict(os.environ, {"CUDA_VISIBLE_DEVICES": ""}),
+            patch.object(vllm_async_stage.ray, "is_initialized", return_value=True),
+            patch.object(vllm_async_stage.ray, "get_gpu_ids", return_value=[7]),
+            patch.object(vllm_async_stage.ray, "get_runtime_context", return_value=rt),
+        ):
+            d = vllm_async_stage._vllm_async_collect_gpu_trace_attributes(stage)
+        assert d["stage.requested_gpus"] == 1.0
+        assert "stage.visible_gpu_ids" not in d
+        assert d["stage.ray_gpu_ids"] == "7"
+
+
 class TestVllmAsyncCaptionStage:
     """Tests for VllmAsyncCaptionStage resource and config declarations."""
 
@@ -844,6 +878,8 @@ class TestVllmAsyncCaptionStage:
                     rendered_prompt=MagicMock(),
                     sampling_params=MagicMock(),
                     frames_shape=(4, 224, 224, 3),
+                    clip_source="test.mp4",
+                    window_index=0,
                 )
             )
 
@@ -867,6 +903,8 @@ class TestVllmAsyncCaptionStage:
                     rendered_prompt=MagicMock(),
                     sampling_params=MagicMock(),
                     frames_shape=(4, 224, 224, 3),
+                    clip_source="test.mp4",
+                    window_index=0,
                 )
             )
 
@@ -891,6 +929,8 @@ class TestVllmAsyncCaptionStage:
                     rendered_prompt=MagicMock(),
                     sampling_params=MagicMock(),
                     frames_shape=(4, 224, 224, 3),
+                    clip_source="test.mp4",
+                    window_index=0,
                 )
             )
 
@@ -924,6 +964,8 @@ class TestVllmAsyncCaptionStage:
                     rendered_prompt=MagicMock(),
                     sampling_params=sampling,
                     frames_shape=(4, 224, 224, 3),
+                    clip_source="test.mp4",
+                    window_index=0,
                 )
             )
 
@@ -951,6 +993,8 @@ class TestVllmAsyncCaptionStage:
                 rendered_prompt=MagicMock(),
                 sampling_params=MagicMock(),
                 frames_shape=(4, 224, 224, 3),
+                clip_source="test.mp4",
+                window_index=0,
             )
         )
         assert caption == "A beautiful sunset over the ocean."
@@ -1486,7 +1530,6 @@ class TestConfigureVllmEnvironment:
         with patch.dict(os.environ, clear=False):
             stage._configure_vllm_environment()
             assert os.environ["VLLM_LOGGING_LEVEL"] == "INFO"
-            assert os.environ["OTEL_SDK_DISABLED"] == "true"
 
     def test_extra_env_vars_applied_to_os_environ(self) -> None:
         """Extra env vars from config should be set in os.environ."""
@@ -1572,7 +1615,7 @@ class TestEnvInfoEnvVars:
         assert env["VLLM_CACHE_ROOT"] == "/mnt/fast/vllm"
 
     def test_otel_not_in_env_info(self) -> None:
-        """OTEL_SDK_DISABLED is set in _configure_vllm_environment, not env_info."""
+        """OTEL_SDK_DISABLED is set globally in profiling_scope, not env_info."""
         env = self._env_vars()
         assert "OTEL_SDK_DISABLED" not in env
 

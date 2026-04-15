@@ -198,6 +198,7 @@ attributes on the batch span instead::
             return tasks
 """
 
+import asyncio
 import contextlib
 import functools
 import os
@@ -224,7 +225,6 @@ SpanAttributeValue = str | int | float | bool
 # source of truth for endpoint resolution.
 _ENV_OTLP_ENDPOINT = "OTEL_EXPORTER_OTLP_ENDPOINT"
 _ENV_OTLP_TRACES_ENDPOINT = "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"
-_DEFAULT_OTLP_ENDPOINT = "http://localhost:4318"
 
 # Re-export StatusCode so callers don't need an extra import.
 __all__ = [
@@ -299,7 +299,13 @@ def get_otlp_endpoint() -> str:
 
     1. ``OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`` (trace-specific override)
     2. ``OTEL_EXPORTER_OTLP_ENDPOINT`` (general OTLP endpoint)
-    3. ``http://localhost:4318`` (standard OTLP HTTP port)
+    3. ``""`` (empty -- OTLP export disabled)
+
+    Returns an empty string when no endpoint is explicitly configured.
+    This makes OTLP export **opt-in**: the file-based exporter is always
+    active and captures all spans locally; remote OTLP delivery only
+    activates when an operator explicitly sets one of the standard OTel
+    endpoint env vars or passes ``--profile-tracing-otlp-endpoint``.
 
     This function is the single source of truth for OTLP endpoint
     resolution.  Used by:
@@ -311,10 +317,10 @@ def get_otlp_endpoint() -> str:
       so it exports spans to the same collector as the pipeline.
 
     Returns:
-        The resolved OTLP HTTP endpoint URL.
+        The resolved OTLP HTTP endpoint URL, or ``""`` if none is set.
 
     """
-    return os.environ.get(_ENV_OTLP_TRACES_ENDPOINT) or os.environ.get(_ENV_OTLP_ENDPOINT) or _DEFAULT_OTLP_ENDPOINT
+    return os.environ.get(_ENV_OTLP_TRACES_ENDPOINT) or os.environ.get(_ENV_OTLP_ENDPOINT) or ""
 
 
 class TracedSpan:
@@ -517,6 +523,16 @@ def traced_span(
     Unhandled exceptions propagating out of the ``with`` block are
     automatically recorded on the span by OTel.
 
+    In-process 3rd-party OTel spans become children of the active span
+    via the standard OTel context (no W3C env injection).  Ray workers
+    get the driver's trace via ``propagate_trace_context()`` and
+    ``COSMOS_CURATE_TRACEPARENT`` (see ``tracing_hook``).
+
+    Trace volume is controlled by OTel's ``ParentBasedTraceIdRatio``
+    sampler (configured via ``--profile-tracing-sampling``), which
+    makes the sampling decision at the root span and propagates it
+    to all descendants -- ensuring correct parent-child semantics.
+
     ::
 
         traced_span("MyStage.download", attributes={...})
@@ -622,7 +638,7 @@ def trace_root_anchor(
 
         trace_anchor  (root, no parent, ends FIRST)
           +-- _root.main              (ends LAST, parent=anchor)
-          +-- worker spans            (parent=anchor via env var)
+          +-- stage spans             (parent=anchor via env var)
 
     Args:
         name: Span name for the anchor (e.g. ``"pipeline.trace_anchor"``).
@@ -692,6 +708,15 @@ def traced(
               +-- span ends (duration = function wall-clock time)
               +-- exception? -> auto-recorded on span by OTel
 
+    Works with both sync and async functions.  For ``async def``
+    targets, the span stays open for the full coroutine execution
+    (not just until the coroutine object is returned).
+
+    Trace volume is controlled by OTel's ``ParentBasedTraceIdRatio``
+    sampler (configured via ``--profile-tracing-sampling``), which
+    makes the sampling decision at the root span and propagates it
+    to all descendants.
+
     Usage::
 
         from cosmos_curate.core.utils.infra.tracing import traced
@@ -699,6 +724,10 @@ def traced(
         @traced("MyModel.predict", attributes={"model": "resnet50"})
         def predict(self, batch: list[Frame]) -> list[float]:
             return self._model(batch)
+
+        @traced("MyStage.generate")
+        async def generate(self, prompt: str) -> str:
+            return await self._engine.generate(prompt)
 
     This is equivalent to::
 
@@ -723,6 +752,17 @@ def traced(
     def wrapper(wrapped, instance, args, kwargs):  # type: ignore[no-untyped-def]  # noqa: ANN001, ANN202, ARG001
         # wrapt.decorator mandates this exact (wrapped, instance, args, kwargs) signature;
         # all four parameters are untyped by design (no stubs for wrapt).
+        #
+        # For async functions, the sync `with traced_span(...)` block would
+        # exit as soon as the coroutine object is returned - before the
+        # actual async work executes.
+        if asyncio.iscoroutinefunction(wrapped):
+
+            async def _async_traced() -> object:
+                with traced_span(name, attributes=attributes):
+                    return await wrapped(*args, **kwargs)
+
+            return _async_traced()
         with traced_span(name, attributes=attributes):
             return wrapped(*args, **kwargs)
 

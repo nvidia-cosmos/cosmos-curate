@@ -22,7 +22,90 @@ Grafana Tempo, VictoriaTraces, or any OTLP-compatible backend.
 The script appends ``/v1/traces`` to the URL you pass.  Backends that use
 a different path (e.g. VictoriaTraces) require that path in the base URL.
 
-Usage::
+Quick start -- Jaeger all-in-one (simplest)
+-------------------------------------------
+
+::
+
+    # 1. Start Jaeger (OTLP HTTP on 4318, UI on 16686)
+    docker run -d --name jaeger \
+      -p 16686:16686 \
+      -p 4318:4318 \
+      jaegertracing/jaeger:latest \
+      --set receivers.otlp.protocols.http.endpoint=0.0.0.0:4318
+
+    # 2. Replay traces
+    python -m benchmarks.replay_traces tmp/traces/ \
+        --replay-to http://localhost:4318
+
+
+    # 3. In Grafana UI (http://localhost:3000):
+    #    Connections > Data sources > Add Jaeger
+    #    URL: http://host.docker.internal:16686
+
+    # 4. Open http://localhost:16686, select service "cosmos_curate"
+
+Quick start -- Grafana + Tempo (richer dashboards)
+--------------------------------------------------
+
+::
+
+    # 1. Create minimal Tempo config
+    cat > /tmp/tempo.yaml <<'EOF'
+    server:
+      http_listen_port: 3200
+    distributor:
+      receivers:
+        otlp:
+          protocols:
+            http:
+              endpoint: "0.0.0.0:4318"
+    ingester:
+      max_block_duration: 5s   # flush WAL quickly (default 30m)
+    query_frontend:
+      search:
+        max_duration: 0         # no limit on search time range
+    storage:
+      trace:
+        backend: local
+        local:
+          path: /var/tempo/traces
+        wal:
+          path: /var/tempo/wal
+    EOF
+
+    # 2. Start Tempo (OTLP HTTP on 4318, API on 3200)
+    #    Pin to 2.6 -- v2.10+ requires Kafka distributor config.
+    docker run -d --name tempo \
+      -p 3200:3200 -p 4318:4318 \
+      -v /tmp/tempo.yaml:/etc/tempo.yaml \
+      grafana/tempo:2.6.1 \
+      -config.file=/etc/tempo.yaml
+
+    # 3. Start Grafana (UI on 3000, auth disabled)
+    docker run -d --name grafana \
+      -p 3000:3000 \
+      -e GF_AUTH_ANONYMOUS_ENABLED=true \
+      -e GF_AUTH_ANONYMOUS_ORG_ROLE=Admin \
+      -e GF_AUTH_DISABLE_LOGIN_FORM=true \
+      grafana/grafana:latest
+
+    # 4. In Grafana UI (http://localhost:3000):
+    #    Connections > Data sources > Add Tempo
+    #    URL: http://host.docker.internal:3200
+
+    # 5. Replay traces
+    python -m benchmarks.replay_traces tmp/traces/ \
+        --replay-to http://localhost:4318
+
+Cleanup::
+
+    docker rm -f jaeger tempo grafana
+
+Usage examples
+--------------
+
+::
 
     # Replay to a local Jaeger (standard OTLP path)
     python -m benchmarks.replay_traces ./profiles/traces/ \
@@ -35,6 +118,10 @@ Usage::
     # Filter by span name
     python -m benchmarks.replay_traces ./profiles/traces/ \
         --replay-to http://localhost:4318 --filter-name RemuxStage
+
+    # HTTP 400 request body too large: use a smaller export batch
+    python -m benchmarks.replay_traces ./profiles/traces/ \
+        --replay-to http://localhost:4318 --export-batch-size 128
 
 """
 
@@ -81,7 +168,14 @@ def _parse_timestamp(ts: str | None) -> datetime | None:
 
 
 def _hex_to_int(hex_str: str | None) -> int:
-    """Convert a ``0x...`` hex string to int, or 0 if falsy."""
+    """Convert a ``0x...`` hex string to int, or 0 if falsy.
+
+    OTel trace IDs are 128-bit and span IDs are 64-bit.  The OTLP
+    protobuf exporter converts the int back to fixed-width bytes
+    via ``int.to_bytes(16, 'big')``, so leading zeros are preserved
+    in the wire format even though ``int()`` drops them.
+
+    """
     if not hex_str:
         return 0
     return int(hex_str, 16)
@@ -172,24 +266,31 @@ def _json_to_readable_span(span_json: dict) -> object | None:
     )
 
 
-def _replay_to_otlp(all_spans: list[dict], endpoint: str) -> None:
+def _replay_to_otlp(all_spans: list[dict], endpoint: str, export_batch_size: int) -> bool:
     """Replay parsed spans to an OTLP HTTP endpoint.
 
     Converts raw span dicts into ``ReadableSpan`` objects and exports
-    them synchronously using ``OTLPSpanExporter.export()``.
+    them synchronously using ``OTLPSpanExporter.export()`` in chunks of
+    at most *export_batch_size* spans per HTTP request.  Many receivers
+    reject a single giant protobuf payload (HTTP 400: request body too
+    large); chunking keeps each POST under typical limits.
 
     ::
 
         .jsonl dicts --> _json_to_readable_span --> OTLPSpanExporter.export()
-                                                         |
-                                                         v
-                                                   OTLP endpoint
+                                    (chunked)              |
+                                                           v
+                                                     OTLP endpoint
 
     A synchronous (direct) export is used instead of ``BatchSpanProcessor``
     because replay is a one-shot operation: we want immediate confirmation
     that all spans were delivered and clear error reporting on failure.
 
     Requires ``opentelemetry-exporter-otlp-proto-http``.
+
+    Returns:
+        False if any export batch failed.  True if there were no valid spans
+        to send, or every batch exported successfully.
 
     """
     from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter  # noqa: PLC0415
@@ -214,21 +315,29 @@ def _replay_to_otlp(all_spans: list[dict], endpoint: str) -> None:
 
     if not readable_spans:
         logger.warning("No valid spans to replay")
-        return
+        return True
 
-    logger.info(f"Replaying {len(readable_spans)} span(s) to {endpoint}")
+    logger.info(f"Replaying {len(readable_spans)} span(s) to {endpoint} ({export_batch_size} span(s) per HTTP request)")
 
     # OTLPSpanExporter uses the endpoint parameter as-is (no auto-appending
     # of /v1/traces), so we must include the full path ourselves.
     exporter = OTLPSpanExporter(endpoint=f"{endpoint.rstrip('/')}/v1/traces")
 
-    result = exporter.export(readable_spans)
-    if result == SpanExportResult.SUCCESS:
-        logger.info(f"Replay complete: {len(readable_spans)} span(s) exported successfully")
-    else:
-        logger.error(f"Replay failed: exporter returned {result}")
+    n = len(readable_spans)
+    batch_idx = 0
+    for start in range(0, n, export_batch_size):
+        batch_idx += 1
+        chunk = readable_spans[start : start + export_batch_size]
+        result = exporter.export(chunk)
+        if result != SpanExportResult.SUCCESS:
+            end = start + len(chunk) - 1
+            logger.error(f"Replay failed on batch {batch_idx} (span indices {start}-{end}): exporter returned {result}")
+            exporter.shutdown()
+            return False
 
+    logger.info(f"Replay complete: {n} span(s) exported in {batch_idx} request(s)")
     exporter.shutdown()
+    return True
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -255,6 +364,17 @@ def main(argv: list[str] | None = None) -> None:
         default=None,
         metavar="PATTERN",
         help="Only include spans whose name contains this substring.",
+    )
+    parser.add_argument(
+        "--export-batch-size",
+        type=int,
+        default=512,
+        metavar="N",
+        help=(
+            "Maximum spans per OTLP HTTP export request (payload size is not fixed; "
+            "attribute-heavy spans need a smaller value). "
+            "Lower this if the receiver returns HTTP 400 (request body too large)."
+        ),
     )
 
     args = parser.parse_args(argv)
@@ -286,8 +406,13 @@ def main(argv: list[str] | None = None) -> None:
 
     logger.info(f"Total: {len(all_spans)} span(s)")
 
+    if args.export_batch_size < 1:
+        logger.error("--export-batch-size must be >= 1")
+        sys.exit(1)
+
     # 4. Replay
-    _replay_to_otlp(all_spans, args.replay_to)
+    if not _replay_to_otlp(all_spans, args.replay_to, args.export_batch_size):
+        sys.exit(1)
 
 
 if __name__ == "__main__":

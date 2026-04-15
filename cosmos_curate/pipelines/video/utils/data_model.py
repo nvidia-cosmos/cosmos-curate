@@ -197,6 +197,18 @@ class Clip:
 
     This class stores information about a video segment, including its source, timing,
     extracted frames, motion data, aesthetic scores, and generated captions.
+
+    ``span`` is the clip's time range on the original source video (seconds).
+    Each ``Window`` in ``windows`` covers a contiguous slice of native frames
+    within the clip.  The relationship between the two coordinate systems::
+
+        source timeline
+        span[0]=10s |=====[w0: 10-14.7s]=====[w1: 15.3-20s]=====| span[1]=20s
+                    ^clip start                                   ^clip end
+                         ^window source_start  ^window source_end  (for w0)
+
+    See :func:`~cosmos_curate.pipelines.video.utils.windowing_utils.window_source_time_bounds_from_clip`
+    for the linear mapping from ``Window.start_frame`` / ``end_frame`` to source seconds.
     """
 
     uuid: UUID

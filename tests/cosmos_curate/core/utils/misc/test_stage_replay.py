@@ -671,8 +671,13 @@ def test_run_stage_replay_init_ray(tmp_path: Path, *, init_ray: bool) -> None:
     serializer = PickleTaskSerializer()
     serializer.save(tmp_path / "batch_000.pkl", [TestTask(value=1)])
 
-    # Mock ray.init to avoid actually initializing Ray
-    with patch("cosmos_curate.core.utils.misc.stage_replay.ray.init") as mock_ray_init:
+    # Mock ray.init and ray.is_initialized to avoid actually initializing Ray
+    # and to ensure the init_ray guard doesn't short-circuit when Ray is
+    # already initialized from a prior test in the same process.
+    with (
+        patch("cosmos_curate.core.utils.misc.stage_replay.ray.init") as mock_ray_init,
+        patch("cosmos_curate.core.utils.misc.stage_replay.ray.is_initialized", return_value=False),
+    ):
         result = run_stage_replay(
             stages=[IncrementStage()],
             path=tmp_path,

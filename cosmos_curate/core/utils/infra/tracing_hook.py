@@ -51,11 +51,12 @@ hook function signature takes no arguments:
         ``/tmp/cosmos_curate_traces``.
 
     OTEL_EXPORTER_OTLP_ENDPOINT  *(standard OTel env var)*
-        OTLP HTTP endpoint for span export.  Defaults to
-        ``http://localhost:4318`` when neither this nor
-        ``OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`` is set, so traces
-        are always sent to a local collector (e.g. Jaeger) out of
-        the box.  Set to a remote URL to ship spans elsewhere.
+        OTLP HTTP endpoint for remote span export.  **Opt-in**:
+        when neither this nor ``OTEL_EXPORTER_OTLP_TRACES_ENDPOINT``
+        is set, remote OTLP export is disabled and spans are only
+        written to local ``.jsonl`` files.  Set to a collector URL
+        (e.g. ``http://localhost:4318``) to enable remote delivery.
+        Can also be set via ``--profile-tracing-otlp-endpoint``.
 
     OTEL_EXPORTER_OTLP_TRACES_ENDPOINT  *(standard OTel env var)*
         Trace-specific override for ``OTEL_EXPORTER_OTLP_ENDPOINT``.
@@ -125,7 +126,6 @@ from opentelemetry.sdk.trace import ReadableSpan
 from opentelemetry.sdk.trace.export import SpanExporter, SpanExportResult
 
 from cosmos_curate.core.utils.infra.tracing import (
-    _DEFAULT_OTLP_ENDPOINT,
     _ENV_OTLP_ENDPOINT,
     _ENV_OTLP_TRACES_ENDPOINT,
     artifact_id,
@@ -173,10 +173,12 @@ class TracingConfig:
             When ``COSMOS_CURATE_ARTIFACTS_STAGING_DIR`` is set, defaults to
             ``<staging_dir>/traces/`` so traces are collected with
             other profiling artifacts post-pipeline.
-        otlp_endpoint: OTLP HTTP collector endpoint.  Defaults to
-            ``http://localhost:4318`` (standard OTLP HTTP port) when
-            neither ``OTEL_EXPORTER_OTLP_ENDPOINT`` nor
-            ``OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`` is set.
+        otlp_endpoint: OTLP HTTP collector endpoint.  Empty string
+            (default) disables remote OTLP export -- only the local
+            file-based exporter is active.  Set via
+            ``OTEL_EXPORTER_OTLP_ENDPOINT``,
+            ``OTEL_EXPORTER_OTLP_TRACES_ENDPOINT``, or
+            ``--profile-tracing-otlp-endpoint`` to enable.
         traceparent: W3C-style trace context propagated from the
             driver's root span.  Format:
             ``"{trace_id_hex}:{span_id_hex}"`` or empty string
@@ -192,7 +194,7 @@ class TracingConfig:
     """
 
     trace_dir: str = "/tmp/cosmos_curate_traces"  # noqa: S108
-    otlp_endpoint: str = _DEFAULT_OTLP_ENDPOINT
+    otlp_endpoint: str = ""
     traceparent: str = ""
     service_name: str = "cosmos_curate"
 
@@ -436,8 +438,11 @@ class _TracingBackend:
         1. A ``SimpleSpanProcessor`` + ``ConsoleSpanExporter`` writing
            NDJSON to the local span file (always active).
         2. A ``SimpleSpanProcessor`` + ``_ResilientOtlpExporter``
-           (wrapping ``OTLPSpanExporter``) for remote delivery
-           (defaults to ``http://localhost:4318``).  Uses
+           (wrapping ``OTLPSpanExporter``) for remote delivery.
+           **Only added when** ``otlp_endpoint`` **is non-empty**
+           (set via ``OTEL_EXPORTER_OTLP_ENDPOINT``,
+           ``OTEL_EXPORTER_OTLP_TRACES_ENDPOINT``, or
+           ``--profile-tracing-otlp-endpoint``).  Uses
            ``SimpleSpanProcessor`` (not ``BatchSpanProcessor``) so
            each span is sent immediately -- Ray may SIGKILL workers
            before a batched flush completes.  The resilient wrapper
@@ -505,8 +510,8 @@ class _TracingBackend:
             ),
         )
 
-        # OTLP remote exporter (always active -- defaults to
-        # http://localhost:4318 when no endpoint env var is set).
+        # OTLP remote exporter (opt-in: only active when an endpoint
+        # is explicitly configured via env var or CLI flag).
         #
         # Uses SimpleSpanProcessor (not BatchSpanProcessor) so each
         # span is exported synchronously when it completes.  This is
@@ -562,32 +567,16 @@ class _TracingBackend:
     def _attach_remote_parent(self, traceparent: str) -> None:
         """Parse a traceparent string and attach it as the current OTel context.
 
-        Creates a remote ``SpanContext`` from the driver's root span
-        and attaches it so all subsequent spans on this worker inherit
-        the same ``trace_id`` and become children of the root.
+        Delegates to the module-level :func:`attach_remote_parent`
+        function.  Kept as a method for backward compatibility with
+        the ``setup_provider()`` call site.
 
         Args:
             traceparent: ``"{trace_id_hex}:{span_id_hex}"`` string
                 set by :func:`propagate_trace_context` on the driver.
 
         """
-        from opentelemetry.trace import NonRecordingSpan, SpanContext, TraceFlags  # noqa: PLC0415
-
-        try:
-            trace_id_hex, span_id_hex = traceparent.split(":")
-            remote_ctx = SpanContext(
-                trace_id=int(trace_id_hex, 16),
-                span_id=int(span_id_hex, 16),
-                is_remote=True,
-                trace_flags=TraceFlags(TraceFlags.SAMPLED),
-            )
-            parent_ctx = trace.set_span_in_context(NonRecordingSpan(remote_ctx))
-            context.attach(parent_ctx)
-            logger.trace(
-                f"[otel] {self._id}: Attached remote parent: trace_id={trace_id_hex}, span_id={span_id_hex}",
-            )
-        except Exception as exc:  # noqa: BLE001
-            logger.warning(f"[otel] {self._id}: Failed to attach remote parent: {exc}")
+        attach_remote_parent(traceparent)
 
     def propagate_context(self) -> None:
         """Write the current span's trace context to the environment.
@@ -855,17 +844,19 @@ def _instrument_libraries() -> None:
     )
 
 
-def enable_tracing() -> None:
+def enable_tracing(*, sampling_rate: float = 1.0, otlp_endpoint: str = "") -> None:
     """Enable distributed OpenTelemetry tracing for the pipeline.
 
-    Performs three actions:
+    Performs four actions:
 
-    1. Sets environment variables read by ``init_or_connect_to_cluster()``
+    1. Sets standard OTel sampling env vars so ``TracerProvider``
+       auto-configures ``ParentBasedTraceIdRatio`` from the environment.
+    2. Sets environment variables read by ``init_or_connect_to_cluster()``
        (in ``ray_cluster_utils.py`` and xenna's ``cluster.py``) to pass
        ``_tracing_startup_hook`` to ``ray.init()``.
-    2. Sets environment variables read by :func:`setup_tracing` on each
-       worker (trace dir, staging dir).
-    3. Calls :func:`setup_tracing` on the **driver** process itself so
+    3. Sets environment variables read by :func:`setup_tracing` on each
+       worker (trace dir, staging dir, OTLP endpoint).
+    4. Calls :func:`setup_tracing` on the **driver** process itself so
        that driver-side spans (``profiling_scope``, ``TracedSpan``,
        ``@traced``) are captured.  Workers get their own
        ``setup_tracing()`` call via Ray's ``_tracing_startup_hook``.
@@ -874,6 +865,17 @@ def enable_tracing() -> None:
     the local staging directory.  Post-pipeline,
     ``ArtifactDelivery`` collects and uploads all staged trace
     files.
+
+    Args:
+        sampling_rate: Fraction of traces to sample (0.0--1.0).
+            Sets ``OTEL_TRACES_SAMPLER`` and ``OTEL_TRACES_SAMPLER_ARG``
+            so the OTel SDK auto-configures ``ParentBasedTraceIdRatio``.
+            Default: 1.0 (sample all).
+        otlp_endpoint: OTLP HTTP collector endpoint (e.g.
+            ``http://localhost:4318``).  Empty string (default)
+            disables remote OTLP export -- only the local file-based
+            exporter is active.  When non-empty, sets
+            ``OTEL_EXPORTER_OTLP_ENDPOINT`` so workers inherit it.
 
     """
     import cosmos_curate  # noqa: PLC0415
@@ -908,6 +910,23 @@ def enable_tracing() -> None:
     # after the root span is created in profiling_scope().
     os.environ.pop(_ENV_TRACEPARENT, None)
 
+    # Set standard OTel env vars so TracerProvider (constructed without
+    # an explicit sampler= arg) auto-configures sampling from env.
+    # Workers inherit env vars from driver via Ray.  Any 3rd-party
+    # library (vLLM, etc.) that creates its own TracerProvider also
+    # picks up these env vars automatically.
+    os.environ["OTEL_TRACES_SAMPLER"] = "parentbased_traceidratio"
+    os.environ["OTEL_TRACES_SAMPLER_ARG"] = str(sampling_rate)
+
+    # Set the OTLP endpoint env var if explicitly provided via CLI
+    # flag.  Workers inherit env vars from the driver, so setting it
+    # here propagates to all Ray workers.  When empty (default), the
+    # OTLP exporter is not created -- only the local file exporter
+    # is active (no ConnectionRefused warnings in NVCF/Slurm).
+    otlp_endpoint = otlp_endpoint.strip()
+    if otlp_endpoint:
+        os.environ[_ENV_OTLP_ENDPOINT] = otlp_endpoint
+
     # Also configure tracing on the driver process itself.
     # Workers get setup_tracing() via Ray's _tracing_startup_hook,
     # but the driver never goes through that path.  Without this,
@@ -915,8 +934,9 @@ def enable_tracing() -> None:
     # go to OTel's no-op tracer and produce an empty trace file.
     setup_tracing()
 
+    otlp_status = f"OTLP -> {otlp_endpoint}" if otlp_endpoint else "OTLP disabled (file-only)"
     logger.info(
-        f"[otel] Distributed tracing enabled; hook={_RAY_TRACING_HOOK}, span files: {trace_dir}/",
+        f"[otel] Distributed tracing enabled; hook={_RAY_TRACING_HOOK}, span files: {trace_dir}/, {otlp_status}",
     )
 
 
@@ -1034,3 +1054,54 @@ def propagate_trace_context() -> None:
     """
     if _current_backend is not None:
         _current_backend.propagate_context()
+
+
+def read_propagated_traceparent() -> str:
+    """Return ``COSMOS_CURATE_TRACEPARENT`` from the environment if set.
+
+    :func:`propagate_trace_context` writes this after the trace anchor
+    is created.  ``ProfilingConfig.traceparent`` is often captured
+    earlier (e.g. when building stage specs before the anchor exists),
+    so worker-side code should prefer
+    ``config.traceparent or read_propagated_traceparent()``.
+    """
+    return os.environ.get(_ENV_TRACEPARENT, "")
+
+
+def attach_remote_parent(traceparent: str) -> None:
+    """Attach a remote parent span context to the **current thread**.
+
+    Parses a ``"{trace_id_hex}:{span_id_hex}"`` string (the same
+    format written by :func:`propagate_trace_context`) and attaches
+    it as the active OTel context.  All subsequent spans created on
+    this thread become children of the remote parent, sharing its
+    ``trace_id``.
+
+    No-op when *traceparent* is empty or malformed (logs a warning
+    on parse failure).
+
+    Args:
+        traceparent: ``"{trace_id_hex}:{span_id_hex}"`` string, or
+            empty string to skip.
+
+    """
+    if not traceparent:
+        return
+
+    from opentelemetry.trace import NonRecordingSpan, SpanContext, TraceFlags  # noqa: PLC0415
+
+    try:
+        trace_id_hex, span_id_hex = traceparent.split(":")
+        remote_ctx = SpanContext(
+            trace_id=int(trace_id_hex, 16),
+            span_id=int(span_id_hex, 16),
+            is_remote=True,
+            trace_flags=TraceFlags(TraceFlags.SAMPLED),
+        )
+        parent_ctx = trace.set_span_in_context(NonRecordingSpan(remote_ctx))
+        context.attach(parent_ctx)
+        logger.trace(
+            f"[otel] attach_remote_parent: trace_id={trace_id_hex}, span_id={span_id_hex}",
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(f"[otel] attach_remote_parent: Failed to parse traceparent: {exc}")

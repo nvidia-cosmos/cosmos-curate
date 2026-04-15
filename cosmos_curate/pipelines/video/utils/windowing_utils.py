@@ -88,6 +88,171 @@ def compute_windows(total_frames: int, window_size: int = 128, remainder_thresho
     return out
 
 
+def estimate_native_frame_count(clip: Clip, fallback_window: Window | None = None) -> int:
+    """Estimate the native frame count ``N`` for a clip segment.
+
+    When ``clip.windows`` is populated (normal vLLM async prep path), windows
+    partition ``0 .. total_native-1``; ``max(end_frame) + 1`` recovers ``N``.
+
+    When ``clip.windows`` is empty, uses ``fallback_window.end_frame + 1`` if
+    provided; otherwise returns ``1`` (degenerate single-frame case).
+
+    ::
+
+        clip.windows:  [w0: 0..9] [w1: 10..19]
+                        |---------+---------| N = 20
+
+    Assumes native frame indices are contiguous and uniformly spaced across
+    ``clip.span``. If only a subset of windows is present the estimate may be
+    low, and mapped source times become approximate.
+
+    Args:
+        clip: Clip whose ``windows`` list defines the partition when non-empty.
+        fallback_window: Used only when ``clip.windows`` is empty.
+
+    Returns:
+        Estimated ``N >= 1``.
+
+    """
+    if clip.windows:
+        max_end: int = max(w.end_frame for w in clip.windows)
+        return max_end + 1
+    if fallback_window is not None:
+        n: int = max(fallback_window.end_frame + 1, 1)
+        return n
+    return 1
+
+
+def frame_index_to_source_time_s(
+    clip_span: tuple[float, float],
+    frame_index: int,
+    native_frame_count: int,
+) -> float:
+    """Map a single native frame index to an estimated source time (seconds).
+
+    Linearly interpolates ``frame_index`` between ``clip_span[0]`` and
+    ``clip_span[1]`` over native indices ``0 .. native_frame_count - 1``.
+
+    ::
+
+        source time
+        clip_span[0] |---------+---------| clip_span[1]
+        frame index   0        f        N-1
+
+        result = clip_span[0] + (f / max(N-1, 1)) * (clip_span[1] - clip_span[0])
+
+    Args:
+        clip_span: ``(t0, t1)`` seconds on the original source video.
+        frame_index: Native frame index to map.
+        native_frame_count: Estimated ``N``; denominator is ``max(N - 1, 1)``.
+
+    Returns:
+        Estimated source time in seconds for ``frame_index``.
+
+    """
+    span_s = max(clip_span[1] - clip_span[0], 0.0)
+    denom = max(native_frame_count - 1, 1)
+    return clip_span[0] + (frame_index / denom) * span_s
+
+
+def window_source_time_bounds_s(
+    clip_span: tuple[float, float],
+    start_frame: int,
+    end_frame: int,
+    native_frame_count: int,
+) -> tuple[float, float]:
+    """Map inclusive native frame indices to estimated source times (seconds).
+
+    Convenience wrapper: calls :func:`frame_index_to_source_time_s` for both
+    ``start_frame`` and ``end_frame``.
+
+    ::
+
+        source timeline
+        clip_span[0] |----[start_frame ... end_frame]----| clip_span[1]
+                          ^                          ^
+                     source_start_s            source_end_s
+
+    Assumes uniform spacing of native frames across the clip time range.
+    Matches the current pipeline where windows are built from a contiguous
+    native decode range.
+
+    Args:
+        clip_span: ``(t0, t1)`` seconds of this clip on the original source video.
+        start_frame: Inclusive native start index for the window.
+        end_frame: Inclusive native end index for the window.
+        native_frame_count: Estimated ``N``; denominator is ``max(N - 1, 1)``.
+
+    Returns:
+        ``(source_start_s, source_end_s)`` estimated bounds on the source timeline.
+
+    """
+    return (
+        frame_index_to_source_time_s(clip_span, start_frame, native_frame_count),
+        frame_index_to_source_time_s(clip_span, end_frame, native_frame_count),
+    )
+
+
+def window_source_time_bounds_from_clip(
+    clip: Clip,
+    window: Window,
+) -> tuple[float, float]:
+    """Estimate source-timeline bounds for a window using clip context.
+
+    Combines :func:`estimate_native_frame_count` and
+    :func:`window_source_time_bounds_s` into a single call for the common
+    case where a ``Clip`` and ``Window`` are both available.
+
+    Args:
+        clip: Clip providing ``span`` and ``windows`` for ``N`` estimation.
+        window: Window whose ``start_frame`` / ``end_frame`` are mapped.
+
+    Returns:
+        ``(source_start_s, source_end_s)`` estimated bounds on the source timeline.
+
+    """
+    n = estimate_native_frame_count(clip, fallback_window=window)
+    return window_source_time_bounds_s(clip.span, window.start_frame, window.end_frame, n)
+
+
+def window_source_time_trace_attributes(clip: Clip, window: Window) -> dict[str, str | float]:
+    """Build trace attributes mapping a window's native frames to estimated source times.
+
+    Returns a dict of OTel-safe key/value pairs suitable for ``traced_span(..., attributes={})``.
+    Never raises -- returns an empty dict on failure so tracing cannot break the pipeline.
+
+    Returned keys::
+
+        window.source_start_s   -- window start on source timeline (seconds)
+        window.source_end_s     -- window end on source timeline (seconds)
+        window.clip_span_start_s -- parent clip start on source timeline
+        window.clip_span_end_s   -- parent clip end on source timeline
+        window.source_bounds     -- human-scannable summary, e.g. "12.345s-15.678s"
+
+    Args:
+        clip: Clip providing ``span`` and ``windows`` for N estimation.
+        window: Window whose ``start_frame`` / ``end_frame`` are mapped.
+
+    Returns:
+        Dict of trace attributes, or empty dict on error.
+
+    """
+    try:
+        source_start_s, source_end_s = window_source_time_bounds_from_clip(clip, window)
+        return {
+            # Window's estimated position on the original source timeline (seconds).
+            "window.source_start_s": source_start_s,
+            "window.source_end_s": source_end_s,
+            # Parent clip's full time range -- context for where this window sits.
+            "window.clip_span_start_s": clip.span[0],
+            "window.clip_span_end_s": clip.span[1],
+            # Human-scannable summary, e.g. "12.345s-15.678s".
+            "window.source_bounds": f"{source_start_s:.3f}s-{source_end_s:.3f}s",
+        }
+    except Exception:  # noqa: BLE001 -- tracing must never break the pipeline
+        return {}
+
+
 def split_video_into_windows(  # noqa: PLR0913
     mp4_bytes: bytes | npt.NDArray[np.uint8],
     window_size: int = 256,

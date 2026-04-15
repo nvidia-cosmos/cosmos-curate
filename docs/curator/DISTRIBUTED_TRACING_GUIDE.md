@@ -437,7 +437,7 @@ profiling_scope()
       +-- _attach_remote_parent()
       |     Construct remote SpanContext(trace_id, span_id)
       |     Attach as current OTel context
-      |     All subsequent worker spans become children of the anchor
+      |     All subsequent stage spans become children of the anchor
 ```
 
 The propagation uses a custom env-var format
@@ -465,7 +465,7 @@ the anchor's trace_id and use its span_id as their parent.
 ```
 trace_anchor  (root, no parent, ends FIRST)
   +-- _root.main              (ends LAST, parent=anchor)
-  +-- worker spans            (parent=anchor via env var)
+  +-- stage spans             (parent=anchor via env var)
 ```
 
 ### Span Flush and Persist

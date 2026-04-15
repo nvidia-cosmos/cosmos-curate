@@ -166,6 +166,28 @@ class ProfilingConfig:
         tracing_enabled: Enable distributed OpenTelemetry tracing via
             Ray's ``_tracing_startup_hook``.  Captures cross-actor
             spans (scheduling, method invocations) as NDJSON files.
+        tracing_sampling: Trace sampling rate (0.0--1.0) passed to
+            ``enable_tracing()`` which sets standard OTel env vars.
+        tracing_otlp_endpoint: OTLP HTTP collector endpoint for
+            remote span export.  Empty string (default) disables
+            OTLP -- only the local file exporter is active.  Set via
+            ``--profile-tracing-otlp-endpoint`` or the standard
+            ``OTEL_EXPORTER_OTLP_ENDPOINT`` env var.
+        staging_dir: Base staging directory for profiling and trace
+            artifacts.  Empty string means "use env var or create a
+            temp dir".  Populated by ``_apply_profiling_config()``
+            from ``COSMOS_CURATE_ARTIFACTS_STAGING_DIR`` (set by
+            ``ArtifactDelivery.create()``), so the path is serialized
+            with the stage config and available on workers even when
+            the env var is not inherited (e.g. ``ray job submit``
+            in NVCF).
+        traceparent: Driver's trace anchor context in
+            ``"{trace_id_hex}:{span_id_hex}"`` format.  May be empty
+            on the snapshot taken in ``_apply_profiling_config()`` if
+            that runs before ``propagate_trace_context()`` (common when
+            stage specs are built early).  Workers fall back to
+            ``COSMOS_CURATE_TRACEPARENT`` in the environment at span
+            start.  When both are set, they should match.
         cpu_exclude: Scope names to exclude from CPU profiling.
             Matches stage class names (e.g. ``"MyStage"``)
             and the special ``"_root"`` driver scope.
@@ -180,6 +202,10 @@ class ProfilingConfig:
     memory_enabled: bool = False
     gpu_enabled: bool = False
     tracing_enabled: bool = False
+    tracing_sampling: float = 0.01
+    tracing_otlp_endpoint: str = ""
+    staging_dir: str = ""
+    traceparent: str = ""
     cpu_exclude: frozenset[str] = frozenset()
     memory_exclude: frozenset[str] = frozenset()
     gpu_exclude: frozenset[str] = frozenset()
@@ -761,6 +787,29 @@ class _ProfilingState:
         self._call_count = 0
         self._id = f"{stage_name}_{process_tag()}"
 
+        # Resolve the base staging directory.  Three sources, in
+        # priority order:
+        #
+        #   1. config.staging_dir -- serialized with the stage from
+        #      the driver; works even when the worker doesn't inherit
+        #      the driver's env vars (e.g. ray job submit in NVCF).
+        #   2. COSMOS_CURATE_ARTIFACTS_STAGING_DIR env var -- set by
+        #      ArtifactDelivery.create() on the driver.  Available
+        #      on workers that DO inherit env vars (standard ray.init
+        #      on the same node).
+        #   3. Temp directory -- fallback when neither is available
+        #      (e.g. running without ArtifactDelivery).
+        #
+        # Once resolved, set the env var so that downstream code
+        # (setup_tracing, other backends) can read it.
+        base_staging_str = (
+            config.staging_dir
+            or os.environ.get("COSMOS_CURATE_ARTIFACTS_STAGING_DIR", "")
+            or tempfile.mkdtemp(prefix="cosmos_curate_profiling_staging_")
+        )
+        os.environ.setdefault("COSMOS_CURATE_ARTIFACTS_STAGING_DIR", base_staging_str)
+        base_staging = pathlib.Path(base_staging_str)
+
         # Ensure OTel tracing is initialised on this worker process.
         # The primary path is Ray's _tracing_startup_hook, but that
         # hook is a private API and may silently fail (unsupported Ray
@@ -768,26 +817,17 @@ class _ProfilingState:
         # setup_tracing() here acts as a belt-and-suspenders fallback.
         # The re-entrancy guard inside setup_tracing() makes this a
         # no-op if the Ray hook already ran.
+        #
+        # COSMOS_CURATE_ARTIFACTS_STAGING_DIR is already set (above),
+        # so TracingConfig.from_env() inside setup_tracing() will
+        # derive trace_dir = <staging>/traces/ automatically.
         if config.tracing_enabled:
             with contextlib.suppress(Exception):
                 from cosmos_curate.core.utils.infra.tracing_hook import setup_tracing  # noqa: PLC0415
 
                 setup_tracing()
 
-        # All backends write to a local staging directory under the
-        # "profiling" subdirectory.  The base staging dir path is
-        # communicated to workers via an environment variable set by
-        # ArtifactDelivery.create() before the pipeline starts.
-        # If the env var is not set (e.g. running without
-        # ArtifactDelivery), fall back to a temporary directory.
         # The "profiling" subdirectory isolates profiling artifacts
-        # from tracing artifacts (which go to <base>/traces/).
-        base_staging = pathlib.Path(
-            os.environ.get(
-                "COSMOS_CURATE_ARTIFACTS_STAGING_DIR",
-                tempfile.mkdtemp(prefix="cosmos_curate_profiling_staging_"),
-            ),
-        )
         staging_dir = base_staging / "profiling"
         staging_dir.mkdir(parents=True, exist_ok=True)
 
@@ -994,8 +1034,21 @@ def _make_profiled_stage_class[T: CuratorStage](
         _profiling_config: ProfilingConfig = config
 
         def _ensure_state(self) -> _ProfilingState:
-            """Lazy-init the profiling state inside the actor process."""
+            """Lazy-init the profiling state inside the actor process.
+
+            On first call, attaches the driver's trace anchor as the remote
+            parent context so that all subsequent ``scope()`` spans become
+            children of the pipeline's root trace.
+            """
             if self._profiling_state is None:
+                from cosmos_curate.core.utils.infra.tracing_hook import (  # noqa: PLC0415
+                    attach_remote_parent,
+                    read_propagated_traceparent,
+                )
+
+                traceparent = self._profiling_config.traceparent or read_propagated_traceparent()
+                attach_remote_parent(traceparent)
+
                 self._profiling_state = _ProfilingState(
                     stage_name=base_name,
                     config=self._profiling_config,
@@ -1197,10 +1250,51 @@ def _apply_profiling_config(args: argparse.Namespace) -> ProfilingConfig | None:
         memory_enabled=mem,
         gpu_enabled=gpu,
         tracing_enabled=tracing,
+        tracing_sampling=getattr(args, "profile_tracing_sampling", 0.01),
+        tracing_otlp_endpoint=getattr(args, "profile_tracing_otlp_endpoint", ""),
+        staging_dir=os.environ.get("COSMOS_CURATE_ARTIFACTS_STAGING_DIR", ""),
+        traceparent=os.environ.get("COSMOS_CURATE_TRACEPARENT", ""),
         cpu_exclude=_parse_exclude(getattr(args, "profile_cpu_exclude", None)),
         memory_exclude=_parse_exclude(getattr(args, "profile_memory_exclude", None)),
         gpu_exclude=_parse_exclude(getattr(args, "profile_gpu_exclude", None)),
     )
+
+
+def _register_flush_hooks(config: ProfilingConfig, *, has_profiling: bool, state: "_ProfilingState") -> None:
+    """Register pre-shutdown hooks that flush artifacts before collection.
+
+    Called from :func:`profiling_scope` after ``ArtifactDelivery``
+    hooks have been registered.  LIFO ordering ensures these flush
+    hooks run *before* the collection hooks.
+
+    Args:
+        config: Current profiling configuration.
+        has_profiling: Whether CPU/memory/GPU profiling is enabled.
+        state: The ``_ProfilingState`` whose root profilers must be
+            flushed before artifact collection.
+
+    """
+    from cosmos_curate.core.utils.infra.ray_cluster_utils import register_pre_shutdown_hook  # noqa: PLC0415
+
+    if has_profiling:
+
+        def _flush_root_profilers() -> None:
+            state.stop_and_save()
+            state.flush_final_artifacts()
+
+        register_pre_shutdown_hook(_flush_root_profilers)
+
+    if config.tracing_enabled:
+
+        def _flush_driver_traces() -> None:
+            try:
+                from cosmos_curate.core.utils.infra.tracing_hook import flush_tracing  # noqa: PLC0415
+
+                flush_tracing()
+            except Exception as e:  # noqa: BLE001
+                logger.warning(f"[otel] {process_tag()}: Failed to flush driver traces: {e}")
+
+        register_pre_shutdown_hook(_flush_driver_traces)
 
 
 @contextlib.contextmanager
@@ -1225,7 +1319,10 @@ def profiling_scope(
     with the OpenTelemetry tracing hook before yielding.  Each
     worker flushes spans to a local staging directory.  A second
     ``ArtifactDelivery`` (``kind="traces"``) collects trace files
-    from ``<staging>/traces/`` post-pipeline.
+    from ``<staging>/traces/`` post-pipeline.  By default only the
+    local file exporter is active; pass
+    ``--profile-tracing-otlp-endpoint`` to also send spans to a
+    remote OTLP collector.
 
     Both delivery instances register pre-shutdown hooks independently
     and upload to ``<output-path>/profile`` via ``StorageWriter``.
@@ -1298,7 +1395,13 @@ def profiling_scope(
     # /tmp/cosmos_curate_traces/ -- which doesn't match the staging
     # directory that ArtifactDelivery would create later, causing
     # collection to find zero files.
+    # Globally disable or enable the OTel SDK.  This must happen before
+    # ray.init() so workers inherit the env var.  When tracing is disabled,
+    # OTEL_SDK_DISABLED=true tells all OTel-aware libraries (vLLM, boto
+    # instrumentors, etc.) to produce no-op spans.  When tracing is
+    # enabled, we clear it so the SDK is active.
     if config.tracing_enabled:
+        os.environ.pop("OTEL_SDK_DISABLED", None)
         try:
             # Create the traces ArtifactDelivery first so that
             # COSMOS_CURATE_ARTIFACTS_STAGING_DIR is set before
@@ -1313,17 +1416,22 @@ def profiling_scope(
 
             from cosmos_curate.core.utils.infra.tracing_hook import enable_tracing  # noqa: PLC0415
 
-            enable_tracing()
+            enable_tracing(
+                sampling_rate=config.tracing_sampling,
+                otlp_endpoint=config.tracing_otlp_endpoint,
+            )
         except Exception as e:  # noqa: BLE001
             logger.warning(f"[otel] {process_tag()}: Failed to set up distributed tracing: {e}", exc_info=True)
+    else:
+        os.environ["OTEL_SDK_DISABLED"] = "true"
 
     # Run the per-stage profiling scope (cpu/memory/gpu backends).
     # scope() wraps the block with an OTel span automatically.
     state = _ProfilingState(stage_name=stage_name, config=config)
 
-    # Register a pre-shutdown hook that flushes root profiler artifacts
-    # to the staging directory BEFORE ArtifactDelivery collection hooks
-    # run.  Without this, the root profiles are written too late:
+    # Register pre-shutdown hooks that flush artifacts to the staging
+    # directory BEFORE ArtifactDelivery collection hooks run.
+    # Without these, artifacts may be written too late:
     #
     #   The pipeline calls ``shutdown_cluster`` inside the yield.
     #   ``scope.__exit__`` (which writes root files) runs AFTER
@@ -1331,25 +1439,20 @@ def profiling_scope(
     #   has already collected and Ray has been shut down.
     #
     # By registering AFTER the ArtifactDelivery hooks, LIFO ordering
-    # ensures this hook runs FIRST:
+    # ensures flush hooks run FIRST:
     #
     #   Shutdown sequence (LIFO):
-    #     1. flush root profilers  -- writes files to staging
-    #     2. collect traces
-    #     3. collect profiling     -- root files now exist
-    #     4. Ray shutdown
+    #     1. flush driver traces   -- flushes OTel span file to disk
+    #     2. flush root profilers  -- writes cpu/mem/gpu files to staging
+    #     3. collect traces        -- ArtifactDelivery uploads spans
+    #     4. collect profiling     -- ArtifactDelivery uploads profiles
+    #     5. Ray shutdown
     #
     # ``stop_and_save`` is idempotent (each backend guards on None
     # state), so the subsequent ``scope.__exit__`` call is a safe
-    # no-op.
-    if has_profiling:
-        from cosmos_curate.core.utils.infra.ray_cluster_utils import register_pre_shutdown_hook  # noqa: PLC0415
-
-        def _flush_root_profilers() -> None:
-            state.stop_and_save()
-            state.flush_final_artifacts()
-
-        register_pre_shutdown_hook(_flush_root_profilers)
+    # no-op.  ``flush_tracing`` is also idempotent (flushes buffers
+    # but leaves the file open for any late spans).
+    _register_flush_hooks(config, has_profiling=has_profiling, state=state)
 
     # Trace hierarchy: the "trace anchor" is the TRUE root of the
     # distributed trace.  It has no parent, ends immediately, and is
@@ -1358,7 +1461,7 @@ def profiling_scope(
     # warnings that occur when a long-lived root span arrives last.
     #
     # _root.main (created by state.scope) becomes a CHILD of the
-    # anchor.  Worker spans also reference the anchor as parent (via
+    # anchor.  Stage spans also reference the anchor as parent (via
     # COSMOS_CURATE_TRACEPARENT env var).
     #
     #   Trace hierarchy
@@ -1366,7 +1469,7 @@ def profiling_scope(
     #   trace_anchor  (root, no parent, ends FIRST)
     #     +-- _root.main              (ends LAST, parent=anchor)
     #     |     +-- botocore S3 etc.  (auto-instrumented, parent=main)
-    #     +-- worker spans            (parent=anchor via env var)
+    #     +-- stage spans             (parent=anchor via env var)
     #
     #   Timeline
     #   --------
@@ -1405,6 +1508,7 @@ def profiling_scope(
                     "profiling.memory_enabled": config.memory_enabled,
                     "profiling.gpu_enabled": config.gpu_enabled,
                     "profiling.tracing_enabled": config.tracing_enabled,
+                    "profiling.tracing_sampling": config.tracing_sampling,
                 }
             )
 

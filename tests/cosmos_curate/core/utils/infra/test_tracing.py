@@ -43,6 +43,8 @@ Test setup:
     No Ray cluster, no network, no GPU required.
 """
 
+import asyncio
+import contextvars
 import os
 from collections.abc import Generator, Sequence
 from unittest.mock import MagicMock
@@ -207,6 +209,175 @@ class TestTracedDecorator:
         span_names = [s.name for s in spans]
         assert "my.decorated_fn" in span_names
 
+    @pytest.mark.asyncio
+    async def test_traced_async_preserves_return_value_and_creates_span(
+        self,
+        otel_provider: tuple[TracerProvider, _InMemoryExporter],
+    ) -> None:
+        """Async decorated function returns its value; a span is exported."""
+        _provider, exporter = otel_provider
+
+        @traced("my.async_fn")
+        async def async_compute(x: int) -> int:
+            return x * 2
+
+        result = await async_compute(21)
+        assert result == 42
+
+        spans = exporter.get_finished_spans()
+        span_names = [s.name for s in spans]
+        assert "my.async_fn" in span_names
+
+    @pytest.mark.asyncio
+    async def test_traced_async_span_covers_full_coroutine(
+        self,
+        otel_provider: tuple[TracerProvider, _InMemoryExporter],
+    ) -> None:
+        """Async span must stay open until the coroutine completes.
+
+        Verifies that child spans created inside the async function
+        are correctly parented under the @traced span, not orphaned.
+        """
+        _provider, exporter = otel_provider
+
+        @traced("parent.async_op")
+        async def slow_op() -> str:
+            with traced_span("child.inner_work"):
+                await asyncio.sleep(0.01)
+            return "done"
+
+        result = await slow_op()
+        assert result == "done"
+
+        spans = exporter.get_finished_spans()
+        span_names = [s.name for s in spans]
+        assert "parent.async_op" in span_names
+        assert "child.inner_work" in span_names
+
+        parent = next(s for s in spans if s.name == "parent.async_op")
+        child = next(s for s in spans if s.name == "child.inner_work")
+
+        # Child must be parented under the async span.
+        assert child.parent is not None
+        assert child.parent.span_id == parent.context.span_id
+
+        # Parent span must have non-zero duration (covers the full await).
+        assert parent.end_time is not None
+        assert parent.start_time is not None
+        assert parent.end_time > parent.start_time
+
+    @pytest.mark.asyncio
+    async def test_traced_async_propagates_exceptions(
+        self,
+        otel_provider: tuple[TracerProvider, _InMemoryExporter],
+    ) -> None:
+        """Exceptions in async functions must propagate through @traced."""
+        _provider, exporter = otel_provider
+
+        @traced("failing.async_fn")
+        async def failing() -> None:
+            msg = "async boom"
+            raise ValueError(msg)
+
+        with pytest.raises(ValueError, match="async boom"):
+            await failing()
+
+        spans = exporter.get_finished_spans()
+        span_names = [s.name for s in spans]
+        assert "failing.async_fn" in span_names
+
+    @pytest.mark.asyncio
+    async def test_traced_async_bound_method(
+        self,
+        otel_provider: tuple[TracerProvider, _InMemoryExporter],
+    ) -> None:
+        """@traced works on async bound methods (the production use case)."""
+        _provider, exporter = otel_provider
+
+        class Worker:
+            @traced("Worker.run")
+            async def run(self, x: int) -> int:
+                return x + 1
+
+        result = await Worker().run(41)
+        assert result == 42
+
+        spans = exporter.get_finished_spans()
+        span_names = [s.name for s in spans]
+        assert "Worker.run" in span_names
+
+
+class TestAsyncRunnerContextPropagation:
+    """asyncio.Runner + contextvars.copy_context() span parenting.
+
+    asyncio.Runner caches its context on the first run() call.
+    Without passing context=contextvars.copy_context(), all
+    subsequent run() calls reuse the first batch's OTel context,
+    causing child spans to be mis-parented under batch 1's spans.
+    """
+
+    def test_runner_context_per_call_parents_correctly(
+        self,
+        otel_provider: tuple[TracerProvider, _InMemoryExporter],
+    ) -> None:
+        """Each Runner.run() call with copy_context() parents under its own batch span."""
+        _provider, exporter = otel_provider
+        runner = asyncio.Runner()
+
+        async def create_child(name: str) -> None:
+            with traced_span(name):
+                pass
+
+        with traced_span("batch_1"):
+            runner.run(create_child("child_1"), context=contextvars.copy_context())
+        with traced_span("batch_2"):
+            runner.run(create_child("child_2"), context=contextvars.copy_context())
+
+        runner.close()
+
+        spans = exporter.get_finished_spans()
+        child_1 = next(s for s in spans if s.name == "child_1")
+        child_2 = next(s for s in spans if s.name == "child_2")
+        batch_1 = next(s for s in spans if s.name == "batch_1")
+        batch_2 = next(s for s in spans if s.name == "batch_2")
+
+        assert child_1.parent is not None
+        assert child_1.parent.span_id == batch_1.context.span_id
+        assert child_2.parent is not None
+        assert child_2.parent.span_id == batch_2.context.span_id
+
+    def test_runner_without_context_copy_misparents(
+        self,
+        otel_provider: tuple[TracerProvider, _InMemoryExporter],
+    ) -> None:
+        """Without copy_context(), Runner reuses batch 1's context for batch 2.
+
+        This test documents the Python 3.12 asyncio.Runner footgun that
+        the context=contextvars.copy_context() fix addresses.
+        """
+        _provider, exporter = otel_provider
+        runner = asyncio.Runner()
+
+        async def create_child(name: str) -> None:
+            with traced_span(name):
+                pass
+
+        with traced_span("batch_a"):
+            runner.run(create_child("child_a"))
+        with traced_span("batch_b"):
+            runner.run(create_child("child_b"))
+
+        runner.close()
+
+        spans = exporter.get_finished_spans()
+        child_b = next(s for s in spans if s.name == "child_b")
+        batch_a = next(s for s in spans if s.name == "batch_a")
+
+        # child_b should be under batch_b, but Runner reuses batch_a's
+        # cached context -- so child_b is incorrectly under batch_a.
+        assert child_b.parent is not None
+        assert child_b.parent.span_id == batch_a.context.span_id
+
 
 class TestArtifactNaming:
     """artifact_id and process_tag produce deterministic names."""
@@ -228,7 +399,7 @@ class TestGetOtlpEndpoint:
     """get_otlp_endpoint resolves the OTLP endpoint from env vars."""
 
     def test_default_when_no_env_vars(self) -> None:
-        """Should return the default endpoint when no env vars are set."""
+        """Should return empty string when no env vars are set (OTLP disabled)."""
         from unittest.mock import patch  # noqa: PLC0415
 
         with patch.dict(
@@ -236,11 +407,9 @@ class TestGetOtlpEndpoint:
             {},
             clear=True,
         ):
-            # Re-import to avoid stale env reads
             from cosmos_curate.core.utils.infra.tracing import get_otlp_endpoint  # noqa: PLC0415
 
-            # clear=True removes all env vars, so only the default remains
-            assert "localhost:4318" in get_otlp_endpoint()
+            assert get_otlp_endpoint() == ""
 
     def test_traces_endpoint_takes_precedence(self) -> None:
         """OTEL_EXPORTER_OTLP_TRACES_ENDPOINT should win over general endpoint."""

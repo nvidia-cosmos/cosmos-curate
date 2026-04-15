@@ -213,6 +213,8 @@ PROFILING_CLI_FIELDS: frozenset[str] = frozenset(
     {
         "perf_profile",
         "profile_tracing",
+        "profile_tracing_sampling",
+        "profile_tracing_otlp_endpoint",
         "profile_cpu",
         "profile_memory",
         "profile_gpu",
@@ -292,6 +294,30 @@ class CommonPipelineSettings:
             default=False,
             arg_type=None,
             action="store_true",
+        ),
+    )
+    profile_tracing_sampling: float = attrs.field(
+        validator=validators.and_(validators.ge(0.0), validators.le(1.0)),
+        metadata=cli(
+            help=(
+                "Trace sampling rate when --profile-tracing is enabled. "
+                "Value between 0.0 (none) and 1.0 (all). Default: 0.01 (1%%). "
+                "Controls both cosmos-curate and vLLM native span sampling."
+            ),
+            default=0.01,
+        ),
+    )
+    profile_tracing_otlp_endpoint: str = attrs.field(
+        validator=validators.instance_of(str),
+        metadata=cli(
+            help=(
+                "OTLP HTTP collector endpoint for remote span export "
+                "(e.g. http://localhost:4318). Empty (default) disables OTLP -- "
+                "spans are only written to local .jsonl files. "
+                "Can also be set via OTEL_EXPORTER_OTLP_ENDPOINT or "
+                "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT (takes precedence) env vars."
+            ),
+            default="",
         ),
     )
     profile_cpu: bool = attrs.field(

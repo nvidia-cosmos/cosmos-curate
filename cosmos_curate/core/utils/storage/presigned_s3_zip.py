@@ -468,9 +468,11 @@ def _download_and_extract_on_all_nodes(url: str, base_tmp_dir: str) -> str:
 
 
 def _worker_download_and_extract(url: str, base_tmp_dir: str) -> str:
+    """Download and extract an archive on all Ray nodes in a subprocess."""
     ray_cluster_utils.init_or_connect_to_cluster()
     extracted = _download_and_extract_on_all_nodes(url, base_tmp_dir)
-    ray_cluster_utils.shutdown_cluster()
+    if ray.is_initialized():
+        ray.shutdown()
     return extracted
 
 
@@ -567,9 +569,11 @@ def _gather_outputs_on_all_nodes(output_dir: str) -> None:
 
 
 def _worker_gather_outputs(output_dir: str) -> None:
+    """Gather outputs from all Ray nodes in a subprocess."""
     ray_cluster_utils.init_or_connect_to_cluster()
     _gather_outputs_on_all_nodes(output_dir)
-    ray_cluster_utils.shutdown_cluster()
+    if ray.is_initialized():
+        ray.shutdown()
 
 
 def gather_outputs_from_all_nodes(output_directory: str) -> None:

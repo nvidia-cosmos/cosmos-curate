@@ -34,6 +34,8 @@ functions.
     | _is_connection_error chain walk  |  | Direct/wrapped/OSError/unrelated exc |
     | _ResilientOtlpExporter           |  | Mock delegate: success, conn error,  |
     |   suppress + disable + re-raise  |  |   wrapped error, non-conn re-raise   |
+    | _reset_tracing_after_fork()      |  | Call directly, assert same backend,  |
+    |   dup2 fd redirect to new file   |  |   unique filename, fd writes to new  |
     +----------------------------------+  +--------------------------------------+
 
 Test setup:
@@ -72,6 +74,7 @@ from cosmos_curate.core.utils.infra.tracing_hook import (
     _is_connection_error,
     _ResilientOtlpExporter,
     _TracingBackend,
+    attach_remote_parent,
     flush_tracing,
     propagate_trace_context,
     setup_tracing,
@@ -131,7 +134,7 @@ class TestTracingConfig:
         config = TracingConfig.from_env()
         assert config.trace_dir == "/tmp/cosmos_curate_traces"  # noqa: S108
         assert config.service_name == "cosmos_curate"
-        assert config.otlp_endpoint == "http://localhost:4318"
+        assert config.otlp_endpoint == ""
 
     def test_trace_dir_derived_from_staging_env(
         self,
@@ -603,3 +606,78 @@ class TestFlushKeepsFileOpen:
 
         content = (tmp_path / backend._filename).read_text(encoding="utf-8")
         assert "test.shutdown.span" in content, "Span should be persisted before file close"
+
+
+class TestAttachRemoteParent:
+    """Verify attach_remote_parent() sets the OTel context correctly.
+
+    The function parses a ``"trace_id_hex:span_id_hex"`` string and
+    attaches a remote span context so subsequent spans share the same
+    ``trace_id`` and become children of the remote parent.
+
+    ::
+
+        attach_remote_parent("abc123:def456")
+            |
+            v
+        trace.get_current_span().get_span_context()
+            -> trace_id = 0xabc123
+            -> span_id  = 0xdef456 (parent of next span)
+
+        tracer.start_span("child")
+            -> parent_span_id = 0xdef456  (linked to remote parent)
+    """
+
+    def test_noop_for_empty_string(self) -> None:
+        """Empty traceparent is silently ignored (no crash, no context change)."""
+        span_before = trace.get_current_span()
+        attach_remote_parent("")
+        span_after = trace.get_current_span()
+        assert span_before is span_after
+
+    def test_attaches_correct_trace_id(self) -> None:
+        """After attachment, the current span context has the expected trace_id."""
+        trace_id_hex = "0000000000000000000000000000abcd"
+        span_id_hex = "00000000000000ef"
+        attach_remote_parent(f"{trace_id_hex}:{span_id_hex}")
+
+        current = trace.get_current_span().get_span_context()
+        assert current.trace_id == int(trace_id_hex, 16)
+        assert current.span_id == int(span_id_hex, 16)
+        assert current.is_remote is True
+
+    def test_child_span_inherits_trace_id(self, tmp_path: pathlib.Path) -> None:
+        """A span created after attachment shares the remote trace_id as parent."""
+        config = TracingConfig(
+            trace_dir=str(tmp_path),
+            otlp_endpoint="",
+        )
+        backend = _TracingBackend(config)
+        _reset_otel_provider_guard()
+        backend.setup_provider()
+
+        trace_id_hex = "00000000000000000000000000001234"
+        span_id_hex = "0000000000005678"
+        attach_remote_parent(f"{trace_id_hex}:{span_id_hex}")
+
+        tracer = trace.get_tracer("cosmos_curate")
+        child = tracer.start_span("test.child.span")
+        child_ctx = child.get_span_context()
+
+        assert child_ctx.trace_id == int(trace_id_hex, 16), "Child must inherit the remote trace_id"
+
+        # The parent of the child span should be the remote span_id.
+        # ReadableSpan exposes the parent via .parent attribute.
+        assert hasattr(child, "parent"), "Child must expose a parent attribute"
+        assert child.parent is not None, "Child must have a parent"
+        assert child.parent.span_id == int(span_id_hex, 16), "Parent span_id must match the remote span_id"
+
+        child.end()
+        backend.shutdown()
+
+    def test_malformed_traceparent_does_not_crash(self) -> None:
+        """A malformed string does not crash -- warning is logged via loguru."""
+        # Should not raise -- the function catches the parse error
+        # and logs a warning via loguru (which goes to stderr, not
+        # Python's logging module).
+        attach_remote_parent("not-a-valid-traceparent")
