@@ -21,6 +21,7 @@ from typing import Any, cast
 import numpy as np
 import numpy.typing as npt
 import torch
+from PIL import Image
 from transformers import AutoProcessor
 from vllm import LLM, RequestOutput
 
@@ -32,7 +33,8 @@ GPU_MEMORY_UTILIZATION = 0.9
 MAX_NUM_BATCHED_TOKENS = 32768
 MAX_MODEL_LEN = 32768
 TRUST_REMOTE_CODE = True
-LIMIT_MM_PER_PROMPT = {"video": 1}
+LIMIT_MM_PER_PROMPT_VIDEO = {"video": 1}
+LIMIT_MM_PER_PROMPT_IMAGE = {"image": 1}
 
 _DEFAULT_REFINE_PROMPT = (
     """
@@ -50,7 +52,11 @@ EXPECTED_NUMPY_DIMENSIONS = 4
 EXPECTED_CHANNELS = 3
 
 
-def _validate_numpy_array(array: npt.NDArray[np.uint8]) -> npt.NDArray[np.uint8]:
+def _validate_numpy_array(
+    array: npt.NDArray[np.uint8],
+    *,
+    clip_float_for_image: bool = False,
+) -> npt.NDArray[np.uint8]:
     """Validate and normalize numpy array format."""
     if array.ndim != EXPECTED_NUMPY_DIMENSIONS:
         msg = f"Expected 4D numpy array (T, H, W, C), got shape {array.shape}"
@@ -60,90 +66,144 @@ def _validate_numpy_array(array: npt.NDArray[np.uint8]) -> npt.NDArray[np.uint8]
         msg = f"Expected channels-last format (T, H, W, 3), got shape {array.shape}."
         raise ValueError(msg)
 
-    return _normalize_dtype(array)
+    return _normalize_dtype(array, clip_float_for_image=clip_float_for_image)
 
 
-def _normalize_dtype(array: npt.NDArray[np.uint8]) -> npt.NDArray[np.uint8]:
-    """Normalize array dtype to uint8."""
-    if array.dtype != np.uint8:
-        if array.dtype in (np.float32, np.float16) and array.max() <= 1.0:
-            return (array * 255).astype(np.uint8)
-        return array.astype(np.uint8)
-    return array
+def _float_to_uint8_video(arr: npt.NDArray[Any]) -> npt.NDArray[np.uint8]:
+    """Original video behavior: scale by 255 only when values in [0, 1]."""
+    if arr.max() <= 1.0:
+        return (arr * 255).astype(np.uint8)
+    return arr.astype(np.uint8)
 
 
-def _convert_tensor_to_numpy(tensor: torch.Tensor) -> npt.NDArray[np.uint8]:
+def _float_to_uint8_image(arr: npt.NDArray[Any]) -> npt.NDArray[np.uint8]:
+    """Image path: expect [0, 1] or [0, 255]; normalize to [0, 1] then scale and clip to uint8."""
+    arr_f = arr.astype(np.float32)
+    if arr_f.size > 0:
+        mx = float(np.max(arr_f))
+        if mx > 255.0:  # noqa: PLR2004
+            msg = f"Float array has max {mx} (expected [0, 1] or [0, 255])"
+            raise ValueError(msg)
+        if mx > 1.0:
+            arr_f = arr_f / 255.0
+    return np.clip(arr_f * 255, 0, 255).astype(np.uint8)
+
+
+def _normalize_dtype(
+    array: npt.NDArray[np.uint8],
+    *,
+    clip_float_for_image: bool = False,
+) -> npt.NDArray[np.uint8]:
+    """Normalize array dtype to uint8. Video and image paths use separate float handling."""
+    if array.dtype == np.uint8:
+        return array
+    if array.dtype in (np.float32, np.float16):
+        return _float_to_uint8_image(array) if clip_float_for_image else _float_to_uint8_video(array)
+    return array.astype(np.uint8)
+
+
+def _convert_tensor_to_numpy(
+    tensor: torch.Tensor,
+    *,
+    clip_float_for_image: bool = False,
+) -> npt.NDArray[np.uint8]:
     """Convert torch.Tensor (T, C, H, W) to numpy (T, H, W, C)."""
     if tensor.ndim != EXPECTED_TENSOR_DIMENSIONS:
         msg = f"Expected 4D torch.Tensor (T, C, H, W), got shape {tensor.shape}"
         raise ValueError(msg)
 
     video_np = tensor.permute(0, 2, 3, 1).cpu().numpy()
-    return _normalize_dtype(video_np)
+    return _normalize_dtype(video_np, clip_float_for_image=clip_float_for_image)
 
 
 def _convert_video_format(
     video_inputs: torch.Tensor | npt.NDArray[np.uint8] | None,
+    *,
+    clip_float_for_image: bool = False,
 ) -> npt.NDArray[np.uint8] | None:
     """Convert torch.Tensor (T, C, H, W) or np.ndarray to vLLM format (T, H, W, C)."""
     retval: npt.NDArray[np.uint8] | None = None
     if video_inputs is None:
         retval = None
     elif isinstance(video_inputs, torch.Tensor):
-        retval = _convert_tensor_to_numpy(video_inputs)
+        retval = _convert_tensor_to_numpy(video_inputs, clip_float_for_image=clip_float_for_image)
     else:  # isinstance(video_inputs, np.ndarray):
-        retval = _validate_numpy_array(video_inputs)
+        retval = _validate_numpy_array(video_inputs, clip_float_for_image=clip_float_for_image)
 
     return retval
 
 
 def make_prompt(
-    message: dict[str, Any], frames: torch.Tensor, metadata: dict[str, Any], processor: AutoProcessor
+    message: dict[str, Any],
+    frames: torch.Tensor | npt.NDArray[np.uint8],
+    metadata: dict[str, Any],
+    processor: AutoProcessor,
+    *,
+    use_image: bool = False,
 ) -> dict[str, Any]:
     """Make a prompt for the Nemotron Nano 12B v2 model.
 
     Args:
         message: The message to use for the prompt.
-        frames: The frames to use for the prompt.
-        metadata: The metadata of the video clip.
+        frames: Frames as torch.Tensor (T, C, H, W) or numpy (T, H, W, C) uint8;
+            refinement path passes numpy from multi_modal_data["video"][0].
+        metadata: The metadata of the video clip or image.
         processor: The processor to use for the prompt.
+        use_image: When True, select image modality (multi_modal_data["image"]);
+            when False, select video (multi_modal_data["video"] with metadata).
+            Aligned with VllmConfig.use_image_input.
 
     Returns:
         A prompt for the Nemotron Nano 12B v2 model.
 
     """
-    video_np = _convert_video_format(frames)
+    video_np = _convert_video_format(frames, clip_float_for_image=use_image)
+    if video_np is None:
+        msg = "convert_video_format returned None"
+        raise ValueError(msg)
     prompt_ids = processor.apply_chat_template(  # type: ignore[attr-defined]
         [message], add_generation_prompt=True, tokenize=True, return_tensors="pt"
     )[0].tolist()
 
-    nemotron_metadata = {
-        "total_num_frames": frames.shape[0],
-        "fps": metadata["fps"],
-        "duration": metadata["duration"],
-        "frames_indices": metadata["frames_indices"],
-        "video_backend": metadata["video_backend"],
-    }
+    if use_image:
+        single_frame = video_np[0]  # (H, W, C) uint8
+        if single_frame.ndim != 3 or single_frame.shape[-1] != EXPECTED_CHANNELS:  # noqa: PLR2004
+            msg = f"Expected single frame (H, W, C) with C={EXPECTED_CHANNELS}, got shape {single_frame.shape}"
+            raise ValueError(msg)
+        pil_image = Image.fromarray(single_frame.copy())
+        multi_modal_data: dict[str, Any] = {"image": [pil_image]}
+    else:
+        nemotron_metadata = {
+            "total_num_frames": frames.shape[0],
+            "fps": metadata["fps"],
+            "duration": metadata["duration"],
+            "frames_indices": metadata["frames_indices"],
+            "video_backend": metadata["video_backend"],
+        }
+        multi_modal_data = {"video": (video_np, nemotron_metadata)}
 
     return {
         "prompt_token_ids": prompt_ids,
-        "multi_modal_data": {"video": (video_np, nemotron_metadata)},
+        "multi_modal_data": multi_modal_data,
     }
 
 
-def make_message(text_input: str) -> dict[str, Any]:
+def make_message(text_input: str, *, use_image: bool = False) -> dict[str, Any]:
     """Create a chat message structure for Nemotron Nano 12B v2.
 
     Args:
         text_input: The text input to create a message for.
+        use_image: When True, select image modality (content type "image"); when False,
+            select video. Aligned with VllmConfig.use_image_input.
 
     Returns:
         A chat message structure for Nemotron Nano 12B v2.
 
     """
+    content_type = "image" if use_image else "video"
     return {
         "role": "user",
-        "content": [{"type": "video"}, {"type": "text", "text": text_input}],
+        "content": [{"type": content_type}, {"type": "text", "text": text_input}],
     }
 
 
@@ -167,13 +227,14 @@ class VllmNemotronNano12Bv2VL(VllmPlugin):
 
         """
         os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+        limit_mm = LIMIT_MM_PER_PROMPT_IMAGE if config.use_image_input else LIMIT_MM_PER_PROMPT_VIDEO
         return LLM(
             model=str(cls.model_path(config)),
             trust_remote_code=TRUST_REMOTE_CODE,
             tensor_parallel_size=config.num_gpus,
             gpu_memory_utilization=GPU_MEMORY_UTILIZATION,
             max_model_len=MAX_MODEL_LEN,
-            limit_mm_per_prompt=LIMIT_MM_PER_PROMPT,
+            limit_mm_per_prompt=limit_mm,
             compilation_config={"cudagraph_mode": "piecewise"},
             performance_mode=config.performance_mode,
         )
@@ -194,21 +255,26 @@ class VllmNemotronNano12Bv2VL(VllmPlugin):
         frames: torch.Tensor,
         metadata: dict[str, Any],
         processor: AutoProcessor,
+        config: VllmConfig,
     ) -> dict[str, Any]:
-        """Make LLM inputs for the model.
+        """Make LLM inputs for the model (video or image).
 
         Args:
             prompt: The prompt to use for the LLM.
             frames: The frames to use for the LLM.
-            metadata: The metadata to use for the LLM.
+            metadata: The metadata to use for the LLM (video path; unused when use_image_input).
             processor: The AutoProcessor to use for the LLM.
+            config: vLLM config. config.use_image_input: when True, select image modality
+                (content type "image", multi_modal_data["image"], first frame as PIL);
+                when False, select video. Aligned with VllmConfig.use_image_input
+                (pipelines/video/utils/data_model.py).
 
         Returns:
             A dictionary containing the LLM inputs.
 
         """
-        message = make_message(prompt)
-        return make_prompt(message, frames, metadata, processor)
+        message = make_message(prompt, use_image=config.use_image_input)
+        return make_prompt(message, frames, metadata, processor, use_image=config.use_image_input)
 
     @staticmethod
     def make_refined_llm_request(
@@ -238,18 +304,28 @@ class VllmNemotronNano12Bv2VL(VllmPlugin):
             msg = "Message does not contain multi_modal_data"
             raise ValueError(msg)
 
-        if "video" not in request.inputs["multi_modal_data"]:
-            msg = "Message does not contain video"
+        final_prompt = _refine_prompt + request.caption
+        mm_data = request.inputs["multi_modal_data"]
+        if "image" in mm_data and "video" in mm_data:
+            msg = "multi_modal_data must contain one of 'image' or 'video', not both"
+            raise ValueError(msg)
+        if "image" not in mm_data and "video" not in mm_data:
+            msg = "multi_modal_data must contain 'image' or 'video'"
             raise ValueError(msg)
 
-        video_frames = request.inputs["multi_modal_data"]["video"][0]
-        final_prompt = _refine_prompt + request.caption
-
-        nemotron_metadata = request.inputs["multi_modal_data"]["video"][1]
-        # nemotron_metadata is now a dict (converted in make_prompt to avoid pickle issues)
-        metadata = nemotron_metadata if isinstance(nemotron_metadata, dict) else nemotron_metadata.__dict__
-
-        inputs = make_prompt(make_message(final_prompt), video_frames, metadata, processor)
+        use_image = "image" in mm_data
+        if use_image:
+            pil_img = mm_data["image"][0]
+            arr = np.array(pil_img)
+            frames = torch.from_numpy(arr).permute(2, 0, 1).unsqueeze(0)
+            inputs = make_prompt(make_message(final_prompt, use_image=True), frames, {}, processor, use_image=True)
+        else:
+            video_frames = mm_data["video"][0]
+            nemotron_metadata = mm_data["video"][1]
+            metadata = nemotron_metadata if isinstance(nemotron_metadata, dict) else nemotron_metadata.__dict__
+            inputs = make_prompt(
+                make_message(final_prompt, use_image=False), video_frames, metadata, processor, use_image=False
+            )
 
         return VllmCaptionRequest(
             request_id=secrets.token_hex(8),

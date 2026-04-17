@@ -58,8 +58,14 @@ class VllmPlugin(ABC):
     
     @staticmethod
     @abstractmethod
-    def make_llm_input(prompt: str, frames: torch.Tensor, processor: AutoProcessor) -> dict[str, Any]:
-        """Convert prompt + video frames to model-specific input format"""
+    def make_llm_input(
+        prompt: str,
+        frames: torch.Tensor,
+        metadata: dict[str, Any],
+        processor: AutoProcessor,
+        config: VllmConfig,
+    ) -> dict[str, Any]:
+        """Convert prompt + frames + metadata to model-specific input format"""
     
     @staticmethod
     @abstractmethod
@@ -77,6 +83,8 @@ class VllmPlugin(ABC):
 ```
 
 **Only need to implement 5 methods** - `model_id()` and `model_path()` are inherited.
+`make_llm_input()` must accept both `metadata` and `config`. Plugins that support
+both image and video should use `config.use_image_input` to choose the modality.
 
 ---
 
@@ -218,7 +226,13 @@ Convert prompt and video frames to your model's expected input format:
 
 ```python
 @staticmethod
-def make_llm_input(prompt: str, frames: torch.Tensor, processor: AutoProcessor) -> dict[str, Any]:
+def make_llm_input(
+    prompt: str,
+    frames: torch.Tensor,
+    metadata: dict[str, Any],
+    processor: AutoProcessor,
+    config: VllmConfig,
+) -> dict[str, Any]:
     """Make LLM input for token-based models."""
     # Create message structure (model-specific)
     message = {
@@ -239,7 +253,7 @@ def make_llm_input(prompt: str, frames: torch.Tensor, processor: AutoProcessor) 
     
     return {
         "prompt_token_ids": prompt_ids,
-        "multi_modal_data": {"video": frames},  # vLLM expects this key
+        "multi_modal_data": {"video": [(frames, metadata)]},
     }
 ```
 
@@ -247,7 +261,13 @@ def make_llm_input(prompt: str, frames: torch.Tensor, processor: AutoProcessor) 
 
 ```python
 @staticmethod
-def make_llm_input(prompt: str, frames: torch.Tensor, processor: AutoProcessor) -> dict[str, Any]:
+def make_llm_input(
+    prompt: str,
+    frames: torch.Tensor,
+    metadata: dict[str, Any],  # noqa: ARG004
+    processor: AutoProcessor,
+    config: VllmConfig,
+) -> dict[str, Any]:
     """Make LLM input for text-based models with PIL images."""
     from PIL import Image
     
@@ -264,7 +284,7 @@ def make_llm_input(prompt: str, frames: torch.Tensor, processor: AutoProcessor) 
     
     return {
         "prompt": prompt_with_placeholders,
-        "multi_modal_data": {"image": images},  # vLLM expects list of PIL Images
+        "multi_modal_data": {"image": images if config.use_image_input else [(frames, metadata)]},
     }
 ```
 
@@ -272,7 +292,9 @@ def make_llm_input(prompt: str, frames: torch.Tensor, processor: AutoProcessor) 
 1. **Input format varies by model**: Check vLLM's model-specific docs
 2. **`multi_modal_data` key matters**: `"video"` vs `"image"` (singular vs plural)
 3. **Frames format**: Expect `torch.Tensor` of shape `(num_frames, C, H, W)` in range `[0, 1]`
-4. **Chat templates**: Use `processor.apply_chat_template()` if model supports it
+4. **Metadata is part of the plugin API**: include it even if your model ignores it
+5. **`config.use_image_input` controls modality**: use it when one plugin supports both images and video
+6. **Chat templates**: Use `processor.apply_chat_template()` if model supports it
 
 **Testing:**
 ```python
@@ -281,7 +303,13 @@ frames = torch.rand(8, 3, 224, 224)  # 8 frames, RGB, 224x224
 prompt = "Describe this video"
 processor = VllmMyModel.processor()
 
-inputs = VllmMyModel.make_llm_input(prompt, frames, processor)
+inputs = VllmMyModel.make_llm_input(
+    prompt,
+    frames,
+    {"fps": 1.0},
+    processor,
+    VllmConfig(model_variant="mymodel"),
+)
 
 # Verify structure
 assert isinstance(inputs, dict)
@@ -381,7 +409,13 @@ def make_refined_llm_request(
     if "video" in mm_data:
         video_frames = mm_data["video"]
         # Reuse make_llm_input to create new inputs
-        inputs = VllmMyModel.make_llm_input(final_prompt, video_frames, processor)
+        inputs = VllmMyModel.make_llm_input(
+            final_prompt,
+            video_frames,
+            {"fps": 1.0},
+            processor,
+            VllmConfig(model_variant="mymodel"),
+        )
     elif "image" in mm_data:
         # For image-based models, reconstruct from PIL images
         images = mm_data["image"]
@@ -540,7 +574,13 @@ def test_make_llm_input():
     prompt = "Describe this video"
     processor = VllmMyModel.processor()
     
-    inputs = VllmMyModel.make_llm_input(prompt, frames, processor)
+    inputs = VllmMyModel.make_llm_input(
+        prompt,
+        frames,
+        {"fps": 1.0},
+        processor,
+        VllmConfig(model_variant="mymodel"),
+    )
     
     # Verify structure
     assert isinstance(inputs, dict)
@@ -634,7 +674,8 @@ def test_mymodel_e2e_captioning():
     
     # Create test inputs
     frames = torch.rand(8, 3, 224, 224)
-    model_inputs = make_model_inputs([frames], config, processor, "Describe this video")
+    metadata = make_metadata([frames], WindowConfig(sampling_fps=1.0))
+    model_inputs = make_model_inputs([frames], metadata, config, processor, "Describe this video")
     
     # Test stage 1
     captions = vllm_caption(
@@ -810,14 +851,22 @@ Copy structure from the closest match to your model.
 
 ```python
 @staticmethod
-def make_llm_input(prompt: str, frames: torch.Tensor, processor: AutoProcessor) -> dict[str, Any]:
+def make_llm_input(
+    prompt: str,
+    frames: torch.Tensor,
+    metadata: dict[str, Any],
+    processor: AutoProcessor,
+    config: VllmConfig,
+) -> dict[str, Any]:
     """Make LLM input for MyModel.
     
     Args:
         prompt: Text prompt for video description.
         frames: Video frames as torch.Tensor with shape (num_frames, C, H, W)
                 in range [0, 1]. Typically 8 frames for MyModel.
+        metadata: Per-window metadata supplied by ``make_metadata``.
         processor: AutoProcessor for tokenization.
+        config: vLLM configuration. Use ``config.use_image_input`` for image vs video plugins.
     
     Returns:
         Dictionary with keys:
@@ -873,7 +922,13 @@ class VllmMyModel13B(VllmMyModelBase):
 from loguru import logger
 
 @staticmethod
-def make_llm_input(prompt: str, frames: torch.Tensor, processor: AutoProcessor) -> dict[str, Any]:
+def make_llm_input(
+    prompt: str,
+    frames: torch.Tensor,
+    metadata: dict[str, Any],  # noqa: ARG004
+    processor: AutoProcessor,
+    config: VllmConfig,  # noqa: ARG004
+) -> dict[str, Any]:
     logger.debug(f"Creating input for {frames.shape[0]} frames with prompt: {prompt[:50]}...")
     
     inputs = {...}
@@ -1027,7 +1082,13 @@ class VllmVideoLLaMA(VllmPlugin):
         )
 
     @staticmethod
-    def make_llm_input(prompt: str, frames: torch.Tensor, processor: AutoProcessor) -> dict[str, Any]:
+    def make_llm_input(
+        prompt: str,
+        frames: torch.Tensor,
+        metadata: dict[str, Any],
+        processor: AutoProcessor,
+        config: VllmConfig,
+    ) -> dict[str, Any]:
         message = VideoLLaMAMessage(
             role="user",
             content=[
@@ -1045,7 +1106,7 @@ class VllmVideoLLaMA(VllmPlugin):
         
         return {
             "prompt_token_ids": prompt_ids,
-            "multi_modal_data": {"video": frames},
+            "multi_modal_data": {"video": [(frames, metadata)]},
         }
 
     @staticmethod

@@ -52,7 +52,8 @@ def test_make_llm_input_cosmos_reason(plugin_cls: type[VllmCosmosReason1VL]) -> 
     prompt = "Describe the video"
 
     metadata = {"fps": 30, "duration": 1.0}
-    result = plugin_cls.make_llm_input(prompt, frames, metadata, mock_processor)
+    config = VllmConfig(model_variant=plugin_cls.model_variant())
+    result = plugin_cls.make_llm_input(prompt, frames, metadata, mock_processor, config)
 
     assert "multi_modal_data" in result
     assert "video" in result["multi_modal_data"]
@@ -143,7 +144,7 @@ def test_stage2_refine_prompt_equivalence_with_real_processor() -> None:
     metadata = {"fps": 30, "duration": 1.0}
 
     # Generate initial prompt via real processor
-    initial_inputs = VllmCosmosReason1VL.make_llm_input("initial user text", frames, metadata, processor)
+    initial_inputs = VllmCosmosReason1VL.make_llm_input("initial user text", frames, metadata, processor, vllm_config)
     initial_prompt = initial_inputs["prompt"]
 
     caption = "stage1 caption"

@@ -933,10 +933,14 @@ class VllmConfig:
             is the vLLM default. Set to None to use the vLLM default.
         debug_save_frames: Whether to save video frames as PNGs for debugging.
         debug_frames_output_dir: Directory to save debug frame PNGs. Required if debug_save_frames is True.
+        use_image_input: When True, use the image modality only: content type "image",
+            multi_modal_data["image"], and limit_mm_per_prompt for image (video slot 0).
+            Used by the image pipeline; video pipeline leaves this False.
 
     """
 
     model_variant: str
+    use_image_input: bool = False
     prompt_variant: str = "default"
     prompt_text: str | None = None
     fp8: bool = False

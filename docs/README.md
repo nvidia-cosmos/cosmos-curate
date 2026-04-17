@@ -2,7 +2,7 @@
 
 - [Cosmos-Curate Documentation](#cosmos-curate-documentation)
   - [Documentation Structure](#documentation-structure)
-    - [1. End User Guide and Reference Pipelines Guide for Video \& AV](#1-end-user-guide-and-reference-pipelines-guide-for-video--av)
+    - [1. End User Guide and Reference Pipelines Guide for Video, AV, and Image](#1-end-user-guide-and-reference-pipelines-guide-for-video-av-and-image)
     - [2. Architecture Guide and Pipeline Design Guide](#2-architecture-guide-and-pipeline-design-guide)
     - [3. Observability Guide and Deployment Guide for NVCF](#3-observability-guide-and-deployment-guide-for-nvcf)
     - [4. Developer Guide](#4-developer-guide)
@@ -15,16 +15,16 @@ Welcome to the Cosmos-Curate documentation. This documentation is organized into
 
 ## Documentation Structure
 
-### 1. [End User Guide](client/END_USER_GUIDE.md) and Reference Pipelines Guide for [Video](curator/REFERENCE_PIPELINES_VIDEO.md) & [AV](curator/REFERENCE_PIPELINES_AV.md)
-The end user guide is designed for users who want to use the Cosmos-Curate to process and curate videos:
+### 1. [End User Guide](client/END_USER_GUIDE.md) and Reference Pipelines Guide for [Video](curator/REFERENCE_PIPELINES_VIDEO.md), [AV](curator/REFERENCE_PIPELINES_AV.md), and [Image](curator/REFERENCE_PIPELINES_IMAGE.md)
+The end user guide is designed for users who want to use the Cosmos-Curate to process and curate videos and images:
 - Prerequisites and environment setup
 - Basic usage instructions
 - Running pipelines
 - Troubleshooting common issues
 
-The reference pipelines guides are for users to understand the details of reference pipelines:
-- Output directory structure of the reference pipelines
-- Explanation of the extensive list of configuration parameters
+The reference pipelines guides are for users to understand the details of reference pipelines (video, AV, and image):
+- Output directory structure of each reference pipeline
+- Explanation of the configuration parameters
 
 **When to use these guides:**
 - If you're new to Cosmos-Curate
@@ -86,6 +86,7 @@ graph TD
    - Start with the [End User Guide](client/END_USER_GUIDE.md) to learn how to use the system
    - Refer to the [Reference Video Pipelines Guide](curator/REFERENCE_PIPELINES_VIDEO.md) to explore the many options to configure the reference pipelines targeting general videos
    - Refer to the [Reference AV Pipelines Guide](curator/REFERENCE_PIPELINES_AV.md) to explore the many options to configure the reference pipelines targeting autonomous vehicle
+   - Refer to the [Reference Image Pipeline Guide](curator/REFERENCE_PIPELINES_IMAGE.md) for the image annotate pipeline (load, optional captioning, write)
 2. **Developers**:
    - Begin with the [Developer Guide](DEVELOPER_GUIDE.md) to set up your development environment
    - Read the [Architecture Guide](curator/ARCHITECTURE_GUIDE.md) to understand the big picture

@@ -380,7 +380,8 @@ def make_model_inputs(  # noqa: PLR0913
                 )
 
     return [
-        vllm_plugin.make_llm_input(prompt, frames, md, processor) for frames, md in zip(videos, metadata, strict=True)
+        vllm_plugin.make_llm_input(prompt, frames, md, processor, config)
+        for frames, md in zip(videos, metadata, strict=True)
     ]
 
 

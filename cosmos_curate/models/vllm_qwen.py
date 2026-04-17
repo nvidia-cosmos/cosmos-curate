@@ -33,7 +33,8 @@ GPU_MEMORY_UTILIZATION = 0.85
 MAX_NUM_BATCHED_TOKENS = 32768
 DEFAULT_BATCH_SIZE = 16
 TRUST_REMOTE_CODE = False
-LIMIT_MM_PER_PROMPT = {"images": 0, "video": 1}
+LIMIT_MM_PER_PROMPT_VIDEO = {"images": 0, "video": 1}
+LIMIT_MM_PER_PROMPT_IMAGE = {"images": 1, "video": 0}
 
 _DEFAULT_REFINE_PROMPT = """
 Improve and refine following video description. Focus on highlighting the key visual and sensory elements.
@@ -57,34 +58,43 @@ class QwenMessage(TypedDict):  # noqa: D101
 
 def make_message(
     text_input: str,
+    *,
+    use_image: bool = False,
 ) -> QwenMessage:
     """Create a message for the Qwen model.
 
     Args:
         text_input: The text input to create a message for.
+        use_image: If True, use image content type (for image pipeline); else video.
 
     Returns:
         A message for the Qwen model.
 
     """
+    content_type = "image" if use_image else "video"
     return QwenMessage(
         role="user",
         content=[
-            QwenContentType(type="video"),
+            QwenContentType(type=content_type),
             QwenContentTypeText(type="text", text=text_input),
         ],
     )
 
 
 def make_prompt(
-    message: QwenMessage, data: torch.Tensor | list[tuple[torch.Tensor, dict[str, Any]]], processor: AutoProcessor
+    message: QwenMessage,
+    data: torch.Tensor | list[tuple[torch.Tensor, dict[str, Any]]],
+    processor: AutoProcessor,
+    *,
+    use_image: bool = False,
 ) -> dict[str, Any]:
     """Make a prompt for the Qwen model.
 
     Args:
         message: The message to use to create the prompt
-        data: The data to use for the prompt.
+        data: The data to use for the prompt (video: list of (tensor, metadata); image: tensor 1,C,H,W).
         processor: The processor to use for the prompt.
+        use_image: If True, pass data under multi_modal_data["image"] for image pipeline.
 
     Returns:
         A prompt for the Qwen model.
@@ -97,9 +107,15 @@ def make_prompt(
         return_tensors="pt",
     )[0].tolist()
 
+    if use_image:
+        # Single image: data is frames tensor (1, C, H, W); pass as-is for processor image path.
+        multi_modal_data: dict[str, Any] = {"image": data}
+    else:
+        multi_modal_data = {"video": data}
+
     return {
         "prompt_token_ids": prompt_ids,
-        "multi_modal_data": ({"video": data}),
+        "multi_modal_data": multi_modal_data,
     }
 
 
@@ -127,9 +143,10 @@ class VllmQwen(VllmPlugin):
             "do_normalize": config.preprocess,
         }
 
+        limit_mm = LIMIT_MM_PER_PROMPT_IMAGE if config.use_image_input else LIMIT_MM_PER_PROMPT_VIDEO
         return LLM(
             model=str(cls.model_path(config)),
-            limit_mm_per_prompt=LIMIT_MM_PER_PROMPT,
+            limit_mm_per_prompt=limit_mm,
             quantization=quantization,
             max_model_len=MAX_MODEL_LEN,
             gpu_memory_utilization=GPU_MEMORY_UTILIZATION,
@@ -156,23 +173,26 @@ class VllmQwen(VllmPlugin):
     def make_llm_input(
         prompt: str,
         frames: torch.Tensor,
-        metadata: dict[str, Any],  # noqa: ARG004
+        metadata: dict[str, Any],
         processor: AutoProcessor,
+        config: VllmConfig,
     ) -> dict[str, Any]:
         """Make LLM inputs for the model.
 
         Args:
             prompt: The prompt to use for the LLM.
-            frames: The frames to use for the LLM.
+            frames: The frames to use for the LLM (video: T,C,H,W; image: 1,C,H,W).
             metadata: The metadata to use for the LLM.
             processor: The AutoProcessor to use for the LLM.
+            config: vLLM config; config.use_image_input selects image vs video.
 
         Returns:
             A dictionary containing the LLM inputs.
 
         """
-        message = make_message(prompt)
-        return make_prompt(message, frames, processor)
+        message = make_message(prompt, use_image=config.use_image_input)
+        data = frames if config.use_image_input else [(frames, metadata)]
+        return make_prompt(message, data, processor, use_image=config.use_image_input)
 
     @staticmethod
     def make_refined_llm_request(
@@ -204,14 +224,18 @@ class VllmQwen(VllmPlugin):
             msg = "Message does not contain multi_modal_data"
             raise ValueError(msg)
 
-        if "video" not in request.inputs["multi_modal_data"]:
-            msg = "Message does not contain video"
+        mm_data = request.inputs["multi_modal_data"]
+        if "image" in mm_data and "video" in mm_data:
+            msg = "multi_modal_data must contain one of 'image' or 'video', not both"
+            raise ValueError(msg)
+        if "image" not in mm_data and "video" not in mm_data:
+            msg = "multi_modal_data must contain 'image' or 'video'"
             raise ValueError(msg)
 
-        video_frames = request.inputs["multi_modal_data"]["video"]
-
-        message = make_message(final_prompt)
-        inputs = make_prompt(message, video_frames, processor)
+        key = "image" if "image" in mm_data else "video"
+        use_image = key == "image"
+        message = make_message(final_prompt, use_image=use_image)
+        inputs = make_prompt(message, mm_data[key], processor, use_image=use_image)
 
         return VllmCaptionRequest(
             request_id=secrets.token_hex(8),
@@ -247,9 +271,10 @@ class VllmQwen3VL(VllmQwen):
             The vLLM model.
 
         """
+        limit_mm = LIMIT_MM_PER_PROMPT_IMAGE if config.use_image_input else LIMIT_MM_PER_PROMPT_VIDEO
         return LLM(
             model=str(cls.model_path(config)),
-            limit_mm_per_prompt=LIMIT_MM_PER_PROMPT,
+            limit_mm_per_prompt=limit_mm,
             max_model_len=MAX_MODEL_LEN,
             pipeline_parallel_size=1,
             mm_processor_cache_gb=0.0 if config.disable_mmcache else 4.0,
@@ -261,22 +286,28 @@ class VllmQwen3VL(VllmQwen):
 
     @staticmethod
     def make_llm_input(
-        prompt: str, frames: torch.Tensor, metadata: dict[str, Any], processor: AutoProcessor
+        prompt: str,
+        frames: torch.Tensor,
+        metadata: dict[str, Any],
+        processor: AutoProcessor,
+        config: VllmConfig,
     ) -> dict[str, Any]:
         """Make LLM inputs for the model.
 
         Args:
             prompt: The prompt to use for the LLM.
-            frames: The frames to use for the LLM.
+            frames: The frames to use for the LLM (video: T,C,H,W; image: 1,C,H,W).
             metadata: The metadata to use for the LLM.
             processor: The AutoProcessor to use for the LLM.
+            config: vLLM config; config.use_image_input selects image vs video.
 
         Returns:
             A dictionary containing the LLM inputs.
 
         """
-        message = make_message(prompt)
-        return make_prompt(message, [(frames, metadata)], processor)
+        message = make_message(prompt, use_image=config.use_image_input)
+        data = frames if config.use_image_input else [(frames, metadata)]
+        return make_prompt(message, data, processor, use_image=config.use_image_input)
 
 
 class VllmQwen3VL30B(VllmQwen3VL):

@@ -36,6 +36,9 @@ _PROMPTS = {
         road signs, traffic signals, and any aggressive driving behavior of vehicles.
         Also pay attention to interesting landmarks and describe them in detail.
     """,
+    "image": """
+        Describe the image in detail.
+    """,
 }
 
 

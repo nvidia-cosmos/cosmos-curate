@@ -16,10 +16,12 @@
 
 from unittest.mock import MagicMock
 
+import numpy as np
 import pytest
 import torch
 
 from cosmos_curate.core.utils.model import conda_utils
+from cosmos_curate.pipelines.video.utils.data_model import VllmCaptionRequest, VllmConfig
 
 if conda_utils.is_running_in_env("unified"):
     from cosmos_curate.models.vllm_nemotron import VllmNemotronNano12Bv2VL, make_message, make_prompt
@@ -49,8 +51,8 @@ def test_make_llm_input_nemotron() -> None:
         "video_backend": "opencv",
     }
 
-    # Call the function
-    result = VllmNemotronNano12Bv2VL.make_llm_input(prompt, frames, metadata, mock_processor)
+    config = VllmConfig(model_variant="nemotron")
+    result = VllmNemotronNano12Bv2VL.make_llm_input(prompt, frames, metadata, mock_processor, config)
 
     # Verify structure
     assert "multi_modal_data" in result
@@ -98,3 +100,37 @@ def test_make_prompt() -> None:
     assert result["prompt_token_ids"] == [10, 20, 30, 40]  # Should be the token IDs as list
     assert result["multi_modal_data"]["video"][0].shape == (N, H, W, C)
     assert result["multi_modal_data"]["video"][1]["fps"] == metadata["fps"]
+
+
+@pytest.mark.env("unified")
+def test_make_refined_llm_request_nemotron() -> None:
+    """Test refine flow creates a new request preserving video (numpy path) and updating prompt."""
+    mock_processor = MagicMock()
+    mock_processor.apply_chat_template.return_value = torch.tensor([[1, 2, 3]])
+
+    # Nemotron stores video as (video_np, nemotron_metadata) with numpy (T, H, W, C)
+    video_np = np.zeros((1, 8, 8, 3), dtype=np.uint8)
+    nemotron_metadata = {
+        "total_num_frames": 1,
+        "fps": 30.0,
+        "duration": 1.0,
+        "frames_indices": [0],
+        "video_backend": "opencv",
+    }
+    base_inputs = {
+        "prompt_token_ids": [0],
+        "multi_modal_data": {"video": (video_np, nemotron_metadata)},
+    }
+    base_req = VllmCaptionRequest(
+        request_id="r1",
+        inputs=base_inputs,
+        caption="stage1 caption",
+    )
+
+    refined = VllmNemotronNano12Bv2VL.make_refined_llm_request(base_req, mock_processor, refine_prompt=None)
+    assert "prompt_token_ids" in refined.inputs
+    assert "multi_modal_data" in refined.inputs
+    assert "video" in refined.inputs["multi_modal_data"]
+    refined_video_np, refined_meta = refined.inputs["multi_modal_data"]["video"]
+    assert refined_video_np.shape == video_np.shape
+    assert refined_meta["fps"] == nemotron_metadata["fps"]

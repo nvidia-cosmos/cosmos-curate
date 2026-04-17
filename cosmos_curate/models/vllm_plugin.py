@@ -109,15 +109,20 @@ class VllmPlugin(ABC):
     @staticmethod
     @abstractmethod
     def make_llm_input(
-        prompt: str, frames: torch.Tensor, metadata: dict[str, Any], processor: AutoProcessor
+        prompt: str,
+        frames: torch.Tensor,
+        metadata: dict[str, Any],
+        processor: AutoProcessor,
+        config: VllmConfig,
     ) -> dict[str, Any]:
         """Make LLM inputs for the model.
 
         Args:
             prompt: The prompt to use for the LLM.
-            frames: The frames to use for the LLM.
+            frames: The frames to use for the LLM (video: T,C,H,W; image: 1,C,H,W).
             metadata: The metadata to use for the LLM.
             processor: The AutoProcessor to use for the LLM.
+            config: vLLM config; config.use_image_input selects image vs video modality.
 
         Returns:
             A dictionary containing the LLM inputs.

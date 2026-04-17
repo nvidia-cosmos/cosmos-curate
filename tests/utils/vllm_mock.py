@@ -125,7 +125,11 @@ class MockVllmPlugin(VllmPlugin):
 
     @staticmethod
     def make_llm_input(
-        prompt: str, frames: object, metadata: dict[str, object], _processor: AutoProcessor
+        prompt: str,
+        frames: object,
+        metadata: dict[str, object],
+        _processor: AutoProcessor,
+        _config: VllmConfig,
     ) -> dict[str, object]:
         return {"prompt": prompt, "multi_modal_data": {"video": [(frames, metadata)]}}
 

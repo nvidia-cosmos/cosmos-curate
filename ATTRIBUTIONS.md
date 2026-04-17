@@ -6957,6 +6957,9 @@ SOFTWARE.
 Test video fixtures (tests/cosmos_curate/pipelines/video/data/) are clips
 trimmed from the Sintel open movie trailer.
 
+Test image fixtures (tests/cosmos_curate/pipelines/image/data) are images taken
+from the Sintel open movie trailer. 
+
 Source: https://download.blender.org/durian/trailer/sintel_trailer-480p.mp4
 Project: https://durian.blender.org/
 ```
