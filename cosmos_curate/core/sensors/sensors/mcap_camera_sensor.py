@@ -24,6 +24,7 @@ from mcap.records import Channel
 
 from cosmos_curate.core.sensors.data.camera_data import CameraData
 from cosmos_curate.core.sensors.data.video import VideoMetadata
+from cosmos_curate.core.sensors.sampling.grid import SamplingWindow
 from cosmos_curate.core.sensors.sampling.sampler import sample_window_indices
 from cosmos_curate.core.sensors.sampling.spec import SamplingSpec
 from cosmos_curate.core.sensors.types.types import DataSource
@@ -198,12 +199,12 @@ class McapCameraSensor:
     def _read_window_messages(
         self,
         reader: McapReader,
-        window: npt.NDArray[np.int64],
+        window: SamplingWindow,
         width: int,
         height: int,
     ) -> tuple[npt.NDArray[np.int64], list[bytes]]:
         """Read all topic messages whose timestamps overlap one sampling window."""
-        if window.size == 0:
+        if len(window) == 0:
             return np.empty(0, dtype=np.int64), []
 
         frame_bytes = width * height * _RGB_CHANNELS
@@ -214,8 +215,8 @@ class McapCameraSensor:
         for _schema, _channel, message in iter_messages_log_time_ns(
             reader,
             self._topic,
-            int(window[0]),
-            int(window[-1]),
+            int(window.timestamps_ns[0]),
+            int(window.exclusive_end_ns),
             log_time_order=True,
         ):
             if len(message.data) != frame_bytes:
@@ -246,7 +247,7 @@ class McapCameraSensor:
 
     def _sample_window(  # noqa: PLR0913
         self,
-        window: npt.NDArray[np.int64],
+        window: SamplingWindow,
         log_times_ns: npt.NDArray[np.int64],
         payloads: list[bytes],
         *,
@@ -255,7 +256,7 @@ class McapCameraSensor:
         spec: SamplingSpec,
     ) -> CameraData:
         """Build a ``CameraData`` batch for one window."""
-        if window.size == 0 or len(log_times_ns) == 0:
+        if len(window) == 0 or len(log_times_ns) == 0:
             return self._get_empty_camera_data()
 
         indices, _counts = sample_window_indices(log_times_ns, window, policy=spec.policy, dedup=False)
@@ -263,7 +264,7 @@ class McapCameraSensor:
             return self._get_empty_camera_data()
 
         frames = _decode_payload_rows(payloads, indices, width=width, height=height)
-        align_timestamps_ns = window[:-1]
+        align_timestamps_ns = window.timestamps_ns
         sensor_timestamps_ns = log_times_ns[indices]
         sensor_timestamps_ns.flags.writeable = False
         return CameraData(
@@ -279,12 +280,13 @@ class McapCameraSensor:
 
         Each yielded batch follows the sampling-grid half-open interval
         convention. For a window emitted by :class:`SamplingGrid`,
-        ``window[-1]`` is the exclusive right boundary marker.
+        ``window.exclusive_end_ns`` is the exclusive right boundary marker.
 
-        Any reference timestamp strictly less than ``window[-1]`` belongs to
-        this batch, while a timestamp exactly equal to ``window[-1]`` belongs
-        to the later batch, not both. Because ``window`` is sorted in
-        ascending order, this means the current batch uses ``window[:-1]``.
+        Any reference timestamp strictly less than ``window.exclusive_end_ns``
+        belongs to this batch, while a timestamp exactly equal to
+        ``window.exclusive_end_ns`` belongs to the later batch, not both.
+        Because ``window`` is sorted in ascending order, this means the
+        current batch uses ``window.exclusive_end_ns``.
 
         Empty windows yield an empty :class:`CameraData` so that batch index
         ``i`` continues to correspond to the ``i`` th sampling window. Empty

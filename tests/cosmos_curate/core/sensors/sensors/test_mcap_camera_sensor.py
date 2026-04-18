@@ -25,7 +25,7 @@ import numpy.typing as npt
 import pytest
 
 from cosmos_curate.core.sensors.data.video import VideoMetadata
-from cosmos_curate.core.sensors.sampling.grid import SamplingGrid
+from cosmos_curate.core.sensors.sampling.grid import SamplingGrid, SamplingWindow
 from cosmos_curate.core.sensors.sampling.spec import SamplingSpec
 from cosmos_curate.core.sensors.sensors.mcap_camera_sensor import (
     McapCameraSensor,
@@ -166,7 +166,7 @@ def test_mcap_camera_sensor_samples_window_and_reports_nanosecond_pts_stream(
     metadata = _make_metadata(width=2, height=2)
     frame0 = bytes(range(12))
     frame1 = bytes(range(12, 24))
-    sampling_calls: list[tuple[npt.NDArray[np.int64], npt.NDArray[np.int64]]] = []
+    sampling_calls: list[tuple[npt.NDArray[np.int64], SamplingWindow]] = []
 
     @contextmanager
     def fake_open_data_source(source: object, mode: str = "rb") -> Iterator[object]:
@@ -195,14 +195,14 @@ def test_mcap_camera_sensor_samples_window_and_reports_nanosecond_pts_stream(
 
     def fake_sample_window_indices(
         canonical: npt.NDArray[np.int64],
-        grid: npt.NDArray[np.int64],
+        window: SamplingWindow,
         *,
         policy: object = None,
         dedup: bool = True,
     ) -> tuple[npt.NDArray[np.int64], npt.NDArray[np.int64]]:
         del policy
         assert dedup is False
-        sampling_calls.append((canonical.copy(), grid.copy()))
+        sampling_calls.append((canonical.copy(), window))
         return np.array([0, 0, 1], dtype=np.int64), np.array([1, 1, 1], dtype=np.int64)
 
     patch_mcap_camera_sensor_dependencies(
@@ -224,7 +224,9 @@ def test_mcap_camera_sensor_samples_window_and_reports_nanosecond_pts_stream(
 
     assert len(sampling_calls) == 1
     np.testing.assert_array_equal(sampling_calls[0][0], np.array([100, 300], dtype=np.int64))
-    np.testing.assert_array_equal(sampling_calls[0][1], np.array([100, 200, 300, 301], dtype=np.int64))
+    np.testing.assert_array_equal(sampling_calls[0][1].timestamps_ns, np.array([100, 200, 300], dtype=np.int64))
+    assert sampling_calls[0][1].start_ns == 100
+    assert sampling_calls[0][1].exclusive_end_ns == 301
     np.testing.assert_array_equal(batch.align_timestamps_ns, np.array([100, 200, 300], dtype=np.int64))
     np.testing.assert_array_equal(batch.sensor_timestamps_ns, np.array([100, 100, 300], dtype=np.int64))
     np.testing.assert_array_equal(batch.pts_stream, np.array([100, 100, 300], dtype=np.int64))
@@ -532,7 +534,7 @@ def test_mcap_camera_sensor_read_window_messages_returns_empty_for_empty_window(
 
     log_times_ns, payloads = sensor._read_window_messages(
         _FakeReader(),
-        np.array([], dtype=np.int64),
+        SamplingWindow(start_ns=0, exclusive_end_ns=0, timestamps_ns=np.array([], dtype=np.int64)),
         width=2,
         height=2,
     )
@@ -616,7 +618,7 @@ def test_mcap_camera_sensor_sample_window_returns_empty_when_sampler_selects_no_
 
     sensor = McapCameraSensor(b"not-used")
     batch = sensor._sample_window(
-        np.array([100, 200], dtype=np.int64),
+        SamplingWindow(start_ns=100, exclusive_end_ns=200, timestamps_ns=np.array([100], dtype=np.int64)),
         np.array([100], dtype=np.int64),
         [bytes(range(12))],
         width=2,

@@ -97,9 +97,8 @@ This library:
   │  - ``spec: SamplingSpec`` has ``.grid`` and optional ``.policy``            │
   │  - Each step: ``window`` from ``for window in spec.grid``, (N,)             │
   │  - Each sensor: next batch from ``sensor.sample(spec)`` (same spec)         │
-  │  - ``spec.policy`` supplies tolerance / overlap rules for alignment QC      │
-  │  - ``AlignedFrame(align_timestamps_ns=window[:-1], sensor_data={id → …})``  │
-  └─────────────────────────────────────────────────────────────────────────────┘
+  │  - ``AlignedFrame(align_timestamps_ns=window.timestamps_ns,``               │
+  │    ``sensor_data={id → …})``                                                │
                                           │
                                           ▼
   ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -138,19 +137,29 @@ not:
 the source of truth for which timestamps downstream code cares about, and it
 also defines batching.
 
-A yielded `window` should be interpreted as a batch of reference timestamps, not
-as a promise about how many raw sensor samples exist in that wall-clock span.
+Sampling and alignment are related but not identical:
+
+- sampling is the mechanism that defines half-open windows and selects data for
+  reference timestamps
+- alignment is the result of applying that sampling mechanism so sensor payload
+  rows line up on a shared reference timeline
+
+A yielded `SamplingWindow` should be interpreted as one sampling interval plus
+the active alignment timestamps that belong to it, not as a promise about how
+many raw sensor samples exist in that wall-clock span.
 
 For one window:
 
-- `window[:-1]` are the active reference timestamps for the batch
-- `window[-1]` is the exclusive right boundary marker
-- batch shape is determined by `len(window) - 1`, not by the number of
-  sensor samples inside that time span
+- `window.timestamps_ns` are the active reference timestamps for the
+  batch
+- `window.start_ns` and `window.exclusive_end_ns` define the half-open sampling interval
+  `[start_ns, exclusive_end_ns)`
+- batch shape is determined by `len(window)`, not by the number of sensor
+  samples inside that time span
 
-Sensors are sampled onto those reference timestamps.
+Sensors are then sampled onto those reference timestamps.
 
-For each reference timestamp in `window[:-1]`, a sensor applies its own
+For each reference timestamp in `window.timestamps_ns`, a sensor applies its own
 sampling rule to produce the payload aligned to that reference timestamp. The
 sampling rule is sensor-specific:
 
@@ -176,16 +185,16 @@ rather than simply returning all raw samples that fall inside each window.
 
 ### Half-Open Window Semantics
 
-Sampling windows use the half-open interval `[window[0], window[-1])`.
+Sampling windows use the half-open interval `[window.start_ns, window.exclusive_end_ns)`.
 
 This convention exists to define batch boundaries and avoid double-counting at
-window edges. A timestamp exactly equal to `window[-1]` belongs to the next
-window, not the current one.
+window edges. A timestamp exactly equal to `window.exclusive_end_ns` belongs to
+the next window, not the current one.
 
 The half-open interval should not be interpreted to mean that every raw sensor
 sample inside that interval must appear in the sampled output. A raw sample may
 be unused if it is not selected by the sensor’s sampling rule for any reference
-timestamp in `window[:-1]`.
+timestamp in `window.timestamps_ns`.
 
 ## Sampling Data by Timestamp
 
@@ -320,16 +329,17 @@ Internals may read **`spec.grid`** and **`spec.policy`**; CLIs and configs pass 
 ### Batch contract: each window defines `N`
 
 Concrete sensors implement **`sample(spec)`** as a **generator**. For each
-**window**, ``for window in spec.grid`` produces a 1-D ``int64`` array
-**`window`**. Under the half-open contract:
+**window**, ``for window in spec.grid`` produces a 1-D **`SamplingWindow`**.
+Under the half-open contract:
 
-- ``window[:-1]`` are the active reference timestamps for the batch
-- ``window[-1]`` is the exclusive right boundary marker
-- the batch size is **`N = len(window) - 1`**
+- ``window.timestamps_ns`` are the active reference timestamps for the batch
+- ``window.start_ns`` is the inclusive left boundary
+- ``window.exclusive_end_ns`` is the exclusive right boundary
+- the batch size is **`N = len(window)`**
 
 - **Reference times** — Row ``i`` is requested at reference time
-  ``window[:-1][i]``. For ``CameraData``, ``align_timestamps_ns`` should match those
-  active reference times.
+  ``window.timestamps_ns[i]``. For ``CameraData``, ``align_timestamps_ns``
+  should match those active reference times.
 - **Sensor times** — ``sensor_timestamps_ns`` has shape ``(N,)``;
   ``sensor_timestamps_ns[i]`` is the actual capture / message time chosen
   for row ``i`` (for example, the nearest neighbour to the active reference
@@ -340,12 +350,12 @@ Concrete sensors implement **`sample(spec)`** as a **generator**. For each
   with ``make_mcap_from_mp4``, **``H``** and **``W``** are read from the
   channel metadata on that topic.
 
-So **`len(window) - 1`**, **`len(align_timestamps_ns)`**,
+So **`len(window)`**, **`len(align_timestamps_ns)`**,
 **`len(sensor_timestamps_ns)`**, and **`frames.shape[0]`** are the same
 **`N`** for each yield. Supersampling (denser reference grid than the source
 rate) **duplicates rows** when multiple reference times map to the same source
 sample; subsampling uses a smaller **`N`** per window because the active
-reference portion of **`window`** contains fewer points.
+reference portion of **`window.timestamps_ns`** contains fewer points.
 
 Aligned batches in an **`AlignedFrame`** use this same **`N`** for every sensor present in that frame so rows stay time-aligned across sensors.
 
@@ -455,13 +465,13 @@ passes, so it is not a supported input to this library.
 ## Components
 
 - **Containers**: Time indexed container files are the only supported container format, like MCAP, or MP4.
-- **SamplingGrid**: Reference `timestamps_ns` plus `stride_ns` / `duration_ns` / `IntervalType`; iterable in **window** order (`for window in grid`). Each **`window`** is a contiguous slice of reference timestamps (a view into `timestamps_ns`) with shape **`(N,)`**. Drives batch shape **`N`** per yield. Held by a **`SamplingSpec`**; not passed alone to **`sample`** / **`align`**.
+- **SamplingGrid**: Reference `timestamps_ns` plus `stride_ns` / `duration_ns` / `IntervalType`; iterable in **window** order (`for window in grid`). Each **`window`** is a `SamplingWindow` with `start_ns`, `exclusive_end_ns`, and `timestamps_ns` `(N,)`. Drives batch shape **`N`** per yield. Held by a **`SamplingSpec`**; not passed alone to **`sample`** / **`align`**.
 - **SamplingPolicy**: Alignment and QC parameters (`tolerance_ns`, etc.); **no** timeline geometry. May be attached to a **`SamplingSpec`**.
 - **SamplingSpec**: **Required** argument to **`sensor.sample(spec)`**. Always contains **`grid: SamplingGrid`** and may also carry **`policy: SamplingPolicy | None`**. Single object threaded through sampling and alignment.
 - **Binary Parsers**: Parse binary data, like vendor-specific lidar data, or h265 encoded video packets, into easily handled Pythonic data formats like CameraData, LidarData, ImuData, etc.
 - **Sensors**: One per data source (CameraSensor, ImuSensor, GpsSensor, LidarSensor, etc.). Expose `start_ns`, `end_ns`, and **`sample(spec)`** — a generator over **`spec.grid`** **windows**. Each yield returns SoA with batch dimension **`N`**. Uses **`spec.policy`** when validating matches (e.g. tolerance). Each sensor type implements its own sampling strategy (nearest, interpolate, preintegrate, bucket).
 - **SensorGroup**: Group of sensors. Holds `sensors`; provides `start_ns`, `end_ns` from sensor bounds. Call `.sample(spec)` to iterate.
-- **SensorGroup.sample()**: Takes **`spec: SamplingSpec`**. Walks **`spec.grid`** in window order (`for window in spec.grid`). For each **`window`**, that `(N,)` active slice is the alignment batch; each sensor’s **`sample(spec)`** is advanced in lockstep so every payload has batch dimension `N`. Uses **`spec.policy`** for cross-sensor checks (e.g. minimum temporal overlap, tolerance). Assembles `AlignedFrame(align_timestamps_ns=window[:-1], sensor_data=…)`.
+- **SensorGroup.sample()**: Takes **`spec: SamplingSpec`**. Walks **`spec.grid`** in window order (`for window in spec.grid`). For each **`window`**, `window.timestamps_ns` is the alignment batch; each sensor's **`sample(spec)`** is advanced in lockstep so every payload has batch dimension `N`. Uses **`spec.policy`** for cross-sensor checks (e.g. minimum temporal overlap, tolerance). Assembles `AlignedFrame(align_timestamps_ns=window.timestamps_ns, sensor_data=…)`.
 - **AlignedFrame**: Batch of timestamp-aligned data (SoA). Fields: `align_timestamps_ns` `(N,)` (that window’s active alignment times from the `SamplingGrid`), and `sensor_data: dict[str, SensorData]` (e.g. `CameraData` with `align_timestamps_ns`, `sensor_timestamps_ns`, `frames` each of length `N`). Index with `frame[sensor_id]` or `frame.sensor_data[sensor_id]`. See `cosmos_curate/core/sensors/data/aligned_frame.py`.
 
 ## Module Layout

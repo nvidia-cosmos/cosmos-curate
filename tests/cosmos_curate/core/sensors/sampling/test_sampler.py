@@ -18,11 +18,18 @@ import numpy as np
 import numpy.typing as npt
 import pytest
 
+from cosmos_curate.core.sensors.sampling.grid import SamplingWindow
 from cosmos_curate.core.sensors.sampling.policy import SamplingPolicy
 from cosmos_curate.core.sensors.sampling.sampler import (
     find_closest_indices,
     sample_window_indices,
 )
+
+
+def _window_from_grid(grid: npt.NDArray[np.int64]) -> SamplingWindow:
+    if len(grid) == 0:
+        return SamplingWindow(start_ns=0, exclusive_end_ns=0, timestamps_ns=np.array([], dtype=np.int64))
+    return SamplingWindow(start_ns=grid[0], exclusive_end_ns=grid[-1], timestamps_ns=grid[:-1])
 
 
 @pytest.mark.parametrize(
@@ -213,7 +220,8 @@ def test_sample_window_indices_core_contract(  # noqa: PLR0913
     dedup: bool,
 ) -> None:
     """Test the core contract of sample_window_indices."""
-    indices, counts = sample_window_indices(canonical=canonical, grid=grid, dedup=dedup)
+    window = _window_from_grid(grid)
+    indices, counts = sample_window_indices(canonical=canonical, window=window, dedup=dedup)
     np.testing.assert_array_equal(indices, expected_indices)
     np.testing.assert_array_equal(counts, expected_counts)
     np.testing.assert_array_equal(canonical[indices], expected_canonical)
@@ -281,7 +289,8 @@ def test_sample_window_indices_half_open_window_semantics(  # noqa: PLR0913
     dedup: bool,
 ) -> None:
     """sample_window_indices should obey the half-open window contract."""
-    indices, counts = sample_window_indices(canonical=canonical, grid=grid, dedup=dedup)
+    window = _window_from_grid(grid)
+    indices, counts = sample_window_indices(canonical=canonical, window=window, dedup=dedup)
 
     np.testing.assert_array_equal(indices, expected_indices)
     np.testing.assert_array_equal(canonical[indices], expected_canonical)
@@ -330,7 +339,8 @@ def test_sample_window_indices_window_local_eligibility(
     expected_counts: npt.NDArray[np.int64],
 ) -> None:
     """sample_window_indices should use only canonical timestamps from the current window."""
-    indices, counts = sample_window_indices(canonical=canonical, grid=grid)
+    window = _window_from_grid(grid)
+    indices, counts = sample_window_indices(canonical=canonical, window=window)
 
     np.testing.assert_array_equal(indices, expected_indices)
     np.testing.assert_array_equal(canonical[indices], expected_canonical)
@@ -400,7 +410,8 @@ def test_sample_window_indices_nearest_neighbor_within_window(  # noqa: PLR0913
     dedup: bool,
 ) -> None:
     """sample_window_indices should perform nearest-neighbour matching within the eligible window-local subset."""
-    indices, counts = sample_window_indices(canonical=canonical, grid=grid, dedup=dedup)
+    window = _window_from_grid(grid)
+    indices, counts = sample_window_indices(canonical=canonical, window=window, dedup=dedup)
 
     np.testing.assert_array_equal(indices, expected_indices)
     np.testing.assert_array_equal(canonical[indices], expected_canonical)
@@ -415,8 +426,8 @@ def test_sample_window_indices_returns_original_indices_for_sidecar_arrays() -> 
     canonical = np.array([50, 150, 250, 350, 450], dtype=np.int64)
     pts_stream = np.array([500, 1500, 2500, 3500, 4500], dtype=np.int64)
     grid = np.array([140, 260, 340], dtype=np.int64)
-
-    indices, counts = sample_window_indices(canonical=canonical, grid=grid, dedup=False)
+    window = _window_from_grid(grid)
+    indices, counts = sample_window_indices(canonical=canonical, window=window, dedup=False)
 
     # The eligible canonical subset is [150, 250], but the returned indices
     # must still refer to positions in the original canonical / pts_stream arrays.
@@ -430,9 +441,10 @@ def test_sample_window_indices_policy_tolerance_passes() -> None:
     """Matches within tolerance_ns should pass."""
     canonical = np.array([100, 200, 300], dtype=np.int64)
     grid = np.array([150, 205, 350], dtype=np.int64)
+    window = _window_from_grid(grid)
     policy = SamplingPolicy(tolerance_ns=50)
 
-    indices, counts = sample_window_indices(canonical=canonical, grid=grid, policy=policy, dedup=False)
+    indices, counts = sample_window_indices(canonical=canonical, window=window, policy=policy, dedup=False)
 
     np.testing.assert_array_equal(indices, np.array([1, 1], dtype=np.int64))
     np.testing.assert_array_equal(canonical[indices], np.array([200, 200], dtype=np.int64))
@@ -443,19 +455,21 @@ def test_sample_window_indices_policy_tolerance_raises_with_offending_pair() -> 
     """A tolerance failure should report the offending grid and canonical timestamps."""
     canonical = np.array([100, 200, 300], dtype=np.int64)
     grid = np.array([150, 260, 350], dtype=np.int64)
+    window = _window_from_grid(grid)
     policy = SamplingPolicy(tolerance_ns=30)
 
     with pytest.raises(ValueError, match=r"tolerance_ns=30 exceeded: max delta was 50 ns for grid=150, canonical=200"):
-        sample_window_indices(canonical=canonical, grid=grid, policy=policy)
+        sample_window_indices(canonical=canonical, window=window, policy=policy)
 
 
 def test_sample_window_indices_policy_returns_empty_when_no_canonical_timestamps_are_in_window() -> None:
     """An empty in-window result with policy should return empty arrays rather than raising."""
     canonical = np.array([100, 200, 300], dtype=np.int64)
     grid = np.array([400, 500], dtype=np.int64)
+    window = _window_from_grid(grid)
     policy = SamplingPolicy(tolerance_ns=0)
 
-    indices, counts = sample_window_indices(canonical=canonical, grid=grid, policy=policy)
+    indices, counts = sample_window_indices(canonical=canonical, window=window, policy=policy)
 
     np.testing.assert_array_equal(indices, np.array([], dtype=np.int64))
     np.testing.assert_array_equal(counts, np.array([], dtype=np.int64))
@@ -470,29 +484,14 @@ def test_sample_window_indices_policy_returns_empty_when_no_canonical_timestamps
             "canonical must be non-empty",
         ),
         (
-            np.array([100, 200, 300], dtype=np.int64),
-            np.array([], dtype=np.int64),
-            "grid must be non-empty",
-        ),
-        (
             np.array([100, 200, 150], dtype=np.int64),
             np.array([100, 200], dtype=np.int64),
             "canonical must be strictly sorted in ascending order with no duplicates",
-        ),
-        (
-            np.array([100, 200, 300], dtype=np.int64),
-            np.array([100, 200, 150], dtype=np.int64),
-            "grid must be strictly sorted in ascending order with no duplicates",
         ),
         (
             np.array([100, 200, 200, 300], dtype=np.int64),
             np.array([100, 200], dtype=np.int64),
             "canonical must be strictly sorted in ascending order with no duplicates",
-        ),
-        (
-            np.array([100, 200, 300], dtype=np.int64),
-            np.array([100, 100, 200], dtype=np.int64),
-            "grid must be strictly sorted in ascending order with no duplicates",
         ),
     ],
 )
@@ -502,8 +501,9 @@ def test_sample_window_indices_input_validation(
     match: str,
 ) -> None:
     """sample_window_indices should reject invalid canonical and grid inputs."""
+    window = _window_from_grid(grid)
     with pytest.raises(ValueError, match=match):
-        sample_window_indices(canonical=canonical, grid=grid)
+        sample_window_indices(canonical=canonical, window=window)
 
 
 @pytest.mark.parametrize(
@@ -566,7 +566,8 @@ def test_sample_window_indices_shape_and_density_cases(  # noqa: PLR0913
     dedup: bool,
 ) -> None:
     """sample_window_indices should behave predictably across realistic grid/canonical density patterns."""
-    indices, counts = sample_window_indices(canonical=canonical, grid=grid, dedup=dedup)
+    window = _window_from_grid(grid)
+    indices, counts = sample_window_indices(canonical=canonical, window=window, dedup=dedup)
 
     np.testing.assert_array_equal(indices, expected_indices)
     np.testing.assert_array_equal(canonical[indices], expected_canonical)
@@ -580,9 +581,9 @@ def test_sample_window_indices_differs_from_global_nearest_neighbour() -> None:
     """Window-local sampling should ignore a globally closer canonical timestamp that lies outside the window."""
     canonical = np.array([100, 200, 300], dtype=np.int64)
     grid = np.array([150, 260, 350], dtype=np.int64)
-
-    global_indices = find_closest_indices(canonical, grid[:-1])
-    window_indices, window_counts = sample_window_indices(canonical=canonical, grid=grid, dedup=False)
+    window = _window_from_grid(grid)
+    global_indices = find_closest_indices(canonical, window.timestamps_ns)
+    window_indices, window_counts = sample_window_indices(canonical=canonical, window=window, dedup=False)
 
     # A global nearest-neighbour search would use 100 for the first reference
     # timestamp, because 100 is closer to 150 than 200 is.

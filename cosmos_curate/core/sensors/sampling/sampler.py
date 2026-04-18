@@ -17,6 +17,7 @@
 import numpy as np
 import numpy.typing as npt
 
+from cosmos_curate.core.sensors.sampling.grid import SamplingWindow
 from cosmos_curate.core.sensors.sampling.policy import SamplingPolicy
 from cosmos_curate.core.sensors.utils.validation import require_strictly_increasing
 
@@ -73,7 +74,7 @@ def find_closest_indices(canonical: npt.NDArray[np.int64], grid: npt.NDArray[np.
 
 def sample_window_indices(
     canonical: npt.NDArray[np.int64],
-    grid: npt.NDArray[np.int64],
+    window: SamplingWindow,
     *,
     policy: SamplingPolicy | None = None,
     dedup: bool = True,
@@ -85,16 +86,16 @@ def sample_window_indices(
     This function treats ``grid`` as one sampling window emitted by
     :class:`~cosmos_curate.core.sensors.sampling.grid.SamplingGrid`.
 
-    - ``grid[:-1]`` are the reference timestamps that belong to the current
+    - ``window.timestamps_ns`` are the reference timestamps that belong to the current
       half-open window.
-    - ``grid[-1]`` is the exclusive right boundary marker.
+    - ``window.exclusive_end_ns`` is the exclusive right boundary marker.
     - Eligible canonical timestamps are restricted to the same half-open
-      interval ``[grid[0], grid[-1])``.
+      interval ``[window.timestamps_ns[0], window.exclusive_end_ns)``.
 
     In other words, this function performs nearest-neighbour matching only
     within the current window. Canonical timestamps outside the window are
     ignored, even if one of them would be closer in absolute time to a
-    reference timestamp in ``grid[:-1]``.
+    reference timestamp in ``window.timestamps_ns``.
 
     Return value semantics
     ----------------------
@@ -107,9 +108,8 @@ def sample_window_indices(
     Args:
         canonical: Full canonical timestamp timeline for one sensor. Must be
             strictly increasing.
-        grid: One strictly increasing sampling window. The final element
-            ``grid[-1]`` is an exclusive right boundary marker and is not
-            itself sampled.
+        window: One strictly increasing sampling window. window.exclusive_end_ns
+            is an exclusive right boundary marker and is not sampled.
         policy: Optional sampling policy. When provided, each matched canonical
             timestamp must be within ``policy.tolerance_ns`` of its reference
             grid timestamp.
@@ -128,9 +128,8 @@ def sample_window_indices(
 
     Raises:
         ValueError: If ``canonical`` is empty.
-        ValueError: If ``grid`` is empty.
         ValueError: If ``canonical`` is not strictly increasing.
-        ValueError: If ``grid`` is not strictly increasing.
+        ValueError: If ``window.timestamps_ns`` is not strictly increasing.
         ValueError: If ``policy`` is provided and any matched canonical
             timestamp exceeds ``policy.tolerance_ns`` from its reference
             timestamp.
@@ -140,16 +139,14 @@ def sample_window_indices(
         msg = "canonical must be non-empty"
         raise ValueError(msg)
 
-    if len(grid) < 1:
-        msg = "grid must be non-empty"
-        raise ValueError(msg)
-
     require_strictly_increasing("canonical", canonical)
-    require_strictly_increasing("grid", grid)
+
+    if len(window) < 1:
+        return np.empty(0, dtype=np.int64), np.empty(0, dtype=np.int64)
 
     # `grid[-1]` is the exclusive boundary marker for the half-open interval.
     # The actual reference timestamps to sample in this window are `grid[:-1]`.
-    active_grid = grid[grid < grid[-1]]
+    active_grid = window.timestamps_ns
 
     # If the current window contains only the boundary marker, there are no
     # reference timestamps to sample.
@@ -161,7 +158,7 @@ def sample_window_indices(
     #
     # Window-local contract:
     #   eligible canonical timestamps are those in [grid[0], grid[-1])
-    eligible_mask = (canonical >= grid[0]) & (canonical < grid[-1])
+    eligible_mask = (canonical >= window.timestamps_ns[0]) & (canonical < window.exclusive_end_ns)
 
     # Convert the mask into integer indices into the ORIGINAL canonical array.
     # We keep these indices so that after matching on the filtered subset, we

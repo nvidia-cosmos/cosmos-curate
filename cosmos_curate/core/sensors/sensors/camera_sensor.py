@@ -191,12 +191,13 @@ class CameraSensor:
 
         Each yielded batch follows the sampling-grid half-open interval
         convention. For a window emitted by :class:`SamplingGrid`,
-        ``window[-1]`` is the exclusive right boundary marker.
+        ``window.exclusive_end_ns`` is the exclusive right boundary marker.
 
-        Any reference timestamp strictly less than ``window[-1]`` belongs to
-        this batch, while a timestamp exactly equal to ``window[-1]`` belongs
-        to the later batch, not both. Because ``window`` is sorted in
-        ascending order, this means the current batch uses ``window[:-1]``.
+        Any reference timestamp strictly less than ``window.exclusive_end_ns``
+        belongs to this batch, while a timestamp exactly equal to
+        ``window.exclusive_end_ns`` belongs to the later batch, not both.
+        Because ``window`` is sorted in ascending order, this means the
+        current batch uses ``window.exclusive_end_ns``.
 
         Empty windows yield an empty :class:`CameraData` so that batch index
         ``i`` continues to correspond to the ``i`` th sampling window. Empty
@@ -227,7 +228,7 @@ class CameraSensor:
 
         with decoder_cm as decoder:
             for window in spec.grid:
-                if window.size == 0:
+                if len(window) == 0:
                     yield self._get_empty_camera_data()
                     continue
 
@@ -241,7 +242,7 @@ class CameraSensor:
                 pts_stream_expanded = np.repeat(sampled_pts_stream, counts)
 
                 yield CameraData(
-                    align_timestamps_ns=window[:-1],
+                    align_timestamps_ns=window.timestamps_ns,
                     sensor_timestamps_ns=pts_to_ns(pts_stream_expanded, decoder.time_base),
                     pts_stream=pts_stream_expanded,
                     frames=frames,

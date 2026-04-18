@@ -22,7 +22,7 @@ import numpy as np
 import numpy.typing as npt
 import pytest
 
-from cosmos_curate.core.sensors.sampling.grid import SamplingGrid, make_ts_grid
+from cosmos_curate.core.sensors.sampling.grid import SamplingGrid, SamplingWindow, make_ts_grid
 
 
 def _iter_window_arrays(
@@ -30,13 +30,13 @@ def _iter_window_arrays(
     *,
     stride_ns: int,
     duration_ns: int,
-) -> list[npt.NDArray[np.int64]]:
+) -> list[SamplingWindow]:
     p = SamplingGrid(
         timestamps_ns=ts,
         stride_ns=stride_ns,
         duration_ns=duration_ns,
     )
-    return [w.copy() for w in p]
+    return list(p)
 
 
 def test_sampling_grid_iter() -> None:
@@ -45,13 +45,27 @@ def test_sampling_grid_iter() -> None:
     sampling_grid = SamplingGrid(ts, 20, 20)
 
     expected_windows = [
-        np.array([0, 10, 20], dtype=np.int64),
-        np.array([20, 30, 40], dtype=np.int64),
-        np.array([40, 50], dtype=np.int64),
+        SamplingWindow(
+            start_ns=0,
+            exclusive_end_ns=20,
+            timestamps_ns=np.array([0, 10], dtype=np.int64),
+        ),
+        SamplingWindow(
+            start_ns=20,
+            exclusive_end_ns=40,
+            timestamps_ns=np.array([20, 30], dtype=np.int64),
+        ),
+        SamplingWindow(
+            start_ns=40,
+            exclusive_end_ns=50,
+            timestamps_ns=np.array([40], dtype=np.int64),
+        ),
     ]
 
     for window, expected_window in zip(sampling_grid, expected_windows, strict=True):
-        np.testing.assert_array_equal(window, expected_window)
+        np.testing.assert_array_equal(window.timestamps_ns, expected_window.timestamps_ns)
+        assert window.start_ns == expected_window.start_ns
+        assert window.exclusive_end_ns == expected_window.exclusive_end_ns
 
 
 def test_sampling_grid_half_open_window_contract() -> None:
@@ -59,12 +73,10 @@ def test_sampling_grid_half_open_window_contract() -> None:
     ts = np.array([100, 200, 300, 400], dtype=np.int64)
     windows = list(SamplingGrid(ts, 200, 200))
 
-    np.testing.assert_array_equal(windows[0], np.array([100, 200, 300], dtype=np.int64))
-    np.testing.assert_array_equal(windows[1], np.array([300, 400], dtype=np.int64))
-
-    # The final element is the boundary marker; downstream active references are window[:-1].
-    np.testing.assert_array_equal(windows[0][:-1], np.array([100, 200], dtype=np.int64))
-    assert int(windows[0][-1]) == 300
+    np.testing.assert_array_equal(windows[0].timestamps_ns, np.array([100, 200], dtype=np.int64))
+    assert windows[0].exclusive_end_ns == 300
+    np.testing.assert_array_equal(windows[1].timestamps_ns, np.array([300], dtype=np.int64))
+    assert windows[1].exclusive_end_ns == 400
 
 
 def test_sampling_grid_adjacent_windows_share_boundary_marker() -> None:
@@ -72,11 +84,29 @@ def test_sampling_grid_adjacent_windows_share_boundary_marker() -> None:
     ts = np.array([0, 100, 200, 300], dtype=np.int64)
     windows = list(SamplingGrid(ts, 100, 100))
 
-    assert len(windows) == 3
-    assert int(windows[0][-1]) == 100
-    assert int(windows[1][0]) == 100
-    assert int(windows[1][-1]) == 200
-    assert int(windows[2][0]) == 200
+    expected_windows = [
+        SamplingWindow(
+            start_ns=0,
+            exclusive_end_ns=100,
+            timestamps_ns=np.array([0], dtype=np.int64),
+        ),
+        SamplingWindow(
+            start_ns=100,
+            exclusive_end_ns=200,
+            timestamps_ns=np.array([100], dtype=np.int64),
+        ),
+        SamplingWindow(
+            start_ns=200,
+            exclusive_end_ns=300,
+            timestamps_ns=np.array([200], dtype=np.int64),
+        ),
+    ]
+
+    assert len(windows) == len(expected_windows)
+    for window, expected_window in zip(windows, expected_windows, strict=True):
+        np.testing.assert_array_equal(window.timestamps_ns, expected_window.timestamps_ns)
+        assert window.start_ns == expected_window.start_ns
+        assert window.exclusive_end_ns == expected_window.exclusive_end_ns
 
 
 def test_sampling_grid_singleton_window_is_boundary_only() -> None:
@@ -84,9 +114,18 @@ def test_sampling_grid_singleton_window_is_boundary_only() -> None:
     ts = np.array([42], dtype=np.int64)
     windows = list(SamplingGrid(ts, 1, 10))
 
-    assert len(windows) == 1
-    np.testing.assert_array_equal(windows[0], np.array([42], dtype=np.int64))
-    np.testing.assert_array_equal(windows[0][:-1], np.array([], dtype=np.int64))
+    expected_windows = [
+        SamplingWindow(
+            start_ns=42,
+            exclusive_end_ns=42,
+            timestamps_ns=np.array([], dtype=np.int64),
+        ),
+    ]
+
+    for window, expected_window in zip(windows, expected_windows, strict=True):
+        np.testing.assert_array_equal(window.timestamps_ns, expected_window.timestamps_ns)
+        assert window.start_ns == expected_window.start_ns
+        assert window.exclusive_end_ns == expected_window.exclusive_end_ns
 
 
 def test_make_ts_grid() -> None:
@@ -237,12 +276,23 @@ def test_stride_equals_duration_tiling() -> None:
     got = _iter_window_arrays(ts, stride_ns=stride_ns, duration_ns=duration_ns)
 
     want = [
-        np.array([0, 100, 200], dtype=np.int64),
-        np.array([200, 300, 400], dtype=np.int64),
+        SamplingWindow(
+            start_ns=0,
+            exclusive_end_ns=200,
+            timestamps_ns=np.array([0, 100], dtype=np.int64),
+        ),
+        SamplingWindow(
+            start_ns=200,
+            exclusive_end_ns=400,
+            timestamps_ns=np.array([200, 300], dtype=np.int64),
+        ),
     ]
+
     assert len(got) == len(want)
     for a, b in zip(got, want, strict=True):
-        np.testing.assert_array_equal(a, b)
+        np.testing.assert_array_equal(a.timestamps_ns, b.timestamps_ns)
+        assert a.start_ns == b.start_ns
+        assert a.exclusive_end_ns == b.exclusive_end_ns
 
 
 def test_iter_stride_equals_duration_last_window_full_query_one_sample() -> None:
@@ -257,9 +307,24 @@ def test_iter_stride_equals_duration_last_window_full_query_one_sample() -> None
             duration_ns=duration_ns,
         )
     )
-    assert len(windows) == 2
-    np.testing.assert_array_equal(windows[0], [0, 100, 200])
-    np.testing.assert_array_equal(windows[1], [500])
+    expected_windows = [
+        SamplingWindow(
+            start_ns=0,
+            exclusive_end_ns=200,
+            timestamps_ns=np.array([0, 100], dtype=np.int64),
+        ),
+        SamplingWindow(
+            start_ns=500,
+            exclusive_end_ns=500,
+            timestamps_ns=np.array([], dtype=np.int64),
+        ),
+    ]
+
+    assert len(windows) == len(expected_windows)
+    for window, expected_window in zip(windows, expected_windows, strict=True):
+        np.testing.assert_array_equal(window.timestamps_ns, expected_window.timestamps_ns)
+        assert window.start_ns == expected_window.start_ns
+        assert window.exclusive_end_ns == expected_window.exclusive_end_ns
 
 
 def test_iter_stride_less_than_duration_overlap() -> None:
@@ -279,20 +344,20 @@ def test_iter_stride_less_than_duration_overlap() -> None:
     # Check that windows actually overlap when stride_ns < duration_ns
     # Restrict this to the two windows that share the 150us timestamp
     t_overlap = 150
-    windows_with_t = [w for w in windows if np.any(w == t_overlap)]
+    windows_with_t = [w for w in windows if np.any(w.timestamps_ns == t_overlap)]
     assert len(windows_with_t) == 2
 
     # Check that timestamps in each window are within the expected range
     starts = [p.start_ns + k * stride_ns for k in range(len(windows))]
     for w, start in zip(windows, starts, strict=True):
         end = start + duration_ns
-        for t in w:
+        for t in w.timestamps_ns:
             assert start <= int(t) <= end
 
     # Check that the indices of the windows are monotonic and non-overlapping
     # This is a thin belt & suspenders check, indices should never decrease
     # This grid has a sample on every window start, so indices strictly increase
-    first_indices = [int(np.searchsorted(ts, w[0], side="left")) for w in windows]
+    first_indices = [int(np.searchsorted(ts, w.timestamps_ns[0], side="left")) for w in windows]
     for prev, cur in pairwise(first_indices):
         assert cur > prev
 
@@ -308,36 +373,19 @@ def test_iter_irregular_sparse_grid_repeated_first_sample_across_windows() -> No
     ts = np.array([1_000, 5_000, 5_100, 9_000], dtype=np.int64)
     duration_ns = 3_000
     stride_ns = 2_000
-    p = SamplingGrid(
-        timestamps_ns=ts,
-        stride_ns=stride_ns,
-        duration_ns=duration_ns,
-    )
-    windows = list(p)
+    got = _iter_window_arrays(ts, stride_ns=stride_ns, duration_ns=duration_ns)
+    want = [
+        SamplingWindow(start_ns=1000, exclusive_end_ns=1000, timestamps_ns=np.array([], dtype=np.int64)),
+        SamplingWindow(start_ns=5000, exclusive_end_ns=5100, timestamps_ns=np.array([5000], dtype=np.int64)),
+        SamplingWindow(start_ns=5000, exclusive_end_ns=5100, timestamps_ns=np.array([5000], dtype=np.int64)),
+        SamplingWindow(start_ns=9000, exclusive_end_ns=9000, timestamps_ns=np.array([], dtype=np.int64)),
+    ]
 
-    assert len(windows) == _expected_window_count(p.start_ns, p.end_ns, stride_ns)
-    np.testing.assert_array_equal(windows[0], [1_000])
-    # Repeated leading samples are expected for sparse irregular timelines.
-    np.testing.assert_array_equal(windows[1], [5_000, 5_100])
-    np.testing.assert_array_equal(windows[2], [5_000, 5_100])
-    np.testing.assert_array_equal(windows[3], [9_000])
-
-    # Check that timestamps in each window are within the expected range
-    first_usec = [int(w[0]) for w in windows]
-    for prev, cur in pairwise(first_usec):
-        assert cur >= prev
-    assert first_usec[1] == first_usec[2] == 5_000
-
-    starts = [p.start_ns + k * stride_ns for k in range(len(windows))]
-    for w, start in zip(windows, starts, strict=True):
-        end = start + duration_ns
-        for t in w:
-            assert start <= int(t) <= end
-
-    # Window starts should remain monotonic even when the first sample repeats.
-    first_indices = [int(np.searchsorted(ts, w[0], side="left")) for w in windows]
-    for prev, cur in pairwise(first_indices):
-        assert cur >= prev
+    assert len(got) == len(want)
+    for a, b in zip(got, want, strict=True):
+        np.testing.assert_array_equal(a.timestamps_ns, b.timestamps_ns)
+        assert a.start_ns == b.start_ns
+        assert a.exclusive_end_ns == b.exclusive_end_ns
 
 
 def test_iter_stride_greater_than_duration_gaps() -> None:
@@ -351,15 +399,18 @@ def test_iter_stride_greater_than_duration_gaps() -> None:
     ts = np.array([0, 50, 100, 200, 300, 400, 500], dtype=np.int64)
     duration_ns = 100
     stride_ns = 250
-    windows = _iter_window_arrays(ts, stride_ns=stride_ns, duration_ns=duration_ns)
-    expected_windows = [
-        np.array([0, 50, 100], dtype=np.int64),
-        np.array([300], dtype=np.int64),
+    got = _iter_window_arrays(ts, stride_ns=stride_ns, duration_ns=duration_ns)
+    want = [
+        SamplingWindow(timestamps_ns=np.array([0, 50], dtype=np.int64), start_ns=0, exclusive_end_ns=100),
+        SamplingWindow(timestamps_ns=np.array([], dtype=np.int64), start_ns=300, exclusive_end_ns=300),
     ]
-    expected_orphans = [200, 400, 500]
+    assert len(got) == len(want)
 
-    assert len(windows) == len(expected_windows)
-    covered = np.unique(np.concatenate(windows))
+    expected_orphans = [200, 400, 500]
+    covered = np.array(
+        list({int(x) for x in np.concatenate([w.timestamps_ns for w in got])} | {w.exclusive_end_ns for w in want}),
+        dtype=np.int64,
+    )
     orphans = np.setdiff1d(ts, covered)
     np.testing.assert_array_equal(orphans, expected_orphans)
 
@@ -369,18 +420,16 @@ def test_boundaries_on_every_timestamp() -> None:
     ts = np.array([0, 100, 200], dtype=np.int64)
     duration_ns = 100
     stride_ns = 100
-    got = _iter_window_arrays(
-        ts,
-        stride_ns=stride_ns,
-        duration_ns=duration_ns,
-    )
+    got = _iter_window_arrays(ts, stride_ns=stride_ns, duration_ns=duration_ns)
     want = [
-        np.array([0, 100], dtype=np.int64),
-        np.array([100, 200], dtype=np.int64),
+        SamplingWindow(start_ns=0, exclusive_end_ns=100, timestamps_ns=np.array([0], dtype=np.int64)),
+        SamplingWindow(start_ns=100, exclusive_end_ns=200, timestamps_ns=np.array([100], dtype=np.int64)),
     ]
     assert len(got) == len(want)
     for a, b in zip(got, want, strict=True):
-        np.testing.assert_array_equal(a, b)
+        np.testing.assert_array_equal(a.timestamps_ns, b.timestamps_ns)
+        assert a.start_ns == b.start_ns
+        assert a.exclusive_end_ns == b.exclusive_end_ns
 
 
 def test_iter_child_slices_share_parent_memory() -> None:
@@ -392,32 +441,41 @@ def test_iter_child_slices_share_parent_memory() -> None:
         duration_ns=100,
     )
     for w in p:
-        assert np.shares_memory(w, p.timestamps_ns)
-        assert not np.shares_memory(w, ts)
-        assert not w.flags.owndata
-        assert not w.flags.writeable
+        assert np.shares_memory(w.timestamps_ns, p.timestamps_ns)
+        assert not np.shares_memory(w.timestamps_ns, ts)
+        assert not w.timestamps_ns.flags.owndata
+        assert not w.timestamps_ns.flags.writeable
 
 
 def test_initializer_defensively_copies_timestamps() -> None:
     """Mutating the caller-owned array after construction must not affect the grid."""
     ts = np.array([100, 200, 300], dtype=np.int64)
-    grid = SamplingGrid(timestamps_ns=ts, stride_ns=100, duration_ns=100)
-
+    got = _iter_window_arrays(ts, stride_ns=100, duration_ns=100)
     ts[1] = 999
+    want = [
+        SamplingWindow(start_ns=100, exclusive_end_ns=200, timestamps_ns=np.array([100], dtype=np.int64)),
+        SamplingWindow(start_ns=200, exclusive_end_ns=300, timestamps_ns=np.array([200], dtype=np.int64)),
+    ]
 
-    np.testing.assert_array_equal(grid.timestamps_ns, np.array([100, 200, 300], dtype=np.int64))
-    windows = list(grid)
-    np.testing.assert_array_equal(windows[0], np.array([100, 200], dtype=np.int64))
-    np.testing.assert_array_equal(windows[1], np.array([200, 300], dtype=np.int64))
+    assert len(got) == len(want)
+    for a, b in zip(got, want, strict=True):
+        np.testing.assert_array_equal(a.timestamps_ns, b.timestamps_ns)
+        assert a.start_ns == b.start_ns
+        assert a.exclusive_end_ns == b.exclusive_end_ns
 
 
 def test_iter_single_timestamp_yields_one_window() -> None:
     """A single timestamp still yields one degenerate boundary-only window."""
     ts = np.array([42], dtype=np.int64)
-    p = SamplingGrid(timestamps_ns=ts, stride_ns=1, duration_ns=10)
-    windows = list(p)
-    assert len(windows) == 1
-    np.testing.assert_array_equal(windows[0], [42])
+    got = _iter_window_arrays(ts, stride_ns=1, duration_ns=10)
+    want = [
+        SamplingWindow(start_ns=42, exclusive_end_ns=42, timestamps_ns=np.array([], dtype=np.int64)),
+    ]
+    assert len(got) == len(want)
+    for a, b in zip(got, want, strict=True):
+        np.testing.assert_array_equal(a.timestamps_ns, b.timestamps_ns)
+        assert a.start_ns == b.start_ns
+        assert a.exclusive_end_ns == b.exclusive_end_ns
 
 
 def test_iter_sample_span_inside_window_may_be_shorter_than_duration() -> None:
@@ -430,28 +488,22 @@ def test_iter_sample_span_inside_window_may_be_shorter_than_duration() -> None:
     duration_ns = 300
     stride_ns = 300
     ts = np.array([0, 100, 200, 400, 700, 900], dtype=np.int64)
-    windows = _iter_window_arrays(ts, stride_ns=stride_ns, duration_ns=duration_ns)
+    got = _iter_window_arrays(ts, stride_ns=stride_ns, duration_ns=duration_ns)
 
-    expected_windows = [
-        np.array([0, 100, 200], dtype=np.int64),
-        np.array([400], dtype=np.int64),
-        np.array([700, 900], dtype=np.int64),
+    want = [
+        SamplingWindow(start_ns=0, exclusive_end_ns=200, timestamps_ns=np.array([0, 100], dtype=np.int64)),
+        SamplingWindow(start_ns=400, exclusive_end_ns=400, timestamps_ns=np.array([], dtype=np.int64)),
+        SamplingWindow(start_ns=700, exclusive_end_ns=900, timestamps_ns=np.array([700], dtype=np.int64)),
     ]
 
-    assert len(windows) == len(expected_windows)
-
-    def sample_span_ns(w: npt.NDArray[np.int64]) -> int:
-        return int(w[-1] - w[0]) if len(w) >= 2 else 0
-
-    assert sample_span_ns(windows[0]) < duration_ns
-    assert sample_span_ns(windows[1]) < duration_ns
-    assert sample_span_ns(windows[-1]) < duration_ns
-
-    for w, expected_w in zip(windows, expected_windows, strict=True):
-        np.testing.assert_array_equal(w, expected_w)
+    assert len(got) == len(want)
+    for a, b in zip(got, want, strict=True):
+        np.testing.assert_array_equal(a.timestamps_ns, b.timestamps_ns)
+        assert a.start_ns == b.start_ns
+        assert a.exclusive_end_ns == b.exclusive_end_ns
 
 
-def test_duration_short_than_stride() -> None:
+def test_duration_shorter_than_stride() -> None:
     """Duration shorter than stride yields disjoint windows whose slices may end before the nominal interval end.
 
     grid:     0    60    120   180     240   300
@@ -470,13 +522,16 @@ def test_duration_short_than_stride() -> None:
     )
     got_windows = list(p)
     expected_windows = [
-        np.array([0, 60], dtype=np.int64),
-        np.array([120, 180], dtype=np.int64),
-        np.array([240, 300], dtype=np.int64),
+        SamplingWindow(start_ns=0, exclusive_end_ns=60, timestamps_ns=np.array([0], dtype=np.int64)),
+        SamplingWindow(start_ns=120, exclusive_end_ns=180, timestamps_ns=np.array([120], dtype=np.int64)),
+        SamplingWindow(start_ns=240, exclusive_end_ns=300, timestamps_ns=np.array([240], dtype=np.int64)),
     ]
 
+    assert len(got_windows) == len(expected_windows)
     for got_window, expected_window in zip(got_windows, expected_windows, strict=True):
-        np.testing.assert_array_equal(got_window, expected_window)
+        np.testing.assert_array_equal(got_window.timestamps_ns, expected_window.timestamps_ns)
+        assert got_window.start_ns == expected_window.start_ns
+        assert got_window.exclusive_end_ns == expected_window.exclusive_end_ns
 
 
 def test_iter_stride_equals_duration_many_steps() -> None:
@@ -531,13 +586,142 @@ def test_iter_stride_equals_duration_many_steps() -> None:
     )
 
     expected_windows = [
-        np.array([0, 333333333, 666666666, 999999999, 1333333332, 1666666665, 1999999998], dtype=np.int64),
-        np.array([2333333331, 2666666664, 2999999997, 3333333330, 3666666663, 3999999996], dtype=np.int64),
-        np.array([4333333329, 4666666662, 4999999995, 5333333328, 5666666661, 5999999994], dtype=np.int64),
-        np.array([6333333327, 6666666660, 6999999993, 7333333326, 7666666659, 7999999992], dtype=np.int64),
-        np.array([8333333325, 8666666658, 8999999991, 9333333324, 9666666657, 9999999990], dtype=np.int64),
+        SamplingWindow(
+            start_ns=0,
+            exclusive_end_ns=1999999998,
+            timestamps_ns=np.array([0, 333333333, 666666666, 999999999, 1333333332, 1666666665], dtype=np.int64),
+        ),
+        SamplingWindow(
+            start_ns=2333333331,
+            exclusive_end_ns=3999999996,
+            timestamps_ns=np.array([2333333331, 2666666664, 2999999997, 3333333330, 3666666663], dtype=np.int64),
+        ),
+        SamplingWindow(
+            start_ns=4333333329,
+            exclusive_end_ns=5999999994,
+            timestamps_ns=np.array([4333333329, 4666666662, 4999999995, 5333333328, 5666666661], dtype=np.int64),
+        ),
+        SamplingWindow(
+            start_ns=6333333327,
+            exclusive_end_ns=7999999992,
+            timestamps_ns=np.array([6333333327, 6666666660, 6999999993, 7333333326, 7666666659], dtype=np.int64),
+        ),
+        SamplingWindow(
+            start_ns=8333333325,
+            exclusive_end_ns=9999999990,
+            timestamps_ns=np.array([8333333325, 8666666658, 8999999991, 9333333324, 9666666657], dtype=np.int64),
+        ),
     ]
 
     assert len(windows) == len(expected_windows)
     for w, expected_w in zip(windows, expected_windows, strict=True):
-        np.testing.assert_array_equal(w, expected_w)
+        np.testing.assert_array_equal(w.timestamps_ns, expected_w.timestamps_ns)
+        assert w.start_ns == expected_w.start_ns
+        assert w.exclusive_end_ns == expected_w.exclusive_end_ns
+
+
+@pytest.mark.parametrize(
+    ("timestamps_ns", "start_ns", "exclusive_end_ns"),
+    [
+        (np.array([10, 20], dtype=np.int64), 10, 30),
+        (np.array([10, 20], dtype=np.int64), 5, 30),
+        (np.array([], dtype=np.int64), 10, 20),
+    ],
+)
+def test_sampling_window_accepts_valid_bounds(
+    timestamps_ns: npt.NDArray[np.int64],
+    start_ns: int,
+    exclusive_end_ns: int,
+) -> None:
+    """SamplingWindow should allow start_ns to precede the first timestamp."""
+    window = SamplingWindow(
+        timestamps_ns=timestamps_ns,
+        start_ns=start_ns,
+        exclusive_end_ns=exclusive_end_ns,
+    )
+    np.testing.assert_array_equal(window.timestamps_ns, timestamps_ns)
+
+
+@pytest.mark.parametrize(
+    ("timestamps_ns", "start_ns", "exclusive_end_ns", "raises"),
+    [
+        (np.array([10], dtype=np.int64), 10, 9, pytest.raises(ValueError, match="end_ns must be greater than")),
+        (
+            np.array([9, 10], dtype=np.int64),
+            10,
+            20,
+            pytest.raises(ValueError, match="start_ns must be <="),
+        ),
+        (
+            np.array([10, 20], dtype=np.int64),
+            10,
+            20,
+            pytest.raises(ValueError, match="end_ns must be < exclusive_end_ns"),
+        ),
+        (
+            np.array([10, 10], dtype=np.int64),
+            10,
+            20,
+            pytest.raises(ValueError, match="strictly sorted"),
+        ),
+        (
+            np.array([10, 20], dtype=np.int32),
+            10,
+            30,
+            pytest.raises(ValueError, match="must have dtype int64"),
+        ),
+        (
+            np.array([[10, 20]], dtype=np.int64),
+            10,
+            30,
+            pytest.raises(ValueError, match="must be 1-D"),
+        ),
+    ],
+)
+def test_sampling_window_rejects_invalid_inputs(
+    timestamps_ns: npt.NDArray[np.int64],
+    start_ns: int,
+    exclusive_end_ns: int,
+    raises: AbstractContextManager[Any],
+) -> None:
+    """SamplingWindow should reject inputs that violate its bounds or array invariants."""
+    with raises:
+        SamplingWindow(
+            timestamps_ns=timestamps_ns,
+            start_ns=start_ns,
+            exclusive_end_ns=exclusive_end_ns,
+        )
+
+
+def test_sampling_window_timestamps_are_read_only() -> None:
+    """SamplingWindow should expose a read-only timestamp array."""
+    window = SamplingWindow(
+        timestamps_ns=np.array([0, 100, 200], dtype=np.int64),
+        start_ns=0,
+        exclusive_end_ns=300,
+    )
+
+    assert not window.timestamps_ns.flags.writeable
+    with pytest.raises(ValueError, match="assignment destination is read-only"):
+        window.timestamps_ns[0] = 1
+
+
+def test_sampling_window_len() -> None:
+    """SamplingWindow should return the number of active timestamps in the window."""
+    ts = np.array([0, 100, 200], dtype=np.int64)
+    window = SamplingWindow(
+        timestamps_ns=ts,
+        start_ns=0,
+        exclusive_end_ns=300,
+    )
+    assert len(window) == len(ts)
+    assert len(window.timestamps_ns) == len(ts)
+
+    ts = np.array([], dtype=np.int64)
+    window = SamplingWindow(
+        timestamps_ns=ts,
+        start_ns=0,
+        exclusive_end_ns=300,
+    )
+    assert len(window) == 0
+    assert len(window.timestamps_ns) == 0

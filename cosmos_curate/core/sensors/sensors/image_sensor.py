@@ -92,14 +92,10 @@ class ImageSensor:
     def sample(self, spec: SamplingSpec) -> Generator[ImageData, None, None]:
         """Yield sampled ``ImageData`` batches for each window in ``spec.grid``."""
         for window in spec.grid:
-            if window.size == 0:
+            if len(window) == 0:
                 yield self._get_empty_image_data()
                 continue
 
-            active_grid = window[window < window[-1]]
-            if len(active_grid) == 0:
-                yield self._get_empty_image_data()
-                continue
             indices, counts = sample_window_indices(
                 self.sensor_timestamps_ns,
                 window,
@@ -124,7 +120,7 @@ class ImageSensor:
 
             frames = np.stack(sampled_frames, axis=0)
             yield ImageData(
-                align_timestamps_ns=np.array(active_grid, dtype=np.int64),
+                align_timestamps_ns=np.array(window.timestamps_ns, dtype=np.int64),
                 sensor_timestamps_ns=np.array(sampled_canonical_ts, dtype=np.int64),
                 frames=frames,
                 metadata=metadata,

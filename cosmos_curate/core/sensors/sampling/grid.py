@@ -16,9 +16,30 @@
 
 import math
 from collections.abc import Iterator
+from typing import Protocol
 
+import attrs
 import numpy as np
 import numpy.typing as npt
+from attrs import validators
+
+from cosmos_curate.core.sensors.utils.helpers import make_numpy_fields_readonly
+from cosmos_curate.core.sensors.utils.validation import strictly_increasing_int64_array
+
+
+class _HasHalfOpenWindowBounds(Protocol):
+    start_ns: int
+    exclusive_end_ns: int
+
+
+def _end_ns_ge_start_ns(
+    instance: _HasHalfOpenWindowBounds,
+    _attribute: object,
+    value: int,
+) -> None:
+    if value < instance.start_ns:
+        msg = f"end_ns must be greater than or equal to start_ns, got {instance.start_ns=} {value=}"
+        raise ValueError(msg)
 
 
 def make_ts_grid(
@@ -35,9 +56,10 @@ def make_ts_grid(
     always includes ``start_ns`` and continues until the final timestamp is
     strictly greater than ``end_ns``.
 
-    This ensures that the last window produced by :class:`SamplingGrid` can
-    always reach ``end_ns`` via nearest-neighbour lookup, even when
-    ``end_ns - start_ns`` is not evenly divisible by the sample interval.
+    The final timestamp is retained as an exclusive boundary marker so the
+    requested ``end_ns`` remains reachable under half-open sampling-window
+    semantics, even when ``end_ns - start_ns`` is not evenly divisible by the
+    sample interval.
 
     Args:
         start_ns: the start timestamp in nanoseconds
@@ -79,6 +101,78 @@ def make_ts_grid(
     return retval
 
 
+def _start_ns_le_first_timestamp(
+    instance: _HasHalfOpenWindowBounds,
+    _attribute: object,
+    value: npt.NDArray[np.int64],
+) -> None:
+    """Validate start_ns is less than or equal to the first timestamp."""
+    if len(value) == 0:
+        return
+    first_ts = int(value[0])
+    if instance.start_ns > first_ts:
+        msg = f"start_ns must be <= timestamps_ns[0], got {instance.start_ns} > {first_ts}"
+        raise ValueError(msg)
+
+
+def _end_ns_lt_exclusive_end_ns(
+    instance: _HasHalfOpenWindowBounds,
+    _attribute: object,
+    value: npt.NDArray[np.int64],
+) -> None:
+    if len(value) == 0:
+        return
+    end_ns = int(value[-1])
+    if end_ns >= instance.exclusive_end_ns:
+        msg = f"end_ns must be < exclusive_end_ns, got {end_ns} >= {instance.exclusive_end_ns}"
+        raise ValueError(msg)
+
+
+@attrs.define(frozen=True)
+class SamplingWindow:
+    """One half-open sampling window `[start_ns, exclusive_end_ns)`.
+
+    For non-empty windows, the timestamps are strictly increasing and satisfy
+    ``start_ns <= timestamps_ns[0]`` and
+    ``timestamps_ns[-1] < exclusive_end_ns``.
+
+    If there are no timestamps in the window, ``start_ns`` and
+    ``exclusive_end_ns`` are the theoretical boundaries.
+
+    Attributes:
+        start_ns:
+            Left boundary of the half-open interval, must be less than or
+            equal to the first timestamp in timestamps_ns.
+        exclusive_end_ns:
+            Exclusive right boundary of the window, must be greater than the
+            last timestamp in timestamps_ns.
+        timestamps_ns:
+            Strictly increasing ``int64`` timestamps. For non-empty windows,
+            the first timestamp must be greater than or equal to ``start_ns``
+            and the last timestamp must be strictly less than
+            ``exclusive_end_ns``.
+
+    """
+
+    start_ns: int
+    exclusive_end_ns: int = attrs.field(validator=_end_ns_ge_start_ns)
+    timestamps_ns: npt.NDArray[np.int64] = attrs.field(
+        validator=validators.and_(
+            strictly_increasing_int64_array,
+            _start_ns_le_first_timestamp,
+            _end_ns_lt_exclusive_end_ns,
+        ),
+    )
+
+    def __attrs_post_init__(self) -> None:
+        """Mark ndarray fields read-only."""
+        make_numpy_fields_readonly(self)
+
+    def __len__(self) -> int:
+        """Return the number of timestamps in this window."""
+        return len(self.timestamps_ns)
+
+
 class SamplingGrid:
     """Timestamp sampling grid.
 
@@ -88,7 +182,7 @@ class SamplingGrid:
     2. That extends from ``start_ns`` through the first on-grid timestamp
        strictly after the desired end time
     3. Data is sampled from that grid at a regularly spaced, fixed time interval
-    4. The SamplingGrid iterator yields timestamp slices (views) per window
+    4. The SamplingGrid iterator yields :class:`SamplingWindow` objects
 
     However, the iterator is designed to be flexible enough to handle other
     use-cases, such as timestamps that are not evenly distributed over a regular
@@ -214,39 +308,48 @@ class SamplingGrid:
         """Window duration in nanoseconds."""
         return self._duration_ns
 
-    def __iter__(self) -> Iterator[npt.NDArray[np.int64]]:
+    def __iter__(self) -> Iterator[SamplingWindow]:
         """Iterate over timestamp windows on the timeline.
 
-        Window start times are ``start_ns + k * stride_ns`` for ``k = 0, 1, ...``,
+        The nominal sampling-window start times are
+        ``start_ns + k * stride_ns`` for ``k = 0, 1, ...``, and the nominal
         window end times are ``start_ns + k * stride_ns + duration_ns``.
 
-        Non-empty yielded windows are closed timestamp slices used to define a
-        half-open sampling interval ``[window[0], window[-1])``.
+        Each yielded :class:`SamplingWindow` stores active timestamps in
+        ``window.timestamps_ns`` and the explicit exclusive right boundary in
+        ``window.exclusive_end_ns``. For non-empty windows, ``window.start_ns``
+        is the first timestamp in the raw slice. For empty windows,
+        ``window.start_ns`` is the nominal start of that sampling window.
 
         Interpretation:
-        - ``window[-1]`` is the exclusive right boundary marker.
-        - If a timestamp lands exactly on a window boundary, it is sampled in the next
-          window, not the current one.
+        - ``window.exclusive_end_ns`` is the exclusive right boundary marker.
+        - If a timestamp lands exactly on a window boundary, it is sampled in
+          the next window, not the current one.
 
         This prevents double-counting across adjacent windows.
 
         Empty windows:
-        - A yielded window may be length 0 if no timestamps fall in that time range.
+        - A yielded window may have ``len(window) == 0`` if no active
+          timestamps fall in that time range.
         - Empty windows are kept so window index ``i`` still maps to the time window
           starting at ``start_ns + i * stride_ns``.
 
-        Degenerate case:
-        - If a yielded window has length 1, that single timestamp acts as a boundary
-          marker only; consumers using the half-open convention will produce zero
-          samples for that window.
+        Boundary-only case:
+        - A yielded window may have zero active timestamps while still carrying
+          a real boundary marker in ``exclusive_end_ns``. This represents a
+          valid half-open sampling window with no active timestamps assigned to
+          it.
 
         Yields:
-            View into ``timestamps_ns`` for samples in that window (dtype ``int64``).
-            May be length 0 if no samples fall in the interval.
+            ``SamplingWindow`` describing one half-open sampling window.
 
         """
         if self.start_ns == self.end_ns:
-            yield self.timestamps_ns
+            yield SamplingWindow(
+                start_ns=self.start_ns,
+                exclusive_end_ns=self.end_ns,
+                timestamps_ns=self.timestamps_ns[:-1],
+            )
             return
 
         start_ns = self.start_ns
@@ -255,5 +358,17 @@ class SamplingGrid:
             window_end_ns = start_ns + self._duration_ns
             i = np.searchsorted(ts, start_ns, side="left")
             j = np.searchsorted(ts, window_end_ns, side="right")
-            yield ts[i:j]
+            window_ts = ts[i:j]
+            if len(window_ts) == 0:
+                yield SamplingWindow(
+                    start_ns=start_ns,
+                    exclusive_end_ns=window_end_ns,
+                    timestamps_ns=window_ts,
+                )
+            else:
+                yield SamplingWindow(
+                    start_ns=int(window_ts[0]),
+                    exclusive_end_ns=int(window_ts[-1]),
+                    timestamps_ns=window_ts[:-1],
+                )
             start_ns += self._stride_ns
