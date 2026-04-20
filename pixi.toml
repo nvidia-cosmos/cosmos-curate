@@ -17,7 +17,7 @@ click = "<8.3.0" # click 8.3.0 is broken
 
 [pypi-dependencies]
 cosmos-xenna = "==0.2.3"
-ray = { version = "==2.54.1", extras = ["default", "data"] } # conda-forge package pulls in an old version of protobuf
+ray = { version = "==2.55.0", extras = ["default", "data", "serve"] } # conda-forge package pulls in an old version of protobuf
 
 [feature.core.system-requirements]
 cuda = "13.0.2" # match the version of the nvidia/cuda docker base image
@@ -26,7 +26,7 @@ libc = { family = "glibc", version = "2.35" } # vllm cu130 wheels require manyli
 [feature.core.dependencies]
 astral = "*"
 attrs = "*"
-av = "*"  # conda dep so it pulls conda-forge FFmpeg (LGPL, full codec suite) instead of PyPI's bundled build
+av = "==17.0.0"  # conda dep so it pulls conda-forge FFmpeg (LGPL, full codec suite) instead of PyPI's bundled build; pin: 17.0.1 deadlocks in CodecContext.__dealloc__ during multi-threaded decode when a Python log callback is installed (TODO: unpin once PyAV releases a fix)
 ffmpeg = { version = "*", build = "lgpl_*" }  # pin LGPL variant (not GPL)
 azure-identity = "*"
 azure-storage-blob = "*"

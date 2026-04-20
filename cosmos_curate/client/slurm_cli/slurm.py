@@ -75,11 +75,7 @@ class LocalConnection:
 
     def run(self, command: str, **kwargs: Any) -> InvokeResult:  # noqa: ANN401
         """Execute a shell command locally."""
-        result = self._context.run(command, **kwargs)
-        if not isinstance(result, InvokeResult):
-            error_message = f"Unexpected result type from invoke: {type(result)!r}"
-            raise TypeError(error_message)
-        return result
+        return self._context.run(command, **kwargs)
 
     def put(self, local: str, remote: str) -> None:
         """Copy a local file path to the destination on the same host."""

@@ -38,6 +38,7 @@ import os
 import socket
 import time
 from collections.abc import Callable
+from typing import Any
 
 import loguru
 import ray
@@ -78,10 +79,11 @@ def init_or_connect_to_cluster() -> None:
     )
 
     tracing_hook = os.environ.get("XENNA_RAY_TRACING_HOOK")
+    tracing_kwarg: dict[str, Any] = {"_tracing_startup_hook": tracing_hook} if tracing_hook else {}
     ray.init(
         ignore_reinit_error=True,
         log_to_driver=True,
-        **({"_tracing_startup_hook": tracing_hook} if tracing_hook else {}),
+        **tracing_kwarg,
     )
 
 
@@ -183,7 +185,7 @@ def get_live_nodes(*, dump_info: bool = True) -> list[dict[str, str]]:
 
     """
     try:
-        all_nodes = ray.nodes()
+        all_nodes = ray.nodes()  # type: ignore[no-untyped-call]
     except Exception as e:
         logger.error(f"Failed to get nodes: {e}")
         msg = "Failed to get nodes from Ray cluster"

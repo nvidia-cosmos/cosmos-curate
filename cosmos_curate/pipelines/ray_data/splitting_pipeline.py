@@ -86,7 +86,7 @@ def run(args: argparse.Namespace) -> int:
     # Fractional CPU (matching Xenna's 0.25 precedent for IO-bound download)
     # with an explicit TaskPoolStrategy size cap scaled to the cluster size.
     # Task compute (not actor pool) preserves fusion with split.
-    download_slots = _DOWNLOAD_SLOTS_PER_NODE * len(ray.nodes())
+    download_slots = _DOWNLOAD_SLOTS_PER_NODE * len(ray.nodes())  # type: ignore[no-untyped-call]
 
     # Stage 1: Download + extract metadata (1:1).
     ds = ds.map(

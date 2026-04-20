@@ -84,7 +84,7 @@ class RAFTActor:
         self._unique_id: bytes | None = nccl.unique_id() if self._index == 0 else None
 
         # CPUs assigned to this actor by Ray
-        cpu_assigned = float(ray.get_runtime_context().get_assigned_resources().get("CPU", 0.0))
+        cpu_assigned = float(ray.get_runtime_context().get_assigned_resources().get("CPU", 0.0))  # type: ignore[no-untyped-call]
         self._assigned_cpus = max(1, round(cpu_assigned))
         if self._verbose:
             logger.debug(f"{self.display_name}: assigned CPUs = {self._assigned_cpus}")
@@ -229,7 +229,7 @@ def initialize_raft_actor_pool[T: RAFTActor](pool_size: int, actor_class: type[T
 
     """
     # Compute even CPU share across actors (fractional CPUs allowed by Ray)
-    total_cpus = float(ray.cluster_resources().get("CPU", 0.0))
+    total_cpus = float(ray.cluster_resources().get("CPU", 0.0))  # type: ignore[no-untyped-call]
     if total_cpus <= 0.0:
         error_message = "Ray reports 0 total CPUs; please start Ray with CPU resources."
         raise RuntimeError(error_message)

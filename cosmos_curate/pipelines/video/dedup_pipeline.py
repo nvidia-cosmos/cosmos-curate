@@ -164,7 +164,7 @@ def _get_num_gpus() -> int:
         RuntimeError: If the Ray cluster has 0 GPUs.
 
     """
-    num_gpus = int(ray.cluster_resources().get("GPU", 0))
+    num_gpus = int(ray.cluster_resources().get("GPU", 0))  # type: ignore[no-untyped-call]
     if num_gpus <= 0:
         error_message = "The Ray cluster has 0 GPUs; semantic dedup requires at least 1 GPU."
         raise RuntimeError(error_message)

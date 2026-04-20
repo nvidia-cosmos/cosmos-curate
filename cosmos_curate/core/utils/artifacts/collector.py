@@ -963,11 +963,10 @@ class RayFileTransport:
         # scheduler maximum lead time to place all actors before we
         # start blocking on their output.
         for _node_name, actor, state in deployed:
-            gen = actor.stream_files.options(
+            state.gen = actor.stream_files.options(  # type: ignore[call-overload]
                 num_returns="streaming",
                 _generator_backpressure_num_objects=_BACKPRESSURE_OBJECTS,
             ).remote(cfg.staging_dir, cfg.chunk_bytes)
-            state.gen = gen
 
         # Pass 2: drain first ref from each generator.
         # By now, most actors have been placed and are yielding their
