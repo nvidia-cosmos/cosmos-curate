@@ -15,7 +15,7 @@
 """Video index and metadata classes for the sensor library."""
 
 from fractions import Fraction
-from typing import Self
+from typing import Protocol, Self
 
 import attrs
 import numpy as np
@@ -25,6 +25,81 @@ from cosmos_curate.core.sensors.utils.helpers import make_numpy_fields_readonly
 from cosmos_curate.core.sensors.utils.validation import bool_array, int64_array, strictly_increasing_int64_array
 
 VIDEO_METADATA_VERSION = "1"
+
+
+class _HasVideoPacketFields(Protocol):
+    offset: npt.NDArray[np.int64]
+    size: npt.NDArray[np.int64]
+    pts_ns: npt.NDArray[np.int64]
+    pts_stream: npt.NDArray[np.int64]
+    is_keyframe: npt.NDArray[np.bool_]
+
+
+class _HasVideoKeyframeNsFields(Protocol):
+    pts_ns: npt.NDArray[np.int64]
+    is_keyframe: npt.NDArray[np.bool_]
+
+
+class _HasVideoKeyframeStreamFields(_HasVideoKeyframeNsFields, Protocol):
+    pts_stream: npt.NDArray[np.int64]
+    kf_pts_ns: npt.NDArray[np.int64]
+
+
+def _packet_array_lengths(
+    instance: _HasVideoPacketFields,
+    _attribute: object,
+    value: npt.NDArray[np.bool_],
+) -> None:
+    """Validate shared packet-array length invariants."""
+    lens = (
+        len(instance.offset),
+        len(instance.size),
+        len(instance.pts_ns),
+        len(instance.pts_stream),
+        len(instance.is_keyframe),
+        len(value),
+    )
+    if len(set(lens)) != 1:
+        error_msg = (
+            "All arrays must be the same length: "
+            f"offset={lens[0]} size={lens[1]} pts_ns={lens[2]} pts_stream={lens[3]} "
+            f"is_keyframe={lens[4]} is_discard={lens[5]}"
+        )
+        raise ValueError(error_msg)
+
+
+def _kf_pts_ns(
+    instance: _HasVideoKeyframeNsFields,
+    _attribute: object,
+    value: npt.NDArray[np.int64],
+) -> None:
+    """Validate keyframe nanosecond timestamps against the packet timeline."""
+    if len(value) != int(instance.is_keyframe.sum()):
+        error_msg = "kf_pts_ns length must equal number of keyframes in is_keyframe"
+        raise ValueError(error_msg)
+
+    expected_kf_pts_ns = instance.pts_ns[instance.is_keyframe]
+    if not np.array_equal(value, expected_kf_pts_ns):
+        error_msg = "kf_pts_ns must equal pts_ns[is_keyframe]"
+        raise ValueError(error_msg)
+
+
+def _kf_pts_stream(
+    instance: _HasVideoKeyframeStreamFields,
+    _attribute: object,
+    value: npt.NDArray[np.int64],
+) -> None:
+    """Validate keyframe stream timestamps against the packet timeline."""
+    # Keep the explicit length check for a clearer error than the generic
+    # value-mismatch failure from np.array_equal(...).
+    if len(instance.kf_pts_ns) != len(value):
+        error_msg = f"kf_pts_ns and kf_pts_stream must have equal length: {len(instance.kf_pts_ns)} != {len(value)}"
+        raise ValueError(error_msg)
+
+    expected_kf_pts_stream = instance.pts_stream[instance.is_keyframe]
+    if not np.array_equal(value, expected_kf_pts_stream):
+        error_msg = "kf_pts_stream must equal pts_stream[is_keyframe]"
+        raise ValueError(error_msg)
 
 
 @attrs.define(hash=False, frozen=True)
@@ -82,53 +157,33 @@ class VideoIndex:
     pts_ns: npt.NDArray[np.int64] = attrs.field(validator=strictly_increasing_int64_array)
     pts_stream: npt.NDArray[np.int64] = attrs.field(validator=strictly_increasing_int64_array)
     is_keyframe: npt.NDArray[np.bool_] = attrs.field(validator=bool_array)
-    is_discard: npt.NDArray[np.bool_] = attrs.field(validator=bool_array)
-    kf_pts_ns: npt.NDArray[np.int64] = attrs.field(validator=strictly_increasing_int64_array)
-    kf_pts_stream: npt.NDArray[np.int64] = attrs.field(validator=strictly_increasing_int64_array)
+    is_discard: npt.NDArray[np.bool_] = attrs.field(
+        validator=attrs.validators.and_(
+            bool_array,
+            _packet_array_lengths,
+        )
+    )
+    kf_pts_ns: npt.NDArray[np.int64] = attrs.field(
+        validator=attrs.validators.and_(
+            strictly_increasing_int64_array,
+            _kf_pts_ns,
+        )
+    )
+    # Attach after `kf_pts_ns` so this validator can compare both keyframe
+    # arrays once attrs has set the earlier field.
+    kf_pts_stream: npt.NDArray[np.int64] = attrs.field(
+        validator=attrs.validators.and_(
+            strictly_increasing_int64_array,
+            _kf_pts_stream,
+        )
+    )
     time_base: Fraction
     _display_mask: npt.NDArray[np.bool_] = attrs.field(init=False, repr=False, eq=False)
     _display_pts_ns: npt.NDArray[np.int64] = attrs.field(init=False, repr=False, eq=False)
     _display_pts_stream: npt.NDArray[np.int64] = attrs.field(init=False, repr=False, eq=False)
 
     def __attrs_post_init__(self) -> None:
-        """Post-initialization checks."""
-        lens = (
-            len(self.offset),
-            len(self.size),
-            len(self.pts_ns),
-            len(self.pts_stream),
-            len(self.is_keyframe),
-            len(self.is_discard),
-        )
-        if len(set(lens)) != 1:
-            error_msg = (
-                "All arrays must be the same length: "
-                f"offset={lens[0]} size={lens[1]} pts_ns={lens[2]} pts_stream={lens[3]} "
-                f"is_keyframe={lens[4]} is_discard={lens[5]}"
-            )
-            raise ValueError(error_msg)
-
-        if len(self.kf_pts_ns) != len(self.kf_pts_stream):
-            error_msg = (
-                "kf_pts_ns and kf_pts_stream must have equal length: "
-                f"{len(self.kf_pts_ns)} != {len(self.kf_pts_stream)}"
-            )
-            raise ValueError(error_msg)
-
-        if len(self.kf_pts_ns) != int(self.is_keyframe.sum()):
-            error_msg = "kf_pts_ns length must equal number of keyframes in is_keyframe"
-            raise ValueError(error_msg)
-
-        expected_kf_pts_ns = self.pts_ns[self.is_keyframe]
-        if not np.array_equal(self.kf_pts_ns, expected_kf_pts_ns):
-            error_msg = "kf_pts_ns must equal pts_ns[is_keyframe]"
-            raise ValueError(error_msg)
-
-        expected_kf_pts_stream = self.pts_stream[self.is_keyframe]
-        if not np.array_equal(self.kf_pts_stream, expected_kf_pts_stream):
-            error_msg = "kf_pts_stream must equal pts_stream[is_keyframe]"
-            raise ValueError(error_msg)
-
+        """Cache display-only views and mark NumPy fields read-only."""
         display_mask = ~self.is_discard
         display_mask.flags.writeable = False
         object.__setattr__(self, "_display_mask", display_mask)

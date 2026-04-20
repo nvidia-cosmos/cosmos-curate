@@ -15,6 +15,8 @@
 
 """Camera data structures for cosmos_curate.core.sensors package."""
 
+from typing import Protocol
+
 import attrs
 import numpy as np
 import numpy.typing as npt
@@ -33,6 +35,78 @@ _CAMERA_FRAME_NDIM = 4
 _RGB_CHANNELS = 3
 
 
+class _HasCameraFrames(Protocol):
+    frames: npt.NDArray[np.uint8]
+
+
+class _HasCameraBatchFields(_HasCameraFrames, Protocol):
+    align_timestamps_ns: npt.NDArray[np.int64]
+    sensor_timestamps_ns: npt.NDArray[np.int64]
+    pts_stream: npt.NDArray[np.int64]
+
+
+def _mvd_frames(
+    _instance: object,
+    _attribute: object,
+    value: tuple[npt.NDArray[np.float64], ...],
+) -> None:
+    """Validate per-frame motion vector block tables."""
+    for i, frame in enumerate(value):
+        if frame.ndim != _MOTION_VECTOR_FRAME_NDIM:
+            msg = f"motion_vectors.frames[{i}] must be 2-D, got ndim={frame.ndim}"
+            raise ValueError(msg)
+        if frame.shape[1] != _MOTION_VECTOR_COLUMNS:
+            msg = f"motion_vectors.frames[{i}] must have shape (N, {_MOTION_VECTOR_COLUMNS}), got shape={frame.shape}"
+            raise ValueError(msg)
+
+
+def _motion_vectors(
+    instance: _HasCameraFrames,
+    _attribute: object,
+    value: "MotionVectorData | None",
+) -> None:
+    """Validate optional motion-vector payload length against the RGB frame batch."""
+    if value is None:
+        return
+    if len(value.frames) != len(instance.frames):
+        error_msg = f"motion_vectors.frames length {len(value.frames)} != frames length {len(instance.frames)}"
+        raise ValueError(error_msg)
+
+
+def _batch_lengths(
+    instance: _HasCameraBatchFields,
+    _attribute: object,
+    _value: VideoMetadata,
+) -> None:
+    """Validate shared row-count invariants across camera batch arrays."""
+    if not (
+        len(instance.align_timestamps_ns)
+        == len(instance.sensor_timestamps_ns)
+        == len(instance.pts_stream)
+        == len(instance.frames)
+    ):
+        error_msg = (
+            "All arrays must be the same length: "
+            f"align_timestamps_ns={len(instance.align_timestamps_ns)} "
+            f"sensor_timestamps_ns={len(instance.sensor_timestamps_ns)} "
+            f"pts_stream={len(instance.pts_stream)} "
+            f"frames={len(instance.frames)}"
+        )
+        raise ValueError(error_msg)
+
+
+def _metadata_shape(
+    instance: _HasCameraFrames,
+    _attribute: object,
+    value: VideoMetadata,
+) -> None:
+    """Validate frame geometry against metadata dimensions."""
+    expected_shape = (value.height, value.width, _RGB_CHANNELS)
+    if instance.frames.shape[1:] != expected_shape:
+        msg = f"frames must have shape (N, {value.height}, {value.width}, {_RGB_CHANNELS}), got {instance.frames.shape}"
+        raise ValueError(msg)
+
+
 @attrs.define(hash=False, frozen=True)
 class MotionVectorData:
     """Per-frame motion vectors from H.264/HEVC (FFmpeg AVMotionVector). Variable num_blocks per frame."""
@@ -47,20 +121,14 @@ class MotionVectorData:
     # [6:7] flags
     # [7:9] motion_x, motion_y (sub-pixel; divide by motion_scale for pixel delta)
     # [9]   motion_scale
-    frames: tuple[npt.NDArray[np.float64], ...]  # length N; each (num_blocks_i, 10)
+    frames: tuple[npt.NDArray[np.float64], ...] = attrs.field(
+        validator=_mvd_frames,
+        converter=tuple,
+    )
 
     def __attrs_post_init__(self) -> None:
-        """Post-initialization checks."""
-        object.__setattr__(self, "frames", tuple(self.frames))
-        for i, frame in enumerate(self.frames):
-            if frame.ndim != _MOTION_VECTOR_FRAME_NDIM:
-                msg = f"motion_vectors.frames[{i}] must be 2-D, got ndim={frame.ndim}"
-                raise ValueError(msg)
-            if frame.shape[1] != _MOTION_VECTOR_COLUMNS:
-                msg = (
-                    f"motion_vectors.frames[{i}] must have shape (N, {_MOTION_VECTOR_COLUMNS}), got shape={frame.shape}"
-                )
-                raise ValueError(msg)
+        """Mark frame arrays read-only."""
+        for frame in self.frames:
             frame.flags.writeable = False
 
 
@@ -91,34 +159,19 @@ class CameraData:
     pts_stream: npt.NDArray[np.int64] = attrs.field(validator=nondecreasing_int64_array)
 
     frames: npt.NDArray[np.uint8] = attrs.field(validator=uint8_frame_batch)
-    metadata: VideoMetadata
-    motion_vectors: MotionVectorData | None = None  # optional; requires decoder with export_mvs
+    # Attach batch-length validation to the last required field so all batch
+    # arrays are already set when attrs runs this validator.
+    metadata: VideoMetadata = attrs.field(
+        validator=attrs.validators.and_(
+            _batch_lengths,
+            _metadata_shape,
+        )
+    )
+    motion_vectors: MotionVectorData | None = attrs.field(
+        default=None,
+        validator=_motion_vectors,
+    )  # optional; requires decoder with export_mvs
 
     def __attrs_post_init__(self) -> None:
-        """Post-initialization checks."""
-        if self.frames.shape[1:] != (self.metadata.height, self.metadata.width, _RGB_CHANNELS):
-            msg = (
-                "frames must have shape "
-                f"(N, {self.metadata.height}, {self.metadata.width}, {_RGB_CHANNELS}), got {self.frames.shape}"
-            )
-            raise ValueError(msg)
-
-        if not (
-            len(self.align_timestamps_ns) == len(self.sensor_timestamps_ns) == len(self.pts_stream) == len(self.frames)
-        ):
-            error_msg = (
-                "All arrays must be the same length: "
-                f"align_timestamps_ns={len(self.align_timestamps_ns)} "
-                f"sensor_timestamps_ns={len(self.sensor_timestamps_ns)} "
-                f"pts_stream={len(self.pts_stream)} "
-                f"frames={len(self.frames)}"
-            )
-            raise ValueError(error_msg)
-
-        if self.motion_vectors is not None and len(self.motion_vectors.frames) != len(self.frames):
-            error_msg = (
-                f"motion_vectors.frames length {len(self.motion_vectors.frames)} != frames length {len(self.frames)}"
-            )
-            raise ValueError(error_msg)
-
+        """Mark NumPy fields read-only."""
         make_numpy_fields_readonly(self)
