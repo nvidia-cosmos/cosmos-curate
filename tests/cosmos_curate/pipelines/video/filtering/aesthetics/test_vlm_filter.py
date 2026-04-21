@@ -22,6 +22,7 @@ import pytest
 
 from cosmos_curate.core.interfaces.pipeline_interface import run_pipeline
 from cosmos_curate.core.interfaces.runner_interface import RunnerInterface
+from cosmos_curate.pipelines.common.filter_prompts import VIDEO_TYPE_LABELS
 from cosmos_curate.pipelines.video.clipping.clip_extraction_stages import (  # type: ignore[import-untyped]
     ClipTranscodingStage,
 )
@@ -30,7 +31,6 @@ from cosmos_curate.pipelines.video.filtering.aesthetics.aesthetics_builders impo
     VlmFilterConfig,
     build_vllm_filter_classifier_stages,
 )
-from cosmos_curate.pipelines.video.filtering.aesthetics.semantic_filter_prompts import VIDEO_TYPE_LABELS
 from cosmos_curate.pipelines.video.utils.data_model import Clip, SplitPipeTask, Video  # type: ignore[import-untyped]
 
 # Fill in after running the classifier GPU test manually to lock in expected classifications.

@@ -83,18 +83,18 @@ def test_vlm_filter_classifier_build_stages_both() -> None:
         classifier_config=VideoClassifierConfig(),
     )
     assert len(stages) == 6
-    # Classifier set
+    # Filter set
     assert isinstance(stages[0], VllmPrepStage)
     assert isinstance(stages[1], CuratorStageSpec)
     assert isinstance(stages[1].stage, VllmCaptionStage)
     assert isinstance(stages[2], CuratorStageSpec)
-    assert isinstance(stages[2].stage, VllmVideoClassifierStage)
-    # Filter set
+    assert isinstance(stages[2].stage, VllmFilteringStage)
+    # Classifier set
     assert isinstance(stages[3], VllmPrepStage)
     assert isinstance(stages[4], CuratorStageSpec)
     assert isinstance(stages[4].stage, VllmCaptionStage)
     assert isinstance(stages[5], CuratorStageSpec)
-    assert isinstance(stages[5].stage, VllmFilteringStage)
+    assert isinstance(stages[5].stage, VllmVideoClassifierStage)
 
 
 def test_vlm_filter_build_stages_openai_endpoint() -> None:
@@ -256,9 +256,8 @@ def test_qwen_video_classifier_rejection_reasons_only_allow_no_and_block_yes() -
     )
     video, clip_idx = _make_video_with_one_clip_one_window()
     all_issues: set[str] = set()
-    rejected_windows: set[int] = set()
     result_json = '{"planet_earth": "no", "mountains": "no", "space": "no"}'
-    stage._type_mode_filter_clip(video, clip_idx, [(0, result_json)], all_issues, rejected_windows)
+    stage._type_mode_filter_clip(video, clip_idx, [(0, result_json)], all_issues)
     cap = video.clips[clip_idx].filter_windows[0].caption["qwen_rejection_reasons"]
     assert "planet_earth" in cap
     assert "no" in cap
@@ -276,9 +275,8 @@ def test_qwen_video_classifier_rejection_reasons_block_yes_included() -> None:
     )
     video, clip_idx = _make_video_with_one_clip_one_window()
     all_issues: set[str] = set()
-    rejected_windows: set[int] = set()
     result_json = '{"planet_earth": "no", "space": "yes"}'
-    stage._type_mode_filter_clip(video, clip_idx, [(0, result_json)], all_issues, rejected_windows)
+    stage._type_mode_filter_clip(video, clip_idx, [(0, result_json)], all_issues)
     cap = video.clips[clip_idx].filter_windows[0].caption["qwen_rejection_reasons"]
     assert "space" in cap
     assert "yes" in cap
@@ -296,9 +294,8 @@ def test_qwen_video_classifier_custom_categories_empty_gets_unclassified() -> No
     )
     video, clip_idx = _make_video_with_one_clip_one_window()
     all_issues: set[str] = set()
-    rejected_windows: set[int] = set()
     result_json = '{"planet_earth": "no", "mountains": "no", "space": "no"}'
-    stage._type_mode_filter_clip(video, clip_idx, [(0, result_json)], all_issues, rejected_windows)
+    stage._type_mode_filter_clip(video, clip_idx, [(0, result_json)], all_issues)
     assert video.clips[clip_idx].qwen_type_classification == ["unclassified"]
 
 
@@ -312,9 +309,8 @@ def test_qwen_video_classifier_custom_categories_match_not_other() -> None:
     )
     video, clip_idx = _make_video_with_one_clip_one_window()
     all_issues: set[str] = set()
-    rejected_windows: set[int] = set()
     result_json = '{"planet_earth": "yes", "mountains": "no", "space": "no"}'
-    stage._type_mode_filter_clip(video, clip_idx, [(0, result_json)], all_issues, rejected_windows)
+    stage._type_mode_filter_clip(video, clip_idx, [(0, result_json)], all_issues)
     assert video.clips[clip_idx].qwen_type_classification == ["planet_earth"]
 
 
@@ -386,7 +382,6 @@ def test_qwen_video_classifier_default_categories_empty_not_unclassified() -> No
     )
     video, clip_idx = _make_video_with_one_clip_one_window()
     all_issues: set[str] = set()
-    rejected_windows: set[int] = set()
     result_json = '{"nature_environment": "no"}'
-    stage._type_mode_filter_clip(video, clip_idx, [(0, result_json)], all_issues, rejected_windows)
+    stage._type_mode_filter_clip(video, clip_idx, [(0, result_json)], all_issues)
     assert video.clips[clip_idx].qwen_type_classification == []

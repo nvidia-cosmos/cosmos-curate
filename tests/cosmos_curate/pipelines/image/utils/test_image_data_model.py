@@ -93,9 +93,15 @@ class TestImage:
         img = Image(input_image=pathlib.Path("/x.png"))
         assert img.caption == ""
         assert img.captions == {}
+        assert img.filter_captions == {}
         assert img.token_counts == {}
         assert img.caption_status is None
         assert img.caption_failure_reason is None
+        assert img.filter_caption_status == {}
+        assert img.filter_caption_failure_reason == {}
+        assert img.qwen_type_classification is None
+        assert img.qwen_rejection_stage is None
+        assert img.is_filtered is False
         assert img.has_caption() is False
 
     def test_has_caption_depends_on_caption_status(self) -> None:

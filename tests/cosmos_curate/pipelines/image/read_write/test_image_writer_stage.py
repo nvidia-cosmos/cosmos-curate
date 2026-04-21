@@ -64,10 +64,15 @@ class TestImageWriterStage:
         assert meta["source_path"] == str(tmp_path / "source.png")
         assert meta["relative_path"] == "source.png"
         assert meta["has_caption"] is False
+        assert meta["is_filtered"] is False
         assert meta["align_timestamp_ns"] is None
         assert meta["sensor_timestamp_ns"] is None
         assert meta["caption_status"] is None
         assert meta["caption_failure_reason"] is None
+        assert "filter_caption_status" not in meta
+        assert "filter_caption_failure_reason" not in meta
+        assert "qwen_type_classification" not in meta
+        assert "qwen_rejection_stage" not in meta
         assert meta["token_counts"] == {}
 
     def test_skip_task_without_encoded_data(self, tmp_path: pathlib.Path) -> None:
@@ -119,4 +124,32 @@ class TestImageWriterStage:
         assert meta["caption"] == "a red car"
         assert meta["caption_status"] == "success"
         assert meta["caption_failure_reason"] is None
+        assert meta["is_filtered"] is False
         assert meta["token_counts"] == {"qwen": {"prompt_tokens": 12, "output_tokens": 34}}
+
+    def test_writes_filtered_images_to_separate_folder(self, tmp_path: pathlib.Path) -> None:
+        """Filtered images should be written under filtered_images/ while metadata stays in metas/."""
+        payload = b"\xff\xd8\xff"
+        image = Image(
+            input_image=tmp_path / "filtered.jpg",
+            relative_path="filtered.jpg",
+            encoded_data=LazyData.coerce(np.frombuffer(payload, dtype=np.uint8)),
+            is_filtered=True,
+            qwen_rejection_stage="semantic",
+        )
+        task = ImagePipeTask(session_id=str(tmp_path / "filtered.jpg"), image=image)
+        stage = ImageWriterStage(
+            output_path=str(tmp_path / "out"),
+            output_s3_profile_name="default",
+        )
+
+        result = stage.process_data([task])
+
+        assert result is not None
+        filtered_images = list((tmp_path / "out" / "filtered_images").iterdir())
+        assert len(filtered_images) == 1
+        assert filtered_images[0].read_bytes() == payload
+        meta_files = list((tmp_path / "out" / "metas").iterdir())
+        meta = json.loads(meta_files[0].read_text())
+        assert meta["is_filtered"] is True
+        assert meta["qwen_rejection_stage"] == "semantic"

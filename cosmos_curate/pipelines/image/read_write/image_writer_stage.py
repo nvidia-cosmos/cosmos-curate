@@ -88,6 +88,46 @@ class ImageWriterStage(CuratorStage):
         """Resource configuration for this stage."""
         return CuratorStageResource(cpus=0.25)
 
+    @staticmethod
+    def _build_metadata(task: ImagePipeTask) -> dict[str, object]:
+        """Build metadata JSON payload for an image task."""
+        image = task.image
+        meta: dict[str, object] = {
+            "source_path": str(image.input_image),
+            "relative_path": image.relative_path,
+            "width": image.width,
+            "height": image.height,
+            "has_caption": image.has_caption(),
+            "is_filtered": image.is_filtered,
+            "align_timestamp_ns": _first_align_timestamp_ns(task),
+            "sensor_timestamp_ns": _first_sensor_timestamp_ns(task),
+            "caption_status": image.caption_status,
+            "caption_failure_reason": image.caption_failure_reason,
+            "token_counts": {
+                model: {
+                    "prompt_tokens": counts.prompt_tokens,
+                    "output_tokens": counts.output_tokens,
+                }
+                for model, counts in image.token_counts.items()
+            },
+        }
+        if image.caption.strip():
+            meta["caption"] = image.caption
+        if image.filter_caption_status:
+            meta["filter_caption_status"] = image.filter_caption_status
+        filter_failures = {
+            model: reason for model, reason in image.filter_caption_failure_reason.items() if reason is not None
+        }
+        if filter_failures:
+            meta["filter_caption_failure_reason"] = filter_failures
+        if image.qwen_type_classification is not None:
+            meta["qwen_type_classification"] = image.qwen_type_classification
+        if image.qwen_rejection_stage is not None:
+            meta["qwen_rejection_stage"] = image.qwen_rejection_stage
+        if image.qwen_rejection_reasons:
+            meta["qwen_rejection_reasons"] = image.qwen_rejection_reasons
+        return meta
+
     @nvtx.annotate("ImageWriterStage")  # type: ignore[untyped-decorator]
     def process_data(self, tasks: list[ImagePipeTask]) -> list[ImagePipeTask] | None:
         """Write each task's image to output_path/images/{id}{ext} and metadata to metas/{id}.json."""
@@ -106,30 +146,11 @@ class ImageWriterStage(CuratorStage):
             with self._timer.time_process():
                 out_id = get_image_output_id(task.session_id)
                 ext = _output_extension(image.relative_path)
-                image_sub = f"images/{out_id}{ext}"
+                image_dir = "filtered_images" if image.is_filtered else "images"
+                image_sub = f"{image_dir}/{out_id}{ext}"
                 meta_sub = f"metas/{out_id}.json"
                 writer.write_bytes_to(image_sub, data.tobytes())
-                has_caption = image.has_caption()
-                meta = {
-                    "source_path": str(image.input_image),
-                    "relative_path": image.relative_path,
-                    "width": image.width,
-                    "height": image.height,
-                    "has_caption": has_caption,
-                    "align_timestamp_ns": _first_align_timestamp_ns(task),
-                    "sensor_timestamp_ns": _first_sensor_timestamp_ns(task),
-                    "caption_status": image.caption_status,
-                    "caption_failure_reason": image.caption_failure_reason,
-                    "token_counts": {
-                        model: {
-                            "prompt_tokens": counts.prompt_tokens,
-                            "output_tokens": counts.output_tokens,
-                        }
-                        for model, counts in image.token_counts.items()
-                    },
-                }
-                if image.caption.strip():
-                    meta["caption"] = image.caption
+                meta = self._build_metadata(task)
                 writer.write_str_to(meta_sub, json.dumps(meta, indent=2))
                 if self._verbose:
                     logger.info(f"Wrote image {task.session_id} -> {image_sub}, {meta_sub}")

@@ -19,28 +19,22 @@ from typing import Literal
 import attrs
 
 from cosmos_curate.core.interfaces.stage_interface import CuratorStage, CuratorStageSpec
+from cosmos_curate.pipelines.common.filter_prompts import get_qwen_filter_prompt
+from cosmos_curate.pipelines.common.model_constraints import MODEL_VARIANTS_REQUIRING_PREPROCESS
+from cosmos_curate.pipelines.common.semantic_filter_postprocess import (
+    custom_categories_union,
+    read_categories_file,
+)
 from cosmos_curate.pipelines.video.captioning.gemini_caption_stage import ApiPrepStage, GeminiCaptionStage
 from cosmos_curate.pipelines.video.captioning.openai_caption_stage import OpenAICaptionStage
 from cosmos_curate.pipelines.video.captioning.vllm_caption_stage import VllmCaptionStage, VllmPrepStage
 from cosmos_curate.pipelines.video.filtering.aesthetics.aesthetic_filter_stages import AestheticFilterStage
 from cosmos_curate.pipelines.video.filtering.aesthetics.artificial_text_filter_stage import ArtificialTextFilterStage
-from cosmos_curate.pipelines.video.filtering.aesthetics.semantic_filter_prompts import (
-    get_qwen_filter_prompt,  # type: ignore[import-untyped]
-)
-from cosmos_curate.pipelines.video.filtering.aesthetics.semantic_filter_stages import (  # type: ignore[import-untyped]
+from cosmos_curate.pipelines.video.filtering.aesthetics.semantic_filter_stages import (
     VllmFilteringStage,
     VllmVideoClassifierStage,
-    custom_categories_union,
-    read_categories_file,  # used by _build_vllm_classifier_stages
 )
 from cosmos_curate.pipelines.video.utils.data_model import VllmConfig, VllmSamplingConfig, WindowConfig
-
-# Model variants that do NOT support CPU preprocessing and require model_does_preprocess=True.
-# Must be kept in sync with QWEN3_CAPTION_ALGOS in splitting_pipeline.py, which has the
-# equivalent guard for the captioning path. A circular import prevents sharing directly.
-_REQUIRES_MODEL_PREPROCESS: frozenset[str] = frozenset(
-    {"qwen3_vl_30b", "qwen3_vl_30b_fp8", "qwen3_vl_235b", "qwen3_vl_235b_fp8"}
-)
 
 
 @attrs.define(frozen=True)
@@ -108,7 +102,7 @@ class VlmFilterConfig:
 class VideoClassifierConfig:
     """Configuration for Qwen-based video-type (allow/block list) filtering.
 
-    By default uses the 27 VIDEO_TYPE_LABELS (imaginaire VideoTypeClassifier taxonomy).
+    By default uses the shared 27-label media taxonomy exposed via ``VIDEO_TYPE_LABELS``.
     When custom_categories is True, type_allow and type_block define the full set of
     categories (plus an "unclassified" fallback when none match); the model is prompted
     only for those, and allow/block logic applies.
@@ -180,7 +174,7 @@ def build_artificial_text_filter_stages(config: ArtificialTextFilterConfig) -> l
 
 def _make_vllm_config(config: VlmFilterConfig | VideoClassifierConfig, prompt_text: str) -> VllmConfig:
     """Build a VllmConfig from a filter/classifier config."""
-    model_does_preprocess = config.model_does_preprocess or config.model_variant in _REQUIRES_MODEL_PREPROCESS
+    model_does_preprocess = config.model_does_preprocess or config.model_variant in MODEL_VARIANTS_REQUIRING_PREPROCESS
     return VllmConfig(
         model_variant=config.model_variant,
         prompt_text=prompt_text,
@@ -195,7 +189,7 @@ def _make_vllm_config(config: VlmFilterConfig | VideoClassifierConfig, prompt_te
 
 def _make_window_config(config: VlmFilterConfig | VideoClassifierConfig) -> WindowConfig:
     """Build a WindowConfig from a legacy Qwen filter/classifier config."""
-    model_does_preprocess = config.model_does_preprocess or config.model_variant in _REQUIRES_MODEL_PREPROCESS
+    model_does_preprocess = config.model_does_preprocess or config.model_variant in MODEL_VARIANTS_REQUIRING_PREPROCESS
     return WindowConfig(
         sampling_fps=config.sampling_fps,
         window_size=config.window_size,
@@ -412,10 +406,10 @@ def _build_vllm_filter_stages(fc: VlmFilterConfig) -> list[CuratorStage | Curato
 
 
 def _build_vllm_stages_both(cc: VideoClassifierConfig, fc: VlmFilterConfig) -> list[CuratorStage | CuratorStageSpec]:
-    """Build classifier + filter stages using VllmCaptionStage; two separate prep+inference passes."""
+    """Build filter + classifier stages using VllmCaptionStage; two separate prep+inference passes."""
     return [
-        *_build_vllm_classifier_stages(cc),
         *_build_vllm_filter_stages(fc),
+        *_build_vllm_classifier_stages(cc),
     ]
 
 
@@ -427,8 +421,8 @@ def build_vllm_filter_classifier_stages(
 
     Uses VllmPrepStage + VllmCaptionStage for inference, supporting all vLLM model
     variants (Qwen2.5, Qwen3, Nemotron, etc.) and VLM endpoints. Pass filter_config
-    and/or classifier_config (at least one required). When both are set, the classifier
-    runs first so every clip gets qwen_type_classification before semantic filtering.
+    and/or classifier_config (at least one required). When both are set, semantic
+    filtering runs first.
     """
     if filter_config is None and classifier_config is None:
         msg = "At least one of filter_config or classifier_config is required"

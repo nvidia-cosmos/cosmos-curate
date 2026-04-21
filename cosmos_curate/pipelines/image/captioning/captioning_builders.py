@@ -18,15 +18,13 @@
 import attrs
 
 from cosmos_curate.core.interfaces.stage_interface import CuratorStage, CuratorStageSpec
+from cosmos_curate.pipelines.common.model_constraints import MODEL_VARIANTS_REQUIRING_PREPROCESS
 from cosmos_curate.pipelines.image.captioning.image_vllm_stages import ImageVllmCaptionStage, ImageVllmPrepStage
 from cosmos_curate.pipelines.video.utils.data_model import VllmConfig, VllmSamplingConfig
 
 IMAGE_CAPTION_ALGOS: frozenset[str] = frozenset(
     {"qwen", "qwen3_vl_30b", "qwen3_vl_30b_fp8", "qwen3_vl_235b", "qwen3_vl_235b_fp8"}
     | {"nemotron", "cosmos_r1", "cosmos_r2"}
-)
-_REQUIRES_MODEL_PREPROCESS: frozenset[str] = frozenset(
-    {"qwen3_vl_30b", "qwen3_vl_30b_fp8", "qwen3_vl_235b", "qwen3_vl_235b_fp8", "cosmos_r2"}
 )
 
 
@@ -55,7 +53,7 @@ def build_image_captioning_stages(config: ImageCaptioningConfig) -> list[Curator
         msg = f"caption_algo must be one of {sorted(IMAGE_CAPTION_ALGOS)}, got {config.caption_algo!r}"
         raise ValueError(msg)
 
-    model_does_preprocess = config.caption_algo in _REQUIRES_MODEL_PREPROCESS
+    model_does_preprocess = config.caption_algo in MODEL_VARIANTS_REQUIRING_PREPROCESS
     vllm_config = VllmConfig(
         model_variant=config.caption_algo,
         use_image_input=True,

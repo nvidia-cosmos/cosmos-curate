@@ -20,6 +20,8 @@ import pathlib
 
 from cosmos_curate.core.interfaces.stage_interface import CuratorStageSpec
 from cosmos_curate.pipelines.image.annotate_pipeline import _assemble_stages, add_annotate_command
+from cosmos_curate.pipelines.image.captioning.image_vllm_stages import ImageVllmCaptionStage, ImageVllmPrepStage
+from cosmos_curate.pipelines.image.filtering.filter_stages import ImageClassifierStage, ImageSemanticFilterStage
 
 
 def test_add_annotate_command_registers_subcommand(tmp_path: pathlib.Path) -> None:
@@ -74,3 +76,72 @@ def test_assemble_stages_with_captioning_returns_four_specs(tmp_path: pathlib.Pa
     stages = _assemble_stages(args)
     assert len(stages) == 4
     assert all(isinstance(stage, CuratorStageSpec) for stage in stages)
+
+
+def test_assemble_stages_with_local_semantic_filter_returns_filter_specs(tmp_path: pathlib.Path) -> None:
+    """Local semantic filtering should run before normal captioning."""
+    parser = argparse.ArgumentParser()
+    subparsers = parser.add_subparsers(dest="command")
+    add_annotate_command(subparsers)
+    args = parser.parse_args(
+        [
+            "annotate",
+            "--input-image-path",
+            str(tmp_path / "in"),
+            "--output-path",
+            str(tmp_path / "out"),
+            "--semantic-filter",
+            "enable",
+        ]
+    )
+
+    stages = _assemble_stages(args)
+    assert len(stages) == 7
+    assert isinstance(stages[1], CuratorStageSpec)
+    assert isinstance(stages[2], CuratorStageSpec)
+    assert isinstance(stages[3], CuratorStageSpec)
+    assert isinstance(stages[1].stage, ImageVllmPrepStage)
+    assert isinstance(stages[2].stage, ImageVllmCaptionStage)
+    assert isinstance(stages[3].stage, ImageSemanticFilterStage)
+    assert isinstance(stages[4], CuratorStageSpec)
+    assert isinstance(stages[5], CuratorStageSpec)
+    assert isinstance(stages[4].stage, ImageVllmPrepStage)
+    assert isinstance(stages[5].stage, ImageVllmCaptionStage)
+    assert stages[2].stage._result_target == "filter_caption"
+    assert stages[5].stage._result_target == "caption"
+
+
+def test_assemble_stages_with_local_classifier_returns_classifier_specs(tmp_path: pathlib.Path) -> None:
+    """Local image classifier should run before normal captioning."""
+    parser = argparse.ArgumentParser()
+    subparsers = parser.add_subparsers(dest="command")
+    add_annotate_command(subparsers)
+    args = parser.parse_args(
+        [
+            "annotate",
+            "--input-image-path",
+            str(tmp_path / "in"),
+            "--output-path",
+            str(tmp_path / "out"),
+            "--image-classifier",
+            "enable",
+            "--image-classifier-use-custom-categories",
+            "--image-classifier-allow",
+            "planet_earth",
+        ]
+    )
+
+    stages = _assemble_stages(args)
+    assert len(stages) == 7
+    assert isinstance(stages[1], CuratorStageSpec)
+    assert isinstance(stages[2], CuratorStageSpec)
+    assert isinstance(stages[3], CuratorStageSpec)
+    assert isinstance(stages[1].stage, ImageVllmPrepStage)
+    assert isinstance(stages[2].stage, ImageVllmCaptionStage)
+    assert isinstance(stages[3].stage, ImageClassifierStage)
+    assert isinstance(stages[4], CuratorStageSpec)
+    assert isinstance(stages[5], CuratorStageSpec)
+    assert isinstance(stages[4].stage, ImageVllmPrepStage)
+    assert isinstance(stages[5].stage, ImageVllmCaptionStage)
+    assert stages[2].stage._result_target == "filter_caption"
+    assert stages[5].stage._result_target == "caption"

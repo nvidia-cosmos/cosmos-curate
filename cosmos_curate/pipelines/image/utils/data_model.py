@@ -65,6 +65,9 @@ class Image:
     captions: dict[str, str] = attrs.Factory(dict)
     """Normalized captions keyed by model variant, mirroring the video pipeline."""
 
+    filter_captions: dict[str, str] = attrs.Factory(dict)
+    """Filter/classifier captions keyed by model variant for CPU postprocessing stages."""
+
     token_counts: dict[str, TokenCounts] = attrs.Factory(dict)
     """Per-model token usage from caption generation."""
 
@@ -73,6 +76,24 @@ class Image:
 
     caption_failure_reason: CaptionFailureReason | None = None
     """Failure reason populated when caption_status == 'error'."""
+
+    filter_caption_status: dict[str, str] = attrs.Factory(dict)
+    """Per-model filter/classifier caption outcome (success/truncated/blocked/error/skipped)."""
+
+    filter_caption_failure_reason: dict[str, CaptionFailureReason | None] = attrs.Factory(dict)
+    """Per-model failure reason populated when a filter/classifier caption errors."""
+
+    qwen_type_classification: list[str] | None = None
+    """Classifier labels inferred from local filter/classifier caption postprocessing."""
+
+    qwen_rejection_stage: str | None = None
+    """Which stage rejected the image: 'semantic' or 'classifier'."""
+
+    qwen_rejection_reasons: dict[str, str] | None = None
+    """Structured rejection reasons written by semantic/classifier postprocessing when applicable."""
+
+    is_filtered: bool = False
+    """Whether the image was filtered out by semantic or classifier postprocessing."""
 
     width: int | None = None
     """Image width (e.g. after resize in caption prep); None if not set."""

@@ -16,7 +16,7 @@
 """vLLM-based image captioning: prep (image → model input) and caption (vLLM generate)."""
 
 import logging
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 import attrs
 import numpy as np
@@ -232,12 +232,23 @@ def caption_images(
     )
 
 
-def _collect_caption_inputs(tasks: list[ImagePipeTask], variant: str) -> tuple[list[dict[str, Any]], list[int]]:
-    """Collect valid model inputs and their task indices for captioning."""
+def _collect_caption_inputs(
+    tasks: list[ImagePipeTask],
+    variant: str,
+    *,
+    result_target: Literal["caption", "filter_caption"] = "caption",
+    result_key: str | None = None,
+) -> tuple[list[dict[str, Any]], list[int]]:
+    """Collect valid model inputs and their task indices for captioning/filter-captioning."""
     model_inputs_list: list[dict[str, Any]] = []
     valid_indices: list[int] = []
+    storage_key = result_key or variant
     for i, task in enumerate(tasks):
-        if task.image.has_caption():
+        if result_target == "caption" and task.image.is_filtered:
+            continue
+        if result_target == "caption" and task.image.has_caption():
+            continue
+        if result_target == "filter_caption" and storage_key in task.image.filter_captions:
             continue
         inp = task.image.model_input.get(variant)
         if inp is None:
@@ -269,24 +280,37 @@ def _normalize_vllm_result(result: Any) -> CaptionResult:  # noqa: ANN401
     return CaptionResult(outcome=CaptionOutcome.ERROR, failure_reason="exception")
 
 
-def _scatter_captions(
+def _scatter_captions(  # noqa: PLR0913
     tasks: list[ImagePipeTask],
     valid_indices: list[int],
     results: list[Any],
     model_variant: str,
     *,
     verbose: bool,
+    result_target: Literal["caption", "filter_caption"] = "caption",
+    result_key: str | None = None,
 ) -> None:
-    """Write normalized caption outputs into tasks at valid_indices."""
+    """Write normalized caption/filter-caption outputs into tasks at valid_indices."""
+    storage_key = result_key or model_variant
     for idx, raw_result in zip(valid_indices, results, strict=True):
         image = tasks[idx].image
         result = _normalize_vllm_result(raw_result)
         if result.text is not None:
-            image.caption = result.text
-            image.captions[model_variant] = result.text
-        image.token_counts[model_variant] = raw_result.token_counts
-        image.caption_status = result.outcome.value
-        image.caption_failure_reason = result.failure_reason if result.outcome == CaptionOutcome.ERROR else None
+            if result_target == "caption":
+                image.caption = result.text
+                image.captions[model_variant] = result.text
+            else:
+                image.filter_captions[storage_key] = result.text
+        if result_target == "caption":
+            image.token_counts[model_variant] = raw_result.token_counts
+            image.caption_status = result.outcome.value
+            image.caption_failure_reason = result.failure_reason if result.outcome == CaptionOutcome.ERROR else None
+        else:
+            image.token_counts[storage_key] = raw_result.token_counts
+            image.filter_caption_status[storage_key] = result.outcome.value
+            image.filter_caption_failure_reason[storage_key] = (
+                result.failure_reason if result.outcome == CaptionOutcome.ERROR else None
+            )
         if verbose:
             preview = (
                 raw_result.text[:_PREVIEW_MAX_LEN] + "..."
@@ -395,12 +419,16 @@ class ImageVllmCaptionStage(CuratorStage):
         self,
         vllm_config: VllmConfig,
         *,
+        result_target: Literal["caption", "filter_caption"] = "caption",
+        result_key: str | None = None,
         verbose: bool = False,
         log_stats: bool = False,
     ) -> None:
         """Store config and init timer; model/sampling/processor set in stage_setup."""
         self._timer = StageTimer(self)
         self._vllm_config = vllm_config
+        self._result_target = result_target
+        self._result_key = result_key
         self._verbose = verbose
         self._log_stats = log_stats
         self._llm: Any = None
@@ -439,7 +467,12 @@ class ImageVllmCaptionStage(CuratorStage):
             raise RuntimeError(msg)
 
         variant = self._vllm_config.model_variant
-        model_inputs_list, valid_indices = _collect_caption_inputs(tasks, variant)
+        model_inputs_list, valid_indices = _collect_caption_inputs(
+            tasks,
+            variant,
+            result_target=self._result_target,
+            result_key=self._result_key,
+        )
         if not model_inputs_list:
             logger.warning("No valid model inputs for captioning")
             _clear_model_inputs(tasks)
@@ -455,7 +488,15 @@ class ImageVllmCaptionStage(CuratorStage):
                 self._processor,
                 self._sampling_params,
             )
-        _scatter_captions(tasks, valid_indices, results, variant, verbose=self._verbose)
+        _scatter_captions(
+            tasks,
+            valid_indices,
+            results,
+            variant,
+            verbose=self._verbose,
+            result_target=self._result_target,
+            result_key=self._result_key,
+        )
         _clear_model_inputs(tasks)
 
         if self._log_stats and tasks and valid_indices:

@@ -38,6 +38,11 @@ from cosmos_curate.pipelines.image.captioning.captioning_builders import (
     ImageCaptioningConfig,
     build_image_captioning_stages,
 )
+from cosmos_curate.pipelines.image.filtering.filtering_builders import (
+    ImageClassifierConfig,
+    ImageSemanticFilterConfig,
+    build_image_filter_classifier_stages,
+)
 from cosmos_curate.pipelines.image.read_write.image_writer_stage import get_image_output_id
 from cosmos_curate.pipelines.image.read_write.read_write_builders import (
     ImageIngestConfig,
@@ -58,6 +63,8 @@ def write_summary(
 ) -> None:
     """Write summary.json and optionally per-stage performance stats to terminal."""
     num_with_caption = sum(1 for t in output_tasks if t.image.has_caption())
+    passed_tasks = [t for t in output_tasks if not t.image.is_filtered]
+    filtered_tasks = [t for t in output_tasks if t.image.is_filtered]
     # Use prep-stage defaults when not set via CLI so summary reflects actual values used
     _default_min = 128 * 28 * 28
     _default_max = 768 * 28 * 28
@@ -68,14 +75,20 @@ def write_summary(
     if resize_max_pixels is None:
         resize_max_pixels = _default_max
     captioned_images = [get_image_output_id(t.session_id) for t in output_tasks if t.image.has_caption()]
+    passed_images = [get_image_output_id(t.session_id) for t in passed_tasks]
+    filtered_images = [get_image_output_id(t.session_id) for t in filtered_tasks]
 
     summary_data: dict[str, Any] = {
         "num_input_images": num_tasks,
         "num_output_tasks": len(output_tasks),
+        "num_images_passed": len(passed_tasks),
+        "num_images_filtered": len(filtered_tasks),
         "pipeline_run_time": round(pipeline_run_time_min, 4),
         "num_images_with_caption": num_with_caption,
         "resize_min_pixels": resize_min_pixels,
         "resize_max_pixels": resize_max_pixels,
+        "images": passed_images,
+        "filtered_images": filtered_images,
         "captioned_images": captioned_images,
     }
 
@@ -153,6 +166,53 @@ def _assemble_stages(args: argparse.Namespace) -> list[CuratorStage | CuratorSta
             )
         )
     )
+    if args.image_classifier == "enable" or args.semantic_filter == "enable":
+        stages.extend(
+            build_image_filter_classifier_stages(
+                filter_config=(
+                    ImageSemanticFilterConfig(
+                        enabled=True,
+                        score_only=args.semantic_filter_score_only,
+                        model_variant=args.semantic_filter_model_variant,
+                        filter_categories=args.semantic_filter_categories,
+                        prompt_variant=args.semantic_filter_prompt_variant,
+                        rejection_threshold=args.semantic_filter_rejection_threshold,
+                        batch_size=args.semantic_filter_batch_size,
+                        max_output_tokens=args.semantic_filter_max_output_tokens,
+                        num_gpus=args.semantic_filter_num_gpus,
+                        caption_prep_min_pixels=args.caption_prep_min_pixels,
+                        caption_prep_max_pixels=args.caption_prep_max_pixels,
+                        num_prep_workers_per_node=args.num_caption_prep_workers_per_node,
+                        verbose=args.verbose,
+                        perf_profile=args.perf_profile,
+                    )
+                    if args.semantic_filter == "enable"
+                    else None
+                ),
+                classifier_config=(
+                    ImageClassifierConfig(
+                        enabled=True,
+                        model_variant=args.image_classifier_model_variant,
+                        rejection_threshold=args.image_classifier_rejection_threshold,
+                        batch_size=args.image_classifier_batch_size,
+                        max_output_tokens=args.image_classifier_max_output_tokens,
+                        num_gpus=args.image_classifier_num_gpus,
+                        caption_prep_min_pixels=args.caption_prep_min_pixels,
+                        caption_prep_max_pixels=args.caption_prep_max_pixels,
+                        num_prep_workers_per_node=args.num_caption_prep_workers_per_node,
+                        verbose=args.verbose,
+                        perf_profile=args.perf_profile,
+                        type_allow=",".join(args.image_classifier_allow) if args.image_classifier_allow else None,
+                        type_block=",".join(args.image_classifier_block) if args.image_classifier_block else None,
+                        custom_categories=args.image_classifier_use_custom_categories,
+                        type_allow_file=args.image_classifier_allow_file,
+                        type_block_file=args.image_classifier_block_file,
+                    )
+                    if args.image_classifier == "enable"
+                    else None
+                ),
+            )
+        )
     if getattr(args, "generate_captions", True):
         stages.extend(
             build_image_captioning_stages(
@@ -301,6 +361,130 @@ def _setup_parser(parser: argparse.ArgumentParser) -> None:
         type=str,
         default=None,
         help="Custom prompt text for captioning (overrides prompt variant).",
+    )
+    parser.add_argument(
+        "--semantic-filter",
+        dest="semantic_filter",
+        choices=["enable", "disable"],
+        default="disable",
+        help="Whether to enable local semantic filtering for images.",
+    )
+    parser.add_argument(
+        "--semantic-filter-score-only",
+        action="store_true",
+        default=False,
+        help="Annotate semantic filter outputs but do not reject images.",
+    )
+    parser.add_argument(
+        "--semantic-filter-model-variant",
+        type=str,
+        default="qwen",
+        choices=sorted(IMAGE_CAPTION_ALGOS - {"openai", "gemini"}),
+        help="Local vLLM model variant for image semantic filtering.",
+    )
+    parser.add_argument(
+        "--semantic-filter-prompt-variant",
+        type=str,
+        default="default",
+        help="Prompt variant for image semantic filtering.",
+    )
+    parser.add_argument(
+        "--semantic-filter-categories",
+        type=str,
+        default=None,
+        help="Comma-separated custom semantic filter categories for images.",
+    )
+    parser.add_argument(
+        "--semantic-filter-rejection-threshold",
+        type=float,
+        default=0.5,
+        help="Fraction of matched filter prompts required to reject an image.",
+    )
+    parser.add_argument(
+        "--semantic-filter-batch-size",
+        type=int,
+        default=16,
+        help="Batch size for local image semantic filtering caption generation.",
+    )
+    parser.add_argument(
+        "--semantic-filter-max-output-tokens",
+        type=int,
+        default=8192,
+        help="Max output tokens for local image semantic filtering.",
+    )
+    parser.add_argument(
+        "--semantic-filter-num-gpus",
+        type=int,
+        default=1,
+        help="Number of GPUs per worker for local image semantic filtering.",
+    )
+    parser.add_argument(
+        "--image-classifier",
+        dest="image_classifier",
+        choices=["enable", "disable"],
+        default="disable",
+        help="Whether to enable local image classifier filtering.",
+    )
+    parser.add_argument(
+        "--image-classifier-model-variant",
+        type=str,
+        default="qwen",
+        choices=sorted(IMAGE_CAPTION_ALGOS),
+        help="Local vLLM model variant for image classifier filtering.",
+    )
+    parser.add_argument(
+        "--image-classifier-rejection-threshold",
+        type=float,
+        default=0.5,
+        help="Fraction of blocked classifier outputs required to reject an image.",
+    )
+    parser.add_argument(
+        "--image-classifier-allow",
+        nargs="*",
+        default=None,
+        help="Image categories to allow.",
+    )
+    parser.add_argument(
+        "--image-classifier-block",
+        nargs="*",
+        default=None,
+        help="Image categories to block.",
+    )
+    parser.add_argument(
+        "--image-classifier-use-custom-categories",
+        action="store_true",
+        default=False,
+        help="Treat allow/block values as the full category set instead of the default taxonomy.",
+    )
+    parser.add_argument(
+        "--image-classifier-allow-file",
+        type=str,
+        default=None,
+        help="File containing newline-separated allow-list categories.",
+    )
+    parser.add_argument(
+        "--image-classifier-block-file",
+        type=str,
+        default=None,
+        help="File containing newline-separated block-list categories.",
+    )
+    parser.add_argument(
+        "--image-classifier-batch-size",
+        type=int,
+        default=16,
+        help="Batch size for local image classifier caption generation.",
+    )
+    parser.add_argument(
+        "--image-classifier-max-output-tokens",
+        type=int,
+        default=8192,
+        help="Max output tokens for local image classifier caption generation.",
+    )
+    parser.add_argument(
+        "--image-classifier-num-gpus",
+        type=int,
+        default=1,
+        help="Number of GPUs per worker for local image classifier caption generation.",
     )
     add_common_args(parser)
 
