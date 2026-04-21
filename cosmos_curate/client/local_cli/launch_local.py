@@ -66,6 +66,38 @@ class LaunchDocker:
     gpus: str | None
     mount_s3_creds: bool
     mount_azure_creds: bool
+    extra_volumes: list[str]  # each entry is HOST_PATH:CONTAINER_PATH
+
+
+_MIN_VOLUME_PARTS = 2
+_MAX_VOLUME_PARTS = 3
+
+
+def _parse_extra_volumes(raw: str) -> list[str]:
+    """Parse and validate comma-separated volume mount specifications.
+
+    Each entry must be in ``HOST_PATH:CONTAINER_PATH`` or
+    ``HOST_PATH:CONTAINER_PATH:MODE`` format.
+
+    Raises:
+        typer.BadParameter: If any entry is malformed.
+
+    """
+    if not raw:
+        return []
+    volumes: list[str] = []
+    for raw_entry in raw.split(","):
+        stripped = raw_entry.strip()
+        if not stripped:
+            continue
+        parts = stripped.split(":")
+        if len(parts) < _MIN_VOLUME_PARTS or len(parts) > _MAX_VOLUME_PARTS:
+            msg = (
+                f"Invalid volume mount '{stripped}'. Expected HOST_PATH:CONTAINER_PATH or HOST_PATH:CONTAINER_PATH:MODE"
+            )
+            raise typer.BadParameter(msg)
+        volumes.append(stripped)
+    return volumes
 
 
 @cc_client_local.command(no_args_is_help=True)
@@ -137,6 +169,16 @@ def launch(  # noqa: PLR0913
             is_flag=True,
         ),
     ] = False,
+    extra_volumes: Annotated[
+        str,
+        Option(
+            help=(
+                "Comma-separated extra volume mounts in HOST_PATH:CONTAINER_PATH format. "
+                "e.g. --extra-volumes /data/models:/config/models,/data/videos:/workspace/input"
+            ),
+            rich_help_panel="local-docker",
+        ),
+    ] = "",
 ) -> None:
     """Launch video-curation pipeline in local docker container.
 
@@ -155,6 +197,7 @@ def launch(  # noqa: PLR0913
         gpus=gpus,
         mount_s3_creds=mount_s3_creds,
         mount_azure_creds=mount_azure_creds,
+        extra_volumes=_parse_extra_volumes(extra_volumes),
     )
     return _launch_in_docker_container(opts)
 
@@ -350,6 +393,8 @@ def _launch_in_docker_container(opts: LaunchDocker) -> None:
     docker_command.extend(_get_s3_creds_mount_strings(opts))
     docker_command.extend(_get_azure_creds_mount_strings(opts))
     docker_command.extend(_get_config_file_mount_strings(is_model_cli=is_model_cli))
+    for vol in opts.extra_volumes:
+        docker_command.extend(["-v", vol])
     docker_command.extend(interactive_strings)
     docker_command.extend(
         [

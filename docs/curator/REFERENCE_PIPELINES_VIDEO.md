@@ -100,6 +100,14 @@ cosmos-curate local launch \
     -- python3 -m cosmos_curate.pipelines.video.run_pipeline split --help
 ```
 
+> **Tip:** Instead of passing many CLI flags, you can put all settings in a JSON or
+> YAML config file and pass the file path as the sole positional argument:
+> `run_pipeline /path/to/config.yaml`. The two modes (config file vs. CLI flags) are
+> mutually exclusive. The config format matches the NVCF invoke payload
+> (`{"pipeline": "split", "args": {...}}`). Per-pipeline reference templates are
+> provided under `examples/osmo/` (`split_config.json`, `shard_config.json`,
+> `dedup_config.json`). See the [End User Guide](../client/END_USER_GUIDE.md#configuration-files) for details.
+
 **Options for Input/Output**
 
 - `--input-video-path`: path on local disk or `s3://` bucket that contains videos.

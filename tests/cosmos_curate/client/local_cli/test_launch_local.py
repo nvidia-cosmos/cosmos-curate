@@ -19,12 +19,14 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+import typer
 from _pytest.monkeypatch import MonkeyPatch
 from typer.testing import CliRunner
 
 from cosmos_curate.client.cli import cosmos_curator  # type: ignore[import-untyped]
 from cosmos_curate.client.local_cli.launch_local import (  # type: ignore[import-untyped]
     _get_config_file_mount_strings,
+    _parse_extra_volumes,
     _verify_local_path_exists,
 )
 
@@ -118,3 +120,76 @@ def test_get_config_file_mount_string(monkeypatch: MonkeyPatch, tmp_path: Path) 
     with patch("cosmos_curate.client.local_cli.launch_local.LOCAL_COSMOS_CURATOR_CONFIG_FILE", mock_file_fail):  # noqa: SIM117
         with pytest.raises(SystemExit):
             _get_config_file_mount_strings(is_model_cli=True)
+
+
+# ---------------------------------------------------------------------------
+# _parse_extra_volumes
+# ---------------------------------------------------------------------------
+class TestParseExtraVolumes:
+    """Tests for the --extra-volumes parsing and validation."""
+
+    def test_empty_string_returns_empty_list(self) -> None:
+        """Empty string yields an empty volume list."""
+        assert _parse_extra_volumes("") == []
+
+    def test_single_volume(self) -> None:
+        """Single host:container pair is parsed as one entry."""
+        assert _parse_extra_volumes("/host:/container") == ["/host:/container"]
+
+    def test_multiple_volumes(self) -> None:
+        """Comma-separated pairs split into multiple mount strings."""
+        result = _parse_extra_volumes("/a:/b,/c:/d")
+        assert result == ["/a:/b", "/c:/d"]
+
+    def test_volume_with_mode(self) -> None:
+        """Read-only mode suffix on a mount is preserved."""
+        assert _parse_extra_volumes("/host:/container:ro") == ["/host:/container:ro"]
+
+    def test_whitespace_stripped(self) -> None:
+        """Leading and trailing whitespace around entries is stripped."""
+        result = _parse_extra_volumes(" /a:/b , /c:/d ")
+        assert result == ["/a:/b", "/c:/d"]
+
+    def test_trailing_comma_ignored(self) -> None:
+        """Trailing comma after the last mount does not add an empty entry."""
+        result = _parse_extra_volumes("/a:/b,")
+        assert result == ["/a:/b"]
+
+    def test_missing_colon_raises(self) -> None:
+        """Value without a colon raises BadParameter."""
+        with pytest.raises(typer.BadParameter, match="Invalid volume mount"):
+            _parse_extra_volumes("no-colon-here")
+
+    def test_too_many_colons_raises(self) -> None:
+        """More than two colons in a mount raises BadParameter."""
+        with pytest.raises(typer.BadParameter, match="Invalid volume mount"):
+            _parse_extra_volumes("/a:/b:ro:extra")
+
+    def test_launch_command_with_extra_volumes(self) -> None:
+        """Verify --extra-volumes produces -v flags in the docker command."""
+        args = [
+            "local",
+            "launch",
+            "--image-name",
+            "cosmos-curate",
+            "--image-tag",
+            "test",
+            "--curator-path",
+            ".",
+            "--extra-volumes",
+            "/models:/config/models,/data:/workspace/input",
+            "--",
+            "echo",
+            "hello",
+        ]
+        with patch("cosmos_curate.client.local_cli.launch_local.subprocess.call") as mock_call:
+            mock_call.return_value = 0
+            result = runner.invoke(cosmos_curator, args)
+            assert result.exit_code == 0
+
+            docker_cmd = mock_call.call_args[0][0]
+
+        volume_pairs = [(docker_cmd[i], docker_cmd[i + 1]) for i in range(len(docker_cmd) - 1) if docker_cmd[i] == "-v"]
+        mounted_volumes = [pair[1] for pair in volume_pairs]
+        assert "/models:/config/models" in mounted_volumes
+        assert "/data:/workspace/input" in mounted_volumes

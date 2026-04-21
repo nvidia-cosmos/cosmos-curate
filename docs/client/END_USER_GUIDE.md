@@ -398,6 +398,72 @@ cosmos-curate local launch --image-name cosmos-curate --image-tag slim \
 The `--pixi-path .` option mounts the `.pixi` directory from the given path into the container, so the container
 uses your pre-installed environments directly — no environment installation at runtime.
 
+#### Configuration Files
+
+Instead of passing many CLI flags, you can define all pipeline settings in a JSON or YAML
+config file. The two invocation modes are **mutually exclusive** -- use either a config
+file or CLI flags, not both:
+
+```bash
+# Config mode -- all arguments come from the file
+run_pipeline /path/to/config.yaml
+
+# CLI mode -- all arguments are passed as flags
+run_pipeline split --input-video-path /workspace/input --output-clip-path /workspace/output
+```
+
+The config format matches the NVCF invoke payload. The file **must** contain a `pipeline`
+key naming the subcommand:
+
+```json
+{
+    "pipeline": "split",
+    "args": {
+        "input_video_path": "/workspace/input",
+        "output_clip_path": "/workspace/output",
+        "generate_captions": true,
+        "limit": 0
+    }
+}
+```
+
+The same config in YAML:
+
+```yaml
+pipeline: split
+args:
+  input_video_path: /workspace/input
+  output_clip_path: /workspace/output
+  generate_captions: true
+  limit: 0
+```
+
+Example launch with a config file:
+
+```bash
+cosmos-curate local launch \
+    --image-name cosmos-curate --image-tag 1.0.0 --curator-path . \
+    --extra-volumes /data/models:/config/models,/data/videos:/workspace/input,/data/output:/workspace/output \
+    -- pixi run --as-is python -m cosmos_curate.pipelines.video.run_pipeline \
+    /opt/cosmos-curate/examples/osmo/split_config.json
+```
+
+Per-pipeline reference templates are provided under `examples/osmo/`:
+`split_config.json`, `shard_config.json`, and `dedup_config.json`.
+
+#### Extra Volume Mounts
+
+The `--extra-volumes` option lets you mount additional host directories into the container.
+Specify comma-separated `HOST_PATH:CONTAINER_PATH` pairs:
+
+```bash
+cosmos-curate local launch \
+    --extra-volumes /data/models:/config/models,/data/videos:/workspace/input \
+    ...
+```
+
+This is useful for mounting model weights, input data, and output directories without resorting to raw `docker run` commands.
+
 ## Launch Pipelines on Slurm
 
 ### **PLEASE READ: For end users walking through this section, the guide assumes that you have already set up a local environment and have launched a reference pipeline locally per [Initial Setup](#initial-setup) + [Run the Reference Video Pipeline](#run-the-reference-video-pipeline).**
