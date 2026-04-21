@@ -22,7 +22,7 @@ import numpy as np
 import numpy.typing as npt
 import pytest
 
-from cosmos_curate.core.sensors.sampling.grid import SamplingWindow, make_ts_grid
+from cosmos_curate.core.sensors.sampling.grid import SamplingGrid, SamplingWindow, make_ts_grid
 from tests.cosmos_curate.core.sensors.test_utils import make_sampling_grid
 
 
@@ -258,6 +258,52 @@ def test_initializer_state() -> None:
     assert not np.shares_memory(p.timestamps_ns, ts)
 
 
+def test_irregular_grid() -> None:
+    """Test an irregular grid.
+
+    * Irregular grid should produce the same number of windows as the regular grid.
+    * Windows should have the same start and exclusive end times.
+    """
+    regular_ts_ns = np.array([0, 10, 20, 30, 40, 50], dtype=np.int64)
+    irregular_ts_ns = np.array([0, 9, 21, 29, 40, 51], dtype=np.int64)
+    expected_irregular_windows = [
+        np.array([0, 9], dtype=np.int64),
+        np.array([21, 29], dtype=np.int64),
+        np.array([40, 51], dtype=np.int64),
+    ]
+    start_ns = regular_ts_ns[0]
+    exclusive_end_ns = 60
+    duration_ns = 20
+    stride_ns = 20
+
+    grid_regular = SamplingGrid(
+        start_ns=start_ns,
+        exclusive_end_ns=exclusive_end_ns,
+        timestamps_ns=regular_ts_ns,
+        stride_ns=stride_ns,
+        duration_ns=duration_ns,
+    )
+    grid_irregular = SamplingGrid(
+        start_ns=start_ns,
+        exclusive_end_ns=exclusive_end_ns,
+        timestamps_ns=irregular_ts_ns,
+        stride_ns=stride_ns,
+        duration_ns=duration_ns,
+    )
+    windows_regular = list(grid_regular)
+    windows_irregular = list(grid_irregular)
+
+    assert len(windows_regular) == len(windows_irregular)
+
+    for window_regular, window_irregular, expected_irregular in zip(
+        windows_regular, windows_irregular, expected_irregular_windows, strict=True
+    ):
+        assert len(window_regular.timestamps_ns) == len(window_irregular.timestamps_ns)
+        np.testing.assert_array_equal(window_irregular.timestamps_ns, expected_irregular)
+        assert window_regular.start_ns == window_irregular.start_ns
+        assert window_regular.exclusive_end_ns == window_irregular.exclusive_end_ns
+
+
 def test_stride_equals_duration_tiling() -> None:
     """With stride == duration, windows tile the timeline and reuse boundary markers between windows."""
     ts = np.array([0, 100, 200, 300, 400], dtype=np.int64)
@@ -286,7 +332,7 @@ def test_stride_equals_duration_tiling() -> None:
 
 
 def test_iter_stride_equals_duration_last_window_full_query_one_sample() -> None:
-    """The final yielded window may contain only a boundary marker when no later samples exist."""
+    """The final yielded window may have no timestamps when the last sample only serves as the terminal boundary."""
     ts = np.array([0, 100, 200, 500], dtype=np.int64)
     duration_ns = 400
     stride_ns = 400
@@ -294,11 +340,11 @@ def test_iter_stride_equals_duration_last_window_full_query_one_sample() -> None
     expected_windows = [
         SamplingWindow(
             start_ns=0,
-            exclusive_end_ns=200,
-            timestamps_ns=np.array([0, 100], dtype=np.int64),
+            exclusive_end_ns=400,
+            timestamps_ns=np.array([0, 100, 200], dtype=np.int64),
         ),
         SamplingWindow(
-            start_ns=500,
+            start_ns=400,
             exclusive_end_ns=500,
             timestamps_ns=np.array([], dtype=np.int64),
         ),
@@ -343,10 +389,10 @@ def test_iter_stride_less_than_duration_overlap() -> None:
 
 
 def test_iter_irregular_sparse_grid_repeated_first_sample_across_windows() -> None:
-    """Sparse, irregular µs times: later window can start at the same sample as a prior minimum.
+    """Sparse, irregular timestamps can cause consecutive windows to start with the same sample.
 
-    Here two consecutive windows both lead with ``5000`` — the first sample in each slice is
-    the same event, but the slices still differ. This is expected for irregular sparse timelines;
+    Here the windows starting at ``3000`` and ``5000`` both begin with ``5000`` and include the
+    same sparse pair ``[5000, 5100]``. This is expected on irregular timelines even though the
     window bounds still advance by ``stride_ns``.
     """
     # Gaps: 4ms idle, ~0.1ms pair, ~3.9ms idle — not on a fixed grid.
@@ -355,10 +401,10 @@ def test_iter_irregular_sparse_grid_repeated_first_sample_across_windows() -> No
     stride_ns = 2_000
     got = _iter_window_arrays(ts, stride_ns=stride_ns, duration_ns=duration_ns)
     want = [
-        SamplingWindow(start_ns=1000, exclusive_end_ns=1000, timestamps_ns=np.array([], dtype=np.int64)),
-        SamplingWindow(start_ns=5000, exclusive_end_ns=5100, timestamps_ns=np.array([5000], dtype=np.int64)),
-        SamplingWindow(start_ns=5000, exclusive_end_ns=5100, timestamps_ns=np.array([5000], dtype=np.int64)),
-        SamplingWindow(start_ns=9000, exclusive_end_ns=9000, timestamps_ns=np.array([], dtype=np.int64)),
+        SamplingWindow(start_ns=1000, exclusive_end_ns=4000, timestamps_ns=np.array([1000], dtype=np.int64)),
+        SamplingWindow(start_ns=3000, exclusive_end_ns=6000, timestamps_ns=np.array([5000, 5100], dtype=np.int64)),
+        SamplingWindow(start_ns=5000, exclusive_end_ns=8000, timestamps_ns=np.array([5000, 5100], dtype=np.int64)),
+        SamplingWindow(start_ns=7000, exclusive_end_ns=9000, timestamps_ns=np.array([], dtype=np.int64)),
     ]
 
     assert len(got) == len(want)
@@ -382,9 +428,13 @@ def test_iter_stride_greater_than_duration_gaps() -> None:
     got = _iter_window_arrays(ts, stride_ns=stride_ns, duration_ns=duration_ns)
     want = [
         SamplingWindow(timestamps_ns=np.array([0, 50], dtype=np.int64), start_ns=0, exclusive_end_ns=100),
-        SamplingWindow(timestamps_ns=np.array([], dtype=np.int64), start_ns=300, exclusive_end_ns=300),
+        SamplingWindow(timestamps_ns=np.array([300], dtype=np.int64), start_ns=250, exclusive_end_ns=350),
     ]
     assert len(got) == len(want)
+    for a, b in zip(got, want, strict=True):
+        np.testing.assert_array_equal(a.timestamps_ns, b.timestamps_ns)
+        assert a.start_ns == b.start_ns
+        assert a.exclusive_end_ns == b.exclusive_end_ns
 
     expected_orphans = [200, 400, 500]
     covered = np.array(
@@ -430,9 +480,9 @@ def test_initializer_defensively_copies_timestamps() -> None:
 
 
 def test_iter_sample_span_inside_window_may_be_shorter_than_duration() -> None:
-    """Samples in a yielded window can span less than ``duration_ns`` when the timeline has gaps.
+    """Timestamps in a yielded window can span less than ``duration_ns`` when the timeline has gaps.
 
-    grid:     0    100   200   400   700   900
+    grid:     0    100   200   400   700   900 <-- exclusive_end_ns, not included in the last window
     windows:  |--------------|-----|--------|
               0             300   600      900
     """
@@ -442,9 +492,9 @@ def test_iter_sample_span_inside_window_may_be_shorter_than_duration() -> None:
     got = _iter_window_arrays(ts, stride_ns=stride_ns, duration_ns=duration_ns)
 
     want = [
-        SamplingWindow(start_ns=0, exclusive_end_ns=200, timestamps_ns=np.array([0, 100], dtype=np.int64)),
-        SamplingWindow(start_ns=400, exclusive_end_ns=400, timestamps_ns=np.array([], dtype=np.int64)),
-        SamplingWindow(start_ns=700, exclusive_end_ns=900, timestamps_ns=np.array([700], dtype=np.int64)),
+        SamplingWindow(start_ns=0, exclusive_end_ns=300, timestamps_ns=np.array([0, 100, 200], dtype=np.int64)),
+        SamplingWindow(start_ns=300, exclusive_end_ns=600, timestamps_ns=np.array([400], dtype=np.int64)),
+        SamplingWindow(start_ns=600, exclusive_end_ns=900, timestamps_ns=np.array([700], dtype=np.int64)),
     ]
 
     assert len(got) == len(want)
@@ -469,8 +519,8 @@ def test_duration_shorter_than_stride() -> None:
     p = make_sampling_grid(ts, stride_ns, duration_ns)
     got_windows = list(p)
     expected_windows = [
-        SamplingWindow(start_ns=0, exclusive_end_ns=60, timestamps_ns=np.array([0], dtype=np.int64)),
-        SamplingWindow(start_ns=120, exclusive_end_ns=180, timestamps_ns=np.array([120], dtype=np.int64)),
+        SamplingWindow(start_ns=0, exclusive_end_ns=100, timestamps_ns=np.array([0, 60], dtype=np.int64)),
+        SamplingWindow(start_ns=120, exclusive_end_ns=220, timestamps_ns=np.array([120, 180], dtype=np.int64)),
         SamplingWindow(start_ns=240, exclusive_end_ns=300, timestamps_ns=np.array([240], dtype=np.int64)),
     ]
 
@@ -482,11 +532,13 @@ def test_duration_shorter_than_stride() -> None:
 
 
 def test_iter_stride_equals_duration_many_steps() -> None:
-    """Coarser grid with stride == duration produces full expected windows."""
+    """With stride == duration, a coarse rounded grid still tiles into predictable windows even when counts differ."""
     # 31 timestamps 0, 1, 2, ..., 30 each scaled by 1_000_000_000 // 3 ns (~333.3 ms steps).
     # >>> ts = np.arange(0, 31, dtype=np.int64) * (1_000_000_000 // 3)
+    # This is a slightly irregular grid, the first window has more samples than the others.
     ts = np.array(
         [
+            # window 0: start_ns: 0, exclusive_end_ns: 2_000_000_000
             0,
             333333333,
             666666666,
@@ -494,24 +546,28 @@ def test_iter_stride_equals_duration_many_steps() -> None:
             1333333332,
             1666666665,
             1999999998,
+            # window 1: start_ns: 2_000_000_000, exclusive_end_ns: 4_000_000_000
             2333333331,
             2666666664,
             2999999997,
             3333333330,
             3666666663,
             3999999996,
+            # window 2: start_ns: 4_000_000_000, exclusive_end_ns: 6_000_000_000
             4333333329,
             4666666662,
             4999999995,
             5333333328,
             5666666661,
             5999999994,
+            # window 3: start_ns: 6_000_000_000, exclusive_end_ns: 8_000_000_000
             6333333327,
             6666666660,
             6999999993,
             7333333326,
             7666666659,
             7999999992,
+            # window 4: start_ns: 8_000_000_000, exclusive_end_ns: 10_000_000_000
             8333333325,
             8666666658,
             8999999991,
@@ -525,31 +581,38 @@ def test_iter_stride_equals_duration_many_steps() -> None:
     duration_ns = 2 * 1_000_000_000
     stride_ns = duration_ns
     windows = list(make_sampling_grid(ts, stride_ns, duration_ns))
-
     expected_windows = [
         SamplingWindow(
             start_ns=0,
-            exclusive_end_ns=1999999998,
-            timestamps_ns=np.array([0, 333333333, 666666666, 999999999, 1333333332, 1666666665], dtype=np.int64),
+            exclusive_end_ns=2_000_000_000,
+            timestamps_ns=np.array(
+                [0, 333333333, 666666666, 999999999, 1333333332, 1666666665, 1999999998], dtype=np.int64
+            ),
         ),
         SamplingWindow(
-            start_ns=2333333331,
-            exclusive_end_ns=3999999996,
-            timestamps_ns=np.array([2333333331, 2666666664, 2999999997, 3333333330, 3666666663], dtype=np.int64),
+            start_ns=2_000_000_000,
+            exclusive_end_ns=4_000_000_000,
+            timestamps_ns=np.array(
+                [2333333331, 2666666664, 2999999997, 3333333330, 3666666663, 3999999996], dtype=np.int64
+            ),
         ),
         SamplingWindow(
-            start_ns=4333333329,
-            exclusive_end_ns=5999999994,
-            timestamps_ns=np.array([4333333329, 4666666662, 4999999995, 5333333328, 5666666661], dtype=np.int64),
+            start_ns=4_000_000_000,
+            exclusive_end_ns=6_000_000_000,
+            timestamps_ns=np.array(
+                [4333333329, 4666666662, 4999999995, 5333333328, 5666666661, 5999999994], dtype=np.int64
+            ),
         ),
         SamplingWindow(
-            start_ns=6333333327,
-            exclusive_end_ns=7999999992,
-            timestamps_ns=np.array([6333333327, 6666666660, 6999999993, 7333333326, 7666666659], dtype=np.int64),
+            start_ns=6_000_000_000,
+            exclusive_end_ns=8_000_000_000,
+            timestamps_ns=np.array(
+                [6333333327, 6666666660, 6999999993, 7333333326, 7666666659, 7999999992], dtype=np.int64
+            ),
         ),
         SamplingWindow(
-            start_ns=8333333325,
-            exclusive_end_ns=9999999990,
+            start_ns=8_000_000_000,
+            exclusive_end_ns=ts[-1],
             timestamps_ns=np.array([8333333325, 8666666658, 8999999991, 9333333324, 9666666657], dtype=np.int64),
         ),
     ]

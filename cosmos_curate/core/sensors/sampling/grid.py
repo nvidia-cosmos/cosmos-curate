@@ -262,10 +262,10 @@ class SamplingGrid:
         window end times are ``start_ns + k * stride_ns + duration_ns``.
 
         Each yielded :class:`SamplingWindow` stores active timestamps in
-        ``window.timestamps_ns`` and the explicit exclusive right boundary in
-        ``window.exclusive_end_ns``. For non-empty windows, ``window.start_ns``
-        is the first timestamp in the raw slice. For empty windows,
-        ``window.start_ns`` is the nominal start of that sampling window.
+        ``window.timestamps_ns`` and the nominal half-open bounds in
+        ``window.start_ns`` and ``window.exclusive_end_ns``. The bounds advance
+        by ``stride_ns`` even when a window is empty or its timestamps begin
+        later within that interval.
 
         Interpretation:
         - ``window.exclusive_end_ns`` is the exclusive right boundary marker.
@@ -301,22 +301,7 @@ class SamplingGrid:
         start_ns = self.start_ns
         ts = np.concatenate([self.timestamps_ns, [self.exclusive_end_ns]])
         while start_ns < self.exclusive_end_ns:
-            window_end_ns = start_ns + self.duration_ns
-            i = np.searchsorted(ts, start_ns, side="left")
-            j = np.searchsorted(ts, window_end_ns, side="right")
-            window_ts = ts[i:j]
-
-            if len(window_ts) == 0:
-                yield SamplingWindow(
-                    start_ns=start_ns,
-                    exclusive_end_ns=window_end_ns,
-                    timestamps_ns=window_ts,
-                )
-            else:
-                yield SamplingWindow(
-                    start_ns=int(window_ts[0]),
-                    exclusive_end_ns=int(window_ts[-1]),
-                    timestamps_ns=window_ts[:-1],
-                )
-
+            window_end_ns = min(start_ns + self.duration_ns, self.exclusive_end_ns)
+            i, j = np.searchsorted(ts, [start_ns, window_end_ns], side="left")
+            yield SamplingWindow(start_ns=start_ns, exclusive_end_ns=window_end_ns, timestamps_ns=ts[i:j])
             start_ns += self.stride_ns
