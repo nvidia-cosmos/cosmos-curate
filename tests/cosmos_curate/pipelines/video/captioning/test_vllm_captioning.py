@@ -40,7 +40,7 @@ from cosmos_curate.pipelines.video.utils.data_model import (
 
 _THRESHOLDS = {
     "qwen": 0.9,
-    "cosmos_r1": 0.8,
+    "cosmos_r1": 0.75,
     "cosmos_r2": 0.7,
 }
 _NUM_CLIPS = 1
