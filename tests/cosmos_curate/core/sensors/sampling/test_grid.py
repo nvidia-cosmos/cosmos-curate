@@ -22,7 +22,8 @@ import numpy as np
 import numpy.typing as npt
 import pytest
 
-from cosmos_curate.core.sensors.sampling.grid import SamplingGrid, SamplingWindow, make_ts_grid
+from cosmos_curate.core.sensors.sampling.grid import SamplingWindow, make_ts_grid
+from tests.cosmos_curate.core.sensors.test_utils import make_sampling_grid
 
 
 def _iter_window_arrays(
@@ -31,7 +32,7 @@ def _iter_window_arrays(
     stride_ns: int,
     duration_ns: int,
 ) -> list[SamplingWindow]:
-    p = SamplingGrid(
+    p = make_sampling_grid(
         timestamps_ns=ts,
         stride_ns=stride_ns,
         duration_ns=duration_ns,
@@ -42,9 +43,9 @@ def _iter_window_arrays(
 def test_sampling_grid_iter() -> None:
     """SamplingGrid should yield raw window slices including the right boundary marker."""
     ts = np.array([0, 10, 20, 30, 40, 50], dtype=np.int64)
-    sampling_grid = SamplingGrid(ts, 20, 20)
-
-    expected_windows = [
+    grid = make_sampling_grid(ts, 20, 20)
+    got = list(grid)
+    want = [
         SamplingWindow(
             start_ns=0,
             exclusive_end_ns=20,
@@ -62,16 +63,18 @@ def test_sampling_grid_iter() -> None:
         ),
     ]
 
-    for window, expected_window in zip(sampling_grid, expected_windows, strict=True):
-        np.testing.assert_array_equal(window.timestamps_ns, expected_window.timestamps_ns)
-        assert window.start_ns == expected_window.start_ns
-        assert window.exclusive_end_ns == expected_window.exclusive_end_ns
+    assert len(got) == len(want)
+    for a, b in zip(got, want, strict=True):
+        np.testing.assert_array_equal(a.timestamps_ns, b.timestamps_ns)
+        assert a.start_ns == b.start_ns
+        assert a.exclusive_end_ns == b.exclusive_end_ns
 
 
 def test_sampling_grid_half_open_window_contract() -> None:
     """A yielded window should include the exclusive right boundary marker as its final element."""
     ts = np.array([100, 200, 300, 400], dtype=np.int64)
-    windows = list(SamplingGrid(ts, 200, 200))
+    grid = make_sampling_grid(ts, 200, 200)
+    windows = list(grid)
 
     np.testing.assert_array_equal(windows[0].timestamps_ns, np.array([100, 200], dtype=np.int64))
     assert windows[0].exclusive_end_ns == 300
@@ -82,7 +85,8 @@ def test_sampling_grid_half_open_window_contract() -> None:
 def test_sampling_grid_adjacent_windows_share_boundary_marker() -> None:
     """Adjacent windows should share the boundary timestamp that separates their half-open intervals."""
     ts = np.array([0, 100, 200, 300], dtype=np.int64)
-    windows = list(SamplingGrid(ts, 100, 100))
+    grid = make_sampling_grid(ts, 100, 100)
+    windows = list(grid)
 
     expected_windows = [
         SamplingWindow(
@@ -109,25 +113,6 @@ def test_sampling_grid_adjacent_windows_share_boundary_marker() -> None:
         assert window.exclusive_end_ns == expected_window.exclusive_end_ns
 
 
-def test_sampling_grid_singleton_window_is_boundary_only() -> None:
-    """A singleton yielded window contains only a boundary marker and therefore zero active reference timestamps."""
-    ts = np.array([42], dtype=np.int64)
-    windows = list(SamplingGrid(ts, 1, 10))
-
-    expected_windows = [
-        SamplingWindow(
-            start_ns=42,
-            exclusive_end_ns=42,
-            timestamps_ns=np.array([], dtype=np.int64),
-        ),
-    ]
-
-    for window, expected_window in zip(windows, expected_windows, strict=True):
-        np.testing.assert_array_equal(window.timestamps_ns, expected_window.timestamps_ns)
-        assert window.start_ns == expected_window.start_ns
-        assert window.exclusive_end_ns == expected_window.exclusive_end_ns
-
-
 def test_make_ts_grid() -> None:
     """Test the make_ts_grid function."""
     start_s = 0.0
@@ -140,9 +125,14 @@ def test_make_ts_grid() -> None:
 
     start_ns = int(start_s * 1_000_000_000)
     end_ns = int(end_s * 1_000_000_000)
-    grid = make_ts_grid(start_ns, end_ns, sample_rate_hz)
+    start_ns, exclusive_end_ns, timestamps_ns = make_ts_grid(start_ns, end_ns, sample_rate_hz)
+    expected_start_ns = int(expected_grid[0])
+    expected_exclusive_end_ns = int(expected_grid[-1])
+    expected_timestamps_ns = expected_grid[:-1]
 
-    np.testing.assert_array_equal(grid, expected_grid)
+    assert start_ns == expected_start_ns
+    assert exclusive_end_ns == expected_exclusive_end_ns
+    np.testing.assert_array_equal(timestamps_ns, expected_timestamps_ns)
 
 
 @pytest.mark.parametrize(
@@ -155,11 +145,12 @@ def test_make_ts_grid() -> None:
     ],
 )
 def test_make_ts_grid_brackets_end_ns(start_ns: int, end_ns: int, sample_rate_hz: float) -> None:
-    """make_ts_grid should always produce a final pair that strictly brackets end_ns."""
-    grid = make_ts_grid(start_ns, end_ns, sample_rate_hz)
+    """make_ts_grid should always produce a final pair that strictly brackets exclusive_end_ns."""
+    got_start_ns, got_exclusive_end_ns, got_timestamps_ns = make_ts_grid(start_ns, end_ns, sample_rate_hz)
 
-    assert len(grid) >= 2
-    assert int(grid[-2]) <= end_ns < int(grid[-1])
+    assert got_start_ns == start_ns
+    assert len(got_timestamps_ns) >= 2
+    assert int(got_timestamps_ns[-1]) <= end_ns < got_exclusive_end_ns
 
 
 @pytest.mark.parametrize(
@@ -173,7 +164,7 @@ def test_make_ts_grid_brackets_end_ns(start_ns: int, end_ns: int, sample_rate_hz
 )
 def test_make_ts_grid_is_strictly_increasing_and_on_grid(start_ns: int, end_ns: int, sample_rate_hz: float) -> None:
     """make_ts_grid should stay strictly increasing on the rounded sample interval."""
-    grid = make_ts_grid(start_ns, end_ns, sample_rate_hz)
+    _, _, grid = make_ts_grid(start_ns, end_ns, sample_rate_hz)
 
     deltas = np.diff(grid)
     expected_step_ns = int(np.round(1_000_000_000 / sample_rate_hz))
@@ -184,13 +175,16 @@ def test_make_ts_grid_is_strictly_increasing_and_on_grid(start_ns: int, end_ns: 
 
 def test_make_ts_grid_single_timestamp() -> None:
     """When start_ns == end_ns, make_ts_grid should add the next on-grid sample."""
-    grid = make_ts_grid(42, 42, 30.0)
+    start_ns, exclusive_end_ns, timestamps_ns = make_ts_grid(42, 42, 30.0)
 
-    assert len(grid) == 2
-    assert int(grid[0]) == 42
-    assert int(grid[0]) <= 42 < int(grid[1])
+    assert start_ns == 42
+    assert exclusive_end_ns == 33333375
+
+    assert len(timestamps_ns) == 1
+    assert int(timestamps_ns[0]) == 42
+    assert start_ns <= int(timestamps_ns[0]) < exclusive_end_ns
     expected_delta_ns = int(np.round(1_000_000_000 / 30.0))
-    assert int(grid[1] - grid[0]) == expected_delta_ns
+    assert (exclusive_end_ns - start_ns) == expected_delta_ns
 
 
 @pytest.mark.parametrize("sample_rate_hz", [0.0, -1.0])
@@ -226,10 +220,6 @@ def _expected_window_count(first: int, last: int, stride_ns: int) -> int:
     [
         # valid
         (np.array([0, 1], dtype=np.int64), 1, 1, nullcontext()),
-        # empty timestamps
-        (np.array([], dtype=np.int64), 1, 1, pytest.raises(ValueError, match=r".*")),
-        # timestamps must be 1-D
-        (np.array([[0, 1]], dtype=np.int64), 1, 1, pytest.raises(ValueError, match=r".*")),
         # timestamps must be int64
         (np.array([0, 1], dtype=np.int32), 1, 1, pytest.raises(ValueError, match=r".*")),
         # zero duration
@@ -252,17 +242,17 @@ def test_initializer_asserts(
 ) -> None:
     """Test initializer asserts."""
     with raises:
-        SamplingGrid(timestamps_ns=timestamps_ns, stride_ns=stride_ns, duration_ns=duration_ns)
+        make_sampling_grid(timestamps_ns=timestamps_ns, stride_ns=stride_ns, duration_ns=duration_ns)
 
 
 def test_initializer_state() -> None:
     """Test state after initialization."""
     ts = np.array([100, 200, 300], dtype=np.int64)
-    p = SamplingGrid(timestamps_ns=ts, stride_ns=1, duration_ns=10)
-    for t, p_t in zip(ts, p.timestamps_ns, strict=True):
+    p = make_sampling_grid(timestamps_ns=ts, stride_ns=1, duration_ns=10)
+    for t, p_t in zip(ts[:-1], p.timestamps_ns, strict=True):
         assert t == p_t
     assert p.start_ns == ts[0]
-    assert p.end_ns == ts[-1]
+    assert p.exclusive_end_ns == ts[-1]
     assert p.stride_ns == 1
     assert p.duration_ns == 10
     assert not np.shares_memory(p.timestamps_ns, ts)
@@ -300,13 +290,7 @@ def test_iter_stride_equals_duration_last_window_full_query_one_sample() -> None
     ts = np.array([0, 100, 200, 500], dtype=np.int64)
     duration_ns = 400
     stride_ns = 400
-    windows = list(
-        SamplingGrid(
-            timestamps_ns=ts,
-            stride_ns=stride_ns,
-            duration_ns=duration_ns,
-        )
-    )
+    windows = list(make_sampling_grid(ts, stride_ns, duration_ns))
     expected_windows = [
         SamplingWindow(
             start_ns=0,
@@ -332,13 +316,9 @@ def test_iter_stride_less_than_duration_overlap() -> None:
     ts = np.arange(0, 501, 50, dtype=np.int64)
     duration_ns = 200
     stride_ns = 100
-    p = SamplingGrid(
-        timestamps_ns=ts,
-        stride_ns=stride_ns,
-        duration_ns=duration_ns,
-    )
+    p = make_sampling_grid(ts, stride_ns, duration_ns)
     windows = list(p)
-    n = _expected_window_count(p.start_ns, p.end_ns, stride_ns)
+    n = _expected_window_count(p.start_ns, p.exclusive_end_ns, stride_ns)
     assert len(windows) == n
 
     # Check that windows actually overlap when stride_ns < duration_ns
@@ -432,21 +412,6 @@ def test_boundaries_on_every_timestamp() -> None:
         assert a.exclusive_end_ns == b.exclusive_end_ns
 
 
-def test_iter_child_slices_share_parent_memory() -> None:
-    """Each yielded window's timestamps view into the grid-owned timestamp array."""
-    ts = np.array([0, 50, 100, 200, 250], dtype=np.int64)
-    p = SamplingGrid(
-        timestamps_ns=ts,
-        stride_ns=100,
-        duration_ns=100,
-    )
-    for w in p:
-        assert np.shares_memory(w.timestamps_ns, p.timestamps_ns)
-        assert not np.shares_memory(w.timestamps_ns, ts)
-        assert not w.timestamps_ns.flags.owndata
-        assert not w.timestamps_ns.flags.writeable
-
-
 def test_initializer_defensively_copies_timestamps() -> None:
     """Mutating the caller-owned array after construction must not affect the grid."""
     ts = np.array([100, 200, 300], dtype=np.int64)
@@ -457,20 +422,6 @@ def test_initializer_defensively_copies_timestamps() -> None:
         SamplingWindow(start_ns=200, exclusive_end_ns=300, timestamps_ns=np.array([200], dtype=np.int64)),
     ]
 
-    assert len(got) == len(want)
-    for a, b in zip(got, want, strict=True):
-        np.testing.assert_array_equal(a.timestamps_ns, b.timestamps_ns)
-        assert a.start_ns == b.start_ns
-        assert a.exclusive_end_ns == b.exclusive_end_ns
-
-
-def test_iter_single_timestamp_yields_one_window() -> None:
-    """A single timestamp still yields one degenerate boundary-only window."""
-    ts = np.array([42], dtype=np.int64)
-    got = _iter_window_arrays(ts, stride_ns=1, duration_ns=10)
-    want = [
-        SamplingWindow(start_ns=42, exclusive_end_ns=42, timestamps_ns=np.array([], dtype=np.int64)),
-    ]
     assert len(got) == len(want)
     for a, b in zip(got, want, strict=True):
         np.testing.assert_array_equal(a.timestamps_ns, b.timestamps_ns)
@@ -515,11 +466,7 @@ def test_duration_shorter_than_stride() -> None:
     ts = np.array([0, 60, 120, 180, 240, 300], dtype=np.int64)
     duration_ns = 100
     stride_ns = 120
-    p = SamplingGrid(
-        timestamps_ns=ts,
-        stride_ns=stride_ns,
-        duration_ns=duration_ns,
-    )
+    p = make_sampling_grid(ts, stride_ns, duration_ns)
     got_windows = list(p)
     expected_windows = [
         SamplingWindow(start_ns=0, exclusive_end_ns=60, timestamps_ns=np.array([0], dtype=np.int64)),
@@ -577,13 +524,7 @@ def test_iter_stride_equals_duration_many_steps() -> None:
 
     duration_ns = 2 * 1_000_000_000
     stride_ns = duration_ns
-    windows = list(
-        SamplingGrid(
-            timestamps_ns=ts,
-            stride_ns=stride_ns,
-            duration_ns=duration_ns,
-        )
-    )
+    windows = list(make_sampling_grid(ts, stride_ns, duration_ns))
 
     expected_windows = [
         SamplingWindow(

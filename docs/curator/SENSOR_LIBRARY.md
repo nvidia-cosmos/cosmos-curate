@@ -305,9 +305,15 @@ A **`SamplingGrid`** holds the sorted reference **`timestamps_ns`** array plus *
 
 Iteration advances window interval starts ``first + k * stride_ns`` for ``k = 0, 1, …`` while that start is ``<= last``, so the final sample is always included in a **window** when it falls on that schedule.
 
-``for window in grid`` yields **``numpy`` ``int64``** views into the parent ``timestamps_ns`` for each **window** (``np.shares_memory`` with the grid’s array; no copy). Windows may overlap in time when ``stride_ns < duration_ns``, so index ranges into the buffer may overlap.
+``for window in grid`` yields **``numpy`` ``int64``** views into the parent ``timestamps_ns`` for each **window**. Windows may overlap in time when ``stride_ns < duration_ns``, so index ranges into the buffer may overlap.
 
-Callers do not pass a **`SamplingGrid`** alone to sensors or **`align`**; it is always reached as **`spec.grid`**.
+A **`SamplingGrid`** holds a half-open timeline (`start_ns`, `exclusive_end_ns`), the active reference `timestamps_ns`, and the window geometry
+(`stride_ns`, `duration_ns`).
+
+Iteration advances nominal window starts `start_ns + k * stride_ns` for  `k = 0, 1, …` while the start is `< exclusive_end_ns`.
+
+``for window in grid`` yields **``SamplingWindow``** objects whose ``window.start_ns`` and ``window.exclusive_end_ns`` are the nominal half-open
+bounds of that window, and whose `window.timestamps_ns` are the active reference timestamps that fall within those bounds.
 
 ### SamplingPolicy
 
@@ -406,9 +412,11 @@ sensor_group = SensorGroup(sensors={
 })
 
 # Reference timeline + windowing (reusable across groups)
-ts = make_ts_grid(sensor_group.start_ns, sensor_group.end_ns, 30.0)
+start_ns, exclusive_end_ns, timestamps = make_ts_grid(sensor_group.start_ns, sensor_group.end_ns, 30.0)
 grid = SamplingGrid(
-    timestamps_ns=ts,
+    start_ns=start_ns,
+    exclusive_end_ns=exclusive_end_ns,
+    timestamps_ns=timestamps,  # reference timestamps
     stride_ns=10 * 1_000_000_000,   # time between window interval starts
     duration_ns=10 * 1_000_000_000,  # query interval width on the timeline (paired with stride)
 )
@@ -435,8 +443,9 @@ for frame in sensor_group.sample(spec):
 
 ### Unit conventions
 
-On **`SamplingGrid`**, `timestamps_ns`, `stride_ns`, and `duration_ns` are
-`int` **nanoseconds** — aligned with MCAP's `log_time` / `publish_time`
+On **`SamplingGrid`**, `start_ns`, `exclusive_end_ns`, `stride_ns`, and
+`duration_ns` are `int` **nanoseconds**; `timestamps_ns` uses the same unit
+— aligned with MCAP's `log_time` / `publish_time`
 (uint64 on the wire) convention. On **`SamplingPolicy`**, `tolerance_ns` and
 similar fields use the same nanosecond unit so comparisons to alignment and
 sensor times stay exact.
@@ -465,7 +474,7 @@ passes, so it is not a supported input to this library.
 ## Components
 
 - **Containers**: Time indexed container files are the only supported container format, like MCAP, or MP4.
-- **SamplingGrid**: Reference `timestamps_ns` plus `stride_ns` / `duration_ns` / `IntervalType`; iterable in **window** order (`for window in grid`). Each **`window`** is a `SamplingWindow` with `start_ns`, `exclusive_end_ns`, and `timestamps_ns` `(N,)`. Drives batch shape **`N`** per yield. Held by a **`SamplingSpec`**; not passed alone to **`sample`** / **`align`**.
+- **SamplingGrid**: Half-open timeline (`start_ns`, `exclusive_end_ns`) and active `timestamps_ns` plus `stride_ns` / `duration_ns`; iterable in **window** order (`for window in grid`). Each **`window`** is a `SamplingWindow` with `start_ns`, `exclusive_end_ns`, and `timestamps_ns` `(N,)`. Drives batch shape **`N`** per yield. Held by a **`SamplingSpec`**; not passed alone to **`sample`** / **`align`**.
 - **SamplingPolicy**: Alignment and QC parameters (`tolerance_ns`, etc.); **no** timeline geometry. May be attached to a **`SamplingSpec`**.
 - **SamplingSpec**: **Required** argument to **`sensor.sample(spec)`**. Always contains **`grid: SamplingGrid`** and may also carry **`policy: SamplingPolicy | None`**. Single object threaded through sampling and alignment.
 - **Binary Parsers**: Parse binary data, like vendor-specific lidar data, or h265 encoded video packets, into easily handled Pythonic data formats like CameraData, LidarData, ImuData, etc.

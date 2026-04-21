@@ -23,7 +23,9 @@ from cosmos_curate.core.sensors.sampling.spec import SamplingSpec
 def test_sampling_spec_instantiation() -> None:
     """SamplingSpec can be constructed with only a grid, defaulting policy to None."""
     grid = SamplingGrid(
-        timestamps_ns=np.array([0, 1], dtype=np.int64),
+        timestamps_ns=np.array([0], dtype=np.int64),
+        start_ns=0,
+        exclusive_end_ns=1,
         stride_ns=1,
         duration_ns=1,
     )

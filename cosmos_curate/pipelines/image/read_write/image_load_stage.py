@@ -138,7 +138,9 @@ class ImageLoadStage(CuratorStage):
 
         try:
             grid = SamplingGrid(
-                timestamps_ns=np.array([start_ns, start_ns + 1], dtype=np.int64),
+                start_ns=start_ns,
+                exclusive_end_ns=start_ns + 1,
+                timestamps_ns=np.array([start_ns], dtype=np.int64),
                 stride_ns=1,
                 duration_ns=1,
             )

@@ -122,7 +122,9 @@ def test_image_sensor_sample_uses_closest_timestamp(tmp_path: pathlib.Path) -> N
 
     sensor = ImageSensor([image_a, image_b], sensor_timestamps_ns=np.array([10, 30], dtype=np.int64))
     grid = SamplingGrid(
-        timestamps_ns=np.array([10, 29, 40], dtype=np.int64),
+        start_ns=10,
+        exclusive_end_ns=40,
+        timestamps_ns=np.array([10, 29], dtype=np.int64),
         stride_ns=100,
         duration_ns=100,
     )
@@ -145,7 +147,9 @@ def test_image_sensor_sample_is_window_local(tmp_path: pathlib.Path) -> None:
 
     sensor = ImageSensor([image_a, image_b], sensor_timestamps_ns=np.array([10, 35], dtype=np.int64))
     grid = SamplingGrid(
-        timestamps_ns=np.array([29, 30], dtype=np.int64),
+        start_ns=29,
+        exclusive_end_ns=30,
+        timestamps_ns=np.array([29], dtype=np.int64),
         stride_ns=100,
         duration_ns=100,
     )
@@ -210,7 +214,9 @@ def test_image_sensor_sample_returns_empty_when_sampler_returns_no_indices(
 
     sensor = ImageSensor([image_a], sensor_timestamps_ns=np.array([10], dtype=np.int64))
     grid = SamplingGrid(
-        timestamps_ns=np.array([10, 11], dtype=np.int64),
+        start_ns=10,
+        exclusive_end_ns=11,
+        timestamps_ns=np.array([10], dtype=np.int64),
         stride_ns=100,
         duration_ns=100,
     )
@@ -254,7 +260,9 @@ def test_image_sensor_sample_preserves_one_output_row_per_align_timestamp(
 
     sensor = ImageSensor([image_a], sensor_timestamps_ns=np.array([10, 11], dtype=np.int64))
     grid = SamplingGrid(
-        timestamps_ns=np.array([10, 11], dtype=np.int64),
+        start_ns=10,
+        exclusive_end_ns=11,
+        timestamps_ns=np.array([10], dtype=np.int64),
         stride_ns=100,
         duration_ns=100,
     )

@@ -31,11 +31,12 @@ import numpy.typing as npt
 import pytest
 
 from cosmos_curate.core.sensors.data.video import VideoIndex, VideoMetadata
-from cosmos_curate.core.sensors.sampling.grid import SamplingGrid, SamplingWindow
+from cosmos_curate.core.sensors.sampling.grid import SamplingWindow
 from cosmos_curate.core.sensors.sampling.policy import SamplingPolicy
 from cosmos_curate.core.sensors.sampling.spec import SamplingSpec
 from cosmos_curate.core.sensors.sensors.camera_sensor import CameraSensor
 from cosmos_curate.core.sensors.utils.video import GpuVideoDecodeConfig, VideoDecodeConfig
+from tests.cosmos_curate.core.sensors.test_utils import make_sampling_grid
 
 
 def _make_video_index_and_metadata(  # noqa: PLR0913
@@ -193,7 +194,7 @@ def test_sample_yields_empty_camera_data_for_empty_windows(synthetic_video: io.B
     stride_ns = 100_000_000  # 100ms
     duration_ns = 70_000_000  # 70ms — spans ~2 frames at 30fps
 
-    grid = SamplingGrid(timestamps_ns=ref_timestamps, stride_ns=stride_ns, duration_ns=duration_ns)
+    grid = make_sampling_grid(timestamps_ns=ref_timestamps, stride_ns=stride_ns, duration_ns=duration_ns)
     spec = SamplingSpec(grid=grid)
 
     n_windows = sum(1 for _ in grid)
@@ -220,7 +221,9 @@ def test_sample_boundary_timestamp_belongs_to_next_window(synthetic_video: io.By
     #   window 0 -> [pts[0], pts[1], pts[2], pts[3]]
     #   window 1 -> [pts[3], pts[4], pts[5], pts[6]]
     spec = SamplingSpec(
-        grid=SamplingGrid(timestamps_ns=pts[:7], stride_ns=int(pts[3] - pts[0]), duration_ns=int(pts[3] - pts[0])),
+        grid=make_sampling_grid(
+            timestamps_ns=pts[:7], stride_ns=int(pts[3] - pts[0]), duration_ns=int(pts[3] - pts[0])
+        ),
     )
 
     batches = list(sensor.sample(spec))
@@ -251,7 +254,7 @@ def test_sample_singleton_window_is_boundary_only() -> None:
     buf.seek(0)
 
     sensor = CameraSensor(buf.getvalue())
-    spec = SamplingSpec(grid=SamplingGrid(sensor.timestamps_ns, stride_ns=1, duration_ns=1))
+    spec = SamplingSpec(grid=make_sampling_grid(sensor.timestamps_ns, stride_ns=1, duration_ns=1))
 
     batches = list(sensor.sample(spec))
     assert len(batches) == 1
@@ -268,7 +271,9 @@ def test_camera_sensor_does_not_close_caller_owned_binaryio(synthetic_video: io.
 
     pts = sensor.timestamps_ns
     spec = SamplingSpec(
-        grid=SamplingGrid(timestamps_ns=pts[:4], stride_ns=int(pts[1] - pts[0]), duration_ns=int(pts[1] - pts[0])),
+        grid=make_sampling_grid(
+            timestamps_ns=pts[:4], stride_ns=int(pts[1] - pts[0]), duration_ns=int(pts[1] - pts[0])
+        ),
     )
 
     batches = list(sensor.sample(spec))
@@ -281,7 +286,7 @@ def test_camera_sensor_does_not_close_caller_owned_binaryio(synthetic_video: io.
 def test_camera_sensor_rejects_unsupported_decode_config(synthetic_video: io.BytesIO) -> None:
     """CameraSensor should raise a clear error for unsupported decode config subclasses."""
     sensor = CameraSensor(synthetic_video.getvalue(), decode_config=VideoDecodeConfig())
-    spec = SamplingSpec(grid=SamplingGrid(sensor.timestamps_ns[:2], stride_ns=1, duration_ns=1))
+    spec = SamplingSpec(grid=make_sampling_grid(sensor.timestamps_ns[:2], stride_ns=1, duration_ns=1))
 
     with pytest.raises(ValueError, match="unsupported decode_config"):
         next(sensor.sample(spec))
@@ -343,7 +348,7 @@ def test_camera_sensor_uses_only_displayable_frames(
     sensor = CameraSensor(b"not-used")
 
     spec = SamplingSpec(
-        grid=SamplingGrid(
+        grid=make_sampling_grid(
             timestamps_ns=np.array([100, 200, 300, 301], dtype=np.int64),
             stride_ns=1_000,
             duration_ns=1_000,
@@ -442,7 +447,7 @@ def test_camera_sensor_passes_window_to_sample_window_indices(
     )
 
     sensor = CameraSensor(b"not-used")
-    grid = SamplingGrid(
+    grid = make_sampling_grid(
         timestamps_ns=np.array([100, 200, 300, 301], dtype=np.int64),
         stride_ns=1_000,
         duration_ns=1_000,
@@ -511,7 +516,7 @@ def test_camera_sensor_expands_repeated_picks_into_aligned_rows(
     )
 
     sensor = CameraSensor(b"not-used")
-    grid = SamplingGrid(
+    grid = make_sampling_grid(
         timestamps_ns=np.array([100, 200, 300, 301], dtype=np.int64),
         stride_ns=1_000,
         duration_ns=1_000,
@@ -584,7 +589,7 @@ def test_camera_sensor_returns_empty_when_window_has_no_displayable_matches(
     )
 
     sensor = CameraSensor(b"not-used")
-    grid = SamplingGrid(
+    grid = make_sampling_grid(
         timestamps_ns=np.array([150, 250, 350], dtype=np.int64),
         stride_ns=1_000,
         duration_ns=1_000,
@@ -652,7 +657,7 @@ def test_camera_sensor_propagates_sampling_policy_failures(
 
     sensor = CameraSensor(b"not-used")
     spec = SamplingSpec(
-        grid=SamplingGrid(
+        grid=make_sampling_grid(
             timestamps_ns=np.array([100, 200, 300], dtype=np.int64),
             stride_ns=1_000,
             duration_ns=1_000,
@@ -714,7 +719,7 @@ def test_camera_sensor_uses_display_pts_stream_sidecar_alignment(
     )
 
     sensor = CameraSensor(b"not-used")
-    grid = SamplingGrid(
+    grid = make_sampling_grid(
         timestamps_ns=np.array([100, 200, 300], dtype=np.int64),
         stride_ns=1_000,
         duration_ns=1_000,
@@ -806,7 +811,7 @@ def test_camera_sensor_sample_supports_gpu_decode_config(
     decode_config = GpuVideoDecodeConfig()
     sensor = CameraSensor(b"not-used", decode_config=decode_config)
     spec = SamplingSpec(
-        grid=SamplingGrid(
+        grid=make_sampling_grid(
             timestamps_ns=np.array([100, 200, 300], dtype=np.int64),
             stride_ns=1_000,
             duration_ns=1_000,

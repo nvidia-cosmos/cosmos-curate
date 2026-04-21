@@ -25,12 +25,13 @@ import numpy.typing as npt
 import pytest
 
 from cosmos_curate.core.sensors.data.video import VideoMetadata
-from cosmos_curate.core.sensors.sampling.grid import SamplingGrid, SamplingWindow
+from cosmos_curate.core.sensors.sampling.grid import SamplingWindow
 from cosmos_curate.core.sensors.sampling.spec import SamplingSpec
 from cosmos_curate.core.sensors.sensors.mcap_camera_sensor import (
     McapCameraSensor,
     _rgb8_channel_dimensions,
 )
+from tests.cosmos_curate.core.sensors.test_utils import make_sampling_grid
 
 
 def _make_metadata(*, width: int = 2, height: int = 2) -> VideoMetadata:
@@ -214,7 +215,7 @@ def test_mcap_camera_sensor_samples_window_and_reports_nanosecond_pts_stream(
     )
 
     sensor = McapCameraSensor(b"not-used")
-    grid = SamplingGrid(
+    grid = make_sampling_grid(
         timestamps_ns=np.array([100, 200, 300, 301], dtype=np.int64),
         stride_ns=1_000,
         duration_ns=1_000,
@@ -273,7 +274,7 @@ def test_mcap_camera_sensor_returns_empty_batch_when_window_has_no_messages(
     )
 
     sensor = McapCameraSensor(b"not-used")
-    grid = SamplingGrid(
+    grid = make_sampling_grid(
         timestamps_ns=np.array([100, 200, 300], dtype=np.int64),
         stride_ns=1_000,
         duration_ns=1_000,
@@ -325,7 +326,7 @@ def test_mcap_camera_sensor_rejects_bad_rgb8_payload_size(
     )
 
     sensor = McapCameraSensor(b"not-used")
-    grid = SamplingGrid(
+    grid = make_sampling_grid(
         timestamps_ns=np.array([100, 200], dtype=np.int64),
         stride_ns=1_000,
         duration_ns=1_000,
@@ -373,7 +374,7 @@ def test_mcap_camera_sensor_rejects_summary_dimensions_that_disagree_with_metada
     sensor = McapCameraSensor(b"not-used")
 
     with pytest.raises(ValueError, match=r"MCAP channel dimensions do not match stored video metadata"):
-        next(sensor.sample(SamplingSpec(grid=SamplingGrid(np.array([100, 200], dtype=np.int64), 1_000, 1_000))))
+        next(sensor.sample(SamplingSpec(grid=make_sampling_grid(np.array([100, 200], dtype=np.int64), 1_000, 1_000))))
 
 
 @pytest.mark.parametrize(
@@ -623,7 +624,7 @@ def test_mcap_camera_sensor_sample_window_returns_empty_when_sampler_selects_no_
         [bytes(range(12))],
         width=2,
         height=2,
-        spec=SamplingSpec(grid=SamplingGrid(np.array([100, 200], dtype=np.int64), 1_000, 1_000)),
+        spec=SamplingSpec(grid=make_sampling_grid(np.array([100, 200], dtype=np.int64), 1_000, 1_000)),
     )
 
     assert batch.align_timestamps_ns.shape == (0,)

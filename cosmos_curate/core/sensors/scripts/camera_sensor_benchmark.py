@@ -420,10 +420,15 @@ def cmd_sensor(args: argparse.Namespace) -> None:  # noqa: PLR0915
     # half-open interval [grid[0], grid[-1]) that sample_window_indices applies
     # to the final segment — otherwise the last frame of the video would be dropped.
     sentinel = int(index.pts_ns[-1]) + 1
-    grid_ts = np.append(index.pts_ns, np.int64(sentinel))
 
     # stride_ns == duration_ns → non-overlapping segments, no gaps.
-    sampling_grid = SamplingGrid(timestamps_ns=grid_ts, stride_ns=segment_ns, duration_ns=segment_ns)
+    sampling_grid = SamplingGrid(
+        start_ns=int(index.pts_ns[0]),
+        exclusive_end_ns=sentinel,
+        timestamps_ns=index.pts_ns,
+        stride_ns=segment_ns,
+        duration_ns=segment_ns,
+    )
     spec = SamplingSpec(grid=sampling_grid)
 
     n_segments = sum(1 for _ in sampling_grid)

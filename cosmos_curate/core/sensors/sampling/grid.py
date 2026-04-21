@@ -16,7 +16,7 @@
 
 import math
 from collections.abc import Iterator
-from typing import Protocol
+from typing import Any, Protocol
 
 import attrs
 import numpy as np
@@ -24,7 +24,10 @@ import numpy.typing as npt
 from attrs import validators
 
 from cosmos_curate.core.sensors.utils.helpers import make_numpy_fields_readonly
-from cosmos_curate.core.sensors.utils.validation import strictly_increasing_int64_array
+from cosmos_curate.core.sensors.utils.validation import (
+    positive_value,
+    strictly_increasing_int64_array,
+)
 
 
 class _HasHalfOpenWindowBounds(Protocol):
@@ -46,7 +49,7 @@ def make_ts_grid(
     start_ns: int,
     end_ns: int,
     sample_rate_hz: float,
-) -> npt.NDArray[np.int64]:
+) -> tuple[int, int, npt.NDArray[np.int64]]:
     """Make a grid of timestamps in nanoseconds.
 
     Samples are ``start_ns + k * (1/sample_rate_hz)`` in float space, rounded
@@ -63,13 +66,13 @@ def make_ts_grid(
 
     Args:
         start_ns: the start timestamp in nanoseconds
-        end_ns: the end timestamp in nanoseconds. The returned array satisfies
-            ``arr[-2] <= end_ns < arr[-1]``.
+        end_ns: the end timestamp in nanoseconds. The returned tuple satisfies
+            ``timestamps_ns[-1] <= end_ns < exclusive_end_ns``.
         sample_rate_hz: the sample rate in Hz
 
     Returns:
-        A numpy array of int64 timestamps in nanoseconds, strictly ascending
-        and read-only.
+        A ``(start_ns, exclusive_end_ns, timestamps_ns)`` tuple where
+        ``timestamps_ns`` is a strictly ascending, read-only ``int64`` array.
 
     """
     if sample_rate_hz <= 0:
@@ -98,7 +101,11 @@ def make_ts_grid(
         )
         raise ValueError(msg)
     retval.flags.writeable = False
-    return retval
+
+    start_ns = int(retval[0])
+    exclusive_end_ns = int(retval[-1])
+    timestamps_ns = retval[:-1]
+    return start_ns, exclusive_end_ns, timestamps_ns
 
 
 def _start_ns_le_first_timestamp(
@@ -115,6 +122,20 @@ def _start_ns_le_first_timestamp(
         raise ValueError(msg)
 
 
+def _start_ns_eq_first_timestamp(
+    instance: _HasHalfOpenWindowBounds,
+    _attribute: object,
+    value: npt.NDArray[np.int64],
+) -> None:
+    """Validate start_ns is equal to the first timestamp."""
+    if len(value) == 0:
+        return
+    first_ts = int(value[0])
+    if instance.start_ns != first_ts:
+        msg = f"start_ns must == timestamps_ns[0], got {instance.start_ns} != {first_ts}"
+        raise ValueError(msg)
+
+
 def _end_ns_lt_exclusive_end_ns(
     instance: _HasHalfOpenWindowBounds,
     _attribute: object,
@@ -128,6 +149,11 @@ def _end_ns_lt_exclusive_end_ns(
         raise ValueError(msg)
 
 
+def _copy_numpy_array(array: npt.NDArray[Any]) -> npt.NDArray[Any]:
+    """Copy a numpy array."""
+    return np.array(array, copy=True)
+
+
 @attrs.define(frozen=True)
 class SamplingWindow:
     """One half-open sampling window `[start_ns, exclusive_end_ns)`.
@@ -135,9 +161,6 @@ class SamplingWindow:
     For non-empty windows, the timestamps are strictly increasing and satisfy
     ``start_ns <= timestamps_ns[0]`` and
     ``timestamps_ns[-1] < exclusive_end_ns``.
-
-    If there are no timestamps in the window, ``start_ns`` and
-    ``exclusive_end_ns`` are the theoretical boundaries.
 
     Attributes:
         start_ns:
@@ -173,140 +196,63 @@ class SamplingWindow:
         return len(self.timestamps_ns)
 
 
+@attrs.define(frozen=True, hash=False)
 class SamplingGrid:
-    """Timestamp sampling grid.
+    """Iterable view over timestamped sampling windows.
 
-    The expected use-case for SamplingGrid is:
+    ``SamplingGrid`` turns a strictly increasing timestamp series into a
+    sequence of half-open windows whose nominal starts are
+    ``start_ns + k * stride_ns``. Iteration yields :class:`SamplingWindow`
+    objects that preserve the exclusive right boundary needed by downstream
+    samplers.
 
-    1. Given a set of timestamps spread evenly across a regular grid
-    2. That extends from ``start_ns`` through the first on-grid timestamp
-       strictly after the desired end time
-    3. Data is sampled from that grid at a regularly spaced, fixed time interval
-    4. The SamplingGrid iterator yields :class:`SamplingWindow` objects
+    The common use case is a regular timestamp grid that includes one extra
+    boundary marker strictly after the final sample that should remain
+    reachable under half-open window semantics. :func:`make_ts_grid` produces
+    timestamps in that format automatically. The iterator is also intentionally
+    permissive enough to support irregular or bursty sensor timelines.
 
-    However, the iterator is designed to be flexible enough to handle other
-    use-cases, such as timestamps that are not evenly distributed over a regular
-    grid.
+    Empty windows are yielded instead of being filtered out. That preserves the
+    invariant that window index ``i`` always corresponds to the nominal time
+    range starting at ``start_ns + i * stride_ns``. On sparse or irregular
+    grids, consecutive yielded windows may therefore look identical even though
+    their nominal time bounds differ; this is expected.
 
-    Surprising but correct behavior:
-
-    Duplicate windows:
-
-    If the supplied grid is sufficiently sparse, and the duration and stride
-    are small enough, the iterator may return duplicated windows.
-
-    This is correct behavior for uneven logging / burst sampling; window
-    bounds still advance by stride_ns.
-
-    If you are experiencing this, consider using data integrity checks to
-    exclude data sources with insufficient density.
-
-    Zero-length / empty windows:
-
-    When SamplingGrid keeps empty windows, there's a clean invariant:
-
-    yielded window at index i  ←→  time window starting at  start_ns + i * stride_ns
-
-    If empty windows are filtered, that mapping breaks:
-
-    # Works today (no filtering):
-    for i, window in enumerate(grid):
-        window_start = grid.start_ns + i * grid.stride_ns  # always correct
-
-    # Breaks with filtering:
-    # i=0 → window 0  (correct)
-    # i=1 → window 2  (window 1 was empty, silently dropped — i is now wrong)
-
-    Any code that uses window index as a proxy for time position silently
-    produces wrong results. That's harder to debug than a ValueError.
-
-    This is why SamplingGrid keeps empty windows.
+    Attributes:
+        start_ns:
+            Left boundary of the half-open interval, must be equal to the first
+            timestamp in timestamps_ns.
+        exclusive_end_ns:
+            Exclusive right boundary of the window, must be greater than the
+            last timestamp in timestamps_ns.
+        timestamps_ns:
+            One-dimensional, strictly increasing ``int64`` timestamp array in
+            nanoseconds.
+        stride_ns:
+            Distance in nanoseconds between consecutive nominal window starts.
+            Must be positive.
+        duration_ns:
+            Width in nanoseconds of each sampling window. Must be positive.
 
     """
 
-    def __init__(
-        self,
-        timestamps_ns: npt.NDArray[np.int64],
-        stride_ns: int,
-        duration_ns: int,
-    ) -> None:
-        """Initialize ``SamplingGrid``.
+    __hash__ = None  # type: ignore[assignment]
+    start_ns: int
+    exclusive_end_ns: int = attrs.field(validator=_end_ns_ge_start_ns)
+    timestamps_ns: npt.NDArray[np.int64] = attrs.field(
+        validator=validators.and_(
+            strictly_increasing_int64_array,
+            _start_ns_eq_first_timestamp,
+            _end_ns_lt_exclusive_end_ns,
+        ),
+        converter=_copy_numpy_array,
+    )
+    stride_ns: int = attrs.field(validator=positive_value)
+    duration_ns: int = attrs.field(validator=positive_value)
 
-        Args:
-            timestamps_ns: the timestamps to use when sampling data, in nanoseconds.
-                Must be sorted in ascending order. If callers want the final
-                real timestamp to be sampled by consumers using the half-open
-                window convention, ``timestamps_ns`` must also include a
-                boundary marker strictly after that final timestamp.
-                :func:`make_ts_grid` does this automatically.
-
-                The grid stores an internal defensive copy of this array so
-                later caller-side mutation cannot change future windows.
-            stride_ns: the stride to use when sampling data
-            duration_ns: the duration to use when sampling data
-
-        Raises:
-            ValueError: if the timestamps are not sorted in ascending order
-            ValueError: if the duration is not positive
-            ValueError: if the stride is not positive
-            ValueError: if the timestamps are empty
-
-        """
-        if duration_ns <= 0:
-            msg = f"Duration must be positive, got {duration_ns=}"
-            raise ValueError(msg)
-
-        if stride_ns <= 0:
-            msg = f"Stride must be positive, got {stride_ns=}"
-            raise ValueError(msg)
-
-        if len(timestamps_ns) == 0:
-            msg = "Timestamps must be non-empty"
-            raise ValueError(msg)
-
-        if timestamps_ns.ndim != 1:
-            msg = f"timestamps_ns must be 1-D, got ndim={timestamps_ns.ndim}"
-            raise ValueError(msg)
-
-        if timestamps_ns.dtype != np.int64:
-            msg = f"timestamps_ns must have dtype int64, got {timestamps_ns.dtype}"
-            raise ValueError(msg)
-
-        if not np.all(np.diff(timestamps_ns) > 0):
-            msg = "Timestamps must be strictly sorted in ascending order, no duplicates allowed"
-            raise ValueError(msg)
-
-        # Store an internal read-only copy so caller-side mutation of the
-        # source array cannot silently change future windows.
-        self._timestamps_ns = np.array(timestamps_ns, copy=True)
-        self._timestamps_ns.flags.writeable = False
-        self._stride_ns = stride_ns
-        self._duration_ns = duration_ns
-
-    @property
-    def timestamps_ns(self) -> npt.NDArray[np.int64]:
-        """Return the timestamps to use when sampling data (nanoseconds)."""
-        return self._timestamps_ns
-
-    @property
-    def start_ns(self) -> int:
-        """Return the first timestamp (nanoseconds) in the series."""
-        return int(self._timestamps_ns[0])
-
-    @property
-    def end_ns(self) -> int:
-        """Return the last timestamp (nanoseconds) in the series."""
-        return int(self._timestamps_ns[-1])
-
-    @property
-    def stride_ns(self) -> int:
-        """Window stride in nanoseconds."""
-        return self._stride_ns
-
-    @property
-    def duration_ns(self) -> int:
-        """Window duration in nanoseconds."""
-        return self._duration_ns
+    def __attrs_post_init__(self) -> None:
+        """Mark ndarray fields read-only."""
+        make_numpy_fields_readonly(self)
 
     def __iter__(self) -> Iterator[SamplingWindow]:
         """Iterate over timestamp windows on the timeline.
@@ -344,21 +290,22 @@ class SamplingGrid:
             ``SamplingWindow`` describing one half-open sampling window.
 
         """
-        if self.start_ns == self.end_ns:
+        if self.start_ns == self.exclusive_end_ns:
             yield SamplingWindow(
                 start_ns=self.start_ns,
-                exclusive_end_ns=self.end_ns,
+                exclusive_end_ns=self.exclusive_end_ns,
                 timestamps_ns=self.timestamps_ns[:-1],
             )
             return
 
         start_ns = self.start_ns
-        ts = self.timestamps_ns
-        while start_ns < self.end_ns:
-            window_end_ns = start_ns + self._duration_ns
+        ts = np.concatenate([self.timestamps_ns, [self.exclusive_end_ns]])
+        while start_ns < self.exclusive_end_ns:
+            window_end_ns = start_ns + self.duration_ns
             i = np.searchsorted(ts, start_ns, side="left")
             j = np.searchsorted(ts, window_end_ns, side="right")
             window_ts = ts[i:j]
+
             if len(window_ts) == 0:
                 yield SamplingWindow(
                     start_ns=start_ns,
@@ -371,4 +318,5 @@ class SamplingGrid:
                     exclusive_end_ns=int(window_ts[-1]),
                     timestamps_ns=window_ts[:-1],
                 )
-            start_ns += self._stride_ns
+
+            start_ns += self.stride_ns

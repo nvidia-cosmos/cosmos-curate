@@ -111,3 +111,14 @@ def uint8_frame_batch(
     if value.dtype != np.uint8:
         msg = f"{attribute.name} must have dtype uint8, got {value.dtype}"
         raise ValueError(msg)
+
+
+def positive_value(
+    instance: object,  # noqa: ARG001
+    attribute: AttrsAttribute,
+    value: int,
+) -> None:
+    """Attrs validator ensuring a value is positive."""
+    if value <= 0:
+        msg = f"{attribute.name} must be positive, got {value=}"
+        raise ValueError(msg)
