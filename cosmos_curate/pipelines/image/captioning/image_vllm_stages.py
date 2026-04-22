@@ -244,7 +244,7 @@ def _collect_caption_inputs(
     valid_indices: list[int] = []
     storage_key = result_key or variant
     for i, task in enumerate(tasks):
-        if result_target == "caption" and task.image.is_filtered:
+        if task.image.is_filtered:
             continue
         if result_target == "caption" and task.image.has_caption():
             continue
@@ -390,6 +390,8 @@ class ImageVllmPrepStage(CuratorStage):
         for task in tasks:
             self._timer.reinit(self, task.get_major_size())
             image = task.image
+            if image.is_filtered:
+                continue
             if image.image_data is None:
                 image.errors["caption_prep"] = "no image_data"
                 continue

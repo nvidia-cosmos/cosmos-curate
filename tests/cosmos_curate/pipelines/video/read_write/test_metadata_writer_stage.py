@@ -343,6 +343,28 @@ def test_process_data_writes_expected_local_outputs(tmp_path: Path) -> None:
     assert cds_meta["clip_location"].endswith(f"clips/{clip.uuid}.mp4")
 
 
+def test_process_data_writes_filter_window_errors(tmp_path: Path) -> None:
+    """Filter-window errors should be persisted in clip metadata."""
+    stage, task, clip, main_window, output_dir = _stage_with_main_clip(tmp_path)
+    clip.filter_windows[0].errors["qwen"] = "malformed_model_output"
+
+    result = stage.process_data([task])
+    assert result == [task]
+
+    _assert_payloads_cleared(clip, main_window)
+
+    clip_meta_path = output_dir / "metas" / "v0" / f"{clip.uuid}.json"
+    clip_metadata = _read_json(clip_meta_path)
+    assert clip_metadata["filtered_windows"] == [
+        {
+            "start_frame": 0,
+            "end_frame": 30,
+            "qwen_rejection_reasons": "too blurry",
+            "errors": {"qwen": "malformed_model_output"},
+        }
+    ]
+
+
 def test_single_cam_clip_path_uses_flat_structure(tmp_path: Path) -> None:
     """Single-cam must write clips to clips/{uuid}.mp4 (relative_path empty)."""
     input_dir = tmp_path / "input"

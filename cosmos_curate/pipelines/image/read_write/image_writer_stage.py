@@ -126,6 +126,8 @@ class ImageWriterStage(CuratorStage):
             meta["qwen_rejection_stage"] = image.qwen_rejection_stage
         if image.qwen_rejection_reasons:
             meta["qwen_rejection_reasons"] = image.qwen_rejection_reasons
+        if image.errors:
+            meta["errors"] = dict(image.errors)
         return meta
 
     @nvtx.annotate("ImageWriterStage")  # type: ignore[untyped-decorator]

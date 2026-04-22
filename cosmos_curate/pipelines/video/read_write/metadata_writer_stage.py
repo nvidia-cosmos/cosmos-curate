@@ -750,6 +750,8 @@ class ClipWriterStage(CuratorStage):
             }
             if "qwen_rejection_reasons" in window.caption:
                 curr_filter_window["qwen_rejection_reasons"] = window.caption["qwen_rejection_reasons"]
+            if window.errors:
+                curr_filter_window["errors"] = dict(window.errors)
             data["filtered_windows"].append(curr_filter_window)
         total_prompt_tokens = 0
         total_output_tokens = 0

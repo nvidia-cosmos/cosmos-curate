@@ -85,20 +85,24 @@ class ImageSemanticFilterStage(CuratorStage):
                 caption = image.filter_captions.get(self._filter_caption_key)
                 if caption is None:
                     image.errors["qwen"] = "all_windows_failed_preparation"
-                    image.qwen_rejection_stage = "semantic"
+                    image.qwen_rejection_stage = None if self._score_only else "semantic"
                     image.qwen_rejection_reasons = None
-                    image.is_filtered = True
+                    image.is_filtered = not self._score_only
                 else:
-                    clip_should_pass, all_issues, _ = evaluate_semantic_window_results(
+                    clip_should_pass, all_issues, _, per_window_errors = evaluate_semantic_window_results(
                         [(0, caption)],
                         filter_criteria=filter_criteria,
                         rejection_threshold=self._rejection_threshold,
                         score_only=self._score_only,
                     )
+                    if per_window_errors:
+                        image.errors["qwen"] = next(iter(per_window_errors.values()))
                     image.is_filtered = not clip_should_pass
                     image.qwen_rejection_stage = "semantic" if not clip_should_pass else None
                     image.qwen_rejection_reasons = (
-                        dict.fromkeys(sorted(all_issues), "yes") if all_issues and not clip_should_pass else None
+                        dict.fromkeys(sorted(all_issues), "yes")
+                        if all_issues and (self._score_only or not clip_should_pass)
+                        else None
                     )
                     if self._verbose and not clip_should_pass:
                         logger.info(f"Image {task.session_id} filtered out due to: {set(all_issues)}")
@@ -174,22 +178,24 @@ class ImageClassifierStage(CuratorStage):
                     image.qwen_rejection_reasons = None
                     image.is_filtered = True
                 else:
-                    clip_should_pass, all_issues, _reasons, classification = evaluate_classifier_window_results(
-                        [(0, caption)],
-                        config=ClassifierEvaluationConfig(
-                            type_allow=self._type_allow,
-                            type_block=self._type_block,
-                            custom_categories=self._custom_categories,
-                            valid_type_labels=self._valid_type_labels,
-                            rejection_threshold=self._rejection_threshold,
-                        ),
+                    clip_should_pass, all_issues, per_window_reasons, per_window_errors, classification = (
+                        evaluate_classifier_window_results(
+                            [(0, caption)],
+                            config=ClassifierEvaluationConfig(
+                                type_allow=self._type_allow,
+                                type_block=self._type_block,
+                                custom_categories=self._custom_categories,
+                                valid_type_labels=self._valid_type_labels,
+                                rejection_threshold=self._rejection_threshold,
+                            ),
+                        )
                     )
+                    if per_window_errors:
+                        image.errors["qwen"] = next(iter(per_window_errors.values()))
                     image.qwen_type_classification = classification
                     image.is_filtered = not clip_should_pass
                     image.qwen_rejection_stage = "classifier" if not clip_should_pass else None
-                    image.qwen_rejection_reasons = (
-                        dict.fromkeys(sorted(all_issues), "yes") if all_issues and not clip_should_pass else None
-                    )
+                    image.qwen_rejection_reasons = (per_window_reasons.get(0) or None) if not clip_should_pass else None
                     if self._verbose and image.qwen_type_classification:
                         logger.info(f"Image {task.session_id} type classification: {image.qwen_type_classification}")
                     if self._verbose and not clip_should_pass:

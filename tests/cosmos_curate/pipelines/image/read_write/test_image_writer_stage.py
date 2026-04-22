@@ -75,6 +75,28 @@ class TestImageWriterStage:
         assert "qwen_rejection_stage" not in meta
         assert meta["token_counts"] == {}
 
+    def test_writes_errors_into_metadata(self, tmp_path: pathlib.Path) -> None:
+        """Writer should persist image errors so malformed filter outputs appear in metadata."""
+        payload = b"\xff\xd8\xff"
+        image = Image(
+            input_image=tmp_path / "source.jpg",
+            relative_path="source.jpg",
+            encoded_data=LazyData.coerce(np.frombuffer(payload, dtype=np.uint8)),
+            errors={"qwen": "malformed_model_output"},
+        )
+        task = ImagePipeTask(session_id=str(tmp_path / "source.jpg"), image=image)
+        stage = ImageWriterStage(
+            output_path=str(tmp_path / "out"),
+            output_s3_profile_name="default",
+        )
+
+        result = stage.process_data([task])
+
+        assert result is not None
+        meta_files = list((tmp_path / "out" / "metas").iterdir())
+        meta = json.loads(meta_files[0].read_text())
+        assert meta["errors"] == {"qwen": "malformed_model_output"}
+
     def test_skip_task_without_encoded_data(self, tmp_path: pathlib.Path) -> None:
         """Task with no encoded_data gets errors['write'] and no file written."""
         image = Image(input_image=tmp_path / "missing.jpg", relative_path="missing.jpg")

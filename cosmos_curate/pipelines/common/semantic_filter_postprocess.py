@@ -22,6 +22,8 @@ import re
 import attrs
 from loguru import logger
 
+MALFORMED_MODEL_OUTPUT = "malformed_model_output"
+
 
 def parse_comma_separated_types(cs: str | None) -> list[str]:
     """Return list of non-empty stripped tokens from a comma-separated string."""
@@ -101,15 +103,17 @@ def evaluate_semantic_window_results(
     filter_criteria: list[str],
     rejection_threshold: float,
     score_only: bool,
-) -> tuple[bool, set[str], dict[int, dict[str, str]]]:
+) -> tuple[bool, set[str], dict[int, dict[str, str]], dict[int, str]]:
     """Evaluate semantic filter captions and return pass/fail plus window rejection details."""
     all_issues: set[str] = set()
     rejected_windows: set[int] = set()
     per_window_reasons: dict[int, dict[str, str]] = {}
+    per_window_errors: dict[int, str] = {}
 
     for window_idx, result in window_results:
         filtering_dict = parse_results(result)
         if filtering_dict is None:
+            per_window_errors[window_idx] = MALFORMED_MODEL_OUTPUT
             continue
         window_specific_issues: dict[str, str] = {}
         for criterion in filter_criteria:
@@ -121,9 +125,11 @@ def evaluate_semantic_window_results(
         per_window_reasons[window_idx] = window_specific_issues
 
     clip_should_pass = True
-    if not score_only and window_results and (len(rejected_windows) / len(window_results)) > rejection_threshold:
-        clip_should_pass = False
-    return clip_should_pass, all_issues, per_window_reasons
+    if not score_only and window_results:
+        all_malformed = len(per_window_errors) == len(window_results)
+        if all_malformed or (len(rejected_windows) / len(window_results)) > rejection_threshold:
+            clip_should_pass = False
+    return clip_should_pass, all_issues, per_window_reasons, per_window_errors
 
 
 @attrs.define(frozen=True)
@@ -168,7 +174,7 @@ def evaluate_classifier_window_results(
     window_results: list[tuple[int, str]],
     *,
     config: ClassifierEvaluationConfig,
-) -> tuple[bool, set[str], dict[int, dict[str, str]], list[str]]:
+) -> tuple[bool, set[str], dict[int, dict[str, str]], dict[int, str], list[str]]:
     """Evaluate classifier captions and return pass/fail plus labels and rejection details."""
     has_allowed = not bool(config.type_allow)
     any_parsed = False
@@ -176,10 +182,12 @@ def evaluate_classifier_window_results(
     all_issues: set[str] = set()
     rejected_windows: set[int] = set()
     per_window_reasons: dict[int, dict[str, str]] = {}
+    per_window_errors: dict[int, str] = {}
 
     for window_idx, result in window_results:
         filtering_dict = parse_results(result)
         if filtering_dict is None:
+            per_window_errors[window_idx] = MALFORMED_MODEL_OUTPUT
             continue
         any_parsed = True
         all_types_yes.update(
@@ -197,7 +205,7 @@ def evaluate_classifier_window_results(
             all_issues.add(matched_block)
             rejected_windows.add(window_idx)
 
-    if config.type_allow and not any_parsed:
+    if config.type_allow and not any_parsed and not per_window_errors:
         has_allowed = True
 
     allow_ok = has_allowed
@@ -206,4 +214,4 @@ def evaluate_classifier_window_results(
         block_ok = (len(rejected_windows) / len(window_results)) <= config.rejection_threshold
 
     classification = sorted(all_types_yes) if all_types_yes else (["unclassified"] if config.custom_categories else [])
-    return bool(allow_ok and block_ok), all_issues, per_window_reasons, classification
+    return bool(allow_ok and block_ok), all_issues, per_window_reasons, per_window_errors, classification

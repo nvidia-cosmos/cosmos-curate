@@ -372,6 +372,67 @@ def test_vlm_classifier_stage_middle_clip_no_windows_correct_error_assignment() 
     assert errored is original_clips[1]
 
 
+def test_vlm_filtering_stage_score_only_middle_clip_no_windows_kept_with_error() -> None:
+    """Score-only semantic filtering should keep errored clips instead of moving them to filtered_clips."""
+    stage = VllmFilteringStage(model_variant="qwen", user_prompt="slideshow", score_only=True)
+    video = _make_video_three_clips_middle_no_windows()
+    original_clips = list(video.clips)
+
+    mapping = {0: (0, 0), 1: (2, 0)}
+    captions = enumerate(['{"slideshow": "no"}', '{"slideshow": "no"}'])
+
+    stage._filter_clips(video, mapping, captions)
+
+    assert len(video.clips) == 3
+    assert len(video.filtered_clips) == 0
+    errored = video.clips[2]
+    assert errored.errors.get("qwen") == "all_windows_failed_preparation"
+    assert errored is original_clips[1]
+
+
+def test_vlm_filtering_stage_marks_malformed_model_output_on_window() -> None:
+    """Malformed semantic-filter output should filter the clip and store the error on its window."""
+    stage = VllmFilteringStage(model_variant="qwen", user_prompt="slideshow")
+    video, clip_idx = _make_video_with_one_clip_one_window()
+
+    stage._filter_clips(video, {0: (clip_idx, 0)}, enumerate(["not valid json"]))
+
+    assert len(video.clips) == 0
+    assert len(video.filtered_clips) == 1
+    assert video.filtered_clips[0].filter_windows[0].errors.get("qwen") == "malformed_model_output"
+    assert video.filtered_clips[0].qwen_rejection_stage == "semantic"
+
+
+def test_vlm_filtering_stage_malformed_score_only_keeps_clip() -> None:
+    """Malformed semantic-filter output with score_only should keep the clip."""
+    stage = VllmFilteringStage(model_variant="qwen", user_prompt="slideshow", score_only=True)
+    video, clip_idx = _make_video_with_one_clip_one_window()
+
+    stage._filter_clips(video, {0: (clip_idx, 0)}, enumerate(["not valid json"]))
+
+    assert len(video.clips) == 1
+    assert len(video.filtered_clips) == 0
+    assert video.clips[0].filter_windows[0].errors.get("qwen") == "malformed_model_output"
+
+
+def test_vlm_classifier_stage_marks_malformed_model_output_on_window() -> None:
+    """Malformed classifier output should filter the clip and store the error on its window."""
+    stage = VllmVideoClassifierStage(
+        model_variant="qwen",
+        custom_categories=True,
+        type_allow="planet_earth",
+        clear_model_input_after=False,
+    )
+    video, clip_idx = _make_video_with_one_clip_one_window()
+
+    stage._filter_clips(video, {0: (clip_idx, 0)}, enumerate(["not valid json"]))
+
+    assert len(video.clips) == 0
+    assert len(video.filtered_clips) == 1
+    assert video.filtered_clips[0].filter_windows[0].errors.get("qwen") == "malformed_model_output"
+    assert video.filtered_clips[0].qwen_rejection_stage == "classifier"
+
+
 def test_qwen_video_classifier_default_categories_empty_not_unclassified() -> None:
     """When custom_categories=False and no category is yes, classification is [] (no default fallback)."""
     stage = VllmVideoClassifierStage(

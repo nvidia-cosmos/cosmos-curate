@@ -28,7 +28,7 @@ from cosmos_curate.pipelines.common.semantic_filter_postprocess import (
     evaluate_semantic_window_results,
     parse_comma_separated_types,
 )
-from cosmos_curate.pipelines.video.utils.data_model import SplitPipeTask, Video
+from cosmos_curate.pipelines.video.utils.data_model import Clip, SplitPipeTask, Video
 
 
 class VllmFilteringStage(CuratorStage):
@@ -122,42 +122,64 @@ class VllmFilteringStage(CuratorStage):
             else [s.strip() for s in self._user_prompt.split(",") if s.strip()]
         )
 
-        passing_clips = []
+        passing_clips: list[Clip] = []
         for clip_idx, window_results in clip_results.items():
-            clip_should_pass, all_issues, per_window_reasons = evaluate_semantic_window_results(
-                window_results,
-                filter_criteria=filter_criteria,
-                rejection_threshold=self._rejection_threshold,
-                score_only=self._score_only,
-            )
-            for window_idx, reasons in per_window_reasons.items():
-                video.clips[clip_idx].filter_windows[window_idx].caption["qwen_rejection_reasons"] = str(reasons)
-
-            if not clip_should_pass:
-                if self._verbose:
-                    logger.info(f"Clip {video.clips[clip_idx].uuid} filtered out due to: {set(all_issues)}")
-                clip = video.clips[clip_idx]
-                clip.qwen_rejection_stage = "semantic"
-                video.filtered_clips.append(clip)
-                video.clip_stats.num_filtered_by_qwen_semantic += 1
-            else:
-                passing_clips.append(video.clips[clip_idx])
+            self._process_semantic_clip(video, clip_idx, window_results, filter_criteria, passing_clips)
 
         original_clips = list(video.clips)
-        video.clips = passing_clips
 
         for clip_idx in range(len(original_clips)):
             if clip_idx not in clip_results:
-                clip = original_clips[clip_idx]
-                clip.errors["qwen"] = "all_windows_failed_preparation"
-                clip.qwen_rejection_stage = "semantic"
-                video.filtered_clips.append(clip)
-                video.clip_stats.num_filtered_by_qwen_semantic += 1
-                logger.warning(f"Clip {clip.uuid} had no successfully mapped windows; added to filtered_clips")
+                self._handle_unmapped_semantic_clip(original_clips[clip_idx], video, passing_clips)
+        video.clips = passing_clips
         for clip in video.clips + video.filtered_clips:
             for window in clip.filter_windows:
                 window.model_input.clear()
                 window.mp4_bytes.drop()
+
+    def _process_semantic_clip(
+        self,
+        video: Video,
+        clip_idx: int,
+        window_results: list[tuple[int, str]],
+        filter_criteria: list[str],
+        passing_clips: list[Clip],
+    ) -> None:
+        """Evaluate semantic results for one clip and update clip/window metadata."""
+        clip_should_pass, all_issues, per_window_reasons, per_window_errors = evaluate_semantic_window_results(
+            window_results,
+            filter_criteria=filter_criteria,
+            rejection_threshold=self._rejection_threshold,
+            score_only=self._score_only,
+        )
+        clip = video.clips[clip_idx]
+        for window_idx, reasons in per_window_reasons.items():
+            clip.filter_windows[window_idx].caption["qwen_rejection_reasons"] = str(reasons)
+        for window_idx, error in per_window_errors.items():
+            clip.filter_windows[window_idx].errors["qwen"] = error
+
+        if clip_should_pass:
+            passing_clips.append(clip)
+            return
+
+        if self._verbose:
+            logger.info(f"Clip {clip.uuid} filtered out due to: {set(all_issues)}")
+        clip.qwen_rejection_stage = "semantic"
+        video.filtered_clips.append(clip)
+        video.clip_stats.num_filtered_by_qwen_semantic += 1
+
+    def _handle_unmapped_semantic_clip(self, clip: Clip, video: Video, passing_clips: list[Clip]) -> None:
+        """Handle clips that had no successfully mapped semantic-filter windows."""
+        clip.errors["qwen"] = "all_windows_failed_preparation"
+        if self._score_only:
+            passing_clips.append(clip)
+            logger.warning(f"Clip {clip.uuid} had no successfully mapped windows during score-only mode; kept in clips")
+            return
+
+        clip.qwen_rejection_stage = "semantic"
+        video.filtered_clips.append(clip)
+        video.clip_stats.num_filtered_by_qwen_semantic += 1
+        logger.warning(f"Clip {clip.uuid} had no successfully mapped windows; added to filtered_clips")
 
 
 class VllmVideoClassifierStage(CuratorStage):
@@ -256,19 +278,23 @@ class VllmVideoClassifierStage(CuratorStage):
         window_results: list[tuple[int, str]],
         all_issues: set[str],
     ) -> bool:
-        clip_should_pass, issues, per_window_reasons, classification = evaluate_classifier_window_results(
-            window_results,
-            config=ClassifierEvaluationConfig(
-                type_allow=self._type_allow,
-                type_block=self._type_block,
-                custom_categories=self._custom_categories,
-                valid_type_labels=self._valid_type_labels,
-                rejection_threshold=self._rejection_threshold,
-            ),
+        clip_should_pass, issues, per_window_reasons, per_window_errors, classification = (
+            evaluate_classifier_window_results(
+                window_results,
+                config=ClassifierEvaluationConfig(
+                    type_allow=self._type_allow,
+                    type_block=self._type_block,
+                    custom_categories=self._custom_categories,
+                    valid_type_labels=self._valid_type_labels,
+                    rejection_threshold=self._rejection_threshold,
+                ),
+            )
         )
         all_issues.update(issues)
         for window_idx, reasons in per_window_reasons.items():
             video.clips[clip_idx].filter_windows[window_idx].caption["qwen_rejection_reasons"] = str(reasons)
+        for window_idx, error in per_window_errors.items():
+            video.clips[clip_idx].filter_windows[window_idx].errors["qwen"] = error
         clip = video.clips[clip_idx]
         clip.qwen_type_classification = classification
         if self._verbose and clip.qwen_type_classification:

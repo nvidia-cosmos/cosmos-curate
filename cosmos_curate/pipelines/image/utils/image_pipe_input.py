@@ -49,34 +49,36 @@ def get_image_relative_paths(
     return sorted(f for f in all_files if _is_image_file(f))
 
 
-def _read_captioned_ids_from_summary(
+def _read_processed_ids_from_summary(
     output_path: str,
     summary_path: str | StoragePrefix | pathlib.Path,
     client: StorageClient | None,
     *,
     verbose: bool = False,
 ) -> set[str] | None:
-    """Read summary.json and return set of captioned image IDs, or None on failure/empty."""
+    """Read summary.json and return set of processed image IDs, or None on failure/empty."""
     try:
         data = read_json_file(summary_path, client)
-        captioned = data.get("captioned_images") or []
-        ids = {str(x) for x in captioned}
+        images_list = data.get("images") or []
+        filtered_list = data.get("filtered_images") or []
+        processed = data.get("processed_images") or (images_list + filtered_list) or data.get("captioned_images") or []
+        ids = {str(x) for x in processed}
     except Exception as e:  # noqa: BLE001
         if verbose:
-            logger.debug(f"Could not read summary for already-captioned check: {e}")
+            logger.debug(f"Could not read summary for already-processed check: {e}")
         return None
     else:
         if ids:
-            logger.info(f"Found {len(ids)} already-captioned image(s) in {output_path}/summary.json")
+            logger.info(f"Found {len(ids)} already-processed image(s) in {output_path}/summary.json")
         return ids
 
 
-def _read_captioned_ids_from_metas(
+def _read_processed_ids_from_metas(
     output_path: str,
     metas_prefix: str | StoragePrefix | pathlib.Path,
     client: StorageClient | None,
 ) -> set[str]:
-    """Scan metas/ JSON files and return output IDs that have has_caption=True."""
+    """Scan metas/ and return output IDs for any image that has a metadata file."""
     try:
         meta_files = get_files_relative(str(metas_prefix), client, limit=0)
     except Exception:  # noqa: BLE001
@@ -85,33 +87,27 @@ def _read_captioned_ids_from_metas(
     for rel in meta_files:
         if not rel.endswith(".json"):
             continue
-        meta_path = get_full_path(metas_prefix, rel)
-        try:
-            data = read_json_file(meta_path, client)
-            if data.get("has_caption") is True:
-                meta_ids.add(rel.removesuffix(".json"))
-        except Exception as e:  # noqa: BLE001
-            logger.debug("Skip meta file %s: %s", rel, e)
+        meta_ids.add(rel.removesuffix(".json"))
     if meta_ids:
-        logger.info(f"Found {len(meta_ids)} already-captioned image(s) in {output_path}/metas/")
+        logger.info(f"Found {len(meta_ids)} already-processed image(s) in {output_path}/metas/")
     return meta_ids
 
 
-def _get_already_captioned_output_ids(
+def _get_already_processed_output_ids(
     output_path: str,
     output_s3_profile_name: str | None,
     *,
     verbose: bool = False,
 ) -> set[str]:
-    """Return set of output IDs that already have a caption in the output (don't recaption)."""
+    """Return set of output IDs that already have a metadata file in the output."""
     client = get_storage_client(output_path, profile_name=output_s3_profile_name or "default")
     summary_path = get_full_path(output_path, "summary.json")
     if path_exists(summary_path, client):
-        ids = _read_captioned_ids_from_summary(output_path, summary_path, client, verbose=verbose)
+        ids = _read_processed_ids_from_summary(output_path, summary_path, client, verbose=verbose)
         if ids is not None and ids:
             return ids
     metas_prefix = get_full_path(output_path, "metas")
-    return _read_captioned_ids_from_metas(output_path, metas_prefix, client)
+    return _read_processed_ids_from_metas(output_path, metas_prefix, client)
 
 
 def extract_image_tasks(
@@ -125,15 +121,15 @@ def extract_image_tasks(
     """Discover image files under input_path and build one ImagePipeTask per image.
 
     Uses get_files_relative (no extension filter), then filters by IMAGE_EXTENSIONS.
-    When output_path_and_profile is set, skips images that already have a caption
-    in the output (failsafe: do not recaption), matching video pipeline behavior.
+    When output_path_and_profile is set, skips images that already have a metadata
+    file in the output, matching video pipeline behavior.
 
     Args:
         input_path: Local or S3 path to list (directory/prefix).
         input_s3_profile_name: S3 profile for input_path when remote.
         limit: If > 0, process at most this many images (first after sort).
         output_path_and_profile: Optional (output_path, output_s3_profile_name) to skip
-            already-captioned images; None to process all.
+            already-processed images; None to process all.
         verbose: Log each discovered path.
 
     Returns:
@@ -142,10 +138,10 @@ def extract_image_tasks(
     """
     image_files = get_image_relative_paths(input_path, input_s3_profile_name)
 
-    already_captioned: set[str] = set()
+    already_processed: set[str] = set()
     if output_path_and_profile is not None:
         out_path, out_profile = output_path_and_profile
-        already_captioned = _get_already_captioned_output_ids(out_path, out_profile, verbose=verbose)
+        already_processed = _get_already_processed_output_ids(out_path, out_profile, verbose=verbose)
 
     to_process: list[str] = []
     skipped = 0
@@ -153,12 +149,12 @@ def extract_image_tasks(
         full = get_full_path(input_path, rel)
         session_id = str(full)
         out_id = get_image_output_id(session_id)
-        if out_id in already_captioned:
+        if out_id in already_processed:
             skipped += 1
             continue
         to_process.append(rel)
     if skipped:
-        logger.info(f"Skipping {skipped} already-captioned image(s)")
+        logger.info(f"Skipping {skipped} already-processed image(s)")
 
     if limit > 0:
         to_process = to_process[:limit]

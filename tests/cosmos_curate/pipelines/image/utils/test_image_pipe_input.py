@@ -95,15 +95,59 @@ class TestExtractImageTasks:
         assert tasks[0].session_id == str(tmp_path / "photo.png")
         assert tasks[0].image.relative_path == "photo.png"
 
-    def test_skips_already_captioned_when_summary_has_captioned_images(self, tmp_path: pathlib.Path) -> None:
-        """When output_path_and_profile points to output with summary.json captioned_images, skip those."""
+    def test_skips_already_processed_when_summary_has_images_and_filtered_images(self, tmp_path: pathlib.Path) -> None:
+        """summary.json with images+filtered_images (current writer format) skips both passed and filtered."""
         in_dir = tmp_path / "in"
         out_dir = tmp_path / "out"
         in_dir.mkdir()
         out_dir.mkdir()
         (in_dir / "a.jpg").write_bytes(b"\xff\xd8\xff")
         (in_dir / "b.jpg").write_bytes(b"\xff\xd8\xff")
-        # Mark a.jpg as already captioned via summary.json (same ID logic as writer)
+        (in_dir / "c.jpg").write_bytes(b"\xff\xd8\xff")
+        out_id_a = get_image_output_id(str(in_dir / "a.jpg"))
+        out_id_b = get_image_output_id(str(in_dir / "b.jpg"))
+        summary = {"images": [out_id_a], "filtered_images": [out_id_b], "num_input_images": 3}
+        (out_dir / "summary.json").write_text(json.dumps(summary))
+
+        tasks = extract_image_tasks(
+            str(in_dir),
+            "default",
+            output_path_and_profile=(str(out_dir), None),
+            verbose=False,
+        )
+        assert len(tasks) == 1
+        assert tasks[0].image.relative_path == "c.jpg"
+
+    def test_skips_already_processed_when_summary_has_processed_images(self, tmp_path: pathlib.Path) -> None:
+        """Backward compat: summary.json with processed_images is still honoured."""
+        in_dir = tmp_path / "in"
+        out_dir = tmp_path / "out"
+        in_dir.mkdir()
+        out_dir.mkdir()
+        (in_dir / "a.jpg").write_bytes(b"\xff\xd8\xff")
+        (in_dir / "b.jpg").write_bytes(b"\xff\xd8\xff")
+        session_id_a = str(in_dir / "a.jpg")
+        out_id_a = get_image_output_id(session_id_a)
+        summary = {"processed_images": [out_id_a], "num_input_images": 2}
+        (out_dir / "summary.json").write_text(json.dumps(summary))
+
+        tasks = extract_image_tasks(
+            str(in_dir),
+            "default",
+            output_path_and_profile=(str(out_dir), None),
+            verbose=False,
+        )
+        assert len(tasks) == 1
+        assert tasks[0].image.relative_path == "b.jpg"
+
+    def test_skips_already_processed_when_summary_has_legacy_captioned_images(self, tmp_path: pathlib.Path) -> None:
+        """Backward compat: summary.json with captioned_images is still honoured."""
+        in_dir = tmp_path / "in"
+        out_dir = tmp_path / "out"
+        in_dir.mkdir()
+        out_dir.mkdir()
+        (in_dir / "a.jpg").write_bytes(b"\xff\xd8\xff")
+        (in_dir / "b.jpg").write_bytes(b"\xff\xd8\xff")
         session_id_a = str(in_dir / "a.jpg")
         out_id_a = get_image_output_id(session_id_a)
         summary = {"captioned_images": [out_id_a], "num_input_images": 2}
@@ -118,8 +162,8 @@ class TestExtractImageTasks:
         assert len(tasks) == 1
         assert tasks[0].image.relative_path == "b.jpg"
 
-    def test_skips_already_captioned_when_metas_has_has_caption(self, tmp_path: pathlib.Path) -> None:
-        """When output has metas/{id}.json with has_caption true, skip that image."""
+    def test_skips_already_processed_when_metas_file_exists(self, tmp_path: pathlib.Path) -> None:
+        """Any metas/{id}.json file is sufficient to skip — has_caption is no longer required."""
         in_dir = tmp_path / "in"
         out_dir = tmp_path / "out"
         in_dir.mkdir()
@@ -127,7 +171,7 @@ class TestExtractImageTasks:
         (in_dir / "only.jpg").write_bytes(b"\xff\xd8\xff")
         session_id = str(in_dir / "only.jpg")
         out_id = get_image_output_id(session_id)
-        meta = {"has_caption": True, "source_path": str(in_dir / "only.jpg")}
+        meta = {"has_caption": False, "is_filtered": True, "source_path": str(in_dir / "only.jpg")}
         (out_dir / "metas" / f"{out_id}.json").write_text(json.dumps(meta))
 
         tasks = extract_image_tasks(
