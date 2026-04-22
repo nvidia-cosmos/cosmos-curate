@@ -163,6 +163,27 @@ In case you want the output to be in a different S3 bucket than the input, you c
 - `--qwen-batch-size`: batch size for VLM captioning call.
 - `--qwen-use-fp8-weights`: whether to enable FP8 quantization.
 
+Each CPU-heavy stage also exposes a `--*-cpus-per-worker` flag. Defaults are tuned for server-class hosts with many cores:
+
+- `--transnetv2-frame-decode-cpus-per-worker` (default `3.0`): CPU threads per worker for video frame decoding in `ffmpeg_cpu` mode.
+- `--transcode-cpus-per-worker` (default `5.0`): CPU threads per transcode worker; the stage runs a batched ffmpeg command with one thread per batch element.
+- `--motion-decode-cpus-per-worker` (default `2.0`): CPUs per worker allocated to motion-vector decoding.
+- `--clip-extraction-cpus-per-worker` (default `3.0`): CPUs per worker allocated to clip frame extraction.
+- `--vllm-prepare-num-cpus-per-worker` (default `3.0`): CPUs per worker for `VllmPrepStage`.
+
+**Running on CPU-constrained hosts**
+
+The per-stage CPU defaults above are tuned for server-class machines and, combined with the headroom that Ray reserves for the node manager, can over-subscribe CPU-limited workstations and cause the pipeline to fail to schedule. If you see an error that the pipeline cannot allocate enough CPUs, lower the per-stage `--*-cpus-per-worker` flags until the total fits your host. For example, the following combination runs the split pipeline on an 8-core, 1-GPU machine:
+
+```bash
+--transnetv2-frame-decode-cpus-per-worker 1 \
+--transcode-cpus-per-worker 1 \
+--clip-extraction-cpus-per-worker 1 \
+--vllm-prepare-num-cpus-per-worker 1
+```
+
+Lowering these flags changes actor scaling, so expect less throughput than the defaults would deliver on a larger host. The best combination depends on your workload; start from the values above and adjust.
+
 ## Dedup Pipeline
 
 The semantic dedup pipeline takes the embedding-parquet path under `output_clip_path` of split-annotate pipeline as its `input_embeddings_path`,

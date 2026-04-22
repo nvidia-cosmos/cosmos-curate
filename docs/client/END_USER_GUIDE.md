@@ -212,6 +212,8 @@ cosmos-curate local launch --image-name cosmos-curate --image-tag 1.0.0 -- pixi 
    - **`--limit` option**
      - `limit` specifies how many input videos under `input_video_path` to process.
      - Note when running locally with e.g. one GPU, a small `limit` value (like `1`) is needed to avoid running out of memory or disk.
+   - **CPU-constrained hosts**
+     - Split-annotate default per-stage CPU counts are tuned for server-class hosts and can over-subscribe workstations. If the pipeline fails to schedule with a CPU-resource error, lower the `--*-cpus-per-worker` flags — see [Split-Annotate Pipeline Configurable Options](../curator/REFERENCE_PIPELINES_VIDEO.md#split-annotate-pipeline-configurable-options) for a concrete 8-core recipe.
    - **Failure recovery**
      - Failures are often inevitable due to hardware failures/glitches, kernel/driver/library bugs, etc., therefore this pipeline is carefully designed such that it can handle any crash gracefully without loss of compute time and a simple restart would resume from where it left resulting in correct behavior.
 
