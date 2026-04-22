@@ -206,7 +206,7 @@ def add_settings_cli_arguments[T: attrs.AttrsInstance](
         parser.add_argument(flag, dest=field.name, **_add_argument_options_from_cli_spec(field, spec))
 
 
-_EXECUTION_MODES = frozenset(("BATCH", "STREAMING"))
+_EXECUTION_MODES = frozenset(("AUTO", "BATCH", "STREAMING"))
 
 # Dest names registered by :func:`add_profiling_args` only (subset of this class).
 PROFILING_CLI_FIELDS: frozenset[str] = frozenset(
@@ -241,9 +241,11 @@ class CommonPipelineSettings:
         validator=validators.in_(_EXECUTION_MODES),
         metadata=cli(
             help=(
-                "Execution mode of Cosmos-Curator pipeline; STREAMING can be enabled when there more GPUs than models"
+                "Execution mode of Cosmos-Curator pipeline. AUTO picks STREAMING when the number of "
+                "GPUs requested by stages is at most the number of available GPUs, else BATCH; "
+                "STREAMING and BATCH force the respective mode."
             ),
-            default="BATCH",
+            default="AUTO",
             choices=_EXECUTION_MODES,
         ),
     )

@@ -42,6 +42,7 @@ class RunnerInterface(abc.ABC):
         input_tasks: list[T],
         stage_specs: list[CuratorStageSpec],
         model_weights_prefix: str,
+        execution_mode: str = "AUTO",
     ) -> list[T] | None:
         """Execute the pipeline with the given configuration.
 
@@ -49,6 +50,8 @@ class RunnerInterface(abc.ABC):
             input_tasks: A list of pipeline tasks to process.
             stage_specs: A list of stage specifications with filled-in defaults.
             model_weights_prefix: Prefix for model weights in local or cloud storage.
+            execution_mode: ``"AUTO"`` (default) selects the mode automatically based on available
+                GPUs; ``"STREAMING"`` or ``"BATCH"`` forces the respective mode.
 
         Returns:
             A list of output pipeline tasks, or None if the pipeline produces no output.
@@ -68,6 +71,7 @@ class XennaRunner(RunnerInterface):
         input_tasks: list[T],
         stage_specs: list[CuratorStageSpec],
         model_weights_prefix: str,
+        execution_mode: str = "AUTO",
     ) -> list[T] | None:
         """Execute the pipeline using Cosmos-Xenna.
 
@@ -75,6 +79,8 @@ class XennaRunner(RunnerInterface):
             input_tasks: A list of pipeline tasks to process.
             stage_specs: A list of stage specifications with filled-in defaults.
             model_weights_prefix: Prefix for model weights in local or cloud storage.
+            execution_mode: ``"AUTO"`` (default) selects the mode automatically based on available
+                GPUs; ``"STREAMING"`` or ``"BATCH"`` forces the respective mode.
 
         Returns:
             A list of output pipeline tasks, or None if the pipeline produces no output.
@@ -90,11 +96,11 @@ class XennaRunner(RunnerInterface):
         from cosmos_xenna.utils.verbosity import VerbosityLevel  # noqa: PLC0415
 
         # Prepare the pipeline (download models, determine execution mode)
-        execution_mode = _prepare_to_run_pipeline(stage_specs, model_weights_prefix)
+        resolved_execution_mode = _prepare_to_run_pipeline(stage_specs, model_weights_prefix, execution_mode)
 
         # Construct the pipeline configuration
         pipeline_config = PipelineConfig(
-            execution_mode=execution_mode,
+            execution_mode=resolved_execution_mode,
             enable_work_stealing=False,
             return_last_stage_outputs=True,
             actor_pool_verbosity_level=VerbosityLevel.NONE,

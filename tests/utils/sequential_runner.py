@@ -36,6 +36,7 @@ class SequentialRunner(RunnerInterface):
         input_tasks: list[T],
         stage_specs: Sequence[CuratorStageSpec],
         _model_weights_prefix: str,
+        _execution_mode: str = "AUTO",
     ) -> list[T] | None:
         """Execute stages sequentially.
 
@@ -43,6 +44,7 @@ class SequentialRunner(RunnerInterface):
             input_tasks: A list of pipeline tasks to process.
             stage_specs: A list of stage specifications.
             _model_weights_prefix: Model weights prefix (unused in sequential execution).
+            _execution_mode: Execution mode (unused in sequential execution).
 
         Returns:
             A list of output pipeline tasks.

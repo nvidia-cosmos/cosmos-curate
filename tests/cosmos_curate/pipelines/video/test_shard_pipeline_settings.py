@@ -167,7 +167,7 @@ def test_shard_settings_from_minimal_valid_parse() -> None:
     assert settings.input_clip_path == "/data/clips"
     assert settings.output_dataset_path == "/data/out"
     assert settings.common.verbose is False
-    assert settings.common.execution_mode == "BATCH"
+    assert settings.common.execution_mode == "AUTO"
     assert settings.captioning_algorithm == "qwen"
     assert settings.max_tars_per_part >= 1
 
@@ -251,7 +251,7 @@ def test_shard_settings_validation_rejects_invalid_values(
 
 
 def test_common_settings_rejects_invalid_execution_mode() -> None:
-    """``execution_mode`` must be BATCH or STREAMING."""
+    """``execution_mode`` must be AUTO, BATCH, or STREAMING."""
     ns = argparse.Namespace(
         input_s3_profile_name="default",
         output_s3_profile_name="default",

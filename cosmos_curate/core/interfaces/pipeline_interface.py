@@ -118,7 +118,9 @@ def download_models(model_names: list[str], model_weights_prefix: str = MODEL_WE
 
 
 def _prepare_to_run_pipeline(
-    stages: list[CuratorStageSpec], model_weights_prefix: str = MODEL_WEIGHTS_PREFIX
+    stages: list[CuratorStageSpec],
+    model_weights_prefix: str = MODEL_WEIGHTS_PREFIX,
+    execution_mode: str = "AUTO",
 ) -> ExecutionMode:
     """Run a few steps to prepare the pipeline for execution.
 
@@ -128,6 +130,8 @@ def _prepare_to_run_pipeline(
     Args:
         stages: List of pipeline stages to process.
         model_weights_prefix: Prefix for model weights in local or cloud storage.
+        execution_mode: ``"AUTO"`` selects STREAMING when enough GPUs are available, otherwise
+            BATCH. ``"STREAMING"`` or ``"BATCH"`` forces the respective mode.
 
     Returns:
         ExecutionMode: The execution mode for the pipeline.
@@ -147,7 +151,17 @@ def _prepare_to_run_pipeline(
     logger.info(
         f"Required GPUs to run STREAMING mode vs. available GPUs: {num_gpus_requested} vs. {num_gpus_available}"
     )
-    return ExecutionMode["STREAMING"] if num_gpus_requested <= num_gpus_available else ExecutionMode["BATCH"]
+
+    if execution_mode == "AUTO":
+        return ExecutionMode["STREAMING"] if num_gpus_requested <= num_gpus_available else ExecutionMode["BATCH"]
+
+    mode = ExecutionMode[execution_mode]
+    if mode is ExecutionMode.STREAMING and num_gpus_requested > num_gpus_available:
+        logger.warning(
+            f"STREAMING mode requested but stages want {num_gpus_requested} GPUs and only "
+            f"{num_gpus_available} are available; pipeline may fail to schedule."
+        )
+    return mode
 
 
 def _conditionally_wrap_stage(
@@ -299,10 +313,11 @@ def run_pipeline[T: PipelineTask](  # noqa: PLR0913
 
     # Build a list of StageSpecs and fill in default config values.
     stage_specs = _build_pipeline_stage_specs(stages, stage_save_config, args)
+    execution_mode = getattr(args, "execution_mode", "AUTO") if args is not None else "AUTO"
 
     # Run the pipeline!
     try:
-        output_tasks = runner.run(input_tasks, stage_specs, model_weights_prefix)
+        output_tasks = runner.run(input_tasks, stage_specs, model_weights_prefix, execution_mode)
     except Exception as e:
         err_msg = f"Pipeline execution failed: {e!s}"
         logger.error("Pipeline execution failed: ")

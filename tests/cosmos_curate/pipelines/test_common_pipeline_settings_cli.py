@@ -131,9 +131,16 @@ def test_common_parse_coerces_limit_and_from_namespace_roundtrip() -> None:
 
 
 def test_execution_mode_has_argparse_choices() -> None:
-    """execution_mode exposes BATCH and STREAMING as argparse choices."""
+    """execution_mode exposes AUTO, BATCH, and STREAMING as argparse choices."""
     parser = _common_parser()
     action = _action_for_dest(parser, "execution_mode")
     assert action is not None
     assert action.choices is not None
-    assert set(action.choices) == {"BATCH", "STREAMING"}
+    assert set(action.choices) == {"AUTO", "BATCH", "STREAMING"}
+
+
+def test_execution_mode_default_is_auto() -> None:
+    """With no flag, the CLI default preserves auto-selection behavior."""
+    parser = _common_parser()
+    args = parser.parse_args([])
+    assert args.execution_mode == "AUTO"
