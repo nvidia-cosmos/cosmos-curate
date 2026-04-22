@@ -1,23 +1,28 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
 set -euo pipefail
 
 echo "Running nvcf split benchmark"
 
-# Build curator image
-PERF_IMAGE_TAG="${CI_COMMIT_TIMESTAMP%%T*}_${CI_COMMIT_SHORT_SHA}"
-cosmos-curate image build \
-  --curator-path . \
-  --image-name "${CURATOR_IMAGE}" \
-  --image-tag "${PERF_IMAGE_TAG}"
+# STAGING_IMAGE_NAME/STAGING_TAG from resolve job dotenv.
+if [[ -z "${STAGING_IMAGE_NAME:-}" ]]; then
+  echo "ERROR: STAGING_IMAGE_NAME is unset (needs resolve_nvcf_staging_tag dotenv)" >&2
+  exit 1
+fi
+if [[ -z "${STAGING_TAG:-}" ]]; then
+  echo "ERROR: STAGING_TAG is unset (needs resolve_nvcf_staging_tag dotenv or explicit setting)" >&2
+  exit 1
+fi
 
-PERF_FULL_IMAGE="${CURATOR_IMAGE}:${PERF_IMAGE_TAG}"
-echo "Built image ${PERF_FULL_IMAGE} from curator commit [${CI_COMMIT_SHA}]"
-docker push "${PERF_FULL_IMAGE}"
-echo "Pushed image ${PERF_FULL_IMAGE} to GitLab registry"
-
-PERF_NVCF_IMAGE="${PERF_NVCF_IMAGE_REPOSITORY}:${PERF_IMAGE_TAG}"
-docker buildx imagetools create -t "${PERF_NVCF_IMAGE}" "${PERF_FULL_IMAGE}"
-echo "Copied to image ${PERF_NVCF_IMAGE} from curator commit [${CI_COMMIT_SHA}]"
+echo "Skopeo copy nvcr.io/${NGC_NVCF_ORG}/${STAGING_IMAGE_NAME}:${STAGING_TAG} -> nvcr.io/${PERF_NGC_NVCF_ORG_ID}/${STAGING_IMAGE_NAME}:${STAGING_TAG}"
+skopeo copy --all \
+  --src-creds "\$oauthtoken:${NGC_REGISTRY_KEY}" \
+  --dest-creds "\$oauthtoken:${PERF_REGISTRY_KEY}" \
+  "docker://nvcr.io/${NGC_NVCF_ORG}/${STAGING_IMAGE_NAME}:${STAGING_TAG}" \
+  "docker://nvcr.io/${PERF_NGC_NVCF_ORG_ID}/${STAGING_IMAGE_NAME}:${STAGING_TAG}"
+echo "Published nvcr.io/${PERF_NGC_NVCF_ORG_ID}/${STAGING_IMAGE_NAME}:${STAGING_TAG}"
 
 date_str=$(date +%Y%m%d%H%M%S)
 LIMIT_INPUT_VIDEOS=5000
@@ -31,7 +36,7 @@ IFS=' ' read -ra _num_nodes_list      <<< "${NUM_NODES_LIST:-4 2}"
 IFS=' ' read -ra _splitting_algo_list <<< "${SPLITTING_ALGORITHM_LIST:-transnetv2 fixed-stride}"
 for num_nodes in "${_num_nodes_list[@]}"; do
   for splitting_algorithm in "${_splitting_algo_list[@]}"; do
-    PERF_S3_OUTPUT_DIR="${PERF_S3_ROOT_DIR}/${date_str}_nodes_${num_nodes}_caption_${caption}_${splitting_algorithm}";
+    PERF_S3_OUTPUT_DIR="${PERF_S3_ROOT_DIR}/${date_str}_nodes_${num_nodes}_caption_${caption}_${splitting_algorithm}"
     echo "PERF_S3_OUTPUT_DIR: ${PERF_S3_OUTPUT_DIR}"
     micromamba run -n curator python benchmarks/split_pipeline/nvcf_split_benchmark.py \
       --num-nodes "${num_nodes}" \
@@ -40,8 +45,8 @@ for num_nodes in "${_num_nodes_list[@]}"; do
       --captioning-algorithm "qwen" \
       --funcid "${PERF_NVCF_FUNC_ID}" \
       --version "${PERF_NVCF_FUNC_VERSION}" \
-      --image-repository "${PERF_NVCF_IMAGE_REPOSITORY}" \
-      --image-tag "${PERF_IMAGE_TAG}" \
+      --image-repository "nvcr.io/${PERF_NGC_NVCF_ORG_ID}/${STAGING_IMAGE_NAME}" \
+      --image-tag "${STAGING_TAG}" \
       --metrics-endpoint "${PERF_NVCF_METRICS_ENDPOINT}" \
       --backend "${PERF_NVCF_BACKEND}" \
       --gpu "${PERF_NVCF_GPU}" \

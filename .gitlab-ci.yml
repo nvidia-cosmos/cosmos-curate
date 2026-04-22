@@ -104,6 +104,12 @@ variables:
     options:
       - "True"
       - "False"
+  RUN_BENCHMARK:
+    description: "Scheduled nvcf_split_benchmark (same STAGING_TAG dotenv as promote; skopeo dev→perf then NVCF on perf)"
+    value: "False"
+    options:
+      - "True"
+      - "False"
   HELM_DEBUG_KEEP_FAILED_DEPLOYMENTS:
     description: "On failure, do not delete the deployment"
     value: "False"
@@ -127,8 +133,6 @@ variables:
   PERF_NGC_NVCF_ORG_ID: "$PERF_NGC_NVCF_ORG_ID"
   PERF_NVCF_FUNC_ID: "$PERF_NVCF_FUNC_ID"
   PERF_NVCF_FUNC_VERSION: "$PERF_NVCF_FUNC_VERSION"
-  PERF_IMAGE_NAME: "cosmos-curate"
-  PERF_NVCF_IMAGE_REPOSITORY: "nvcr.io/${PERF_NGC_NVCF_ORG_ID}/${PERF_IMAGE_NAME}"
   PERF_NVCF_METRICS_ENDPOINT: "$PERF_NVCF_METRICS_ENDPOINT"
   PERF_NVCF_BACKEND: "$PERF_NVCF_BACKEND"
   PERF_NVCF_GPU: "$PERF_NVCF_GPU"
@@ -137,6 +141,7 @@ variables:
   PERF_S3_INPUT_DIR: "$PERF_S3_INPUT_DIR"
   PERF_KRATOS_METRICS_ENDPOINT: "$PERF_KRATOS_METRICS_ENDPOINT"
   PERF_KRATOS_BEARER_URL: "$PERF_KRATOS_BEARER_URL"
+  STAGING_TAG_OVERRIDE:
 
 stages:
   - lint
@@ -752,24 +757,43 @@ promote_to_staging:
     - STAGING="${NVCF_STAGING_IMAGE}:${IMAGE_TAG}"
     - docker buildx imagetools create --tag "${STAGING}" "${DEV}"
 
+resolve_nvcf_staging_tag:
+  stage: test
+  image: ${CI_BUILDER_IMAGE}
+  tags:
+    - build-runner
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "schedule" && $RUN_PROMOTE_TO_PROD == "True"'
+    - if: '$CI_PIPELINE_SOURCE == "schedule" && $RUN_BENCHMARK == "True"'
+    - when: never
+  id_tokens:
+    VAULT_JWT_TOKEN:
+      aud: ${VAULT_ADDR}
+  before_script:
+    - source .gitlab/vault/vault-auth.sh
+    - *setup_ci_builder_env
+    - *setup_curator_cli
+  script:
+    - *configure_nvcf_cli
+    - bash .gitlab/scripts/resolve_nvcf_staging_tag.sh --write-dotenv staging_tag.env
+  artifacts:
+    reports:
+      dotenv: staging_tag.env
+
 # Promote the latest staging image to prod on a nightly schedule
 promote_to_prod:
   stage: post-merge
   rules: *schedule_rules_promote
+  needs:
+    - job: resolve_nvcf_staging_tag
   id_tokens:
     VAULT_JWT_TOKEN:
       aud: ${VAULT_ADDR}
   before_script:
     - source .gitlab/vault/vault-auth.sh
   script:
-    - echo "Promoting latest staging image to prod"
+    - echo "Promoting latest staging image to prod (STAGING_TAG=${STAGING_TAG})"
     - *docker_login
-    - *setup_micromamba
-    - *setup_curator_cli
-    - *configure_nvcf_cli
-    # Determine staging tag by inspecting annotation on the latest staging image
-    - STAGING_TAG=$(cosmos-curate nvcf image list-image-detail --iname $NVCF_STAGING_BASE_IMAGE |grep latestTag |sed "s/['│,]//g" |awk '{print $2}')
-    - echo "Extracted staging tag ${STAGING_TAG}"
     - STAGING_IMAGE="${NVCF_STAGING_IMAGE}:${STAGING_TAG}"
     - PROD_IMAGE="${NVCF_PROD_IMAGE}:${STAGING_TAG}"
     - echo "Copying $STAGING_IMAGE -> $PROD_IMAGE"
@@ -800,20 +824,24 @@ build-packages:
 nvcf_split_benchmark:
   stage: test
   timeout: 30h
+  interruptible: false  # keep running when main gets a new pipeline (auto_cancel.on_new_commit: interruptible)
+  image: ${CI_BUILDER_IMAGE}
+  tags:
+    - build-runner
+  needs:
+    - job: resolve_nvcf_staging_tag
   rules:
-    - if: $CI_PIPELINE_SOURCE == "schedule" && $SCHEDULE_TYPE == "weekly"
+    - if: '$CI_PIPELINE_SOURCE == "schedule" && $RUN_BENCHMARK == "True"'
     - when: never   # fallback: never run otherwise
   id_tokens:
     VAULT_JWT_TOKEN:
       aud: ${VAULT_ADDR}
   before_script:
     - source .gitlab/vault/vault-auth.sh
+    - *setup_ci_builder_env
+    - *setup_curator_cli
   script:
-    - *docker_login_perf
-    - *setup_micromamba
-    - *setup_curator
     - .gitlab/scripts/nvcf_split_benchmark.sh
-    - *teardown_micromamba
 
 # GPU tests - runs actual mini pipeline with GPU
 k8s_gpu_tests:

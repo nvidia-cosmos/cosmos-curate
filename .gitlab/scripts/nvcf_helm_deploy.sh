@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
 set -euo pipefail
 
 # shellcheck source=common.sh
@@ -6,18 +9,26 @@ source "$(dirname "$0")/common.sh"
 
 export NVCF_BACKEND="${NVCF_CUSTOM_BACKEND:-$NVCF_BACKEND}"
 
-# Determine HELM_IMAGE_TAG based on pipeline source
+# shellcheck source=resolve_nvcf_staging_tag.sh
+source "$(dirname "$0")/resolve_nvcf_staging_tag.sh"
+
+# Determine HELM_IMAGE_TAG:
+# 1) TEST_END_TO_END=True -> latest DEV tag (unless HELM_IMAGE_TAG is explicitly set)
+# 2) web trigger (non-e2e) -> latest STAGING tag
+# 3) otherwise -> commit-derived CI tag (get_image_tag)
 if [[ "$TEST_END_TO_END" == "True" ]]; then
   # this can be overridden by passing the HELM_IMAGE_TAG var in cicd variables
-  export HELM_IMAGE_TAG=${HELM_IMAGE_TAG:-$(cosmos-curate nvcf image list-image-detail --iname "$NVCF_DEV_BASE_IMAGE" |grep latestTag |sed "s/['│,]//g" |awk '{print $2}')}
+  export HELM_IMAGE_TAG="${HELM_IMAGE_TAG:-$(nvcf_registry_latest_tag "${NVCF_DEV_BASE_IMAGE}")}"
 elif [[ "$CI_PIPELINE_SOURCE" == "web" ]]; then
-  # Web triggers use staging images unless e2e is specified, then tests latest dev image
-  export HELM_IMAGE_TAG=${HELM_IMAGE_TAG:-$(cosmos-curate nvcf image list-image-detail --iname "$NVCF_STAGING_BASE_IMAGE" |grep latestTag |sed "s/['│,]//g" |awk '{print $2}')}
+  # Non-e2e web triggers default to latest staging tag
+  export HELM_IMAGE_TAG="${HELM_IMAGE_TAG:-$(nvcf_registry_latest_tag "${NVCF_STAGING_BASE_IMAGE}")}"
 else
   export HELM_IMAGE_TAG="$(get_image_tag)"
 fi
 
-# Determine NVCF_IMAGE based on pipeline source
+# Determine NVCF_IMAGE repository:
+# - web + non-e2e -> STAGING repo
+# - all other cases (including e2e) -> DEV repo
 if [[ "$CI_PIPELINE_SOURCE" == "web" && "$TEST_END_TO_END" != "True" ]]; then
   NVCF_IMAGE=${NVCF_STAGING_IMAGE}:$HELM_IMAGE_TAG
 else
