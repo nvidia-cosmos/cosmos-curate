@@ -218,61 +218,47 @@ class ClipWriterStage(CuratorStage):
         return ClipWriterStage._get_output_path(output_path, f"processed_lance_fragments/{version}")
 
     @staticmethod
+    def _embd_stem(embedding_algorithm: str) -> str:
+        if embedding_algorithm == "internvideo2":
+            return "iv2_embd"
+        if embedding_algorithm.startswith("cosmos-embed1-"):
+            variant = embedding_algorithm.removeprefix("cosmos-embed1-")
+            return f"ce1_embd_{variant}"
+        if embedding_algorithm == "openai":
+            return "openai_embd"
+        logger.error(f"Unknown embedding algorithm: {embedding_algorithm}")
+        return f"{embedding_algorithm}_embd"
+
+    @staticmethod
     def get_output_path_embds(output_path: str, embedding_algorithm: str) -> str:
         """Get path to store generated clips."""
-        if embedding_algorithm == "internvideo2":
-            return ClipWriterStage._get_output_path(output_path, "iv2_embd")
-        if embedding_algorithm.startswith("cosmos-embed1"):
-            return ClipWriterStage._get_output_path(output_path, "ce1_embd")
-        if embedding_algorithm == "openai":
-            return ClipWriterStage._get_output_path(output_path, "openai_embd")
-        # should not happen
-        logger.error(f"Unknown embedding algorithm: {embedding_algorithm}")
-        return ClipWriterStage._get_output_path(output_path, f"{embedding_algorithm}_embd")
+        return ClipWriterStage._get_output_path(output_path, ClipWriterStage._embd_stem(embedding_algorithm))
 
     @staticmethod
     def get_output_path_embd_parquets(output_path: str, embedding_algorithm: str) -> str:
         """Get path to store generated clip embeddings in a parquet file."""
-        if embedding_algorithm == "internvideo2":
-            return ClipWriterStage._get_output_path(output_path, "iv2_embd_parquet")
-        if embedding_algorithm.startswith("cosmos-embed1"):
-            return ClipWriterStage._get_output_path(output_path, "ce1_embd_parquet")
-        if embedding_algorithm == "openai":
-            return ClipWriterStage._get_output_path(output_path, "openai_embd_parquet")
-        return ClipWriterStage._get_output_path(output_path, f"{embedding_algorithm}_embd_parquet")
+        return ClipWriterStage._get_output_path(
+            output_path, f"{ClipWriterStage._embd_stem(embedding_algorithm)}_parquet"
+        )
 
     @staticmethod
     def get_output_path_embd_lance(output_path: str, embedding_algorithm: str) -> str:
         """Get path to store generated clip embeddings in a Lance dataset."""
-        if embedding_algorithm == "internvideo2":
-            return ClipWriterStage._get_output_path(output_path, "iv2_embd_lance")
-        if embedding_algorithm.startswith("cosmos-embed1"):
-            return ClipWriterStage._get_output_path(output_path, "ce1_embd_lance")
-        if embedding_algorithm == "openai":
-            return ClipWriterStage._get_output_path(output_path, "openai_embd_lance")
-        return ClipWriterStage._get_output_path(output_path, f"{embedding_algorithm}_embd_lance")
+        return ClipWriterStage._get_output_path(output_path, f"{ClipWriterStage._embd_stem(embedding_algorithm)}_lance")
 
     @staticmethod
     def get_output_path_embd_lance_fragments(output_path: str, embedding_algorithm: str) -> str:
         """Get path to store staged Lance fragments for embeddings."""
-        if embedding_algorithm == "internvideo2":
-            return ClipWriterStage._get_output_path(output_path, "iv2_embd_lance_fragments")
-        if embedding_algorithm.startswith("cosmos-embed1"):
-            return ClipWriterStage._get_output_path(output_path, "ce1_embd_lance_fragments")
-        if embedding_algorithm == "openai":
-            return ClipWriterStage._get_output_path(output_path, "openai_embd_lance_fragments")
-        return ClipWriterStage._get_output_path(output_path, f"{embedding_algorithm}_embd_lance_fragments")
+        return ClipWriterStage._get_output_path(
+            output_path, f"{ClipWriterStage._embd_stem(embedding_algorithm)}_lance_fragments"
+        )
 
     @staticmethod
     def get_output_path_embd_lance_fragments_processed(output_path: str, embedding_algorithm: str) -> str:
         """Get path to store processed Lance fragment sidecars for embeddings."""
-        if embedding_algorithm == "internvideo2":
-            return ClipWriterStage._get_output_path(output_path, "iv2_embd_lance_fragments_processed")
-        if embedding_algorithm.startswith("cosmos-embed1"):
-            return ClipWriterStage._get_output_path(output_path, "ce1_embd_lance_fragments_processed")
-        if embedding_algorithm == "openai":
-            return ClipWriterStage._get_output_path(output_path, "openai_embd_lance_fragments_processed")
-        return ClipWriterStage._get_output_path(output_path, f"{embedding_algorithm}_embd_lance_fragments_processed")
+        return ClipWriterStage._get_output_path(
+            output_path, f"{ClipWriterStage._embd_stem(embedding_algorithm)}_lance_fragments_processed"
+        )
 
     @staticmethod
     def get_output_path_cds_parquets(output_path: str) -> str:
@@ -668,7 +654,7 @@ class ClipWriterStage(CuratorStage):
     def _get_clip_embedding(self, clip: Clip) -> npt.NDArray[np.float32] | None:
         if self._embedding_algorithm == "internvideo2":
             return clip.intern_video_2_embedding
-        if self._embedding_algorithm.startswith("cosmos-embed1"):
+        if self._embedding_algorithm.startswith("cosmos-embed1-"):
             return clip.cosmos_embed1_embedding
         if self._embedding_algorithm == "openai":
             return clip.openai_embedding

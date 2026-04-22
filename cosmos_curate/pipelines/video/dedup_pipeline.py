@@ -301,7 +301,8 @@ def _setup_parser(parser: argparse.ArgumentParser) -> None:
         required=True,
         help=(
             "Path to input embeddings; could be either output_clip_path of split pipeline for best performance "
-            "(the path containing a summary.json and an iv2_embd_parquet/ce1_embd_parquet directory) "
+            "(the path containing a summary.json and an iv2_embd_parquet, ce1_embd_<variant>_parquet, "
+            "or openai_embd_parquet directory) "
             "or a path with embedding parquet files which includes id & embedding columns."
         ),
     )

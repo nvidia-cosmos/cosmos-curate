@@ -951,7 +951,14 @@ def _setup_parser(parser: argparse.ArgumentParser) -> None:  # noqa: PLR0915
         type=str,
         default="internvideo2",
         choices=["cosmos-embed1-224p", "cosmos-embed1-336p", "cosmos-embed1-448p", "internvideo2", "openai"],
-        help="Embedding algorithm to use.",
+        help=(
+            "Embedding algorithm to use. The `cosmos-embed1-*` suffix selects the input resolution "
+            "(224p, 336p, or 448p): 224p is the fastest with 256-dim output vectors, while 336p and "
+            "448p are slower but score higher on retrieval/classification benchmarks and produce "
+            "768-dim vectors. Outputs for each variant are written to separate directories "
+            "(e.g. `ce1_embd_336p/`), so switching variants against the same output path will not "
+            "overwrite existing embeddings."
+        ),
     )
     parser.add_argument(
         "--generate-previews",

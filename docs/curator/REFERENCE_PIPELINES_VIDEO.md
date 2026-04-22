@@ -59,13 +59,13 @@ Today the split-annotate pipeline produces the following artifacts under the pat
 │   ├── {clip-uuid}.mp4
 ├── iv2_embd/                       # InternVideo2 embedding per clip
 │   ├── {clip-uuid}.pickle
-├── ce1_embd/                       # Cosmos-Embed1 embedding per clip; enabled by `--embedding-algorithm cosmos-embed1-336p`
+├── ce1_embd_<variant>/             # Cosmos-Embed1 embedding per clip; enabled by `--embedding-algorithm cosmos-embed1-336p` (variant is e.g. `336p`)
 │   ├── {clip-uuid}.pickle
 ├── openai_embd/                    # OpenAI-compatible API embedding per clip; enabled by `--embedding-algorithm openai`
 │   ├── {clip-uuid}.pickle
 ├── iv2_embd_parquet/               # InternVideo2 embeddings grouped by a chunk of clips; used for semantic dedup
 │   ├── {video-uuid}_{chunk_index}.parquet
-├── ce1_embd_parquet/               # Cosmos-Embed1 embeddings grouped by a chunk of clips; used for semantic dedup
+├── ce1_embd_<variant>_parquet/     # Cosmos-Embed1 embeddings grouped by a chunk of clips; used for semantic dedup
 │   ├── {video-uuid}_{chunk_index}.parquet
 ├── openai_embd_parquet/            # OpenAI-compatible API embeddings grouped by a chunk of clips; used for semantic dedup
 │   ├── {video-uuid}_{chunk_index}.parquet
@@ -140,7 +140,7 @@ In case you want the output to be in a different S3 bucket than the input, you c
 
 - `--limit`: how many videos to process
 - `--no-generate-embeddings`: disables InterVideo2/Cosmos-Embed1 embedding generation; use `"generate_embeddings": false` in API endpoint.
-- `--embedding-algorithm`: specifies embedding model, available options are `cosmos-embed1`, `internvideo2` (default), and `openai` (requires an OpenAI-compatible endpoint; see [Use an OpenAI-Compatible Endpoint for Embedding](#use-an-openai-compatible-endpoint-for-embedding)).
+- `--embedding-algorithm`: specifies embedding model, available options are `cosmos-embed1-224p`, `cosmos-embed1-336p`, `cosmos-embed1-448p`, `internvideo2` (default), and `openai` (requires an OpenAI-compatible endpoint; see [Use an OpenAI-Compatible Endpoint for Embedding](../client/END_USER_GUIDE.md#use-an-openai-compatible-endpoint-for-embedding)). The `cosmos-embed1-*` suffix selects the input resolution; 224p is faster with 256-dim vectors, while 336p/448p are slower but score higher on retrieval/classification benchmarks and produce 768-dim vectors.
 - `--no-generate-captions`: disables VLM captioning; use `"generate_captions": false` in API endpoint.
 - `--generate-previews`: enables web preview generation.
 - `--upload-clip-info-in-chunks`: enables metadata jsonl for a group of clips and disables per-clip embedding & metadata writes.

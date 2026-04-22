@@ -245,6 +245,42 @@ def _assert_embeddings_written(output_dir: Path, clip: Clip, video_uuid: uuid.UU
     npt.assert_allclose(np.array(embedding_df.iloc[0]["embedding"]), np.array([0.1, 0.2], dtype=np.float32))
 
 
+@pytest.mark.parametrize(
+    ("embedding_algorithm", "expected_stem"),
+    [
+        ("internvideo2", "iv2_embd"),
+        ("cosmos-embed1-224p", "ce1_embd_224p"),
+        ("cosmos-embed1-336p", "ce1_embd_336p"),
+        ("cosmos-embed1-448p", "ce1_embd_448p"),
+        ("openai", "openai_embd"),
+    ],
+)
+def test_embedding_output_paths_per_algorithm(embedding_algorithm: str, expected_stem: str) -> None:
+    """Each algorithm (including per-resolution cosmos-embed1 variants) gets its own output directory."""
+    root = "/data/out"
+    assert ClipWriterStage.get_output_path_embds(root, embedding_algorithm) == f"{root}/{expected_stem}"
+    assert ClipWriterStage.get_output_path_embd_parquets(root, embedding_algorithm) == f"{root}/{expected_stem}_parquet"
+    assert ClipWriterStage.get_output_path_embd_lance(root, embedding_algorithm) == f"{root}/{expected_stem}_lance"
+    assert (
+        ClipWriterStage.get_output_path_embd_lance_fragments(root, embedding_algorithm)
+        == f"{root}/{expected_stem}_lance_fragments"
+    )
+    assert (
+        ClipWriterStage.get_output_path_embd_lance_fragments_processed(root, embedding_algorithm)
+        == f"{root}/{expected_stem}_lance_fragments_processed"
+    )
+
+
+def test_cosmos_embed1_variants_write_to_distinct_paths() -> None:
+    """Switching cosmos-embed1 resolution against the same output path must not silently overwrite."""
+    root = "/data/out"
+    paths = {
+        variant: ClipWriterStage.get_output_path_embds(root, f"cosmos-embed1-{variant}")
+        for variant in ("224p", "336p", "448p")
+    }
+    assert len(set(paths.values())) == len(paths)
+
+
 def test_process_data_writes_expected_local_outputs(tmp_path: Path) -> None:
     """End-to-end validation for per-clip assets and metadata aggregation."""
     stage, task, clip, main_window, output_dir = _stage_with_main_clip(tmp_path)
