@@ -670,6 +670,63 @@ def test_video_index_display_view_filters_discard_packets() -> None:
     assert index.display_pts_stream is display_pts_stream_0
 
 
+def test_video_index_does_not_mutate_caller_owned_arrays() -> None:
+    """VideoIndex should keep caller-owned arrays writeable while exposing read-only views."""
+    offset = np.array([0, 10, 20], dtype=np.int64)
+    size = np.array([100, 100, 100], dtype=np.int64)
+    pts_ns = np.array([100, 200, 300], dtype=np.int64)
+    pts_stream = np.array([10, 20, 30], dtype=np.int64)
+    is_keyframe = np.array([True, False, False], dtype=np.bool_)
+    is_discard = np.array([False, True, False], dtype=np.bool_)
+    kf_pts_ns = np.array([100], dtype=np.int64)
+    kf_pts_stream = np.array([10], dtype=np.int64)
+
+    index = VideoIndex(
+        offset=offset,
+        size=size,
+        pts_ns=pts_ns,
+        pts_stream=pts_stream,
+        is_keyframe=is_keyframe,
+        is_discard=is_discard,
+        kf_pts_ns=kf_pts_ns,
+        kf_pts_stream=kf_pts_stream,
+        time_base=Fraction(1, 30),
+    )
+
+    assert offset.flags.writeable is True
+    assert size.flags.writeable is True
+    assert pts_ns.flags.writeable is True
+    assert pts_stream.flags.writeable is True
+    assert is_keyframe.flags.writeable is True
+    assert is_discard.flags.writeable is True
+    assert kf_pts_ns.flags.writeable is True
+    assert kf_pts_stream.flags.writeable is True
+    assert index.offset.flags.writeable is False
+    assert index.size.flags.writeable is False
+    assert index.pts_ns.flags.writeable is False
+    assert index.pts_stream.flags.writeable is False
+    assert index.is_keyframe.flags.writeable is False
+    assert index.is_discard.flags.writeable is False
+    assert index.kf_pts_ns.flags.writeable is False
+    assert index.kf_pts_stream.flags.writeable is False
+    assert index.offset is not offset
+    assert index.size is not size
+    assert index.pts_ns is not pts_ns
+    assert index.pts_stream is not pts_stream
+    assert index.is_keyframe is not is_keyframe
+    assert index.is_discard is not is_discard
+    assert index.kf_pts_ns is not kf_pts_ns
+    assert index.kf_pts_stream is not kf_pts_stream
+    assert np.shares_memory(index.offset, offset)
+    assert np.shares_memory(index.size, size)
+    assert np.shares_memory(index.pts_ns, pts_ns)
+    assert np.shares_memory(index.pts_stream, pts_stream)
+    assert np.shares_memory(index.is_keyframe, is_keyframe)
+    assert np.shares_memory(index.is_discard, is_discard)
+    assert np.shares_memory(index.kf_pts_ns, kf_pts_ns)
+    assert np.shares_memory(index.kf_pts_stream, kf_pts_stream)
+
+
 @pytest.mark.parametrize(("height", "width"), [(0, 1), (1, 0), (-1, 1), (1, -1)])
 def test_video_metadata_raises_on_non_positive_dimensions(height: int, width: int) -> None:
     """VideoMetadata should reject zero or negative frame dimensions."""

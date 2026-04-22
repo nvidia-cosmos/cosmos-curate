@@ -19,7 +19,7 @@ import attrs
 import numpy as np
 import numpy.typing as npt
 
-from cosmos_curate.core.sensors.utils.helpers import make_numpy_fields_readonly
+from cosmos_curate.core.sensors.utils.helpers import as_readonly_view
 from cosmos_curate.core.sensors.utils.validation import (
     nondecreasing_int64_array,
     strictly_increasing_int64_array,
@@ -44,9 +44,18 @@ class ImageData:
 
     __hash__ = None  # type: ignore[assignment]
 
-    align_timestamps_ns: npt.NDArray[np.int64] = attrs.field(validator=strictly_increasing_int64_array)
-    sensor_timestamps_ns: npt.NDArray[np.int64] = attrs.field(validator=nondecreasing_int64_array)
-    frames: npt.NDArray[np.uint8] = attrs.field(validator=uint8_frame_batch)
+    align_timestamps_ns: npt.NDArray[np.int64] = attrs.field(
+        converter=as_readonly_view,
+        validator=strictly_increasing_int64_array,
+    )
+    sensor_timestamps_ns: npt.NDArray[np.int64] = attrs.field(
+        converter=as_readonly_view,
+        validator=nondecreasing_int64_array,
+    )
+    frames: npt.NDArray[np.uint8] = attrs.field(
+        converter=as_readonly_view,
+        validator=uint8_frame_batch,
+    )
     metadata: ImageMetadata
 
     @classmethod
@@ -71,7 +80,7 @@ class ImageData:
         )
 
     def __attrs_post_init__(self) -> None:
-        """Validate cross-field invariants and mark NumPy fields read-only."""
+        """Validate cross-field invariants."""
         expected_shape = (self.metadata.height, self.metadata.width, _RGB_CHANNELS)
         if self.frames.shape[1:] != expected_shape:
             msg = f"frames must have shape (N, {expected_shape[0]}, {expected_shape[1]}, 3), got {self.frames.shape}"
@@ -85,5 +94,3 @@ class ImageData:
                 f"frames={len(self.frames)}"
             )
             raise ValueError(msg)
-
-        make_numpy_fields_readonly(self)

@@ -157,6 +157,21 @@ def test_aligned_frame_timestamps_are_readonly() -> None:
         frame.align_timestamps_ns[0] = 2
 
 
+def test_aligned_frame_does_not_mutate_caller_owned_timestamps() -> None:
+    """AlignedFrame should wrap the caller's array without changing its writeability."""
+    align_timestamps_ns = np.array([1], dtype=np.int64)
+
+    frame = AlignedFrame(
+        align_timestamps_ns=align_timestamps_ns,
+        sensor_data={"cam0": cast("SensorData", _make_camera_data())},
+    )
+
+    assert align_timestamps_ns.flags.writeable is True
+    assert frame.align_timestamps_ns.flags.writeable is False
+    assert frame.align_timestamps_ns is not align_timestamps_ns
+    assert np.shares_memory(frame.align_timestamps_ns, align_timestamps_ns)
+
+
 @pytest.mark.parametrize(
     ("align_timestamps_ns", "match"),
     [

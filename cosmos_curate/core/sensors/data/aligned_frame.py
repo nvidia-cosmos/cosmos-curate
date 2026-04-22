@@ -23,8 +23,38 @@ import numpy as np
 import numpy.typing as npt
 
 from cosmos_curate.core.sensors.data.sensor_data import SensorData
-from cosmos_curate.core.sensors.utils.helpers import make_numpy_fields_readonly
+from cosmos_curate.core.sensors.utils.helpers import as_readonly_view
 from cosmos_curate.core.sensors.utils.validation import strictly_increasing_int64_array
+
+
+def _as_immutable_sensor_data(value: Mapping[str, SensorData]) -> Mapping[str, SensorData]:
+    """Return an immutable snapshot of the caller-provided sensor mapping."""
+    return MappingProxyType(dict(value))
+
+
+def _validate_sensor_alignment(
+    instance: "AlignedFrame",
+    _attribute: object,
+    value: Mapping[str, SensorData],
+) -> None:
+    """Validate that each sensor payload matches the aligned frame timeline."""
+    expected_len = len(instance.align_timestamps_ns)
+    for sensor_id, data in value.items():
+        if len(data.align_timestamps_ns) != expected_len:
+            msg = (
+                f"sensor {sensor_id!r} align_timestamps_ns length {len(data.align_timestamps_ns)} "
+                f"!= aligned frame length {expected_len}"
+            )
+            raise ValueError(msg)
+        if not np.array_equal(data.align_timestamps_ns, instance.align_timestamps_ns):
+            msg = f"sensor {sensor_id!r} align_timestamps_ns must exactly match aligned frame align_timestamps_ns"
+            raise ValueError(msg)
+        if len(data.sensor_timestamps_ns) != expected_len:
+            msg = (
+                f"sensor {sensor_id!r} sensor_timestamps_ns length "
+                f"{len(data.sensor_timestamps_ns)} != aligned frame length {expected_len}"
+            )
+            raise ValueError(msg)
 
 
 @attrs.define(hash=False, frozen=True)
@@ -40,36 +70,14 @@ class AlignedFrame:
 
     __hash__ = None  # type: ignore[assignment]
 
-    align_timestamps_ns: npt.NDArray[np.int64] = attrs.field(validator=strictly_increasing_int64_array)
-    sensor_data: Mapping[str, SensorData] = attrs.field()
-
-    @sensor_data.validator
-    def _validate_sensor_alignment(self, _attribute: object, value: Mapping[str, SensorData]) -> None:
-        """Validate that each sensor payload matches the aligned frame timeline."""
-        expected_len = len(self.align_timestamps_ns)
-        for sensor_id, data in value.items():
-            if len(data.align_timestamps_ns) != expected_len:
-                msg = (
-                    f"sensor {sensor_id!r} align_timestamps_ns length {len(data.align_timestamps_ns)} "
-                    f"!= aligned frame length {expected_len}"
-                )
-                raise ValueError(msg)
-            if not np.array_equal(data.align_timestamps_ns, self.align_timestamps_ns):
-                msg = f"sensor {sensor_id!r} align_timestamps_ns must exactly match aligned frame align_timestamps_ns"
-                raise ValueError(msg)
-            if len(data.sensor_timestamps_ns) != expected_len:
-                msg = (
-                    f"sensor {sensor_id!r} sensor_timestamps_ns length "
-                    f"{len(data.sensor_timestamps_ns)} != aligned frame length {expected_len}"
-                )
-                raise ValueError(msg)
-
-    def __attrs_post_init__(self) -> None:
-        """Post-initialization."""
-        make_numpy_fields_readonly(self)
-        sensor_data = dict(self.sensor_data)
-        # Make sensor_data immutable
-        object.__setattr__(self, "sensor_data", MappingProxyType(sensor_data))
+    align_timestamps_ns: npt.NDArray[np.int64] = attrs.field(
+        converter=as_readonly_view,
+        validator=strictly_increasing_int64_array,
+    )
+    sensor_data: Mapping[str, SensorData] = attrs.field(
+        converter=_as_immutable_sensor_data,
+        validator=_validate_sensor_alignment,
+    )
 
     def __getitem__(self, key: str) -> SensorData:
         """Get sensor data by key."""

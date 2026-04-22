@@ -15,14 +15,20 @@
 
 """Utilities shared across ``cosmos_curate.core.sensors`` (data models, devices, etc.)."""
 
-import attrs
-import numpy as np
-from attrs import AttrsInstance
+from typing import Any
+
+import numpy.typing as npt
 
 
-def make_numpy_fields_readonly(obj: AttrsInstance) -> None:
-    """Set ``writeable=False`` on top-level ``ndarray`` attrs fields of *obj*."""
-    for field in attrs.fields(type(obj)):
-        value = getattr(obj, field.name)
-        if isinstance(value, np.ndarray):
-            value.flags.writeable = False
+def as_readonly_view(array: npt.NDArray[Any]) -> npt.NDArray[Any]:
+    """Return a read-only view without mutating the caller-owned array."""
+    readonly_view = array.view()
+    readonly_view.flags.writeable = False
+    return readonly_view
+
+
+def as_readonly_view_tuple(
+    arrays: tuple[npt.NDArray[Any], ...] | list[npt.NDArray[Any]],
+) -> tuple[npt.NDArray[Any], ...]:
+    """Return a tuple of read-only views without mutating the caller-owned arrays."""
+    return tuple(as_readonly_view(array) for array in arrays)

@@ -140,6 +140,23 @@ def test_motion_vector_data_accepts_valid_frames_and_marks_them_readonly() -> No
         motion_vectors.frames[0][0, 0] = 1.0
 
 
+def test_motion_vector_data_does_not_mutate_caller_owned_frames() -> None:
+    """MotionVectorData should keep caller-owned frame tables writeable."""
+    frame0 = np.zeros((1, 10), dtype=np.float64)
+    frame1 = np.ones((2, 10), dtype=np.float64)
+
+    motion_vectors = MotionVectorData(frames=(frame0, frame1))
+
+    assert frame0.flags.writeable is True
+    assert frame1.flags.writeable is True
+    assert motion_vectors.frames[0].flags.writeable is False
+    assert motion_vectors.frames[1].flags.writeable is False
+    assert motion_vectors.frames[0] is not frame0
+    assert motion_vectors.frames[1] is not frame1
+    assert np.shares_memory(motion_vectors.frames[0], frame0)
+    assert np.shares_memory(motion_vectors.frames[1], frame1)
+
+
 def test_camera_data_accepts_matching_motion_vectors() -> None:
     """CameraData should accept motion vectors whose frame count matches the RGB frame count."""
     motion_vectors = MotionVectorData(
@@ -159,6 +176,39 @@ def test_camera_data_accepts_matching_motion_vectors() -> None:
     )
 
     assert camera_data.motion_vectors is motion_vectors
+
+
+def test_camera_data_does_not_mutate_caller_owned_arrays() -> None:
+    """CameraData should keep caller-owned arrays writeable while exposing read-only views."""
+    align_timestamps_ns = np.array([1, 2], dtype=np.int64)
+    sensor_timestamps_ns = np.array([1, 2], dtype=np.int64)
+    pts_stream = np.array([1, 2], dtype=np.int64)
+    frames = np.zeros((2, 1, 1, 3), dtype=np.uint8)
+
+    camera_data = CameraData(
+        align_timestamps_ns=align_timestamps_ns,
+        sensor_timestamps_ns=sensor_timestamps_ns,
+        pts_stream=pts_stream,
+        frames=frames,
+        metadata=_make_metadata(),
+    )
+
+    assert align_timestamps_ns.flags.writeable is True
+    assert sensor_timestamps_ns.flags.writeable is True
+    assert pts_stream.flags.writeable is True
+    assert frames.flags.writeable is True
+    assert camera_data.align_timestamps_ns.flags.writeable is False
+    assert camera_data.sensor_timestamps_ns.flags.writeable is False
+    assert camera_data.pts_stream.flags.writeable is False
+    assert camera_data.frames.flags.writeable is False
+    assert camera_data.align_timestamps_ns is not align_timestamps_ns
+    assert camera_data.sensor_timestamps_ns is not sensor_timestamps_ns
+    assert camera_data.pts_stream is not pts_stream
+    assert camera_data.frames is not frames
+    assert np.shares_memory(camera_data.align_timestamps_ns, align_timestamps_ns)
+    assert np.shares_memory(camera_data.sensor_timestamps_ns, sensor_timestamps_ns)
+    assert np.shares_memory(camera_data.pts_stream, pts_stream)
+    assert np.shares_memory(camera_data.frames, frames)
 
 
 @pytest.mark.parametrize(

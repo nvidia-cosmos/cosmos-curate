@@ -23,7 +23,7 @@ import numpy as np
 import numpy.typing as npt
 from attrs import validators
 
-from cosmos_curate.core.sensors.utils.helpers import make_numpy_fields_readonly
+from cosmos_curate.core.sensors.utils.helpers import as_readonly_view
 from cosmos_curate.core.sensors.utils.validation import (
     positive_value,
     strictly_increasing_int64_array,
@@ -154,6 +154,11 @@ def _copy_numpy_array(array: npt.NDArray[Any]) -> npt.NDArray[Any]:
     return np.array(array, copy=True)
 
 
+def _copy_as_readonly_view(array: npt.NDArray[Any]) -> npt.NDArray[Any]:
+    """Copy a numpy array and expose the copy as a read-only view."""
+    return as_readonly_view(_copy_numpy_array(array))
+
+
 @attrs.define(frozen=True)
 class SamplingWindow:
     """One half-open sampling window `[start_ns, exclusive_end_ns)`.
@@ -180,16 +185,13 @@ class SamplingWindow:
     start_ns: int
     exclusive_end_ns: int = attrs.field(validator=_end_ns_ge_start_ns)
     timestamps_ns: npt.NDArray[np.int64] = attrs.field(
+        converter=as_readonly_view,
         validator=validators.and_(
             strictly_increasing_int64_array,
             _start_ns_le_first_timestamp,
             _end_ns_lt_exclusive_end_ns,
         ),
     )
-
-    def __attrs_post_init__(self) -> None:
-        """Mark ndarray fields read-only."""
-        make_numpy_fields_readonly(self)
 
     def __len__(self) -> int:
         """Return the number of timestamps in this window."""
@@ -240,19 +242,15 @@ class SamplingGrid:
     start_ns: int
     exclusive_end_ns: int = attrs.field(validator=_end_ns_ge_start_ns)
     timestamps_ns: npt.NDArray[np.int64] = attrs.field(
+        converter=_copy_as_readonly_view,
         validator=validators.and_(
             strictly_increasing_int64_array,
             _start_ns_eq_first_timestamp,
             _end_ns_lt_exclusive_end_ns,
         ),
-        converter=_copy_numpy_array,
     )
     stride_ns: int = attrs.field(validator=positive_value)
     duration_ns: int = attrs.field(validator=positive_value)
-
-    def __attrs_post_init__(self) -> None:
-        """Mark ndarray fields read-only."""
-        make_numpy_fields_readonly(self)
 
     def __iter__(self) -> Iterator[SamplingWindow]:
         """Iterate over timestamp windows on the timeline.

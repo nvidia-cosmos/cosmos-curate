@@ -710,6 +710,22 @@ def test_sampling_window_timestamps_are_read_only() -> None:
         window.timestamps_ns[0] = 1
 
 
+def test_sampling_window_does_not_mutate_caller_owned_timestamps() -> None:
+    """SamplingWindow should keep the caller's timestamp array writeable."""
+    timestamps_ns = np.array([0, 100, 200], dtype=np.int64)
+
+    window = SamplingWindow(
+        timestamps_ns=timestamps_ns,
+        start_ns=0,
+        exclusive_end_ns=300,
+    )
+
+    assert timestamps_ns.flags.writeable is True
+    assert window.timestamps_ns.flags.writeable is False
+    assert window.timestamps_ns is not timestamps_ns
+    assert np.shares_memory(window.timestamps_ns, timestamps_ns)
+
+
 def test_sampling_window_len() -> None:
     """SamplingWindow should return the number of active timestamps in the window."""
     ts = np.array([0, 100, 200], dtype=np.int64)

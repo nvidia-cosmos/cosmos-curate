@@ -21,7 +21,7 @@ import attrs
 import numpy as np
 import numpy.typing as npt
 
-from cosmos_curate.core.sensors.utils.helpers import make_numpy_fields_readonly
+from cosmos_curate.core.sensors.utils.helpers import as_readonly_view
 from cosmos_curate.core.sensors.utils.validation import bool_array, int64_array, strictly_increasing_int64_array
 
 VIDEO_METADATA_VERSION = "1"
@@ -152,30 +152,36 @@ class VideoIndex:
 
     __hash__ = None  # type: ignore[assignment]
 
-    offset: npt.NDArray[np.int64] = attrs.field(validator=int64_array)
-    size: npt.NDArray[np.int64] = attrs.field(validator=int64_array)
-    pts_ns: npt.NDArray[np.int64] = attrs.field(validator=strictly_increasing_int64_array)
-    pts_stream: npt.NDArray[np.int64] = attrs.field(validator=strictly_increasing_int64_array)
-    is_keyframe: npt.NDArray[np.bool_] = attrs.field(validator=bool_array)
+    offset: npt.NDArray[np.int64] = attrs.field(converter=as_readonly_view, validator=int64_array)
+    size: npt.NDArray[np.int64] = attrs.field(converter=as_readonly_view, validator=int64_array)
+    pts_ns: npt.NDArray[np.int64] = attrs.field(converter=as_readonly_view, validator=strictly_increasing_int64_array)
+    pts_stream: npt.NDArray[np.int64] = attrs.field(
+        converter=as_readonly_view,
+        validator=strictly_increasing_int64_array,
+    )
+    is_keyframe: npt.NDArray[np.bool_] = attrs.field(converter=as_readonly_view, validator=bool_array)
     is_discard: npt.NDArray[np.bool_] = attrs.field(
+        converter=as_readonly_view,
         validator=attrs.validators.and_(
             bool_array,
             _packet_array_lengths,
-        )
+        ),
     )
     kf_pts_ns: npt.NDArray[np.int64] = attrs.field(
+        converter=as_readonly_view,
         validator=attrs.validators.and_(
             strictly_increasing_int64_array,
             _kf_pts_ns,
-        )
+        ),
     )
     # Attach after `kf_pts_ns` so this validator can compare both keyframe
     # arrays once attrs has set the earlier field.
     kf_pts_stream: npt.NDArray[np.int64] = attrs.field(
+        converter=as_readonly_view,
         validator=attrs.validators.and_(
             strictly_increasing_int64_array,
             _kf_pts_stream,
-        )
+        ),
     )
     time_base: Fraction
     _display_mask: npt.NDArray[np.bool_] = attrs.field(init=False, repr=False, eq=False)
@@ -183,20 +189,15 @@ class VideoIndex:
     _display_pts_stream: npt.NDArray[np.int64] = attrs.field(init=False, repr=False, eq=False)
 
     def __attrs_post_init__(self) -> None:
-        """Cache display-only views and mark NumPy fields read-only."""
-        display_mask = ~self.is_discard
-        display_mask.flags.writeable = False
+        """Cache display-only views derived from the packet timeline."""
+        display_mask = as_readonly_view(~self.is_discard)
         object.__setattr__(self, "_display_mask", display_mask)
 
-        display_pts_ns = self.pts_ns[display_mask]
-        display_pts_ns.flags.writeable = False
+        display_pts_ns = as_readonly_view(self.pts_ns[display_mask])
         object.__setattr__(self, "_display_pts_ns", display_pts_ns)
 
-        display_pts_stream = self.pts_stream[display_mask]
-        display_pts_stream.flags.writeable = False
+        display_pts_stream = as_readonly_view(self.pts_stream[display_mask])
         object.__setattr__(self, "_display_pts_stream", display_pts_stream)
-
-        make_numpy_fields_readonly(self)
 
     def __len__(self) -> int:
         """Return number of packets."""

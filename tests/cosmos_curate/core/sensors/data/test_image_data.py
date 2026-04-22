@@ -62,3 +62,30 @@ def test_image_data_rejects_mismatched_array_lengths() -> None:
             frames=np.zeros((2, 3, 4, 3), dtype=np.uint8),
             metadata=ImageMetadata(height=3, width=4, image_format="png"),
         )
+
+
+def test_image_data_does_not_mutate_caller_owned_arrays() -> None:
+    """ImageData should keep the caller's arrays writeable while exposing read-only views."""
+    align_timestamps_ns = np.array([0, 1], dtype=np.int64)
+    sensor_timestamps_ns = np.array([0, 1], dtype=np.int64)
+    frames = np.zeros((2, 3, 4, 3), dtype=np.uint8)
+
+    data = ImageData(
+        align_timestamps_ns=align_timestamps_ns,
+        sensor_timestamps_ns=sensor_timestamps_ns,
+        frames=frames,
+        metadata=ImageMetadata(height=3, width=4, image_format="png"),
+    )
+
+    assert align_timestamps_ns.flags.writeable is True
+    assert sensor_timestamps_ns.flags.writeable is True
+    assert frames.flags.writeable is True
+    assert data.align_timestamps_ns.flags.writeable is False
+    assert data.sensor_timestamps_ns.flags.writeable is False
+    assert data.frames.flags.writeable is False
+    assert data.align_timestamps_ns is not align_timestamps_ns
+    assert data.sensor_timestamps_ns is not sensor_timestamps_ns
+    assert data.frames is not frames
+    assert np.shares_memory(data.align_timestamps_ns, align_timestamps_ns)
+    assert np.shares_memory(data.sensor_timestamps_ns, sensor_timestamps_ns)
+    assert np.shares_memory(data.frames, frames)

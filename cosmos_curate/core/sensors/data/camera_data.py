@@ -22,7 +22,7 @@ import numpy as np
 import numpy.typing as npt
 
 from cosmos_curate.core.sensors.data.video import VideoMetadata
-from cosmos_curate.core.sensors.utils.helpers import make_numpy_fields_readonly
+from cosmos_curate.core.sensors.utils.helpers import as_readonly_view, as_readonly_view_tuple
 from cosmos_curate.core.sensors.utils.validation import (
     nondecreasing_int64_array,
     strictly_increasing_int64_array,
@@ -123,13 +123,8 @@ class MotionVectorData:
     # [9]   motion_scale
     frames: tuple[npt.NDArray[np.float64], ...] = attrs.field(
         validator=_mvd_frames,
-        converter=tuple,
+        converter=as_readonly_view_tuple,
     )
-
-    def __attrs_post_init__(self) -> None:
-        """Mark frame arrays read-only."""
-        for frame in self.frames:
-            frame.flags.writeable = False
 
 
 @attrs.define(hash=False, frozen=True)
@@ -154,11 +149,22 @@ class CameraData:
     """
 
     __hash__ = None  # type: ignore[assignment]
-    align_timestamps_ns: npt.NDArray[np.int64] = attrs.field(validator=strictly_increasing_int64_array)
-    sensor_timestamps_ns: npt.NDArray[np.int64] = attrs.field(validator=nondecreasing_int64_array)
-    pts_stream: npt.NDArray[np.int64] = attrs.field(validator=nondecreasing_int64_array)
-
-    frames: npt.NDArray[np.uint8] = attrs.field(validator=uint8_frame_batch)
+    align_timestamps_ns: npt.NDArray[np.int64] = attrs.field(
+        converter=as_readonly_view,
+        validator=strictly_increasing_int64_array,
+    )
+    sensor_timestamps_ns: npt.NDArray[np.int64] = attrs.field(
+        converter=as_readonly_view,
+        validator=nondecreasing_int64_array,
+    )
+    pts_stream: npt.NDArray[np.int64] = attrs.field(
+        converter=as_readonly_view,
+        validator=nondecreasing_int64_array,
+    )
+    frames: npt.NDArray[np.uint8] = attrs.field(
+        converter=as_readonly_view,
+        validator=uint8_frame_batch,
+    )
     # Attach batch-length validation to the last required field so all batch
     # arrays are already set when attrs runs this validator.
     metadata: VideoMetadata = attrs.field(
@@ -171,7 +177,3 @@ class CameraData:
         default=None,
         validator=_motion_vectors,
     )  # optional; requires decoder with export_mvs
-
-    def __attrs_post_init__(self) -> None:
-        """Mark NumPy fields read-only."""
-        make_numpy_fields_readonly(self)
