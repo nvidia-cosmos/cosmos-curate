@@ -398,6 +398,11 @@ cosmos-curate local launch --image-name cosmos-curate --image-tag slim \
 The `--pixi-path .` option mounts the `.pixi` directory from the given path into the container, so the container
 uses your pre-installed environments directly — no environment installation at runtime.
 
+The container runs as your host UID:GID, so files written to bind-mounted paths are owned by you on the host;
+`$HOME` caches (Triton, NVIDIA kernel caches, etc.) persist in `~/.cache/cosmos-curate-home/` across runs. Set
+`COSMOS_CURATE_LOCAL_HOME_DIR` to redirect this scratch dir (e.g. to a local disk when `$HOME` is a remote mount
+or has tight quotas).
+
 #### Configuration Files
 
 Instead of passing many CLI flags, you can define all pipeline settings in a JSON or YAML

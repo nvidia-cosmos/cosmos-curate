@@ -364,7 +364,21 @@ def _launch_in_docker_container(opts: LaunchDocker) -> None:
 
     gpus_string = f'"device={opts.gpus}"' if opts.gpus else "all"
 
-    user_strings = ["-u", f"{os.getuid()}:{os.getgid()}"] if is_model_cli else []
+    user_strings = ["-u", f"{os.getuid()}:{os.getgid()}"]
+    # $HOME doesn't exist inside the image for an arbitrary UID; bind-mount a
+    # dedicated host scratch dir so libs can write there (caches persist across
+    # runs) and the --pixi-path symlink preamble works. The scratch path can be
+    # overridden via COSMOS_CURATE_LOCAL_HOME_DIR (useful for remote homedirs or
+    # tight quotas).
+    home_dir = Path.home()
+    scratch_home_override = os.environ.get("COSMOS_CURATE_LOCAL_HOME_DIR")
+    scratch_home = (
+        Path(scratch_home_override).expanduser()
+        if scratch_home_override
+        else home_dir / ".cache" / "cosmos-curate-home"
+    )
+    scratch_home.mkdir(parents=True, exist_ok=True)
+    home_strings = ["-v", f"{scratch_home}:{home_dir}", "-e", f"HOME={home_dir}"]
     interactive_strings = ["-i"] if is_postgres_cli else []
 
     docker_command = [
@@ -382,6 +396,7 @@ def _launch_in_docker_container(opts: LaunchDocker) -> None:
         "NVCF_REQUEST_STATUS=false",
     ]
     docker_command.extend(user_strings)
+    docker_command.extend(home_strings)
     docker_command.extend(
         [
             "-v",
