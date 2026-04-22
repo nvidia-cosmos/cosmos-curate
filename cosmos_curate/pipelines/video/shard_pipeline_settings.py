@@ -136,7 +136,10 @@ class ShardPipelineSettings:
         default=None,
         validator=validators.optional(validators.instance_of(str)),
         metadata=cli(
-            help="S3 or local path to parquet files containing semantically deduplicated clip IDs",
+            help=(
+                "S3 or local path to the dedup pipeline output root containing parquet files with semantically"
+                " deduplicated clip IDs (pass the directory containing 'extraction/', not the extraction/ path itself)"
+            ),
             default=None,
         ),
     )
