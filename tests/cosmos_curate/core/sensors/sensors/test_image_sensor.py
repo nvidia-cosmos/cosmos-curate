@@ -23,17 +23,11 @@ import numpy.typing as npt
 import pytest
 from PIL import Image as PILImage
 
+import cosmos_curate.core.sensors.utils.io as io_module
 from cosmos_curate.core.sensors.sampling.grid import SamplingGrid, SamplingWindow
 from cosmos_curate.core.sensors.sampling.spec import SamplingSpec
 from cosmos_curate.core.sensors.sensors import image_sensor as image_sensor_module
 from cosmos_curate.core.sensors.sensors.image_sensor import ImageSensor, _resolve_sensor_timestamps
-from cosmos_curate.core.utils.storage.storage_client import StoragePrefix
-
-
-class _DummyRemotePrefix(StoragePrefix):
-    @property
-    def path(self) -> str:
-        return f"dummy://{self._input}"
 
 
 class _StaticGrid:
@@ -56,9 +50,9 @@ class _StaticGrid:
 
 
 class _StaticSpec:
-    def __init__(self, windows: list[np.ndarray]) -> None:
+    def __init__(self, windows: list[np.ndarray], policy: object = None) -> None:
         self.grid = _StaticGrid(windows)
-        self.policy = object()
+        self.policy = policy
 
 
 def _write_image(
@@ -295,28 +289,36 @@ def test_image_sensor_empty_image_data_is_cached(tmp_path: pathlib.Path) -> None
     assert sensor._get_empty_image_data() is sensor._get_empty_image_data()
 
 
-def test_image_sensor_read_bytes_requires_client_for_remote_source() -> None:
-    """Remote sources should require a storage client."""
-    sensor = ImageSensor([pathlib.Path(__file__)])
+def test_image_sensor_remote_uri_requires_client_params() -> None:
+    """An s3:// URI source with no client_params should raise ValueError on load."""
+    sensor = ImageSensor(["s3://bucket/image.png"])
 
-    with pytest.raises(ValueError, match="storage client is required for non-local image sources"):
-        sensor._read_bytes(_DummyRemotePrefix("bucket/path"))
+    with pytest.raises(ValueError, match="client_params is required"):
+        next(sensor.sample(_StaticSpec([np.array([0], dtype=np.int64)], policy=None)))
 
 
-def test_image_sensor_read_bytes_uses_storage_client_for_remote_source(
+def test_image_sensor_remote_uri_threads_client_params(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: pathlib.Path,
 ) -> None:
-    """Remote sources should delegate reads through storage_utils when a client is configured."""
-    expected = b"remote-bytes"
+    """client_params should be forwarded to open_file when loading a remote URI."""
+    image_path = tmp_path / "img.png"
+    _write_image(image_path, (10, 20, 30))
+    expected_params = {"transport_params": {"client": object()}}
+    captured: dict[str, object] = {}
+    real_open_file = io_module.open_file
 
-    def _fake_read_bytes(source: StoragePrefix, client: object) -> bytes:
-        assert str(source) == "dummy://bucket/path"
-        assert client is fake_client
-        return expected
+    def _patched_open_file(src: object, mode: str = "rb", client_params: object = None) -> object:
+        captured["src"] = src
+        captured["client_params"] = client_params
+        if isinstance(src, str) and src.startswith("s3://"):
+            return real_open_file(image_path, mode)
+        return real_open_file(src, mode, client_params)  # type: ignore[arg-type]
 
-    fake_client = object()
-    monkeypatch.setattr(image_sensor_module.storage_utils, "read_bytes", _fake_read_bytes)
+    monkeypatch.setattr(io_module, "open_file", _patched_open_file)
 
-    sensor = ImageSensor([pathlib.Path(__file__)], client=fake_client)
+    sensor = ImageSensor(["s3://bucket/image.png"], client_params=expected_params)
+    next(sensor.sample(_StaticSpec([np.array([0], dtype=np.int64)], policy=None)))
 
-    assert sensor._read_bytes(_DummyRemotePrefix("bucket/path")) == expected
+    assert captured["src"] == "s3://bucket/image.png"
+    assert captured["client_params"] is expected_params

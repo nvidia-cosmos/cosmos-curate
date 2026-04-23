@@ -15,9 +15,8 @@
 
 """Sensor wrapper for timestamped still images."""
 
-import io
 from collections.abc import Generator, Sequence
-from pathlib import Path
+from typing import Any
 
 import numpy as np
 import numpy.typing as npt
@@ -26,8 +25,9 @@ from PIL import Image as PILImage
 from cosmos_curate.core.sensors.data.image_data import ImageData, ImageMetadata
 from cosmos_curate.core.sensors.sampling.sampler import sample_window_indices
 from cosmos_curate.core.sensors.sampling.spec import SamplingSpec
+from cosmos_curate.core.sensors.types.types import DataSource
+from cosmos_curate.core.sensors.utils.io import open_data_source
 from cosmos_curate.core.sensors.utils.validation import require_strictly_increasing
-from cosmos_curate.core.utils.storage import storage_client, storage_utils
 
 
 def _resolve_sensor_timestamps(
@@ -53,18 +53,18 @@ class ImageSensor:
 
     def __init__(
         self,
-        sources: Sequence[storage_client.StoragePrefix | Path],
+        sources: Sequence[DataSource],
         sensor_timestamps_ns: npt.NDArray[np.int64] | None = None,
         *,
-        client: storage_client.StorageClient | None = None,
+        client_params: dict[str, Any] | None = None,
     ) -> None:
-        """Initialize with image sources, optional sensor timestamps, and optional storage client."""
+        """Initialize with image sources, optional sensor timestamps, and optional storage client params."""
         if len(sources) == 0:
             msg = "sources must be non-empty"
             raise ValueError(msg)
 
         self._sources = list(sources)
-        self._client = client
+        self._client_params = client_params
         self._provided_sensor_timestamps_ns = sensor_timestamps_ns
         self._sensor_timestamps_ns: npt.NDArray[np.int64] | None = None
         self._empty_image_data: ImageData | None = None
@@ -142,19 +142,12 @@ class ImageSensor:
 
     def _load_frame(self, idx: int) -> tuple[npt.NDArray[np.uint8], ImageMetadata]:
         """Read and decode one image frame."""
-        raw = self._read_bytes(self._sources[idx])
-        with PILImage.open(io.BytesIO(raw)) as image:
+        with (
+            open_data_source(self._sources[idx], client_params=self._client_params) as stream,
+            PILImage.open(stream) as image,
+        ):
             rgb_image = image.convert("RGB")
             frame = np.array(rgb_image, dtype=np.uint8)
             fmt = image.format.lower() if image.format is not None else None
         metadata = ImageMetadata(height=int(frame.shape[0]), width=int(frame.shape[1]), image_format=fmt)
         return frame, metadata
-
-    def _read_bytes(self, source: storage_client.StoragePrefix | Path) -> bytes:
-        """Read image bytes from local or remote storage."""
-        if isinstance(source, Path):
-            return source.read_bytes()
-        if self._client is None:
-            msg = "storage client is required for non-local image sources"
-            raise ValueError(msg)
-        return storage_utils.read_bytes(source, self._client)

@@ -81,12 +81,14 @@ class ImageLoadStage(CuratorStage):
             msg = f"No input images found under {self._input_path}"
             raise ValueError(msg)
 
-        sources = [storage_utils.get_full_path(self._input_path, rel) for rel in relative_paths]
+        raw_sources = [storage_utils.get_full_path(self._input_path, rel) for rel in relative_paths]
+        sources = [s if isinstance(s, pathlib.Path) else str(s) for s in raw_sources]
+        client_params = storage_utils.get_smart_open_client_params(self._client) if self._client is not None else None
         sensor_timestamps_ns = np.arange(len(sources), dtype=np.int64)
         self._image_sensor = ImageSensor(
             sources,
             sensor_timestamps_ns=sensor_timestamps_ns,
-            client=self._client,
+            client_params=client_params,
         )
         self._start_ns_by_relative_path = {
             rel: int(sensor_timestamps_ns[idx]) for idx, rel in enumerate(relative_paths)

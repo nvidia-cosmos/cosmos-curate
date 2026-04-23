@@ -1153,3 +1153,19 @@ class StorageWriter:
         logger.debug(f"StorageWriter.close: uploading {staging} -> {self._base_path}/{sub_path}")
         self._upload_file(sub_path, staging)
         staging.unlink(missing_ok=True)
+
+
+def get_smart_open_client_params(client: StorageClient) -> dict[str, Any]:
+    """Return smart_open-compatible ``client_params`` for a ``StorageClient``.
+
+    The returned dict can be passed directly to
+    ``cosmos_curate.core.sensors.utils.io.open_data_source`` (or ``open_file``)
+    as ``client_params=``, bridging the storage-client abstraction to the
+    ``smart_open`` transport layer.
+    """
+    if isinstance(client, s3_client.S3Client):
+        return {"transport_params": {"client": client.s3}}
+    if isinstance(client, azure_client.AzureClient):
+        return {"transport_params": {"client": client.service_client}}
+    msg = f"Unsupported StorageClient type for smart_open bridge: {type(client)}"
+    raise TypeError(msg)
