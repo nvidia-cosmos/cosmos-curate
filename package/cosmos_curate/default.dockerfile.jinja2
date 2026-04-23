@@ -255,14 +255,50 @@ COPY cosmos_curate/pipelines/video/super_resolution/color_fix.py \
 ENV SEEDVR_ROOT={{code_dir_str}}/SeedVR
 {% endif %}
 
-# For cosmos-xenna development
-# For every environment, uninstall cosmos-xenna and then reinstall from local build.
+# For cosmos-xenna development.
+# Requires a pre-built manylinux wheel matching THIS image's architecture
+# (x86_64 or aarch64), placed at one of:
+#   <repo-root>/target/wheels/cosmos_xenna-*manylinux*_<arch>.whl
+#       (canonical / CI)
+#   <repo-root>/cosmos-xenna/target/wheels/cosmos_xenna-*manylinux*_<arch>.whl
+#       (maturin default when building inside the cosmos-xenna submodule)
+# where <arch> is the value of `uname -m` evaluated inside the build (i.e.
+# `x86_64` for amd64 images, `aarch64` for arm64 images such as GH200/GB200).
+#
+# Both wheel directories are copied into the image; install/check then narrows
+# to the manylinux wheel matching the runtime architecture only. This is
+# important when the host's target/wheels/ contains additional artifacts for
+# other targets (e.g. a `macosx_*_arm64` wheel left behind by a local
+# `maturin build` on macOS, or both x86_64 and aarch64 manylinux wheels built
+# side-by-side) -- non-matching wheels are silently ignored, never installed.
+#
+# cosmos-xenna is a maturin/pyo3 (Rust) package; this image does NOT ship a
+# Rust toolchain, so a source install would fail. Build the wheel on the host
+# first for the correct target, e.g.:
+#
+#   cd <cosmos-xenna source> && uv sync --group dev && \
+#       uv run maturin build --release --strip \
+#           --compatibility manylinux_2_35 \
+#           --target x86_64-unknown-linux-gnu --zig    # for amd64 images
+#       # or:
+#       uv run maturin build --release --strip \
+#           --compatibility manylinux_2_35 \
+#           --target aarch64-unknown-linux-gnu --zig   # for arm64 images
+#
 {% if use_local_xenna_build %}
-COPY cosmos-xenna /tmp/cosmos-xenna
+COPY ["targe[t]/whee[l]s/", "cosmos-xenn[a]/targe[t]/whee[l]s/", "/tmp/cosmos-xenna-wheels/"]
+RUN ARCH="$(uname -m)" && \
+    ls /tmp/cosmos-xenna-wheels/cosmos_xenna-*manylinux*_${ARCH}.whl >/dev/null 2>&1 \
+    || { echo "ERROR: no cosmos-xenna manylinux ${ARCH} wheel found in target/wheels/ or cosmos-xenna/target/wheels/."; \
+         echo "Found these wheels (none usable for this image, arch=${ARCH}):"; \
+         ls /tmp/cosmos-xenna-wheels/ 2>/dev/null || echo "  (no wheels directory at all)"; \
+         echo "Build a manylinux ${ARCH} wheel on the host first."; \
+         exit 1; }
 {% for env in envs %}
-RUN cd {{code_dir_str}} && \
+RUN ARCH="$(uname -m)" && \
+    cd {{code_dir_str}} && \
     pixi run --as-is -e {{ env }} pip uninstall -y cosmos-xenna && \
-    pixi run --as-is -e {{ env }} pip install /tmp/cosmos-xenna
+    pixi run --as-is -e {{ env }} pip install /tmp/cosmos-xenna-wheels/cosmos_xenna-*manylinux*_${ARCH}.whl
 {% endfor %}
 {% endif %}
 

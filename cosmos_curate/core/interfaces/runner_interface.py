@@ -17,13 +17,19 @@
 import abc
 from typing import TypeVar
 
+import attrs
 import ray
 from loguru import logger
 
 from cosmos_curate.core.interfaces.stage_interface import CuratorStageSpec, PipelineTask
 from cosmos_curate.core.utils.infra import ray_cluster_utils
 from cosmos_xenna.pipelines.private.pipelines import run_pipeline as xenna_run_pipeline
-from cosmos_xenna.pipelines.private.specs import PipelineConfig, PipelineSpec
+from cosmos_xenna.pipelines.private.specs import (
+    PipelineConfig,
+    PipelineSpec,
+    StreamingSpecificSpec,
+)
+from cosmos_xenna.utils.verbosity import VerbosityLevel
 
 T = TypeVar("T", bound=PipelineTask)
 
@@ -64,7 +70,56 @@ class XennaRunner(RunnerInterface):
 
     This runner executes pipelines using the Xenna streaming/batch execution engine
     with Ray for distributed computing.
+
+    Per-pipeline tuning of Xenna's streaming-mode behavior (autoscaler windows, queue
+    backpressure, scale-down policy) is supported via the ``streaming_spec`` constructor
+    argument or the :meth:`with_streaming_overrides` convenience classmethod. When omitted,
+    the spec returned by :meth:`_default_streaming_spec` is used.
     """
+
+    def __init__(self, streaming_spec: StreamingSpecificSpec | None = None) -> None:
+        """Initialize the runner with an optional streaming-mode spec.
+
+        Args:
+            streaming_spec: Xenna ``StreamingSpecificSpec`` to apply when execution
+                mode resolves to STREAMING. ``None`` means use
+                :meth:`_default_streaming_spec`. Ignored by Xenna in BATCH mode.
+
+        """
+        self._streaming_spec: StreamingSpecificSpec = streaming_spec or self._default_streaming_spec()
+
+    @staticmethod
+    def _default_streaming_spec() -> StreamingSpecificSpec:
+        """Return the default ``StreamingSpecificSpec`` shared by all pipelines."""
+        return StreamingSpecificSpec(
+            autoscale_interval_s=60 * 3.0,
+            autoscale_speed_estimation_window_duration_s=60 * 3.0,
+            max_queued_multiplier=1.5,
+            max_queued_lower_bound=16,
+            autoscaler_verbosity_level=VerbosityLevel.NONE,
+            executor_verbosity_level=VerbosityLevel.NONE,
+        )
+
+    @classmethod
+    def with_streaming_overrides(cls, **overrides: object) -> "XennaRunner":
+        """Build a runner whose default streaming spec is evolved with ``overrides``.
+
+        Pipelines that need to tune a small number of streaming-mode knobs can call
+        this without having to repeat all of the unchanged defaults from
+        :meth:`_default_streaming_spec`. ``overrides`` are forwarded to
+        :func:`attrs.evolve`, so any field on
+        :class:`cosmos_xenna.pipelines.private.specs.StreamingSpecificSpec` is valid.
+
+        Args:
+            **overrides: Field/value pairs to override on the default spec.
+
+        Returns:
+            A new :class:`XennaRunner` whose ``streaming_spec`` is the default spec
+            evolved with ``overrides``.
+
+        """
+        spec = attrs.evolve(cls._default_streaming_spec(), **overrides)  # type: ignore[arg-type]
+        return cls(streaming_spec=spec)
 
     def run(
         self,
@@ -92,8 +147,6 @@ class XennaRunner(RunnerInterface):
             is_running_on_slurm,
             is_running_on_the_cloud,
         )
-        from cosmos_xenna.pipelines.private.specs import StreamingSpecificSpec  # noqa: PLC0415
-        from cosmos_xenna.utils.verbosity import VerbosityLevel  # noqa: PLC0415
 
         # Prepare the pipeline (download models, determine execution mode)
         resolved_execution_mode = _prepare_to_run_pipeline(stage_specs, model_weights_prefix, execution_mode)
@@ -107,14 +160,7 @@ class XennaRunner(RunnerInterface):
             monitoring_verbosity_level=VerbosityLevel.NONE
             if is_running_on_the_cloud() and not is_running_on_slurm()
             else VerbosityLevel.INFO,
-            mode_specific=StreamingSpecificSpec(
-                autoscale_interval_s=60 * 3.0,
-                autoscale_speed_estimation_window_duration_s=60 * 3.0,
-                max_queued_multiplier=1.5,
-                max_queued_lower_bound=16,
-                autoscaler_verbosity_level=VerbosityLevel.NONE,
-                executor_verbosity_level=VerbosityLevel.NONE,
-            ),
+            mode_specific=self._streaming_spec,
         )
 
         try:

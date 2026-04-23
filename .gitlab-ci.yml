@@ -380,6 +380,13 @@ unit_tests:
     - *setup_curator_cli
     - source .gitlab/scripts/common.sh
     - get_cache_refs "${BUILD_IMAGE_REPO}" "${PLATFORM}"
+    - |
+      if [[ ",${CI_MERGE_REQUEST_LABELS:-}," == *",use-local-xenna-build,"* && "${BUILD_EXTRA_ARGS:-}" != *"--slim"* ]]; then
+        echo "MR label 'use-local-xenna-build' detected; looking for cosmos-xenna wheel..."
+        ls -la target/wheels/ 2>/dev/null || true
+        BUILD_EXTRA_ARGS="${BUILD_EXTRA_ARGS:-} --use-local-xenna-build"
+        echo "Will pass to cosmos-curate image build: ${BUILD_EXTRA_ARGS}"
+      fi
     # Build and push in a single step (BuildKit pushes directly to registry)
     - |
       cosmos-curate image build \
