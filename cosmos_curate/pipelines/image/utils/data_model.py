@@ -90,7 +90,7 @@ class Image:
     """Which stage rejected the image: 'semantic' or 'classifier'."""
 
     qwen_rejection_reasons: dict[str, str] | None = None
-    """Structured rejection reasons written by semantic/classifier postprocessing when applicable."""
+    """Accumulated rejection reasons from semantic filter and/or classifier postprocessing."""
 
     is_filtered: bool = False
     """Whether the image was filtered out by semantic or classifier postprocessing."""

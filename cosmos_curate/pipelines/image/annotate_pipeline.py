@@ -226,8 +226,15 @@ def _assemble_stages(args: argparse.Namespace) -> list[CuratorStage | CuratorSta
                     prompt_text=args.caption_prompt_text or None,
                     stage2_caption=False,
                     stage2_prompt_text=None,
-                    caption_prep_min_pixels=getattr(args, "caption_prep_min_pixels", None),
-                    caption_prep_max_pixels=getattr(args, "caption_prep_max_pixels", None),
+                    caption_prep_min_pixels=args.caption_prep_min_pixels,
+                    caption_prep_max_pixels=args.caption_prep_max_pixels,
+                    openai_raw_image=args.openai_caption_raw_image,
+                    openai_model_name=args.openai_caption_model,
+                    openai_caption_retries=args.openai_caption_retries,
+                    openai_retry_delay_seconds=args.openai_retry_delay_seconds,
+                    gemini_model_name=args.gemini_caption_model,
+                    gemini_caption_retries=args.gemini_caption_retries,
+                    gemini_retry_delay_seconds=args.gemini_retry_delay_seconds,
                     verbose=args.verbose,
                     perf_profile=args.perf_profile,
                 )
@@ -310,7 +317,7 @@ def _setup_parser(parser: argparse.ArgumentParser) -> None:
         type=str,
         default="qwen",
         choices=sorted(IMAGE_CAPTION_ALGOS),
-        help="Captioning algorithm for images (vLLM image-capable models).",
+        help="Captioning algorithm for images (local vLLM variants, OpenAI-compatible, or Gemini).",
     )
     parser.add_argument(
         "--caption-num-gpus",
@@ -361,6 +368,47 @@ def _setup_parser(parser: argparse.ArgumentParser) -> None:
         type=str,
         default=None,
         help="Custom prompt text for captioning (overrides prompt variant).",
+    )
+    parser.add_argument(
+        "--gemini-caption-model",
+        type=str,
+        default="models/gemini-2.5-pro",
+        help="Gemini model name when --captioning-algorithm gemini is selected.",
+    )
+    parser.add_argument(
+        "--gemini-caption-retries",
+        type=int,
+        default=3,
+        help="Retry count for Gemini image captioning requests.",
+    )
+    parser.add_argument(
+        "--gemini-retry-delay-seconds",
+        type=float,
+        default=1.0,
+        help="Delay between Gemini image captioning retries.",
+    )
+    parser.add_argument(
+        "--openai-caption-model",
+        type=str,
+        default="auto",
+        help="OpenAI-compatible model name when --captioning-algorithm openai is selected.",
+    )
+    parser.add_argument(
+        "--openai-caption-retries",
+        type=int,
+        default=3,
+        help="Retry count for OpenAI-compatible image captioning requests.",
+    )
+    parser.add_argument(
+        "--openai-retry-delay-seconds",
+        type=float,
+        default=1.0,
+        help="Delay between OpenAI-compatible image captioning retries.",
+    )
+    parser.add_argument(
+        "--openai-caption-raw-image",
+        action="store_true",
+        help="Send original image bytes to the OpenAI-compatible endpoint instead of local-preprocessed PNGs.",
     )
     parser.add_argument(
         "--semantic-filter",

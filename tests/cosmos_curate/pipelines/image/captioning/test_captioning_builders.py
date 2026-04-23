@@ -18,9 +18,16 @@
 import pytest
 
 from cosmos_curate.core.interfaces.stage_interface import CuratorStageSpec
+from cosmos_curate.core.utils.config.config import ConfigFileData, Gemini
+from cosmos_curate.pipelines.image.captioning import image_api_caption_stages
 from cosmos_curate.pipelines.image.captioning.captioning_builders import (
     ImageCaptioningConfig,
     build_image_captioning_stages,
+)
+from cosmos_curate.pipelines.image.captioning.image_api_caption_stages import (
+    ImageGeminiCaptionStage,
+    ImageOpenAICaptionStage,
+    ImageOpenAIPrepStage,
 )
 from cosmos_curate.pipelines.image.captioning.image_vllm_stages import ImageVllmCaptionStage, ImageVllmPrepStage
 
@@ -74,3 +81,38 @@ def test_build_image_captioning_stages_leaves_qwen25_preprocess_disabled() -> No
     assert isinstance(prep_stage, CuratorStageSpec)
     assert isinstance(prep_stage.stage, ImageVllmPrepStage)
     assert prep_stage.stage._vllm_config.preprocess is False
+
+
+def test_build_image_captioning_stages_returns_gemini_stage(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Gemini should use a single image-native API caption stage."""
+    monkeypatch.setattr(image_api_caption_stages, "load_config", lambda: ConfigFileData(gemini=Gemini(api_key="k")))
+    stages = build_image_captioning_stages(ImageCaptioningConfig(caption_algo="gemini"))
+
+    assert len(stages) == 1
+    assert isinstance(stages[0], CuratorStageSpec)
+    assert isinstance(stages[0].stage, ImageGeminiCaptionStage)
+
+
+def test_build_image_captioning_stages_returns_openai_prep_and_caption_by_default() -> None:
+    """OpenAI should default to local-preprocessed payloads before captioning."""
+    stages = build_image_captioning_stages(ImageCaptioningConfig(caption_algo="openai"))
+
+    assert len(stages) == 2
+    assert isinstance(stages[0], CuratorStageSpec)
+    assert isinstance(stages[1], CuratorStageSpec)
+    assert isinstance(stages[0].stage, ImageOpenAIPrepStage)
+    assert isinstance(stages[1].stage, ImageOpenAICaptionStage)
+
+
+def test_build_image_captioning_stages_openai_raw_image_skips_prep() -> None:
+    """OpenAI raw-image mode should bypass the local preprocessing stage."""
+    stages = build_image_captioning_stages(
+        ImageCaptioningConfig(
+            caption_algo="openai",
+            openai_raw_image=True,
+        )
+    )
+
+    assert len(stages) == 1
+    assert isinstance(stages[0], CuratorStageSpec)
+    assert isinstance(stages[0].stage, ImageOpenAICaptionStage)

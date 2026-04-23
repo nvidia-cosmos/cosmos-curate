@@ -158,6 +158,36 @@ def test_collect_caption_inputs_skips_filtered_images() -> None:
     assert valid_indices == [1]
 
 
+def test_semantic_filter_and_classifier_accumulate_rejection_reasons() -> None:
+    """Reasons from semantic filter (score_only) and classifier rejection must both appear in qwen_rejection_reasons."""
+    task = _make_task()
+    task.image.filter_captions["semantic:qwen"] = '{"synthetic_image": "yes"}'
+    task.image.filter_captions["classifier:qwen"] = '{"planet_earth": "no", "space": "no"}'
+
+    semantic_stage = ImageSemanticFilterStage(
+        model_variant="qwen",
+        filter_caption_key="semantic:qwen",
+        user_prompt="synthetic image",
+        score_only=True,
+    )
+    classifier_stage = ImageClassifierStage(
+        model_variant="qwen",
+        filter_caption_key="classifier:qwen",
+        custom_categories=True,
+        type_allow="planet_earth",
+        type_block="space",
+    )
+
+    semantic_stage.process_data([task])
+    classifier_stage.process_data([task])
+
+    assert task.image.is_filtered is True
+    assert task.image.qwen_rejection_stage == "classifier"
+    assert task.image.qwen_rejection_reasons is not None
+    assert "synthetic image" in task.image.qwen_rejection_reasons
+    assert "planet_earth" in task.image.qwen_rejection_reasons
+
+
 def test_image_classifier_stage_allow_list_rejection_includes_reasons() -> None:
     """Allow-list rejection reasons must appear in qwen_rejection_reasons, not just qwen_rejection_stage."""
     task = _make_task()

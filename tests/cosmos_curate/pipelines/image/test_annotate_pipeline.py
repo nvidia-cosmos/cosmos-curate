@@ -18,8 +18,17 @@
 import argparse
 import pathlib
 
+import pytest
+
 from cosmos_curate.core.interfaces.stage_interface import CuratorStageSpec
+from cosmos_curate.core.utils.config.config import ConfigFileData, Gemini
 from cosmos_curate.pipelines.image.annotate_pipeline import _assemble_stages, add_annotate_command
+from cosmos_curate.pipelines.image.captioning import image_api_caption_stages
+from cosmos_curate.pipelines.image.captioning.image_api_caption_stages import (
+    ImageGeminiCaptionStage,
+    ImageOpenAICaptionStage,
+    ImageOpenAIPrepStage,
+)
 from cosmos_curate.pipelines.image.captioning.image_vllm_stages import ImageVllmCaptionStage, ImageVllmPrepStage
 from cosmos_curate.pipelines.image.filtering.filter_stages import ImageClassifierStage, ImageSemanticFilterStage
 
@@ -76,6 +85,81 @@ def test_assemble_stages_with_captioning_returns_four_specs(tmp_path: pathlib.Pa
     stages = _assemble_stages(args)
     assert len(stages) == 4
     assert all(isinstance(stage, CuratorStageSpec) for stage in stages)
+
+
+def test_assemble_stages_with_gemini_captioning_returns_three_specs(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Gemini should build ingest, Gemini caption, and output stages."""
+    monkeypatch.setattr(image_api_caption_stages, "load_config", lambda: ConfigFileData(gemini=Gemini(api_key="k")))
+    parser = argparse.ArgumentParser()
+    subparsers = parser.add_subparsers(dest="command")
+    add_annotate_command(subparsers)
+    args = parser.parse_args(
+        [
+            "annotate",
+            "--input-image-path",
+            str(tmp_path / "in"),
+            "--output-path",
+            str(tmp_path / "out"),
+            "--captioning-algorithm",
+            "gemini",
+        ]
+    )
+
+    stages = _assemble_stages(args)
+    assert len(stages) == 3
+    assert isinstance(stages[1], CuratorStageSpec)
+    assert isinstance(stages[1].stage, ImageGeminiCaptionStage)
+
+
+def test_assemble_stages_with_openai_captioning_returns_four_specs(tmp_path: pathlib.Path) -> None:
+    """OpenAI should default to ingest, prep, caption, and output stages."""
+    parser = argparse.ArgumentParser()
+    subparsers = parser.add_subparsers(dest="command")
+    add_annotate_command(subparsers)
+    args = parser.parse_args(
+        [
+            "annotate",
+            "--input-image-path",
+            str(tmp_path / "in"),
+            "--output-path",
+            str(tmp_path / "out"),
+            "--captioning-algorithm",
+            "openai",
+        ]
+    )
+
+    stages = _assemble_stages(args)
+    assert len(stages) == 4
+    assert isinstance(stages[1], CuratorStageSpec)
+    assert isinstance(stages[2], CuratorStageSpec)
+    assert isinstance(stages[1].stage, ImageOpenAIPrepStage)
+    assert isinstance(stages[2].stage, ImageOpenAICaptionStage)
+
+
+def test_assemble_stages_with_openai_raw_image_skips_prep(tmp_path: pathlib.Path) -> None:
+    """OpenAI raw-image mode should not include the local preprocessing stage."""
+    parser = argparse.ArgumentParser()
+    subparsers = parser.add_subparsers(dest="command")
+    add_annotate_command(subparsers)
+    args = parser.parse_args(
+        [
+            "annotate",
+            "--input-image-path",
+            str(tmp_path / "in"),
+            "--output-path",
+            str(tmp_path / "out"),
+            "--captioning-algorithm",
+            "openai",
+            "--openai-caption-raw-image",
+        ]
+    )
+
+    stages = _assemble_stages(args)
+    assert len(stages) == 3
+    assert isinstance(stages[1], CuratorStageSpec)
+    assert isinstance(stages[1].stage, ImageOpenAICaptionStage)
 
 
 def test_assemble_stages_with_local_semantic_filter_returns_filter_specs(tmp_path: pathlib.Path) -> None:

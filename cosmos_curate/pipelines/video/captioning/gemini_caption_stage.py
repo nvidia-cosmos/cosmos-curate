@@ -27,9 +27,14 @@ from cosmos_curate.core.interfaces.stage_interface import CuratorStage, CuratorS
 from cosmos_curate.core.utils.config.config import load_config
 from cosmos_curate.core.utils.infra.performance_utils import StageTimer
 from cosmos_curate.models.prompts import get_prompt
+from cosmos_curate.pipelines.common.api_caption_utils import (
+    gemini_error_result_from_exception,
+    handle_gemini_client_exception,
+    normalize_gemini_response_with_detail,
+    should_retry_gemini_exception,
+)
 from cosmos_curate.pipelines.video.utils import windowing_utils
 from cosmos_curate.pipelines.video.utils.data_model import (
-    CaptionFailureReason,
     CaptionOutcome,
     CaptionResult,
     SplitPipeTask,
@@ -114,10 +119,6 @@ class ApiPrepStage(CuratorStage):
         return tasks
 
 
-class NonRetryableGeminiError(RuntimeError):
-    """Error raised when retrying a Gemini request will not succeed."""
-
-
 class GeminiCaptionStage(CuratorStage):
     """Caption video windows using the Google Gemini API.
 
@@ -193,88 +194,6 @@ class GeminiCaptionStage(CuratorStage):
         window.caption_status = result.outcome.value
         window.caption_failure_reason = result.failure_reason if result.outcome == CaptionOutcome.ERROR else None
 
-    @staticmethod
-    def _collect_response_text(response: object) -> tuple[str | None, set[str]]:
-        """Collect response text and candidate finish reasons from a Gemini response."""
-        candidates = getattr(response, "candidates", None) or []
-        collected: list[str] = []
-        finish_reasons: set[str] = set()
-        for candidate in candidates:
-            finish_reason = getattr(candidate, "finish_reason", None)
-            if finish_reason:
-                finish_reasons.add(str(finish_reason))
-
-            content = getattr(candidate, "content", None) or candidate
-            parts = getattr(content, "parts", None)
-            if parts:
-                for part in parts:
-                    part_text = getattr(part, "text", None)
-                    if isinstance(part_text, str) and part_text.strip():
-                        collected.append(part_text.strip())
-
-        response_text = getattr(response, "text", None)
-        text = response_text.strip() if isinstance(response_text, str) and response_text.strip() else None
-        if text is None:
-            joined = "\n".join(collected).strip()
-            text = joined or None
-        return text, finish_reasons
-
-    @staticmethod
-    def _normalize_response_with_detail(response: object) -> tuple[CaptionResult, str | None]:
-        """Map a Gemini response object to a caption result."""
-        prompt_feedback = getattr(response, "prompt_feedback", None)
-        block_reason = getattr(prompt_feedback, "block_reason", None)
-        if block_reason:
-            return CaptionResult(outcome=CaptionOutcome.BLOCKED), None
-
-        text, finish_reasons = GeminiCaptionStage._collect_response_text(response)
-
-        if finish_reasons.intersection({"SAFETY", "RECITATION"}):
-            return CaptionResult(outcome=CaptionOutcome.BLOCKED), None
-        if "MAX_TOKENS" in finish_reasons:
-            if text is not None:
-                return CaptionResult(outcome=CaptionOutcome.TRUNCATED, text=text), None
-            return (
-                CaptionResult(outcome=CaptionOutcome.ERROR, failure_reason="exception"),
-                f"Gemini returned MAX_TOKENS without caption text. finish_reasons={sorted(finish_reasons)}",
-            )
-        if text is not None:
-            return CaptionResult(outcome=CaptionOutcome.SUCCESS, text=text), None
-        detail = "Gemini response did not contain caption text."
-        if finish_reasons:
-            detail = f"{detail} finish_reasons={sorted(finish_reasons)}"
-        return CaptionResult(outcome=CaptionOutcome.ERROR, failure_reason="exception"), detail
-
-    @staticmethod
-    def _normalize_response(response: object) -> CaptionResult:
-        """Map a Gemini response object to a caption result."""
-        result, _detail = GeminiCaptionStage._normalize_response_with_detail(response)
-        return result
-
-    @staticmethod
-    def _handle_client_exception(exc: BaseException) -> BaseException:
-        """Wrap Gemini client exceptions with clearer messaging when appropriate."""
-        message = str(exc).lower()
-        if "api key not found" in message or "api_key_invalid" in message:
-            msg = (
-                "Gemini rejected the API key (API_KEY_INVALID). "
-                "Update the cosmos-curate config with a valid Gemini API key."
-            )
-            return NonRetryableGeminiError(msg)
-        return exc
-
-    @staticmethod
-    def _should_retry_exception(exc: BaseException) -> bool:
-        """Decide whether the Gemini request should be retried."""
-        # Don't retry if we've wrapped it as NonRetryableGeminiError
-        return not isinstance(exc, NonRetryableGeminiError)
-
-    @staticmethod
-    def _error_result_from_exception_with_detail(exc: BaseException) -> tuple[CaptionResult, str]:
-        """Map a Gemini exception to an error result and log detail."""
-        failure_reason: CaptionFailureReason = "timeout" if isinstance(exc, DeadlineExceeded) else "exception"
-        return CaptionResult(outcome=CaptionOutcome.ERROR, failure_reason=failure_reason), str(exc)
-
     def _generate_caption_with_error_detail(
         self, window: Window, _clip_index: int, _window_index: int
     ) -> tuple[CaptionResult, str | None]:
@@ -307,14 +226,14 @@ class GeminiCaptionStage(CuratorStage):
         @tenacity.retry(
             stop=tenacity.stop_after_attempt(self._max_caption_retries),
             wait=tenacity.wait_fixed(self._retry_delay_seconds),
-            retry=tenacity.retry_if_exception(GeminiCaptionStage._should_retry_exception),
+            retry=tenacity.retry_if_exception(should_retry_gemini_exception),
             reraise=True,
         )
         def _call() -> object:
             try:
                 return client.models.generate_content(**generate_kwargs)
             except Exception as exc:
-                new_exc = GeminiCaptionStage._handle_client_exception(exc)
+                new_exc = handle_gemini_client_exception(exc)
                 if new_exc is exc:
                     raise
                 raise new_exc from exc
@@ -322,8 +241,8 @@ class GeminiCaptionStage(CuratorStage):
         try:
             response = _call()
         except Exception as exc:  # noqa: BLE001
-            return self._error_result_from_exception_with_detail(exc)
-        return self._normalize_response_with_detail(response)
+            return gemini_error_result_from_exception(exc, timeout_error_type=DeadlineExceeded)
+        return normalize_gemini_response_with_detail(response)
 
     def _generate_caption(self, window: Window, _clip_index: int, _window_index: int) -> CaptionResult:
         """Generate a caption result for a single window."""

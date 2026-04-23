@@ -23,6 +23,7 @@ from uuid import uuid4
 import pytest
 
 from cosmos_curate.core.utils.config.config import ConfigFileData, Gemini
+from cosmos_curate.pipelines.common.api_caption_utils import normalize_gemini_response
 from cosmos_curate.pipelines.video.captioning import gemini_caption_stage
 from cosmos_curate.pipelines.video.captioning.gemini_caption_stage import ApiPrepStage, GeminiCaptionStage
 from cosmos_curate.pipelines.video.utils.data_model import (
@@ -201,7 +202,7 @@ def test_stage_setup_requires_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_normalize_response_handles_block_reason() -> None:
     """Prompt block reasons map to Blocked."""
     response = SimpleNamespace(prompt_feedback=SimpleNamespace(block_reason="SAFETY"))
-    result = GeminiCaptionStage._normalize_response(response)
+    result = normalize_gemini_response(response)
     assert result.outcome == CaptionOutcome.BLOCKED
 
 
@@ -215,7 +216,7 @@ def test_normalize_response_reports_truncated_finish_reason() -> None:
             )
         ]
     )
-    result = GeminiCaptionStage._normalize_response(response)
+    result = normalize_gemini_response(response)
     assert result.outcome == CaptionOutcome.TRUNCATED
     assert result.text == "partial"
 
@@ -230,7 +231,7 @@ def test_normalize_response_treats_empty_max_tokens_as_error() -> None:
             )
         ]
     )
-    result = GeminiCaptionStage._normalize_response(response)
+    result = normalize_gemini_response(response)
     assert result.outcome == CaptionOutcome.ERROR
     assert result.failure_reason == "exception"
 
@@ -245,7 +246,7 @@ def test_normalize_response_treats_recitation_as_blocked() -> None:
             )
         ]
     )
-    result = GeminiCaptionStage._normalize_response(response)
+    result = normalize_gemini_response(response)
     assert result.outcome == CaptionOutcome.BLOCKED
 
 

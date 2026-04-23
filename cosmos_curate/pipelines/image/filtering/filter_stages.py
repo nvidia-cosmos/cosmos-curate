@@ -86,7 +86,6 @@ class ImageSemanticFilterStage(CuratorStage):
                 if caption is None:
                     image.errors["qwen"] = "all_windows_failed_preparation"
                     image.qwen_rejection_stage = None if self._score_only else "semantic"
-                    image.qwen_rejection_reasons = None
                     image.is_filtered = not self._score_only
                 else:
                     clip_should_pass, all_issues, _, per_window_errors = evaluate_semantic_window_results(
@@ -99,11 +98,9 @@ class ImageSemanticFilterStage(CuratorStage):
                         image.errors["qwen"] = next(iter(per_window_errors.values()))
                     image.is_filtered = not clip_should_pass
                     image.qwen_rejection_stage = "semantic" if not clip_should_pass else None
-                    image.qwen_rejection_reasons = (
-                        dict.fromkeys(sorted(all_issues), "yes")
-                        if all_issues and (self._score_only or not clip_should_pass)
-                        else None
-                    )
+                    if all_issues and (self._score_only or not clip_should_pass):
+                        new_reasons = dict.fromkeys(sorted(all_issues), "yes")
+                        image.qwen_rejection_reasons = {**(image.qwen_rejection_reasons or {}), **new_reasons}
                     if self._verbose and not clip_should_pass:
                         logger.info(f"Image {task.session_id} filtered out due to: {set(all_issues)}")
             if self._log_stats:
@@ -175,7 +172,6 @@ class ImageClassifierStage(CuratorStage):
                 if caption is None:
                     image.errors["qwen"] = "all_windows_failed_preparation"
                     image.qwen_rejection_stage = "classifier"
-                    image.qwen_rejection_reasons = None
                     image.is_filtered = True
                 else:
                     clip_should_pass, all_issues, per_window_reasons, per_window_errors, classification = (
@@ -194,8 +190,11 @@ class ImageClassifierStage(CuratorStage):
                         image.errors["qwen"] = next(iter(per_window_errors.values()))
                     image.qwen_type_classification = classification
                     image.is_filtered = not clip_should_pass
-                    image.qwen_rejection_stage = "classifier" if not clip_should_pass else None
-                    image.qwen_rejection_reasons = (per_window_reasons.get(0) or None) if not clip_should_pass else None
+                    if not clip_should_pass:
+                        image.qwen_rejection_stage = "classifier"
+                        new_reasons = per_window_reasons.get(0) or {}
+                        if new_reasons:
+                            image.qwen_rejection_reasons = {**(image.qwen_rejection_reasons or {}), **new_reasons}
                     if self._verbose and image.qwen_type_classification:
                         logger.info(f"Image {task.session_id} type classification: {image.qwen_type_classification}")
                     if self._verbose and not clip_should_pass:

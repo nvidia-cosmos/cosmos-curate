@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""vLLM-based image captioning: prep (image → model input) and caption (vLLM generate)."""
+"""vLLM-based image captioning helpers and stages."""
 
 import logging
 from typing import Any, Literal, cast
@@ -31,6 +31,10 @@ from cosmos_curate.core.utils.model import conda_utils
 from cosmos_curate.models.all_models import get_all_models_by_id
 from cosmos_curate.models.vllm_model_ids import get_vllm_model_id
 from cosmos_curate.models.vllm_sentinels import VLLM_UNKNOWN_CAPTION
+from cosmos_curate.pipelines.image.captioning.image_prep_utils import (
+    DEFAULT_PREP_MAX_PIXELS,
+    DEFAULT_PREP_MIN_PIXELS,
+)
 from cosmos_curate.pipelines.image.utils.data_model import ImagePipeTask
 from cosmos_curate.pipelines.video.utils.data_model import (
     CaptionOutcome,
@@ -39,9 +43,11 @@ from cosmos_curate.pipelines.video.utils.data_model import (
     WindowConfig,
 )
 
+IMAGE_FACTOR = 28
+
 if conda_utils.is_running_in_env("unified"):
     import torch
-    from PIL import Image
+    from PIL import Image as PILImage
     from torchvision import transforms  # type: ignore[import-untyped]
     from torchvision.transforms import InterpolationMode  # type: ignore[import-untyped]
 
@@ -54,10 +60,7 @@ if conda_utils.is_running_in_env("unified"):
         vllm_caption,
         vllm_model,
     )
-    from cosmos_curate.pipelines.video.utils.vision_process import (
-        IMAGE_FACTOR,
-        smart_resize,
-    )
+    from cosmos_curate.pipelines.video.utils.vision_process import smart_resize
 
     vllm_logger = logging.getLogger("vllm")
     vllm_logger.setLevel(logging.ERROR)  # Suppress warnings and info from vLLM
@@ -93,7 +96,7 @@ class _ImageVllmModelInfo(ModelInterface):
 
 def _image_frame_to_tensor(frame: np.ndarray[Any, Any]) -> Any:  # noqa: ANN401
     """Convert one RGB frame to (1, C, H, W) tensor in [0, 1] for client-side preprocess."""
-    pil = Image.fromarray(frame, mode="RGB")
+    pil = PILImage.fromarray(frame, mode="RGB")
     to_tensor = transforms.ToTensor()
     return to_tensor(pil).unsqueeze(0)  # (1, C, H, W)
 
@@ -135,8 +138,6 @@ def _resize_image_tensor(
     )
 
 
-_DEFAULT_PREP_MIN_PIXELS = 128 * 28 * 28
-_DEFAULT_PREP_MAX_PIXELS = 768 * 28 * 28
 _PREVIEW_MAX_LEN = 80
 
 
@@ -344,8 +345,8 @@ class ImageVllmPrepStage(CuratorStage):
         """Store config and init timer; processor set in stage_setup."""
         self._timer = StageTimer(self)
         self._vllm_config = vllm_config
-        self._min_pixels = caption_prep_min_pixels if caption_prep_min_pixels is not None else _DEFAULT_PREP_MIN_PIXELS
-        self._max_pixels = caption_prep_max_pixels if caption_prep_max_pixels is not None else _DEFAULT_PREP_MAX_PIXELS
+        self._min_pixels = caption_prep_min_pixels if caption_prep_min_pixels is not None else DEFAULT_PREP_MIN_PIXELS
+        self._max_pixels = caption_prep_max_pixels if caption_prep_max_pixels is not None else DEFAULT_PREP_MAX_PIXELS
         self._verbose = verbose
         self._log_stats = log_stats
         self._processor: Any = None
