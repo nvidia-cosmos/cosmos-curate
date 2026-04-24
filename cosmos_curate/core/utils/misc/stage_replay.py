@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -29,22 +29,30 @@ The code is organized into the following sections:
 """
 
 import argparse
+import fnmatch
 import pickle
 import random
+import re
 import secrets
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Protocol, TypeVar, cast
+from urllib.parse import urlparse
 
 import attrs
 import ray
+import smart_open  # type: ignore[import-untyped]
 from loguru import logger
 
 from cosmos_curate.core.interfaces.stage_interface import CuratorStage, CuratorStageSpec, PipelineTask
 from cosmos_curate.core.utils.pixi_runtime_envs import PixiRuntimeEnv
+from cosmos_curate.core.utils.storage import storage_client, storage_utils
 from cosmos_curate.pipelines.video.utils.data_model import Video
 from cosmos_xenna.pipelines.private.resources import NodeInfo, WorkerMetadata
 
 BaseStage = TypeVar("BaseStage", bound="CuratorStage")
+TaskPath = Path | storage_client.StoragePrefix
 
 MAX_STAGE_REPLAY_ARGS = 2
 
@@ -57,7 +65,7 @@ MAX_STAGE_REPLAY_ARGS = 2
 class TaskSerializer(Protocol):
     """Protocol for task serialization and deserialization."""
 
-    def save(self, path: Path, tasks: list[PipelineTask]) -> None:
+    def save(self, path: TaskPath, tasks: list[PipelineTask]) -> None:
         """Save tasks to a file.
 
         Args:
@@ -67,7 +75,7 @@ class TaskSerializer(Protocol):
         """
         ...  # pragma: no cover
 
-    def load(self, path: Path) -> list[PipelineTask]:
+    def load(self, path: TaskPath) -> list[PipelineTask]:
         """Load tasks from a file.
 
         Args:
@@ -79,7 +87,7 @@ class TaskSerializer(Protocol):
         """
         ...  # pragma: no cover
 
-    def find_task_files(self, directory: Path, pattern: str, limit: int = 0) -> list[Path]:
+    def find_task_files(self, directory: TaskPath, pattern: str, limit: int = 0) -> list[TaskPath]:
         """Find task files in a directory.
 
         Args:
@@ -173,21 +181,42 @@ class StageRunner:
 class PickleTaskSerializer:
     """Default pickle-based task serializer."""
 
-    def save(self, path: Path, tasks: list[PipelineTask]) -> None:
+    def __init__(self, profile_name: str = "default") -> None:
+        """Initialize the serializer."""
+        self._profile_name = profile_name
+
+    @contextmanager
+    def _open_path(self, path: TaskPath, mode: str) -> Iterator[Any]:
+        """Open a local or remote task path as a file-like object."""
+        if isinstance(path, Path) and "w" in mode:
+            storage_utils.create_path(str(path.parent))
+
+        open_path: Path | str = path if isinstance(path, Path) else str(path)
+        client = storage_utils.get_storage_client(str(path), profile_name=self._profile_name)
+        client_params = storage_utils.get_smart_open_client_params(client) if client is not None else {}
+
+        with smart_open.open(open_path, mode, **client_params) as f:
+            yield f
+
+    def save(self, path: TaskPath, tasks: list[PipelineTask]) -> None:
         """Save tasks to a pickle file."""
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("wb") as f:
+        with self._open_path(path, "wb") as f:
             pickle.dump(tasks, f)
 
-    def load(self, path: Path) -> list[PipelineTask]:
+    def load(self, path: TaskPath) -> list[PipelineTask]:
         """Load tasks from a pickle file."""
-        with path.open("rb") as f:
-            logger.info(f"Loading tasks from {path}")
+        logger.info(f"Loading tasks from {path}")
+        with self._open_path(path, "rb") as f:
             return cast("list[PipelineTask]", pickle.load(f))  # noqa: S301
 
-    def find_task_files(self, directory: Path, pattern: str, limit: int = 0) -> list[Path]:
+    def find_task_files(self, directory: TaskPath, pattern: str, limit: int = 0) -> list[TaskPath]:
         """Find task files matching a pattern."""
-        files = sorted(directory.glob(pattern))
+        client = storage_utils.get_storage_client(str(directory), profile_name=self._profile_name)
+        relative_files = storage_utils.get_files_relative(str(directory), client, 0)
+        matches = sorted(
+            rel for rel in relative_files if Path(rel).parent == Path() and fnmatch.fnmatch(Path(rel).name, pattern)
+        )
+        files = [storage_utils.get_full_path(directory, match) for match in matches]
         if limit > 0:
             files = files[:limit]
         return files
@@ -280,9 +309,41 @@ class StageSaveConfig:
 
     """
 
-    path: Path
+    path: TaskPath
     stages: list[str]
     sample_rate: float = attrs.field(converter=_clamp_sample_rate)
+    profile_name: str = "default"
+
+
+class TaskPathAllocator:
+    """Allocate unique task-output paths without repeated directory listings."""
+
+    _PATH_PATTERN = re.compile(r"^(?P<name>.+)_(?P<index>\d+)\.(?P<extension>.+)$")
+
+    def __init__(self, base_output_path: TaskPath, *, profile_name: str = "default") -> None:
+        """Seed allocation state from the existing output directory once."""
+        self._base_output_path = base_output_path
+        client = storage_utils.get_storage_client(str(base_output_path), profile_name=profile_name)
+        existing_files = storage_utils.get_files_relative(str(base_output_path), client, 0)
+        self._used_indices_by_key: dict[tuple[str, str], set[int]] = {}
+
+        for relative_path in existing_files:
+            match = self._PATH_PATTERN.fullmatch(relative_path)
+            if match is None:
+                continue
+            key = (match.group("name"), match.group("extension"))
+            self._used_indices_by_key.setdefault(key, set()).add(int(match.group("index")))
+
+    def get_output_path(self, name: str, extension: str) -> TaskPath:
+        """Return the next available output path for ``name`` and ``extension``."""
+        key = (name, extension)
+        used_indices = self._used_indices_by_key.setdefault(key, set())
+        for i in range(1000):
+            if i not in used_indices:
+                used_indices.add(i)
+                return storage_utils.get_full_path(self._base_output_path, f"{name}_{i:03d}.{extension}")
+        msg = f"Failed to find a unique output path for {name}"
+        raise RuntimeError(msg)
 
 
 # ============================================================================
@@ -291,9 +352,11 @@ class StageSaveConfig:
 
 
 def _load_task_batches(
-    path: Path,
+    path: TaskPath,
     limit: int,
     serializer: TaskSerializer | None = None,
+    *,
+    profile_name: str = "default",
 ) -> list[list[PipelineTask]]:
     """Load tasks from the tasks directory.
 
@@ -301,14 +364,32 @@ def _load_task_batches(
         path: The path to the tasks directory.
         limit: The maximum number of task files to load.
         serializer: Task serializer to use. Defaults to PickleTaskSerializer.
+        profile_name: Storage profile to use for remote paths.
 
     Returns:
         A list of task objects.
 
     """
-    _serializer = serializer if serializer is not None else PickleTaskSerializer()
+    _serializer = serializer if serializer is not None else PickleTaskSerializer(profile_name=profile_name)
     files = _serializer.find_task_files(path, "*.pkl", limit)
     return [_serializer.load(file) for file in files]
+
+
+def _get_task_suffix_from_input_video(input_video: object) -> str:
+    """Return a basename for a supported video input path."""
+    if isinstance(input_video, Path):
+        return input_video.name
+
+    if isinstance(input_video, storage_client.StoragePrefix):
+        return Path(urlparse(str(input_video)).path).name
+
+    if isinstance(input_video, str):
+        if input_video.startswith(("s3://", "az://")):
+            return Path(urlparse(input_video).path).name
+        return Path(input_video).name
+
+    msg = f"_get_task_suffix_from_input_video does not support input type: {type(input_video).__name__}"
+    raise TypeError(msg)
 
 
 def _get_name_from_tasks(class_name: str, tasks: list[PipelineTask]) -> str:
@@ -330,48 +411,11 @@ def _get_name_from_tasks(class_name: str, tasks: list[PipelineTask]) -> str:
 
     video = getattr(first_task, "video", None)
     if video is not None and isinstance(video, Video):
-        input_video = video.input_video
-        if isinstance(input_video, Path):
-            task_suffix = input_video.name
-        else:
-            msg = "_get_name_from_tasks only supports local video files"
-            raise TypeError(msg)
+        task_suffix = _get_task_suffix_from_input_video(video.input_video)
     else:
         task_suffix = secrets.token_hex(8)
 
     return f"{class_name}/{task_suffix}"
-
-
-def _get_output_path(base_output_path: Path, name: str, extension: str) -> Path:
-    """Get a unique output path for a task.
-
-    For tasks that have a video attribute (type Video), the task name will be
-    derived from the video's file name. However, a single video may span
-    multiple tasks, which leads to a conflict if the same name is used for
-    tasks.
-
-    To resolve this, a unique index is appended to the task name. This is done
-    by incrementing the index until a unique path is found. This index roughly
-    corresponds to the chunk index of a video.
-
-    Args:
-        base_output_path: The base output path.
-        name: The name of the task.
-        extension: The extension of the task.
-
-    Returns:
-        The output path for the task.
-
-    Raises:
-        RuntimeError: If a unique output path cannot be found.
-
-    """
-    for i in range(1000):
-        output_path = base_output_path / f"{name}_{i:03d}.{extension}"
-        if not output_path.exists():
-            return output_path
-    msg = f"Failed to find a unique output path for {name}"
-    raise RuntimeError(msg)
 
 
 def _save_tasks(
@@ -379,6 +423,7 @@ def _save_tasks(
     config: StageSaveConfig,
     tasks: list[PipelineTask],
     serializer: TaskSerializer | None = None,
+    allocator: TaskPathAllocator | None = None,
 ) -> None:
     """Save tasks to a pickle file.
 
@@ -387,13 +432,16 @@ def _save_tasks(
         config: Configuration for saving stages for replay.
         tasks: The tasks to save.
         serializer: Task serializer to use. Defaults to PickleTaskSerializer.
+        allocator: Output-path allocator. Defaults to TaskPathAllocator.
 
     """
     if serializer is None:
-        serializer = PickleTaskSerializer()
+        serializer = PickleTaskSerializer(profile_name=config.profile_name)
+    if allocator is None:
+        allocator = TaskPathAllocator(config.path, profile_name=config.profile_name)
 
     name = _get_name_from_tasks(class_name, tasks)
-    output_path = _get_output_path(config.path, name, "task.pkl")
+    output_path = allocator.get_output_path(name, "task.pkl")
     serializer.save(output_path, tasks)
     logger.info(f"Saved tasks to {output_path}")
 
@@ -420,7 +468,9 @@ def _make_stage_save_class[T: CuratorStage](
         The task-saving stage class.
 
     """
-    _serializer: TaskSerializer = serializer if serializer is not None else PickleTaskSerializer()
+    _serializer: TaskSerializer = (
+        serializer if serializer is not None else PickleTaskSerializer(profile_name=config.profile_name)
+    )
 
     if config.sample_rate <= 0.0:
         return stage_cls
@@ -430,10 +480,11 @@ def _make_stage_save_class[T: CuratorStage](
     class TaskSavingStage(stage_cls):  # type: ignore[valid-type, misc]
         _config = config
         _serializer_inst = _serializer
+        _path_allocator = TaskPathAllocator(config.path, profile_name=config.profile_name)
 
         def process_data(self, tasks: list[PipelineTask]) -> list[PipelineTask]:
             if tasks and random.random() <= self._config.sample_rate:  # noqa: S311
-                _save_tasks(base_name, self._config, tasks, self._serializer_inst)
+                _save_tasks(base_name, self._config, tasks, self._serializer_inst, self._path_allocator)
 
             return super().process_data(tasks)  # type: ignore[no-any-return]
 
@@ -550,9 +601,10 @@ def get_stages_to_replay(
 
 def run_stage_replay(  # noqa: PLR0913
     stages: list[CuratorStage],
-    path: Path,
+    path: TaskPath,
     limit: int,
     *,
+    profile_name: str = "default",
     executor: StageExecutor | None = None,
     serializer: TaskSerializer | None = None,
     init_ray: bool = True,
@@ -563,6 +615,7 @@ def run_stage_replay(  # noqa: PLR0913
         stages: list of stages to replay.
         path: The path to the tasks directory that holds the task pickles.
         limit: The maximum number of tasks to load.
+        profile_name: Storage profile to use for remote paths.
         executor: Stage executor to use. Defaults to RayStageExecutor.
         serializer: Task serializer to use. Defaults to PickleTaskSerializer.
         init_ray: Whether to initialize Ray. Set to False if Ray is already initialized.
@@ -576,7 +629,7 @@ def run_stage_replay(  # noqa: PLR0913
         raise ValueError(msg)
 
     _executor = executor if executor is not None else RayStageExecutor()
-    _serializer = serializer if serializer is not None else PickleTaskSerializer()
+    _serializer = serializer if serializer is not None else PickleTaskSerializer(profile_name=profile_name)
 
     start_stage = stages[0]
     end_stage = stages[-1]
@@ -590,7 +643,7 @@ def run_stage_replay(  # noqa: PLR0913
     if init_ray and not ray.is_initialized():
         ray.init()
 
-    task_batches = _load_task_batches(path, limit, _serializer)
+    task_batches = _load_task_batches(path, limit, _serializer, profile_name=profile_name)
 
     if len(task_batches) == 0:
         msg = f"No input tasks found in {path}"

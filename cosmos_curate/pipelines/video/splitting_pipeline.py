@@ -25,7 +25,6 @@ Which:
 import argparse
 import pathlib
 import time
-from pathlib import Path
 from typing import Any, cast
 
 import attrs
@@ -45,6 +44,7 @@ from cosmos_curate.core.utils.misc.stage_replay import (
 )
 from cosmos_curate.core.utils.storage.storage_utils import (
     create_path,
+    get_full_path,
     is_path_nested,
     verify_path,
 )
@@ -842,10 +842,12 @@ def _split(args: argparse.Namespace) -> None:
 
     stage_save_config: StageSaveConfig | None = None
     if args.stage_save:
+        task_path = get_full_path(args.output_clip_path, "tasks")
         stage_save_config = StageSaveConfig(
-            path=Path(str(args.output_clip_path)) / "tasks",
+            path=task_path,
             stages=args.stage_save,
             sample_rate=args.stage_save_sample_rate,
+            profile_name=args.output_s3_profile_name,
         )
 
     if len(args.stage_replay) == 0:
@@ -862,11 +864,15 @@ def _split(args: argparse.Namespace) -> None:
         start_stage_name = args.stage_replay[0]
         end_stage_name = args.stage_replay[-1] if len(args.stage_replay) > 1 else start_stage_name
         stage_to_replay = get_stages_to_replay(stages, start_stage_name, end_stage_name)
+        replay_path = get_full_path(args.output_clip_path, "tasks", start_stage_name)
 
         output_tasks = cast(
             "list[SplitPipeTask]",
             run_stage_replay(
-                stage_to_replay, Path(str(args.output_clip_path)) / "tasks" / start_stage_name, args.limit
+                stage_to_replay,
+                replay_path,
+                args.limit,
+                profile_name=args.output_s3_profile_name,
             ),
         )
 

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,6 +15,7 @@
 """Tests for cosmos_curate.core.utils.misc.stage_replay."""
 
 import argparse
+import io
 import pickle
 from contextlib import AbstractContextManager, nullcontext
 from pathlib import Path
@@ -31,8 +32,8 @@ from cosmos_curate.core.utils.misc.stage_replay import (
     RayStageExecutor,
     StageRunner,
     StageSaveConfig,
+    TaskPathAllocator,
     _get_name_from_tasks,
-    _get_output_path,
     _load_task_batches,
     _make_stage_save_class,
     _save_tasks,
@@ -43,6 +44,8 @@ from cosmos_curate.core.utils.misc.stage_replay import (
     stage_save_wrapper,
     validate_stage_replay_args,
 )
+from cosmos_curate.core.utils.storage.azure_client import AzurePrefix
+from cosmos_curate.core.utils.storage.s3_client import S3Prefix
 from cosmos_curate.pipelines.video.utils.data_model import Video
 from cosmos_xenna.pipelines.private.resources import NodeInfo, Resources, WorkerMetadata
 
@@ -81,8 +84,41 @@ class TestStage(CuratorStage):
             "TestClassName/video.mp4",
             nullcontext(),
         ),
-        # Task with Video and non-Path input_video should raise TypeError
-        ([VideoTask(video=Video(input_video="string_path"))], "error", "", pytest.raises(TypeError, match=r".*")),
+        # Task with Video and local string input_video should use basename
+        (
+            [VideoTask(video=Video(input_video="/path/to/video.mp4"))],
+            "exact",
+            "TestClassName/video.mp4",
+            nullcontext(),
+        ),
+        # Task with Video and S3 input_video should use object basename
+        (
+            [VideoTask(video=Video(input_video="s3://bucket/path/to/video.mp4"))],
+            "exact",
+            "TestClassName/video.mp4",
+            nullcontext(),
+        ),
+        # Task with Video and S3 StoragePrefix should use object basename
+        (
+            [VideoTask(video=Video(input_video=S3Prefix("s3://bucket/path/to/video.mp4")))],
+            "exact",
+            "TestClassName/video.mp4",
+            nullcontext(),
+        ),
+        # Task with Video and Azure StoragePrefix should use object basename
+        (
+            [VideoTask(video=Video(input_video=AzurePrefix("az://container/path/to/video.mp4")))],
+            "exact",
+            "TestClassName/video.mp4",
+            nullcontext(),
+        ),
+        # Task with Video and bare filename string should use basename directly
+        (
+            [VideoTask(video=Video(input_video="string_path"))],
+            "exact",
+            "TestClassName/string_path",
+            nullcontext(),
+        ),
         # Task without video attribute should use random hex
         ([TestTask(value=1)], "random_hex", "", nullcontext()),
         # Task with non-Video video attribute should use random hex
@@ -111,39 +147,6 @@ def test_get_name_from_tasks(
             # secrets.token_hex(8) produces 16 hex characters
             assert len(suffix) == 16
             assert all(c in "0123456789abcdef" for c in suffix)
-
-
-@pytest.mark.parametrize(
-    ("existing_files", "expected_index", "raises"),
-    [
-        ([], 0, nullcontext()),  # No existing files, should return _000
-        ([0, 1, 2], 3, nullcontext()),  # Files 0-2 exist, should return _003
-        ([0, 1, 5, 10], 2, nullcontext()),  # Files 0,1,5,10 exist, should return _002 (first gap)
-        # All 1000 files exist, should raise RuntimeError
-        (list(range(1000)), -1, pytest.raises(RuntimeError, match=r".*")),
-    ],
-)
-def test_get_output_path(
-    tmp_path: Path,
-    existing_files: list[int],
-    expected_index: int,
-    raises: AbstractContextManager[Any],
-) -> None:
-    """Test _get_output_path with various scenarios of existing files."""
-    base_name = "TestStage/test_file"
-    extension = "task.pkl"
-
-    # Create existing files
-    for idx in existing_files:
-        file_path = tmp_path / f"{base_name}_{idx:03d}.{extension}"
-        file_path.parent.mkdir(parents=True, exist_ok=True)
-        file_path.touch()
-
-    with raises:
-        result = _get_output_path(tmp_path, base_name, extension)
-        expected_path = tmp_path / f"{base_name}_{expected_index:03d}.{extension}"
-        assert result == expected_path
-        assert not result.exists()
 
 
 @pytest.mark.parametrize(
@@ -486,6 +489,196 @@ def test_load_task_batches_uses_pickle_by_default(tmp_path: Path) -> None:
     assert result[0][0].value == 42  # type: ignore[attr-defined]
 
 
+def test_pickle_task_serializer_find_task_files_sorts_and_limits(tmp_path: Path) -> None:
+    """Test that PickleTaskSerializer returns sorted task files and respects limit."""
+    serializer = PickleTaskSerializer()
+    filenames = ["task_010.pkl", "task_002.pkl", "task_001.pkl"]
+    for name in filenames:
+        (tmp_path / name).write_bytes(b"")
+
+    result = serializer.find_task_files(tmp_path, "*.pkl", limit=2)
+
+    assert result == [tmp_path / "task_001.pkl", tmp_path / "task_002.pkl"]
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        ("remote", "test-profile", {"transport_params": {"client": "mock-client"}}, None, 7),
+        ("local", "default", {}, "nested", 13),
+    ],
+)
+def test_pickle_task_serializer_save_uses_smart_open(
+    case: tuple[str, str, dict[str, Any], str | None, int],
+    tmp_path: Path,
+) -> None:
+    """Test save uses smart_open for both local and remote task paths."""
+    path_kind, profile_name, expected_kwargs, expect_create_subdir, task_value = case
+    serializer = PickleTaskSerializer(profile_name=profile_name)
+    tasks = [TestTask(value=task_value)]
+    buffer = io.BytesIO()
+    client = MagicMock()
+    if path_kind == "remote":
+        path = S3Prefix("s3://bucket/tasks/task_000.pkl")
+        expected_open_path: str | Path = "s3://bucket/tasks/task_000.pkl"
+    else:
+        path = tmp_path / "nested" / "task_000.pkl"
+        expected_open_path = path
+
+    with (
+        patch("cosmos_curate.core.utils.misc.stage_replay.storage_utils.get_storage_client", return_value=client),
+        patch(
+            "cosmos_curate.core.utils.misc.stage_replay.storage_utils.get_smart_open_client_params",
+            return_value=expected_kwargs,
+        ),
+        patch("cosmos_curate.core.utils.misc.stage_replay.storage_utils.create_path") as mock_create_path,
+        patch(
+            "cosmos_curate.core.utils.misc.stage_replay.smart_open.open",
+            return_value=nullcontext(buffer),
+        ) as mock_open,
+    ):
+        serializer.save(path, tasks)
+
+    loaded = cast("list[TestTask]", pickle.loads(buffer.getvalue()))  # noqa: S301
+    assert loaded[0].value == task_value
+    if expect_create_subdir is None:
+        mock_create_path.assert_not_called()
+    else:
+        mock_create_path.assert_called_once_with(str(tmp_path / expect_create_subdir))
+    mock_open.assert_called_once_with(expected_open_path, "wb", **expected_kwargs)
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        ("remote", "test-profile", {"transport_params": {"client": "mock-client"}}, 11),
+        ("local", "default", {}, 17),
+    ],
+)
+def test_pickle_task_serializer_load_uses_smart_open(
+    case: tuple[str, str, dict[str, Any], int],
+    tmp_path: Path,
+) -> None:
+    """Test load uses smart_open for both local and remote task paths."""
+    path_kind, profile_name, expected_kwargs, task_value = case
+    serializer = PickleTaskSerializer(profile_name=profile_name)
+    buffer = io.BytesIO()
+    pickle.dump([TestTask(value=task_value)], buffer)
+    buffer.seek(0)
+    client = MagicMock()
+    if path_kind == "remote":
+        path = S3Prefix("s3://bucket/tasks/task_000.pkl")
+        expected_open_path: str | Path = "s3://bucket/tasks/task_000.pkl"
+    else:
+        path = tmp_path / "task_000.pkl"
+        expected_open_path = path
+
+    with (
+        patch("cosmos_curate.core.utils.misc.stage_replay.storage_utils.get_storage_client", return_value=client),
+        patch(
+            "cosmos_curate.core.utils.misc.stage_replay.storage_utils.get_smart_open_client_params",
+            return_value=expected_kwargs,
+        ),
+        patch(
+            "cosmos_curate.core.utils.misc.stage_replay.smart_open.open",
+            return_value=nullcontext(buffer),
+        ) as mock_open,
+    ):
+        loaded = serializer.load(path)
+
+    assert cast("TestTask", loaded[0]).value == task_value
+    mock_open.assert_called_once_with(expected_open_path, "rb", **expected_kwargs)
+
+
+def test_pickle_task_serializer_find_task_files_remote_sorts_and_limits() -> None:
+    """Test that remote task discovery returns sorted fully-qualified paths."""
+    serializer = PickleTaskSerializer(profile_name="test-profile")
+    client = MagicMock()
+
+    with (
+        patch("cosmos_curate.core.utils.misc.stage_replay.storage_utils.get_storage_client", return_value=client),
+        patch(
+            "cosmos_curate.core.utils.misc.stage_replay.storage_utils.get_files_relative",
+            return_value=[
+                "task_010.pkl",
+                "task_002.pkl",
+                "task_001.pkl",
+            ],
+        ) as mock_get_files,
+    ):
+        result = serializer.find_task_files(S3Prefix("s3://bucket/tasks"), "*.pkl", limit=2)
+
+    assert result == [
+        S3Prefix("s3://bucket/tasks/task_001.pkl"),
+        S3Prefix("s3://bucket/tasks/task_002.pkl"),
+    ]
+    mock_get_files.assert_called_once_with("s3://bucket/tasks", client, 0)
+
+
+def test_pickle_task_serializer_find_task_files_ignores_nested_relative_paths() -> None:
+    """Test that serializer discovery only matches top-level files for a glob like ``*.pkl``."""
+    serializer = PickleTaskSerializer(profile_name="test-profile")
+    client = MagicMock()
+
+    with (
+        patch("cosmos_curate.core.utils.misc.stage_replay.storage_utils.get_storage_client", return_value=client),
+        patch(
+            "cosmos_curate.core.utils.misc.stage_replay.storage_utils.get_files_relative",
+            return_value=[
+                "subdir/task_000.pkl",
+                "task_002.pkl",
+                "task_001.pkl",
+            ],
+        ),
+    ):
+        result = serializer.find_task_files(S3Prefix("s3://bucket/tasks"), "*.pkl")
+
+    assert result == [
+        S3Prefix("s3://bucket/tasks/task_001.pkl"),
+        S3Prefix("s3://bucket/tasks/task_002.pkl"),
+    ]
+
+
+def test_task_path_allocator_uses_single_listing_for_repeated_allocations() -> None:
+    """Test TaskPathAllocator lists existing files once and allocates gaps locally."""
+    client = MagicMock()
+
+    with (
+        patch("cosmos_curate.core.utils.misc.stage_replay.storage_utils.get_storage_client", return_value=client),
+        patch(
+            "cosmos_curate.core.utils.misc.stage_replay.storage_utils.get_files_relative",
+            return_value=[
+                "TestStage/test_file_000.task.pkl",
+                "TestStage/test_file_001.task.pkl",
+                "TestStage/test_file_005.task.pkl",
+            ],
+        ) as mock_get_files_relative,
+    ):
+        allocator = TaskPathAllocator(S3Prefix("s3://bucket/tasks"), profile_name="test-profile")
+        first = allocator.get_output_path("TestStage/test_file", "task.pkl")
+        second = allocator.get_output_path("TestStage/test_file", "task.pkl")
+
+    assert first == S3Prefix("s3://bucket/tasks/TestStage/test_file_002.task.pkl")
+    assert second == S3Prefix("s3://bucket/tasks/TestStage/test_file_003.task.pkl")
+    mock_get_files_relative.assert_called_once_with("s3://bucket/tasks", client, 0)
+
+
+def test_load_task_batches_remote_accepts_storage_prefix() -> None:
+    """Test that _load_task_batches uses StoragePrefix task paths for remote loading."""
+    serializer = MagicMock()
+    task_path = S3Prefix("s3://bucket/tasks")
+    serializer.find_task_files.return_value = [
+        S3Prefix("s3://bucket/tasks/task_001.pkl"),
+        S3Prefix("s3://bucket/tasks/task_002.pkl"),
+    ]
+    serializer.load.side_effect = [[TestTask(value=1)], [TestTask(value=2)]]
+
+    result = _load_task_batches(task_path, limit=2, serializer=serializer)
+
+    assert [cast("TestTask", batch[0]).value for batch in result] == [1, 2]
+    serializer.find_task_files.assert_called_once_with(task_path, "*.pkl", 2)
+
+
 # ============================================================================
 # Tests for deterministic sampling
 # ============================================================================
@@ -537,6 +730,52 @@ def test_make_stage_save_class_deterministic(  # noqa: PLR0913
 
     saved_files = list(tmp_path.glob("**/*.pkl"))
     assert len(saved_files) == expected_saved_count
+
+
+def test_make_stage_save_class_uses_config_profile_name() -> None:
+    """Test _make_stage_save_class propagates config.profile_name to the default serializer."""
+    config = StageSaveConfig(
+        path=S3Prefix("s3://bucket/tasks"),
+        stages=["SaveCountingStage"],
+        sample_rate=1.0,
+        profile_name="test-profile",
+    )
+
+    with (
+        patch("cosmos_curate.core.utils.misc.stage_replay.storage_utils.get_storage_client", return_value=MagicMock()),
+        patch("cosmos_curate.core.utils.misc.stage_replay.storage_utils.get_files_relative", return_value=[]),
+    ):
+        stage_cls = _make_stage_save_class(SaveCountingStage, config)
+
+    assert stage_cls._serializer_inst._profile_name == "test-profile"  # type: ignore[attr-defined]
+
+
+def test_make_stage_save_class_uses_single_listing_for_repeated_saves() -> None:
+    """Test wrapped save stages do not relist the output directory for each saved batch."""
+    config = StageSaveConfig(
+        path=S3Prefix("s3://bucket/tasks"),
+        stages=["SaveCountingStage"],
+        sample_rate=1.0,
+        profile_name="test-profile",
+    )
+    tasks = [VideoTask(video=Video(input_video=S3Prefix("s3://bucket/path/to/video.mp4")))]
+
+    with (
+        patch("cosmos_curate.core.utils.misc.stage_replay.random.random", return_value=0.0),
+        patch("cosmos_curate.core.utils.misc.stage_replay.storage_utils.get_storage_client", return_value=MagicMock()),
+        patch("cosmos_curate.core.utils.misc.stage_replay.storage_utils.get_smart_open_client_params", return_value={}),
+        patch(
+            "cosmos_curate.core.utils.misc.stage_replay.storage_utils.get_files_relative",
+            return_value=[],
+        ) as mock_get_files_relative,
+        patch("cosmos_curate.core.utils.misc.stage_replay.smart_open.open", return_value=nullcontext(io.BytesIO())),
+    ):
+        stage_cls = _make_stage_save_class(SaveCountingStage, config)
+        stage = stage_cls()
+        stage.process_data(tasks)
+        stage.process_data(tasks)
+
+    mock_get_files_relative.assert_called_once()
 
 
 def test_save_tasks_default_serializer(tmp_path: Path) -> None:
