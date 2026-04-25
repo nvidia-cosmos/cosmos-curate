@@ -55,6 +55,7 @@ BaseStage = TypeVar("BaseStage", bound="CuratorStage")
 TaskPath = Path | storage_client.StoragePrefix
 
 MAX_STAGE_REPLAY_ARGS = 2
+MAX_STAGE_COMPARE_ARGS = 2
 
 
 # ============================================================================
@@ -525,6 +526,35 @@ def add_stage_replay_args(parser: argparse.ArgumentParser) -> None:
         "in isolation. two stages are first_stage,last_stage. "
         "Saved tasks are loaded from --output-clip-path / tasks / stage_name / *.pkl",
     )
+    parser.add_argument(
+        "--stage-compare",
+        type=lambda s: [x.strip() for x in s.split(",")],
+        default=[],
+        help=(
+            "Comma-separated list of stage names to compare using saved tasks. "
+            "If one stage is provided, compare that stage in isolation. "
+            "If two stages are provided, compare the range start_stage,end_stage "
+            "and use the final output as the golden comparison target."
+        ),
+    )
+    parser.add_argument(
+        "--stage-compare-path",
+        type=str,
+        default=None,
+        help="Optional base path containing golden task pickles for --stage-compare. Defaults to --output-clip-path.",
+    )
+    parser.add_argument(
+        "--stage-compare-atol",
+        type=float,
+        default=0.0,
+        help="Absolute tolerance for numpy-based comparisons in --stage-compare. Default: 0.0",
+    )
+    parser.add_argument(
+        "--stage-compare-pass-threshold",
+        type=float,
+        default=1.0,
+        help="Minimum pass rate required for --stage-compare to exit successfully. Default: 1.0",
+    )
 
 
 def validate_stage_replay_args(args: argparse.Namespace) -> None:
@@ -534,15 +564,22 @@ def validate_stage_replay_args(args: argparse.Namespace) -> None:
         args: The arguments to validate.
 
     """
-    if len(args.stage_save) == 0 and len(args.stage_replay) == 0:
+    stage_compare = getattr(args, "stage_compare", [])
+
+    if len(args.stage_save) == 0 and len(args.stage_replay) == 0 and len(stage_compare) == 0:
         return
 
-    if len(args.stage_save) > 0 and len(args.stage_replay) > 0:
-        msg = "Cannot save tasks and replay stages at the same time"
+    enabled_modes = sum(int(len(value) > 0) for value in (args.stage_save, args.stage_replay, stage_compare))
+    if enabled_modes > 1:
+        msg = "Only one of --stage-save, --stage-replay, and --stage-compare may be used at a time"
         raise ValueError(msg)
 
     if len(args.stage_replay) > MAX_STAGE_REPLAY_ARGS:
         msg = "--stage-replay should only have one stage, or two stages: start, end."
+        raise ValueError(msg)
+
+    if len(stage_compare) > MAX_STAGE_COMPARE_ARGS:
+        msg = "--stage-compare should only have one stage, or two stages: start, end."
         raise ValueError(msg)
 
 

@@ -35,6 +35,7 @@ from cosmos_curate.core.interfaces.stage_interface import CuratorStage, CuratorS
 from cosmos_curate.core.utils.config import args_utils
 from cosmos_curate.core.utils.infra.hardware_info import get_gpu_infos
 from cosmos_curate.core.utils.infra.profiling import profiling_scope
+from cosmos_curate.core.utils.misc.stage_compare import run_stage_compare
 from cosmos_curate.core.utils.misc.stage_replay import (
     StageSaveConfig,
     add_stage_replay_args,
@@ -116,6 +117,7 @@ from cosmos_curate.pipelines.video.super_resolution.super_resolution_builders im
     SuperResolutionConfig,
     build_super_resolution_stages,
 )
+from cosmos_curate.pipelines.video.utils import data_model_compare  # noqa: F401  # registers SplitPipeTaskComparator
 from cosmos_curate.pipelines.video.utils.data_model import (
     SplitPipeTask,
     VllmConfig,
@@ -851,14 +853,38 @@ def _split(args: argparse.Namespace) -> None:
         )
 
     if len(args.stage_replay) == 0:
-        # Run the full pipeline
-        output_tasks: list[SplitPipeTask] = run_pipeline(
-            input_tasks,
-            stages,
-            args.model_weights_path,
-            stage_save_config=stage_save_config,
-            args=args,
-        )
+        if len(args.stage_compare) == 0:
+            # Run the full pipeline
+            output_tasks: list[SplitPipeTask] = run_pipeline(
+                input_tasks,
+                stages,
+                args.model_weights_path,
+                stage_save_config=stage_save_config,
+                args=args,
+            )
+        else:
+            start_stage_name = args.stage_compare[0]
+            end_stage_name = args.stage_compare[-1] if len(args.stage_compare) > 1 else start_stage_name
+            stage_to_compare = get_stages_to_replay(stages, start_stage_name, end_stage_name)
+            next_stage_name = _get_stage_name_after(stages, end_stage_name)
+            golden_base = args.stage_compare_path if args.stage_compare_path is not None else args.output_clip_path
+            compare_result = run_stage_compare(
+                stage_to_compare,
+                get_full_path(args.output_clip_path, "tasks", start_stage_name),
+                get_full_path(golden_base, "tasks", next_stage_name),
+                args.stage_compare_atol,
+                args.limit,
+                args.stage_compare_pass_threshold,
+                report_path=get_full_path(args.output_clip_path, "compare", start_stage_name, "report.json"),
+                profile_name=args.output_s3_profile_name,
+            )
+            if not compare_result.passed:
+                msg = (
+                    f"Stage compare pass rate {compare_result.report.pass_rate:.3f} is below "
+                    f"threshold {args.stage_compare_pass_threshold:.3f}"
+                )
+                raise RuntimeError(msg)
+            return
     else:
         # Stage replay
         start_stage_name = args.stage_replay[0]
@@ -899,6 +925,25 @@ def _split(args: argparse.Namespace) -> None:
         f"{pipeline_run_time=:.2f} / {summary_run_time=:.2f} mins processing "
         f"time for {total_video_length=:.3f} hours of raw videos",
     )
+
+
+def _get_stage_name_after(stages: list[CuratorStage | CuratorStageSpec], stage_name: str) -> str:
+    """Return the stage name immediately after the requested stage.
+
+    Matches by class name and returns the successor of the first matching stage.
+    """
+    normalized_stages = [
+        cast("CuratorStage", stage.stage) if isinstance(stage, CuratorStageSpec) else stage for stage in stages
+    ]
+    for index, stage in enumerate(normalized_stages):
+        if stage.__class__.__name__ != stage_name:
+            continue
+        if index + 1 >= len(normalized_stages):
+            msg = f"--stage-compare cannot infer golden for last stage {stage_name}"
+            raise ValueError(msg)
+        return normalized_stages[index + 1].__class__.__name__
+    msg = f"Stage {stage_name} not found in pipeline"
+    raise ValueError(msg)
 
 
 def _setup_parser(parser: argparse.ArgumentParser) -> None:  # noqa: PLR0915

@@ -364,25 +364,47 @@ def test_get_stages_to_replay(
 
 
 @pytest.mark.parametrize(
-    ("stage_save", "stage_replay", "raises"),
+    ("stage_save", "stage_replay", "stage_compare", "raises"),
     [
-        ([], [], nullcontext()),  # No args
-        (["Stage1", "Stage2"], [], nullcontext()),  # Save only
-        ([], ["Stage1"], nullcontext()),  # Replay one stage
-        ([], ["Stage1", "Stage2"], nullcontext()),  # Replay two stages
-        (["Stage1"], ["Stage1"], pytest.raises(ValueError, match="Cannot save tasks and replay")),  # Both
-        ([], ["Stage1", "Stage2", "Stage3"], pytest.raises(ValueError, match="should only have one stage, or two")),
+        ([], [], [], nullcontext()),  # No args
+        (["Stage1", "Stage2"], [], [], nullcontext()),  # Save only
+        ([], ["Stage1"], [], nullcontext()),  # Replay one stage
+        ([], ["Stage1", "Stage2"], [], nullcontext()),  # Replay two stages
+        ([], [], ["Stage1"], nullcontext()),  # Compare one stage
+        ([], [], ["Stage1", "Stage2"], nullcontext()),  # Compare two stages
+        (
+            ["Stage1"],
+            ["Stage1"],
+            [],
+            pytest.raises(ValueError, match="Only one of --stage-save, --stage-replay, and --stage-compare"),
+        ),  # Save + replay
+        (
+            ["Stage1"],
+            [],
+            ["Stage1"],
+            pytest.raises(ValueError, match="Only one of --stage-save, --stage-replay, and --stage-compare"),
+        ),  # Save + compare
+        (
+            [],
+            ["Stage1"],
+            ["Stage1"],
+            pytest.raises(ValueError, match="Only one of --stage-save, --stage-replay, and --stage-compare"),
+        ),  # Replay + compare
+        ([], ["Stage1", "Stage2", "Stage3"], [], pytest.raises(ValueError, match="should only have one stage, or two")),
+        ([], [], ["Stage1", "Stage2", "Stage3"], pytest.raises(ValueError, match="should only have one stage, or two")),
     ],
 )
 def test_validate_stage_replay_args(
     stage_save: list[str],
     stage_replay: list[str],
+    stage_compare: list[str],
     raises: AbstractContextManager[Any],
 ) -> None:
     """Test validation of stage replay arguments."""
     args = argparse.Namespace(
         stage_save=stage_save,
         stage_replay=stage_replay,
+        stage_compare=stage_compare,
     )
     with raises:
         validate_stage_replay_args(args)

@@ -6,6 +6,7 @@ Stage replay is a debugging and development feature that allows you to:
 
 1. **Save tasks** from any stage during a pipeline run
 2. **Run a single stage in isolation** using saved tasks from a previous run
+3. **Compare stage outputs against golden saved outputs** from a previous run
 
 This capability can speed up iteration when developing or debugging a specific stage, without needing to re-run the entire pipeline.
 
@@ -13,6 +14,7 @@ This capability can speed up iteration when developing or debugging a specific s
 - 🐛 Debugging a specific stage without running the full pipeline
 - 🔧 Iterating on stage logic (filtering, captioning, etc.)
 - ⚡ Testing stage changes quickly with real production data
+- ✅ Validating that a modified stage still matches previously saved outputs
 - 📊 Profiling stage performance in isolation
 
 **Benefits:**
@@ -20,6 +22,7 @@ This capability can speed up iteration when developing or debugging a specific s
 - **Reproducibility**: Test with the exact same inputs every time
 - **No code changes**: Works with any existing stage
 - **Real data**: Use actual pipeline data, not synthetic test cases
+- **Validation**: Compare new outputs against a known-good saved run
 
 ---
 
@@ -78,6 +81,39 @@ cosmos-curate local launch --curator-path . -- \
 4. Processes each task batch through `stage.process_data()`
 5. Returns the output tasks
 
+### Compare a Stage Against Golden Outputs
+
+Once you have saved consecutive stages, compare the current stage output against the saved golden output
+from the next stage:
+
+```bash
+cosmos-curate local launch --curator-path . -- \
+  pixi run --as-is python -m cosmos_curate.pipelines.video.splitting_pipeline \
+  --input-video-path /path/to/videos \
+  --output-clip-path /path/to/output \
+  --stage-compare ClipFrameExtractionStage \
+  --limit 10
+```
+
+**Parameters:**
+- `--stage-compare`: Stage class name, or comma-separated start/end stage names for a range
+- `--stage-compare-path`: Optional alternate base path for golden outputs
+- `--stage-compare-atol`: Optional numeric tolerance for numpy comparisons
+- `--stage-compare-pass-threshold`: Minimum pass rate required for exit code 0
+- `--limit`: Optional, maximum number of task batches to compare (0 = unlimited)
+
+**What happens:**
+1. Loads replay inputs from `{output-clip-path}/tasks/{StartStageName}/*.pkl`
+2. Executes the stage or stage range directly
+3. Loads golden outputs from `{base}/tasks/{NextStageName}/*.pkl`
+4. Compares candidate vs golden outputs
+5. Writes `report.json` to `{output-clip-path}/compare/{StartStageName}/report.json`
+6. Exits nonzero if the pass rate is below the configured threshold
+
+**Mental model:**
+- `--stage-replay` = replay only
+- `--stage-compare` = replay + compare + report + thresholded exit code
+
 ---
 
 ## Detailed Usage
@@ -100,13 +136,15 @@ cosmos-curate local launch --curator-path . -- \
 ```
 
 **Tips:**
+
 - Save tasks from the **same stage** you want to debug (saves inputs to that stage)
 - Use `sample-rate < 1.0` for large datasets to save disk space
 - The pipeline runs normally; saving happens in the background
 
 **Check saved tasks:**
+
 ```bash
-ls /data/output/tasks/VllmCaptionStage/VllmCaptionStage/
+ls /data/output/tasks/VllmCaptionStage/
 # video1_000.task.pkl
 # video1_001.task.pkl
 # video2_000.task.pkl
@@ -144,6 +182,7 @@ cosmos-curate local launch --curator-path . -- \
 ```
 
 **What's different:**
+
 - ✅ `--stage-replay` specifies which stage to run
 - ✅ `--limit` lets you test on a subset of input pickles
 
@@ -157,10 +196,68 @@ Repeat steps 2-3 as many times as needed:
 4. Repeat
 
 **No need to:**
+
 - Re-run the full pipeline
 - Re-save tasks
 - Modify pipeline structure
 - Add special test fixtures
+
+### Workflow Example: Validate a Stage Change Against Golden Outputs
+
+**Scenario**: You changed `ClipFrameExtractionStage` and want to confirm it still produces the same
+output as a previous known-good run.
+
+#### Step 1: Save Consecutive Stages
+
+You need the saved inputs to the stage under test and the saved golden outputs from its immediate
+successor:
+
+```bash
+cosmos-curate local launch --curator-path . -- \
+  pixi run --as-is python -m cosmos_curate.pipelines.video.splitting_pipeline \
+  --input-video-path /data/raw_videos \
+  --output-clip-path /data/output \
+  --stage-save ClipFrameExtractionStage,InternVideo2FrameCreationStage \
+  --stage-save-sample-rate 1.0
+```
+
+This produces:
+
+```text
+/data/output/tasks/ClipFrameExtractionStage/
+/data/output/tasks/InternVideo2FrameCreationStage/
+```
+
+The second directory contains the golden outputs for `ClipFrameExtractionStage`.
+
+#### Step 2: Modify Your Stage
+
+Make the stage change you want to validate.
+
+#### Step 3: Run Stage Compare
+
+```bash
+cosmos-curate local launch --curator-path . -- \
+  pixi run --as-is python -m cosmos_curate.pipelines.video.splitting_pipeline \
+  --input-video-path /data/raw_videos \
+  --output-clip-path /data/output \
+  --stage-compare ClipFrameExtractionStage \
+  --limit 10
+```
+
+#### Step 4: Inspect the Result
+
+Successful compare prints a summary like:
+
+```text
+[stage-compare] PASSED  10/10 (100.0%)  report: /data/output/compare/ClipFrameExtractionStage/report.json
+```
+
+The JSON report includes:
+- overall pass/fail counts
+- pass rate
+- field-level summaries
+- per-task failures for mismatches
 
 ---
 
@@ -258,6 +355,43 @@ Save tasks from multiple stages in one run:
 ```bash
 --stage-save Stage1,Stage2,Stage3 --stage-save-sample-rate 0.1
 ```
+
+### Compare a Stage Range
+
+You can compare a whole stage range and validate the final output against the stage after the range:
+
+```bash
+--stage-compare Stage0,Stage1
+```
+
+This replays `Stage0` through `Stage1`, then compares the resulting output against the saved golden
+tasks from the stage immediately after `Stage1` in the pipeline.
+
+### Override the Golden Base Path
+
+If the golden outputs live under a different run directory, override the base path:
+
+```bash
+--stage-compare ClipFrameExtractionStage \
+--stage-compare-path /other/output
+```
+
+This reads replay inputs from:
+
+```text
+{output-clip-path}/tasks/ClipFrameExtractionStage/
+```
+
+and golden outputs from:
+
+```text
+/other/output/tasks/{NextStageName}/
+```
+
+### Local and S3 Paths
+
+`--stage-save`, `--stage-replay`, and `--stage-compare` support both local paths and `s3://...`
+paths through the normal `output-clip-path` / `stage-compare-path` handling.
 
 Each stage's tasks are saved independently:
 ```text
@@ -596,4 +730,3 @@ Stage replay is a zero-code-change debugging tool that:
 ```
 
 Start using stage replay today to iterate faster and debug more effectively!
-
