@@ -2,6 +2,78 @@
 
 ## Latest
 
+## [1.3.0]
+
+### Released
+
+- 2026-04-27
+
+### Added
+
+- Image curation pipeline with semantic filtering
+- Image embedding stages (Cosmos-Embed1, InternVideo2-MM, OpenAI-compatible) and image annotate pipeline
+- OpenAI- and Gemini-compatible endpoints for image captioning, filtering, and classification
+- Artificial-text detection stage for the video filtering pipeline (PaddleOCR-based)
+- Sensor library (camera-only) with `SensorGroup`, mcap-based ingestion, and timestamp validation
+- SeedVR-based upscaling stage
+- Pipeline config files with NVCF-compatible JSON and YAML loading (`--config` for split/shard/dedup)
+- Centralized pipeline argument validation via `common_pipeline_settings` and `shard_pipeline_settings`
+- vLLM async captioning stage for higher captioning throughput (experimental — correctness
+  issues are still being worked through; not recommended for production use)
+- OpenTelemetry instrumentation for vLLM captioning
+- Token-counting instrumentation to measure captioning throughput
+- Caption status fields normalized across caption backends, with status-gated metadata writing
+- Stage-replay validation that compares re-run output against the original recording
+- S3 support for `stage-save` and `stage-replay`
+- Ray Data hello-world pipeline and splitting pipeline MVP as an alternative engine alongside Xenna
+- `--*-cpus-per-worker` knobs documented for CPU-constrained hosts
+- Run local-launched container as the host user (including AD/SSSD/NIS UIDs) to avoid root-owned outputs
+- Slim Docker image built alongside the full image, with auto-warmup honoring `--envs`
+- Local Xenna build path in CI and per-pipeline Xenna overrides
+- Fixed-stride coverage in the NVCF split benchmark matrix
+- Real-inference smoke test for vLLM captioning health
+- Upgrade to CUDA 13.0
+- Upgrade vLLM to 0.19.0
+- Upgrade Ray to 2.55.0 (with the `serve` extra)
+- Upgrade cosmos-xenna to 0.2.3
+- Bump `av` to `>=17,<18` and add the `mcap` dependency for the sensor library
+
+### Fixed
+
+- `SamplingGrid` produced incorrect windows for irregular grids
+- `--execution-mode` CLI flag is now honored end-to-end
+- Cosmos-Embed1 writes per-variant embedding directories
+- Symlink the host pixi path so shebangs resolve inside the local-launched container
+- Sensor library uses read-only views to avoid accidental buffer mutation
+- Add Qwen3 preprocessing logic for filtering stages
+- Use pre-built images for benchmark runs to avoid redundant builds
+- Remove external storage dependency from `ImageSensor`
+- Semantic filter updates and dedup pipeline input path cleanup
+- Loosen Cosmos-Reason1 caption similarity threshold to reduce flakiness
+
+### Changed
+
+- Replace `CurationPhase` / `PipelineBuilder` with factory functions (`*_builders.py`); the
+  `phase_interface` module and per-pipeline `phases.py` files are removed
+- Add `config: VllmConfig` parameter to `VllmPlugin.make_llm_input` for image vs video
+  modality selection; subclasses must update their signature
+- Switch CI Slurm and k8s GPU jobs to the slim image with in-container `pixi install` and
+  `pixi run --as-is`
+- Change CI NVCF backend
+- Normalize the `SamplingGrid` API and make sampling windows explicit (no sentinel boundaries)
+- Update semantic filter stages to use `VllmCaptioning`
+- Add a CPU-only Paddle option for the `unified` env
+- Pixi lockfile refreshed for CVE coverage
+- Add notice and disclaimer to README and Docker image
+
+### Documentation
+
+- Speed-of-light design doc for captioning throughput, with refined SOL baseline methodology
+  using `vllm bench` as the reference
+- Refined Ray Data runner design with the first implementation slice
+- Document `--*-cpus-per-worker` tuning knobs
+- Add `--squash-before-merge` to MR guidelines
+
 ## [1.2.2]
 
 ### Released
