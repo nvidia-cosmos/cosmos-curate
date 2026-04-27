@@ -122,6 +122,9 @@ variables:
   CICD_HELM_CHART_VERSION:
     description: "Helm chart version for the CICD pipeline"
     value: "2.2.2"
+  XENNA_REF:
+    description: "cosmos-xenna git ref (branch/tag/SHA) to build when the 'use-local-xenna-build' MR label is set"
+    value: "main"
 
   # Vault integration
   VAULT_ADDR: "$VAULT_ADDR"
@@ -380,10 +383,15 @@ unit_tests:
     - *setup_curator_cli
     - source .gitlab/scripts/common.sh
     - get_cache_refs "${BUILD_IMAGE_REPO}" "${PLATFORM}"
+    # When the MR carries the 'use-local-xenna-build' label, build a
+    # cosmos-xenna wheel from XENNA_REF (default: main) and let the image
+    # build consume it via --use-local-xenna-build. The slim build is
+    # skipped because slim images install pixi envs at runtime from the
+    # lockfile, which still pins the PyPI-released cosmos-xenna.
     - |
       if [[ ",${CI_MERGE_REQUEST_LABELS:-}," == *",use-local-xenna-build,"* && "${BUILD_EXTRA_ARGS:-}" != *"--slim"* ]]; then
-        echo "MR label 'use-local-xenna-build' detected; looking for cosmos-xenna wheel..."
-        ls -la target/wheels/ 2>/dev/null || true
+        echo "MR label 'use-local-xenna-build' detected; building cosmos-xenna wheel from ref '${XENNA_REF:-main}'..."
+        bash .gitlab/scripts/build_xenna_wheel.sh
         BUILD_EXTRA_ARGS="${BUILD_EXTRA_ARGS:-} --use-local-xenna-build"
         echo "Will pass to cosmos-curate image build: ${BUILD_EXTRA_ARGS}"
       fi
