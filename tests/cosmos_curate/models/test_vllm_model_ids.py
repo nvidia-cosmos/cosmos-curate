@@ -28,6 +28,7 @@ from cosmos_curate.models.vllm_model_ids import get_vllm_model_id
         ("qwen", "Qwen/Qwen2.5-VL-7B-Instruct", nullcontext()),
         ("cosmos_r1", "nvidia/Cosmos-Reason1-7B", nullcontext()),
         ("cosmos_r2", "nvidia/Cosmos-Reason2-8B", nullcontext()),
+        ("qwen3_5_27b", "Qwen/Qwen3.5-27B-FP8", nullcontext()),
         ("unknown", None, pytest.raises(ValueError, match=r"vLLM model variant unknown not supported")),
     ],
 )

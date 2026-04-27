@@ -344,3 +344,15 @@ class VllmQwen3VL235BFP8(VllmQwen3VL):
     def model_variant() -> str:
         """Return the model variant name."""
         return "qwen3_vl_235b_fp8"
+
+
+class VllmQwen3527B(VllmQwen3VL):
+    """Qwen3.5-27B vLLM model variant plugin.
+
+    This model supports video inputs in spite of not having VL in the model name.
+    """
+
+    @staticmethod
+    def model_variant() -> str:
+        """Return the model variant name."""
+        return "qwen3_5_27b"

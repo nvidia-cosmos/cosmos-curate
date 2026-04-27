@@ -34,6 +34,7 @@ _VLLM_MODELS = {
     "nemotron": "nvidia/NVIDIA-Nemotron-Nano-12B-v2-VL-BF16",
     "qwen3_vl_235b": "Qwen/Qwen3-VL-235B-A22B-Instruct",
     "qwen3_vl_235b_fp8": "Qwen/Qwen3-VL-235B-A22B-Instruct-FP8",
+    "qwen3_5_27b": "Qwen/Qwen3.5-27B-FP8",
     "qwen3_vl_30b": "Qwen/Qwen3-VL-30B-A3B-Instruct",
     "qwen3_vl_30b_fp8": "Qwen/Qwen3-VL-30B-A3B-Instruct-FP8",
 }

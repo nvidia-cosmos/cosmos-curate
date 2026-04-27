@@ -151,6 +151,13 @@
         "precision": "FP8",
         "nvcf_model_id": "qwen3_vl_235b_a22b_instruct_fp8"
     },
+    "qwen3_5_27b": {
+        "model_id": "Qwen/Qwen3.5-27B-FP8",
+        "version": "97f5941bf617e31c5e237364a8602ce3f03a551a",
+        "filelist": null,
+        "precision": "FP8",
+        "nvcf_model_id": "qwen3_5_27b"
+    },
     "seedvr2_3b": {
         "model_id": "ByteDance-Seed/SeedVR2-3B",
         "version": "37255ff8cccfb01071b87f635a5948ca8d53117c",
