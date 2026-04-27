@@ -15,7 +15,9 @@
 
 """CLI to launch commands."""
 
+import grp
 import os
+import pwd
 import shlex
 import subprocess
 import sys
@@ -71,6 +73,11 @@ class LaunchDocker:
 
 _MIN_VOLUME_PARTS = 2
 _MAX_VOLUME_PARTS = 3
+# Stable while we use nvidia/cuda:*-devel-ubuntu*: those base images ship a
+# default `ubuntu:x:1000:1000` entry, so a host UID of 1000 already resolves
+# inside the container and synthesis would only override `ubuntu` with the
+# host username for no benefit. Revisit if the base image changes.
+_IMAGE_BAKED_UIDS = frozenset({1000})
 
 
 def _parse_extra_volumes(raw: str) -> list[str]:
@@ -355,6 +362,37 @@ def _get_shm_size_str() -> str:
     return f"{_get_system_memory_gb() * fraction:.2f}gb"
 
 
+def _get_identity_mounts(scratch_home: Path) -> list[str]:
+    """Synthesize minimal /etc/passwd and /etc/group so pwd.getpwuid succeeds.
+
+    Docker applies numeric UID/GID but does not synthesize NSS entries; libraries
+    like Torch Inductor call pwd.getpwuid() and crash without one. pwd/grp here
+    go through NSS, so this also resolves AD/SSSD/NIS users that don't appear in
+    the host's /etc/passwd at all (e.g. corp laptops, HPC clusters).
+    """
+    if os.getuid() in _IMAGE_BAKED_UIDS:
+        return []
+    user = pwd.getpwuid(os.getuid())
+    group = grp.getgrgid(os.getgid())
+    etc = scratch_home / "etc"
+    etc.mkdir(parents=True, exist_ok=True)
+    (etc / "passwd").write_text(
+        "root:x:0:0:root:/root:/bin/bash\n"
+        f"{user.pw_name}:x:{user.pw_uid}:{user.pw_gid}:{user.pw_gecos}:{Path.home()}:{user.pw_shell}\n"
+    )
+    (etc / "group").write_text(f"root:x:0:\n{group.gr_name}:x:{group.gr_gid}:{user.pw_name}\n")
+    return [
+        "-v",
+        f"{etc / 'passwd'}:/etc/passwd:ro",
+        "-v",
+        f"{etc / 'group'}:/etc/group:ro",
+        "-e",
+        f"USER={user.pw_name}",
+        "-e",
+        f"LOGNAME={user.pw_name}",
+    ]
+
+
 def _launch_in_docker_container(opts: LaunchDocker) -> None:
     """Launch the command inside a local Docker container."""
     if not LOCAL_WORKSPACE_PATH.exists():
@@ -410,6 +448,7 @@ def _launch_in_docker_container(opts: LaunchDocker) -> None:
     docker_command.extend(_get_config_file_mount_strings(is_model_cli=is_model_cli))
     for vol in opts.extra_volumes:
         docker_command.extend(["-v", vol])
+    docker_command.extend(_get_identity_mounts(scratch_home))
     docker_command.extend(interactive_strings)
     docker_command.extend(
         [

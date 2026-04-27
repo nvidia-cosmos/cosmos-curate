@@ -16,6 +16,7 @@
 
 import logging
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -26,6 +27,7 @@ from typer.testing import CliRunner
 from cosmos_curate.client.cli import cosmos_curator  # type: ignore[import-untyped]
 from cosmos_curate.client.local_cli.launch_local import (  # type: ignore[import-untyped]
     _get_config_file_mount_strings,
+    _get_identity_mounts,
     _parse_extra_volumes,
     _verify_local_path_exists,
 )
@@ -34,13 +36,7 @@ runner = CliRunner()
 
 
 def test_launch_command() -> None:
-    """Test that docker run command forms.
-
-    Args:
-        monkeypatch: The monkeypatch object.
-        tmp_path: The tmp_path object.
-
-    """
+    """Test that docker run command forms."""
     args = [
         "local",
         "launch",
@@ -94,6 +90,49 @@ def test_verify_local_path_exists(monkeypatch: MonkeyPatch, tmp_path: Path, capl
 
         with pytest.raises(SystemExit):
             _verify_local_path_exists(mock_paths_fail)
+
+
+def test_get_identity_mounts_skips_baked_uid(tmp_path: Path) -> None:
+    """UIDs already in the image's /etc/passwd skip synthesis."""
+    with patch("cosmos_curate.client.local_cli.launch_local.os.getuid", return_value=1000):
+        assert _get_identity_mounts(tmp_path) == []
+    assert not (tmp_path / "etc").exists()
+
+
+def test_get_identity_mounts_synthesizes_for_ad_uid(tmp_path: Path) -> None:
+    """High AD/SSSD-style UIDs get a synthesized minimal passwd/group."""
+    with (
+        patch("cosmos_curate.client.local_cli.launch_local.os.getuid", return_value=1776709216),
+        patch("cosmos_curate.client.local_cli.launch_local.os.getgid", return_value=1776709216),
+        patch(
+            "cosmos_curate.client.local_cli.launch_local.pwd.getpwuid",
+            return_value=SimpleNamespace(
+                pw_name="ad_user",
+                pw_uid=1776709216,
+                pw_gid=1776709216,
+                pw_gecos="AD User",
+                pw_shell="/bin/bash",
+            ),
+        ),
+        patch(
+            "cosmos_curate.client.local_cli.launch_local.grp.getgrgid",
+            return_value=SimpleNamespace(gr_name="ad_group", gr_gid=1776709216),
+        ),
+        patch("cosmos_curate.client.local_cli.launch_local.Path.home", return_value=Path("/home/ad_user")),
+    ):
+        result = _get_identity_mounts(tmp_path)
+
+    assert f"{tmp_path / 'etc' / 'passwd'}:/etc/passwd:ro" in result
+    assert f"{tmp_path / 'etc' / 'group'}:/etc/group:ro" in result
+    assert "USER=ad_user" in result
+    assert "LOGNAME=ad_user" in result
+
+    passwd_text = (tmp_path / "etc" / "passwd").read_text()
+    group_text = (tmp_path / "etc" / "group").read_text()
+    assert "ad_user:x:1776709216:1776709216:AD User:/home/ad_user:/bin/bash\n" in passwd_text
+    assert "root:x:0:0:root:/root:/bin/bash\n" in passwd_text
+    assert "ad_group:x:1776709216:ad_user\n" in group_text
+    assert "root:x:0:\n" in group_text
 
 
 def test_get_config_file_mount_string(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
