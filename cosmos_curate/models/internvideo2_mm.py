@@ -16,7 +16,7 @@
 
 import json
 import pathlib
-from typing import Any, Final
+from typing import Any, Final, cast
 
 import cv2
 import numpy as np
@@ -404,6 +404,16 @@ class InternVideo2MultiModality(ModelInterface):
         vid_tube2 = np.concatenate(vid_tube1, axis=1)
         return np.transpose(vid_tube2, (0, 1, 4, 2, 3))
 
+    def _construct_image(
+        self,
+        image: npt.NDArray[np.uint8],
+        target_size: tuple[int, int] = (224, 224),
+    ) -> npt.NDArray[np.float32]:
+        """Construct a single-image tensor in the shape expected by the vision encoder."""
+        resized_image = cast("npt.NDArray[np.uint8]", cv2.resize(image, target_size))  # type: ignore[misc]
+        image_tube = np.expand_dims(self._normalize(resized_image), axis=(0, 1))
+        return np.transpose(image_tube, (0, 1, 4, 2, 3))
+
     def get_target_num_frames(self) -> int:
         """Get the target number of frames for the model.
 
@@ -426,6 +436,11 @@ class InternVideo2MultiModality(ModelInterface):
         fn = self.get_target_num_frames()
         size_t = self._config.get("size_t", 224)
         return self._construct_frames(frames, fnum=fn, target_size=(size_t, size_t))
+
+    def formulate_input_image(self, frame: npt.NDArray[np.uint8]) -> npt.NDArray[np.float32]:
+        """Formulate a single image for the model's native image-aware path."""
+        size_t = self._config.get("size_t", 224)
+        return self._construct_image(frame, target_size=(size_t, size_t))
 
     def encode_video_frames(self, iv2_frames: npt.NDArray[np.float32]) -> torch.Tensor:
         """Encode video frames for the model.

@@ -14,22 +14,19 @@
 # limitations under the License.
 """OpenAI-compatible API embedding stage for remote video embedding inference (e.g. vLLM serving)."""
 
-import base64
 import concurrent.futures
-import io
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import numpy.typing as npt
 import nvtx  # type: ignore[import-untyped]
-import tenacity
 from loguru import logger
-from PIL import Image
 
 from cosmos_curate.core.interfaces.stage_interface import CuratorStage, CuratorStageResource
 from cosmos_curate.core.utils.config.config import maybe_load_config, resolve_model_name_auto
 from cosmos_curate.core.utils.infra.performance_utils import StageTimer
 from cosmos_curate.core.utils.model import conda_utils
+from cosmos_curate.pipelines.common.openai_embedding_utils import call_openai_embedding_api, frame_to_base64_jpeg
 from cosmos_curate.pipelines.video.utils.data_model import (
     Clip,
     SplitPipeTask,
@@ -41,21 +38,10 @@ from cosmos_curate.pipelines.video.utils.decoder_utils import (
 
 if TYPE_CHECKING:
     import openai
-    from openai.types.create_embedding_response import CreateEmbeddingResponse
 
 
 if conda_utils.is_running_in_env("unified"):
     import openai
-    from openai.types.create_embedding_response import CreateEmbeddingResponse
-
-
-def _frame_to_base64_jpeg(frame: npt.NDArray[np.uint8]) -> str:
-    """Encode a single video frame (H, W, C uint8 array) as a base64 JPEG data URI."""
-    img = Image.fromarray(frame)
-    buf = io.BytesIO()
-    img.save(buf, format="JPEG")
-    b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
-    return f"data:image/jpeg;base64,{b64}"
 
 
 class OpenAIEmbeddingStage(CuratorStage):
@@ -146,33 +132,15 @@ class OpenAIEmbeddingStage(CuratorStage):
             raise RuntimeError(msg)
 
         content_parts: list[dict[str, Any]] = [
-            {"type": "image_url", "image_url": {"url": _frame_to_base64_jpeg(frame)}} for frame in frames
+            {"type": "image_url", "image_url": {"url": frame_to_base64_jpeg(frame)}} for frame in frames
         ]
-
-        @tenacity.retry(
-            stop=tenacity.stop_after_attempt(self._max_retries),
-            wait=tenacity.wait_fixed(self._retry_delay_seconds),
-            retry=tenacity.retry_if_not_exception_type(
-                (openai.AuthenticationError, openai.NotFoundError, openai.BadRequestError),
-            ),
-            reraise=True,
+        return call_openai_embedding_api(
+            client,
+            self._model_name,
+            content_parts,
+            max_retries=self._max_retries,
+            retry_delay_seconds=self._retry_delay_seconds,
         )
-        def _call() -> npt.NDArray[np.float32]:
-            response: CreateEmbeddingResponse = client.post(
-                "/embeddings",
-                cast_to=CreateEmbeddingResponse,
-                body={
-                    "model": self._model_name,
-                    "messages": [{"role": "user", "content": content_parts}],
-                    "encoding_format": "float",
-                },
-            )
-            if not response.data:
-                msg = f"OpenAI-compatible embedding API returned no data. model={self._model_name!r}"
-                raise RuntimeError(msg)
-            return np.array(response.data[0].embedding, dtype=np.float32)
-
-        return _call()
 
     def _embed_clip(self, clip: Clip) -> None:
         """Embed a single clip — designed to run inside a thread pool."""

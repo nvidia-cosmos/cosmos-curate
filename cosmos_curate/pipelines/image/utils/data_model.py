@@ -95,6 +95,15 @@ class Image:
     is_filtered: bool = False
     """Whether the image was filtered out by semantic or classifier postprocessing."""
 
+    embeddings: dict[str, npt.NDArray[np.float32]] = attrs.Factory(dict)
+    """Embeddings keyed by model key (e.g. 'clip', 'cosmos_embed1_336p', 'internvideo2', 'openai')."""
+
+    intern_video_2_text_match: tuple[str, float] | None = None
+    """Best text-match result for InternVideo2 embedding verification, when requested by tests."""
+
+    cosmos_embed1_text_match: tuple[str, float] | None = None
+    """Best text-match result for Cosmos-Embed1 embedding verification, when requested by tests."""
+
     width: int | None = None
     """Image width (e.g. after resize in caption prep); None if not set."""
 

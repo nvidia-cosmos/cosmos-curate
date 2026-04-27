@@ -16,8 +16,10 @@
 """Image writer stage: write image bytes and minimal metadata to output path."""
 
 import hashlib
+import io
 import json
 
+import numpy as np
 import nvtx  # type: ignore[import-untyped]
 from loguru import logger
 
@@ -126,6 +128,8 @@ class ImageWriterStage(CuratorStage):
             meta["qwen_rejection_stage"] = image.qwen_rejection_stage
         if image.qwen_rejection_reasons:
             meta["qwen_rejection_reasons"] = image.qwen_rejection_reasons
+        if image.embeddings:
+            meta["embedding_keys"] = list(image.embeddings.keys())
         if image.errors:
             meta["errors"] = dict(image.errors)
         return meta
@@ -154,6 +158,10 @@ class ImageWriterStage(CuratorStage):
                 writer.write_bytes_to(image_sub, data.tobytes())
                 meta = self._build_metadata(task)
                 writer.write_str_to(meta_sub, json.dumps(meta, indent=2))
+                for model_key, embedding in image.embeddings.items():
+                    npy_buf = io.BytesIO()
+                    np.save(npy_buf, embedding)
+                    writer.write_bytes_to(f"embeddings/{model_key}/{out_id}.npy", npy_buf.getvalue())
                 if self._verbose:
                     logger.info(f"Wrote image {task.session_id} -> {image_sub}, {meta_sub}")
             if self._log_stats:

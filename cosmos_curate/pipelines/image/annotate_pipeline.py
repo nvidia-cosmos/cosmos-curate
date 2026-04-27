@@ -38,6 +38,15 @@ from cosmos_curate.pipelines.image.captioning.captioning_builders import (
     ImageCaptioningConfig,
     build_image_captioning_stages,
 )
+from cosmos_curate.pipelines.image.embedding.embedding_builders import (
+    CLIPImageEmbeddingConfig,
+    CosmosEmbed1ImageEmbeddingConfig,
+    ImageEmbeddingBackendConfig,
+    ImageEmbeddingConfig,
+    InternVideo2ImageEmbeddingConfig,
+    OpenAIImageEmbeddingConfig,
+    build_image_embedding_stages,
+)
 from cosmos_curate.pipelines.image.filtering.filtering_builders import (
     ImageClassifierConfig,
     ImageSemanticFilterConfig,
@@ -63,6 +72,7 @@ def write_summary(
 ) -> None:
     """Write summary.json and optionally per-stage performance stats to terminal."""
     num_with_caption = sum(1 for t in output_tasks if t.image.has_caption())
+    num_with_embeddings = sum(1 for t in output_tasks if t.image.embeddings)
     passed_tasks = [t for t in output_tasks if not t.image.is_filtered]
     filtered_tasks = [t for t in output_tasks if t.image.is_filtered]
     # Use prep-stage defaults when not set via CLI so summary reflects actual values used
@@ -85,6 +95,10 @@ def write_summary(
         "num_images_filtered": len(filtered_tasks),
         "pipeline_run_time": round(pipeline_run_time_min, 4),
         "num_images_with_caption": num_with_caption,
+        "num_images_with_embeddings": num_with_embeddings,
+        "embedding_backend": getattr(args, "embedding_algorithm", None)
+        if getattr(args, "generate_embeddings", True)
+        else None,
         "resize_min_pixels": resize_min_pixels,
         "resize_max_pixels": resize_max_pixels,
         "images": passed_images,
@@ -211,6 +225,30 @@ def _assemble_stages(args: argparse.Namespace) -> list[CuratorStage | CuratorSta
                     if args.image_classifier == "enable"
                     else None
                 ),
+            )
+        )
+    embedding_algorithm = getattr(args, "embedding_algorithm", "internvideo2")
+    if getattr(args, "generate_embeddings", True):
+        emb_backend: ImageEmbeddingBackendConfig
+        if embedding_algorithm.startswith("cosmos-embed1-"):
+            emb_backend = CosmosEmbed1ImageEmbeddingConfig(variant=embedding_algorithm.removeprefix("cosmos-embed1-"))
+        elif embedding_algorithm == "internvideo2":
+            emb_backend = InternVideo2ImageEmbeddingConfig()
+        elif embedding_algorithm == "clip":
+            emb_backend = CLIPImageEmbeddingConfig()
+        else:
+            emb_backend = OpenAIImageEmbeddingConfig(
+                model_name=args.openai_embedding_model_name,
+                max_concurrent_requests=args.openai_embedding_max_concurrent_requests,
+            )
+        stages.extend(
+            build_image_embedding_stages(
+                ImageEmbeddingConfig(
+                    backend=emb_backend,
+                    gpus_per_worker=args.embedding_gpus_per_worker,
+                    verbose=args.verbose,
+                    perf_profile=args.perf_profile,
+                )
             )
         )
     if getattr(args, "generate_captions", True):
@@ -533,6 +571,43 @@ def _setup_parser(parser: argparse.ArgumentParser) -> None:
         type=int,
         default=1,
         help="Number of GPUs per worker for local image classifier caption generation.",
+    )
+    parser.add_argument(
+        "--no-generate-embeddings",
+        dest="generate_embeddings",
+        action="store_false",
+        default=True,
+        help="Skip embedding generation even if --embedding-algorithm is set.",
+    )
+    parser.add_argument(
+        "--embedding-algorithm",
+        type=str,
+        default="internvideo2",
+        choices=["clip", "cosmos-embed1-224p", "cosmos-embed1-336p", "cosmos-embed1-448p", "internvideo2", "openai"],
+        help=(
+            "Embedding algorithm to use. The `cosmos-embed1-*` suffix selects the input resolution "
+            "(224p, 336p, or 448p): 224p is the fastest with 256-dim output vectors, while 336p and "
+            "448p are slower but score higher on retrieval/classification benchmarks and produce "
+            "768-dim vectors."
+        ),
+    )
+    parser.add_argument(
+        "--embedding-gpus-per-worker",
+        type=float,
+        default=1.0,
+        help="GPUs per worker for local embedding stages (CLIP, CosmosEmbed1, InternVideo2).",
+    )
+    parser.add_argument(
+        "--openai-embedding-model-name",
+        type=str,
+        default="auto",
+        help="Model name for OpenAI-compatible embedding endpoint (only used when --embedding-algorithm=openai).",
+    )
+    parser.add_argument(
+        "--openai-embedding-max-concurrent-requests",
+        type=int,
+        default=8,
+        help="Max concurrent requests to the OpenAI embedding endpoint.",
     )
     add_common_args(parser)
 

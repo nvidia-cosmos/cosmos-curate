@@ -19,6 +19,7 @@ import json
 import pathlib
 
 import numpy as np
+import numpy.testing as npt
 
 from cosmos_curate.core.sensors.data.image_data import ImageData, ImageMetadata
 from cosmos_curate.core.utils.data.lazy_data import LazyData
@@ -175,3 +176,39 @@ class TestImageWriterStage:
         meta = json.loads(meta_files[0].read_text())
         assert meta["is_filtered"] is True
         assert meta["qwen_rejection_stage"] == "semantic"
+
+    def test_writes_embedding_artifacts_and_metadata_keys(self, tmp_path: pathlib.Path) -> None:
+        """Writer should persist embeddings under per-model directories and record embedding_keys."""
+        payload = b"\xff\xd8\xff"
+        internvideo2 = np.array([[1.0, 2.0, 3.0]], dtype=np.float32)
+        clip = np.array([4.0, 5.0], dtype=np.float32)
+        image = Image(
+            input_image=tmp_path / "embedded.jpg",
+            relative_path="embedded.jpg",
+            encoded_data=LazyData.coerce(np.frombuffer(payload, dtype=np.uint8)),
+            embeddings={
+                "internvideo2": internvideo2,
+                "clip": clip,
+            },
+        )
+        task = ImagePipeTask(session_id=str(tmp_path / "embedded.jpg"), image=image)
+        stage = ImageWriterStage(
+            output_path=str(tmp_path / "out"),
+            output_s3_profile_name="default",
+        )
+
+        result = stage.process_data([task])
+
+        assert result is not None
+        meta_files = list((tmp_path / "out" / "metas").iterdir())
+        meta = json.loads(meta_files[0].read_text())
+        assert meta["embedding_keys"] == ["internvideo2", "clip"]
+
+        internvideo2_path = tmp_path / "out" / "embeddings" / "internvideo2"
+        clip_path = tmp_path / "out" / "embeddings" / "clip"
+        internvideo2_files = list(internvideo2_path.iterdir())
+        clip_files = list(clip_path.iterdir())
+        assert len(internvideo2_files) == 1
+        assert len(clip_files) == 1
+        npt.assert_array_equal(np.load(internvideo2_files[0]), internvideo2)
+        npt.assert_array_equal(np.load(clip_files[0]), clip)

@@ -132,6 +132,28 @@ class CosmosEmbed1(ModelInterface):
             self._processor(videos=video_batch, return_tensors="pt")["videos"].numpy(),
         )
 
+    def formulate_input_image(self, frame: npt.NDArray[np.uint8]) -> npt.NDArray[np.float32]:
+        """Formulate a single image input for the model.
+
+        Args:
+            frame: Single input image frame.
+
+        Returns:
+            The formulated processor output for a single-frame video input.
+
+        """
+        video_batch = np.expand_dims(np.expand_dims(frame, 0), 0)
+        video_batch = np.transpose(video_batch, (0, 1, 4, 2, 3))
+        original_num_video_frames = cast("int", self._processor.num_video_frames)
+        try:
+            self._processor.num_video_frames = 1
+            return cast(
+                "npt.NDArray[np.float32]",
+                self._processor(videos=video_batch, return_tensors="pt")["videos"].numpy(),
+            )
+        finally:
+            self._processor.num_video_frames = original_num_video_frames
+
     def encode_video_frames(self, frames: npt.NDArray[np.float32]) -> torch.Tensor:
         """Encode video frames for the model.
 
