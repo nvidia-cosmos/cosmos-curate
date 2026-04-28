@@ -247,6 +247,27 @@ class Clip:
     qwen_type_classification: list[str] | None = None
     # When clip is in filtered_clips due to Qwen: "classifier" (type allow/block) or "semantic" (criteria filter)
     qwen_rejection_stage: str | None = None
+    # SAM3 object tracking: list of per-prompt tracking results; populated by SAM3TrackingStage
+    sam3_tracked_objects: list[dict[str, Any]] = attrs.Factory(list)
+    # fraction [0,1] of frames where at least one tracked object is present; populated by SAM3TrackingStage
+    sam3_foreground_coverage: float | None = None
+    # SAM3 bbox stage outputs (populated by SAM3BBoxStage); None when SAM3 did not run.
+    # Each entry summarises one tracked object_id across the entire clip with
+    # fields object_id (int), prompt (str), start_time_s (float, wall-clock
+    # seconds with ms precision), end_time_s (float), and num_frames (int).
+    # Seconds (not frame indices) are used so the downstream VLM captioning
+    # stage can pass the payload to a VLM unchanged.
+    sam3_instances: list[dict[str, Any]] | None = None
+    # Per-frame object detections: {frame_idx: [{object_id, prompt, box_xyxy}, ...]}
+    sam3_objects_by_frame: dict[int, list[dict[str, Any]]] | None = None
+    # Per-event VLM annotations populated by PerEventCaptionStage. The shape
+    # of each entry is defined entirely by the prompt — the stage passes the
+    # model's JSON output through unchanged, so downstream consumers must be
+    # robust to whatever shape the configured prompt asks for.
+    sam3_events: list[Any] | None = None
+    # Re-encoded mp4 bytes with boxes/masks/ids/trails drawn on top (produced by AnnotatedVideoWriterStage).
+    # Wrapped in LazyData for zero-copy inter-stage transport via PEP 574.
+    sam3_annotated_video: LazyData[npt.NDArray[np.uint8]] = attrs.field(factory=LazyData, converter=LazyData.coerce)  # type: ignore[misc]
 
     def get_all_captions(self) -> list[str]:
         """Get all captions from the clip's windows.

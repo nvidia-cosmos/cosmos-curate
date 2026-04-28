@@ -193,7 +193,9 @@ def launch(  # noqa: PLR0913
     which can be controlled independently with the mount_s3_creds and mount_azure_creds
     flags. This allows using either S3 storage, Azure storage, or both together.
     """
-    command_str = " ".join(command)
+    # Use ``shlex.join`` so argv tokens containing spaces survive the
+    # round-trip into the container's ``bash -c`` string.
+    command_str = shlex.join(command)
 
     opts = LaunchDocker(
         image_label=get_image_label(image_name, image_tag),
@@ -340,6 +342,10 @@ def _get_code_mount_strings(opts: LaunchDocker) -> list[str]:
 
         tests_path = Path(opts.curator_path) / Path("tests") / Path("cosmos_curate")
         code_path_strings += ["-v", f"{tests_path.absolute()}:{CONTAINER_PATHS_CODE_DIR}/tests/cosmos_curate"]
+
+        tools_path = Path(opts.curator_path) / Path("tools")
+        if tools_path.is_dir():
+            code_path_strings += ["-v", f"{tools_path.absolute()}:{CONTAINER_PATHS_CODE_DIR}/tools"]
     return code_path_strings
 
 

@@ -64,6 +64,11 @@ from cosmos_curate.pipelines.video.captioning.captioning_builders import (
     build_captioning_stages,
     build_t5_stages,
 )
+from cosmos_curate.pipelines.video.captioning.per_event_caption_stage import PerEventCaptionStage
+from cosmos_curate.pipelines.video.captioning.per_event_cli_args import (
+    add_event_caption_args,
+    resolve_event_caption_prompt,
+)
 from cosmos_curate.pipelines.video.captioning.vllm_async_config import (
     add_vllm_async_cli_args,
     build_vllm_async_config,
@@ -116,6 +121,12 @@ from cosmos_curate.pipelines.video.read_write.summary_writers import (
 from cosmos_curate.pipelines.video.super_resolution.super_resolution_builders import (
     SuperResolutionConfig,
     build_super_resolution_stages,
+)
+from cosmos_curate.pipelines.video.tracking.cli_args import add_sam3_args
+from cosmos_curate.pipelines.video.tracking.sam3_bbox_stage import SAM3QualityConfig
+from cosmos_curate.pipelines.video.tracking.tracking_builders import (
+    SAM3TrackingConfig,
+    build_sam3_tracking_stages,
 )
 from cosmos_curate.pipelines.video.utils import data_model_compare  # noqa: F401  # registers SplitPipeTaskComparator
 from cosmos_curate.pipelines.video.utils.data_model import (
@@ -767,6 +778,69 @@ def _assemble_stages(  # noqa: C901, PLR0912, PLR0915
             )
         )
 
+    # Per-event captioning consumes SAM3 outputs (instances + tracked.mp4),
+    # so it requires SAM3 to be explicitly enabled. We don't auto-enable
+    # it here — the user should opt into the SAM3 stage knowingly because
+    # of its GPU/disk cost.
+    if args.enable_event_captioning and not args.enable_sam3:
+        msg = "--enable-event-captioning requires --enable-sam3 to also be set"
+        raise ValueError(msg)
+
+    # --- SAM3 tracking (optional) ---
+    if args.enable_sam3:
+        if not args.sam3_prompts:
+            msg = "--sam3-prompts must be non-empty when --enable-sam3 is set"
+            raise ValueError(msg)
+        # Event captioning needs the annotated tracked.mp4 (``#id`` overlay is
+        # the VLM's only spatial grounding for object ids), so force-enable
+        # annotation when it's on.
+        write_annotated_video = args.sam3_write_annotated_video or args.enable_event_captioning
+        stages.extend(
+            build_sam3_tracking_stages(
+                SAM3TrackingConfig(
+                    prompts=list(args.sam3_prompts),
+                    target_fps=args.sam3_target_fps,
+                    max_clip_duration_s=args.sam3_max_clip_duration_s,
+                    session_reset_s=args.sam3_session_reset_s,
+                    quality=SAM3QualityConfig(
+                        score_threshold_detection=args.sam3_score_threshold_detection,
+                        det_nms_thresh=args.sam3_det_nms_thresh,
+                        new_det_thresh=args.sam3_new_det_thresh,
+                        fill_hole_area=args.sam3_fill_hole_area,
+                        recondition_every_nth_frame=args.sam3_recondition_every_nth_frame,
+                        recondition_on_trk_masks=args.sam3_recondition_on_trk_masks,
+                        high_conf_thresh=args.sam3_high_conf_thresh,
+                        high_iou_thresh=args.sam3_high_iou_thresh,
+                    ),
+                    write_annotated_video=write_annotated_video,
+                    draw_trails=args.sam3_annotated_video_trails,
+                    verbose=args.verbose,
+                )
+            )
+        )
+
+    # --- Per-event VLM captioning (optional) ---
+    if args.enable_event_captioning:
+        stages.append(
+            PerEventCaptionStage(
+                backend=args.event_caption_backend,
+                prompt_text=resolve_event_caption_prompt(args),
+                qwen_variant=args.event_caption_qwen_variant,
+                qwen_sampling_fps=args.event_caption_qwen_sampling_fps,
+                qwen_fp8=args.event_caption_qwen_fp8,
+                qwen_temperature=args.event_caption_qwen_temperature,
+                qwen_top_p=args.event_caption_qwen_top_p,
+                qwen_top_k=args.event_caption_qwen_top_k,
+                gemini_model_name=args.event_caption_gemini_model_name,
+                gemini_video_fps=args.event_caption_gemini_fps,
+                gemini_media_resolution=args.event_caption_gemini_media_resolution,
+                gemini_thinking_budget=args.event_caption_gemini_thinking_budget,
+                gemini_max_output_tokens=args.event_caption_gemini_max_output_tokens,
+                verbose=args.verbose,
+                log_stats=args.perf_profile,
+            )
+        )
+
     # --- T5 encoding (optional) ---
     if args.generate_cosmos_predict_dataset != "disable":
         stages.extend(
@@ -1069,6 +1143,9 @@ def _setup_parser(parser: argparse.ArgumentParser) -> None:  # noqa: PLR0915
         default=True,
         help="Whether to write all captions to a single JSON file in the output path.",
     )
+    # --- SAM3 tracking + per-event VLM captioning (optional) ---
+    add_sam3_args(parser)
+    add_event_caption_args(parser)
     parser.add_argument(
         "--splitting-algorithm",
         type=str,

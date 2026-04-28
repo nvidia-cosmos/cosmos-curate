@@ -127,6 +127,17 @@ local = [
     "cosmos-xenna==0.2.3",
 ]
 
+[tool.setuptools.package-data]
+# Ship non-Python data files inside the wheel. Needed so that runtime
+# ``importlib.resources`` lookups (e.g. prompt templates used by
+# ``PerEventCaptionStage``) keep working when the package is installed from a
+# built wheel rather than from the source tree.
+"cosmos_curate" = [
+    "pipelines/video/captioning/prompts/*.md",
+    "configs/*.json",
+    "models/configs/*.json",
+]
+
 [tool.coverage.run]
 omit = [
     "tests/*",

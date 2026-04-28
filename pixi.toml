@@ -218,6 +218,13 @@ wrapt = ">=1.14"
 pyinstrument = ">=5.0"
 memray = ">=1.14"
 
+[feature.sam3.pypi-dependencies]
+# SAM3 (Segment Anything 3) requires transformers>=5.0.0, which conflicts with
+# vLLM's hard cap of transformers<5.  This dedicated environment isolates
+# SAM3 from vLLM so both can coexist on the same node via separate Ray workers.
+kernels = "*"
+transformers = ">=5.0.0"
+
 [environments]
 cuml = ["cuml", "tracing"]
 default = ["core", "tracing", "profiling"]
@@ -226,4 +233,5 @@ model-download = ["model-download", "tracing"]
 paddle-ocr = ["core", "paddle-ocr", "tracing", "profiling"]
 seedvr = ["core", "transformers", "seedvr", "tracing", "profiling"]
 transformers = ["core", "transformers", "tracing", "profiling"]
+sam3 = ["core", "sam3", "tracing", "profiling"]
 unified = ["core", "transformers", "unified", "tracing", "profiling"]

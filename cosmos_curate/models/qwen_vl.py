@@ -29,9 +29,23 @@ from cosmos_curate.core.utils.model import conda_utils, model_utils
 
 _QWEN2_5_VL_MODEL_ID = "Qwen/Qwen2.5-VL-7B-Instruct"
 
+# Variant keys must match entries in ``cosmos_curate/configs/all_models.json``
+# so the weight downloader can resolve them. The 30B MoE variants are the
+# recommended choice on Hopper-class GPUs; the FP8 variant is a W8A8 PTQ of
+# the same checkpoint and delivers ~2x throughput on native-FP8 hardware.
 _QWEN_VARIANTS_INFO = {
     "qwen": _QWEN2_5_VL_MODEL_ID,
+    "qwen3_vl_30b": "Qwen/Qwen3-VL-30B-A3B-Instruct",
+    "qwen3_vl_30b_fp8": "Qwen/Qwen3-VL-30B-A3B-Instruct-FP8",
 }
+
+# Variants that skip our 28-aligned ``fetch_video`` preprocessing and instead
+# expect raw uint8 TCHW frames + HF's native video processor. Qwen3-VL uses a
+# 32-aligned patch grid that our preprocessor would corrupt; let HF resize/
+# rescale/normalize itself. Single source of truth — both ``QwenVL.__init__``
+# (for ``model_does_preprocess`` defaulting) and ``PerEventCaptionStage._call_qwen``
+# (for picking the decoder path) key off this set.
+QWEN_VARIANTS_NEED_RAW_FRAMES: frozenset[str] = frozenset({"qwen3_vl_30b", "qwen3_vl_30b_fp8"})
 
 _DEFAULT_STAGE2_PROMPT = """
 Improve and refine following video description. Focus on highlighting the key visual and sensory elements.
@@ -109,6 +123,7 @@ class QwenUtils:
         self,
         prompt: str,
         video_inputs: torch.Tensor | None = None,
+        video_metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Generate inputs for the Qwen language model from video and text data.
 
@@ -122,6 +137,10 @@ class QwenUtils:
             prompt: Text prompt to be included with the input.
             video_inputs: Pre-processed video inputs. If None, and video data is to be passed to
                           the model, then video cannot be None.
+            video_metadata: Optional HF-style video metadata dict
+                (``fps``, ``total_num_frames``, ``duration``,
+                ``frames_indices``, ``do_sample_frames``, ``video_backend``).
+                Required by Qwen3-VL; ignored by Qwen2.5-VL.
 
         Returns:
             dict containing:
@@ -145,8 +164,14 @@ class QwenUtils:
             )
             self._prompt_template_cache[prompt] = text_prompt
 
+        # Qwen3-VL requires a ``(tensor, metadata)`` tuple; Qwen2.5-VL accepts
+        # either and discards the metadata. Always tuple when we have it.
+        video_item: torch.Tensor | tuple[torch.Tensor, dict[str, Any]] = video_inputs
+        if video_metadata is not None:
+            video_item = (video_inputs, video_metadata)
+
         mm_data = {}
-        mm_data["video"] = [video_inputs]
+        mm_data["video"] = [video_item]
         return {
             "prompt": text_prompt,
             "multi_modal_data": mm_data,
@@ -162,7 +187,7 @@ class QwenVL(ModelInterface):
         *,
         fp8: bool = True,
         max_output_tokens: int = 8192,
-        model_does_preprocess: bool = False,
+        model_does_preprocess: bool | None = None,
         stage2_prompt_text: str | None = None,
         disable_mmcache: bool = False,
         num_gpus: int = 1,
@@ -173,7 +198,11 @@ class QwenVL(ModelInterface):
             model_variant: The variant of the Qwen model to use.
             fp8: Whether to use FP8 quantization.
             max_output_tokens: The maximum number of tokens to generate.
-            model_does_preprocess: Whether to preprocess the model.
+            model_does_preprocess: Whether vLLM's HF mm-processor should
+                resize/rescale/normalize the video. ``None`` picks a
+                per-variant default: ``False`` for Qwen2.5-VL (28-aligned
+                patch grid; callers pre-process with ``fetch_video``) and
+                ``True`` for Qwen3-VL (32-aligned grid; let HF do it).
             stage2_prompt_text: The prompt for the stage 2 caption.
             disable_mmcache: Whether to disable the MM cache.
             num_gpus: Number of GPUs to use for processing.
@@ -184,6 +213,8 @@ class QwenVL(ModelInterface):
         self.weight_file = str(model_utils.get_local_dir_for_weights_name(self._weights_name))
         self.fp8 = fp8
         self.max_output_tokens = max_output_tokens
+        if model_does_preprocess is None:
+            model_does_preprocess = model_variant in QWEN_VARIANTS_NEED_RAW_FRAMES
         self.model_does_preprocess = model_does_preprocess
         self.disable_mmcache = disable_mmcache
         self.llm: LLM | None = None

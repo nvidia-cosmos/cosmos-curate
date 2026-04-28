@@ -21,8 +21,8 @@ class PixiRuntimeEnv(RuntimeEnv):
     """RuntimeEnv that launches Python inside a Pixi environment.
 
     This thin wrapper forwards all arguments to :class:`ray.runtime_env.RuntimeEnv`
-    but overrides the ``py_executable`` to run ``python`` via ``pixi run`` when a
-    Pixi environment name is provided.
+    but overrides the ``py_executable`` to run ``python`` via ``pixi run --as-is``
+    when a Pixi environment name is provided.
     """
 
     def __init__(self, env_name: str, env_vars: dict[str, str] | None = None) -> None:

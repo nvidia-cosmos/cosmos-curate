@@ -67,7 +67,8 @@ def _try_memfd_create(name: str) -> tuple[int | None, str | None]:
     # -- Tier 1: os.memfd_create (CPython native) --
     if _OS_MEMFD_AVAILABLE:
         try:
-            return os.memfd_create(name), None
+            # Linux-only; runtime-guarded via ``_OS_MEMFD_AVAILABLE``.
+            return os.memfd_create(name), None  # type: ignore[attr-defined]
         except OSError as e:
             return None, _format_oserror_reason(e, name, source="os.memfd_create")
 

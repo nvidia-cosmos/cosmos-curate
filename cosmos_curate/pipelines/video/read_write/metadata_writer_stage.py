@@ -49,6 +49,11 @@ from cosmos_curate.core.utils.storage.writer_utils import (
     write_parquet,
     write_text,
 )
+from cosmos_curate.pipelines.video.tracking.serialization import (
+    sam3_events_envelope,
+    sam3_instances_envelope,
+    sam3_objects_envelope,
+)
 from cosmos_curate.pipelines.video.utils.data_model import (
     Clip,
     ClipStats,
@@ -266,6 +271,26 @@ class ClipWriterStage(CuratorStage):
         return ClipWriterStage._get_output_path(output_path, "cds_parquet")
 
     @staticmethod
+    def get_output_path_sam3_instances(output_path: str) -> str:
+        """Get path to store per-clip SAM3 ``instances.json`` files."""
+        return ClipWriterStage._get_output_path(output_path, "sam3_instances")
+
+    @staticmethod
+    def get_output_path_sam3_objects(output_path: str) -> str:
+        """Get path to store per-clip SAM3 ``objects.json`` files."""
+        return ClipWriterStage._get_output_path(output_path, "sam3_objects")
+
+    @staticmethod
+    def get_output_path_sam3_events(output_path: str) -> str:
+        """Get path to store per-clip SAM3 ``events.json`` files."""
+        return ClipWriterStage._get_output_path(output_path, "sam3_events")
+
+    @staticmethod
+    def get_output_path_sam3_tracked(output_path: str) -> str:
+        """Get path to store per-clip SAM3 annotated ``tracked.mp4`` files."""
+        return ClipWriterStage._get_output_path(output_path, "sam3_tracked")
+
+    @staticmethod
     def get_video_uuid(input_video_path: str) -> uuid.UUID:
         """Get a UUID for the video based on its input path."""
         return uuid.uuid5(uuid.NAMESPACE_URL, f"{input_video_path}")
@@ -337,7 +362,7 @@ class ClipWriterStage(CuratorStage):
     ) -> None:
         write_text(text, dest, desc, source_video, verbose=self._verbose, client=self._storage_client)
 
-    def _process_video(self, video: Video, *, is_primary: bool = True) -> None:  # noqa: C901
+    def _process_video(self, video: Video, *, is_primary: bool = True) -> None:  # noqa: C901, PLR0912
         """Process a video and write clips/metadata.
 
         For multi-cam tasks, per-clip metadata and embedding paths use shared UUIDs
@@ -366,6 +391,10 @@ class ClipWriterStage(CuratorStage):
                 if is_primary:
                     futures_clips += [executor.submit(self._write_clip_window_webp, clip) for clip in video.clips]
                     futures_clips += [executor.submit(self._write_clip_embedding, clip) for clip in video.clips]
+                    # SAM3BBoxStage sets ``sam3_instances`` on every clip it processes (even when the list
+                    # is empty), so ``is not None`` is the canonical "did SAM3 run?" signal.
+                    if any(clip.sam3_instances is not None for clip in video.clips):
+                        futures_clips += [executor.submit(self._write_clip_sam3, clip) for clip in video.clips]
                     futures_clips += [
                         executor.submit(self._write_clip_metadata, clip, video.metadata) for clip in video.clips
                     ]
@@ -651,6 +680,68 @@ class ClipWriterStage(CuratorStage):
             clip_stats.num_passed += 1
         return clip_stats
 
+    def _write_clip_sam3(self, clip: Clip) -> ClipStats:
+        """Write SAM3 per-clip outputs (instances/objects/events JSON + annotated mp4).
+
+        Silently no-ops when the clip has no SAM3 data (i.e. ``SAM3BBoxStage``
+        was not run or produced no detections).
+        """
+        clip_stats = ClipStats()
+        if self._dry_run:
+            return clip_stats
+
+        source_video = clip.source_video
+
+        if clip.sam3_instances is not None:
+            dest = self._get_clip_uri(
+                clip.uuid,
+                self.get_output_path_sam3_instances(self._output_path),
+                "json",
+            )
+            self._write_json_data(
+                sam3_instances_envelope(clip.sam3_instances),
+                dest,
+                f"sam3 instances {clip.uuid}",
+                source_video,
+            )
+
+        if clip.sam3_objects_by_frame is not None:
+            dest = self._get_clip_uri(
+                clip.uuid,
+                self.get_output_path_sam3_objects(self._output_path),
+                "json",
+            )
+            self._write_json_data(
+                sam3_objects_envelope(clip.sam3_objects_by_frame),
+                dest,
+                f"sam3 objects {clip.uuid}",
+                source_video,
+            )
+
+        if clip.sam3_events is not None:
+            dest = self._get_clip_uri(
+                clip.uuid,
+                self.get_output_path_sam3_events(self._output_path),
+                "json",
+            )
+            self._write_json_data(
+                sam3_events_envelope(clip.sam3_events),
+                dest,
+                f"sam3 events {clip.uuid}",
+                source_video,
+            )
+
+        annotated = clip.sam3_annotated_video.resolve()
+        if annotated is not None and self._upload_clips:
+            dest = self._get_clip_uri(
+                clip.uuid,
+                self.get_output_path_sam3_tracked(self._output_path),
+                "mp4",
+            )
+            self._write_data(annotated, dest, f"sam3 tracked {clip.uuid}", source_video)
+
+        return clip_stats
+
     def _get_clip_embedding(self, clip: Clip) -> npt.NDArray[np.float32] | None:
         if self._embedding_algorithm == "internvideo2":
             return clip.intern_video_2_embedding
@@ -738,6 +829,10 @@ class ClipWriterStage(CuratorStage):
             data["qwen_rejection_stage"] = clip.qwen_rejection_stage
         if clip.has_artificial_text is not None:
             data["post_production_text"] = bool(clip.has_artificial_text)
+        if clip.sam3_instances is not None:
+            data["sam3_num_instances"] = len(clip.sam3_instances)
+        if clip.sam3_events is not None:
+            data["sam3_num_events"] = len(clip.sam3_events)
         if len(clip.errors) > 0:
             data["errors"] = list(clip.errors)
         has_caption = False
