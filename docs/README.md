@@ -68,6 +68,7 @@ The developer guide is for contributors who want to work on the Cosmos-Curate co
 
 **Additional Development Resources:**
 - [Stage Replay Guide](curator/STAGE_REPLAY.md) - Debug pipeline stages in isolation without re-running entire pipelines
+- [Interactive Slurm Development Guide](curator/SLURM_INTERACTIVE.md) - Iterate on Cosmos-Curate from an interactive Slurm allocation
 
 ## Guide Relationships
 

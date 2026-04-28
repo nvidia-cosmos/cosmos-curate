@@ -9,6 +9,7 @@
       - [Viewing Available Environments](#viewing-available-environments)
       - [Viewing Packages in Pixi Environments](#viewing-packages-in-pixi-environments)
       - [Running Commands in Pixi Environments](#running-commands-in-pixi-environments)
+    - [Interactive Slurm Development](#interactive-slurm-development)
   - [Code Quality Checks](#code-quality-checks)
   - [Building the Client package](#building-the-client-package)
   - [Testing](#testing)
@@ -132,6 +133,13 @@ pixi run -e unified python -c "import torch; print(torch.cuda.is_available())"
 ```
 
 Note: For pipeline execution, always use the Docker container as shown in the testing section.
+
+### Interactive Slurm Development
+
+For GPU development on a Slurm compute node, use the
+[Interactive Slurm Development Guide](./curator/SLURM_INTERACTIVE.md). It covers starting the slim container from an
+interactive allocation, using a live Lustre checkout, running a pipeline command, and troubleshooting common
+environment issues.
 
 ## Code Quality Checks
 
