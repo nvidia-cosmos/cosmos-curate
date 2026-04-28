@@ -31,7 +31,7 @@ the framework leverages two key features of [Ray Core](https://docs.ray.io/en/la
 - Manage Ray actors across a Ray cluster with one or more nodes.
 - Pass objects across a Ray cluster using Ray's [distributed object store](https://docs.ray.io/en/latest/ray-core/objects.html#objects-in-ray).
 
-With that, [Cosmos-Xenna]((https://github.com/nvidia-cosmos/cosmos-xenna)) implements an orchestration layer to run data pipeline efficiently.
+With that, [Cosmos-Xenna](https://github.com/nvidia-cosmos/cosmos-xenna) implements an orchestration layer to run data pipeline efficiently.
 
 Before we dive into more details, it is helpful to understand the main motivation for the design:
 - minimize IO/egress cost by running long pipelines with many stages
@@ -51,7 +51,7 @@ The diagram below illustrates a logical view of a 4-stage pipeline.
   - So when the main orchestration process moves pipeline tasks from one stage to the next, it really moves the object reference, which is essentially a pointer, instead of the actual data.
   - It is the stage worker's responsibility to pull and deserialize the pipeline task from the object store given the object reference. This is why the orchestration can be done in a central process.
 
-![Logical View](../assets/cosmos-curate-logical-view.png)
+![Logical View](../../assets/cosmos-curate-logical-view.png)
 
 ## Physical View
 
@@ -63,7 +63,7 @@ To support the logical view above, physically what happens is illustrated below.
   - That object reference is scheduled to a worker from the next stage's pool.
   - When the next stage's worker pulls actual object, Ray tells its physical location, either on the local node or a remote node in the Ray cluster.
 
-![Physical View](../assets/cosmos-curate-physical-view.png)
+![Physical View](../../assets/cosmos-curate-physical-view.png)
 
 ## Key Features
 
@@ -95,7 +95,7 @@ An auto-scaler works out an allocation plan to balance the throughputs of all st
 ### How to handle large variation in input data?
 
 The memory consumption and processing time for a video curation pipeline is very input data dependent.
-Take the [split-annotate pipeline](./REFERENCE_PIPELINES_VIDEO.md#shard-dataset-pipeline) as an example,
+Take the [split-annotate pipeline](./VIDEO_PIPELINES.md#shard-dataset-pipeline) as an example,
 the input video can be either 1-min long or 5-hour long.
 plus the pipeline might only knows this after a video finishes the first `VideoDownloader` stage.
 
@@ -168,7 +168,7 @@ Worker C --+        |                           +--> Worker C
 For a comprehensive deep-dive into the artifact transport subsystem
 including concurrency models, backpressure mechanics, memory
 accounting, environment variables, and error handling flows, see the
-[Artifact Transport Guide](ARTIFACT_TRANSPORT_GUIDE.md).
+[Artifact Transport Guide](ARTIFACT_TRANSPORT.md).
 
 ## Profiling Instrumentation
 
@@ -182,7 +182,7 @@ collected post-pipeline by `ArtifactDelivery` instances.
 
 For a full deep-dive -- backend internals, LIFO nesting,
 `profiling_scope` driver setup, file naming, and error handling --
-see the [Profiling Guide](PROFILING_GUIDE.md).
+see the [Profiling Guide](../guides/PROFILING.md).
 
 ## Reference
 

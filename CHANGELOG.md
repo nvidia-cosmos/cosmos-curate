@@ -298,7 +298,7 @@
 ### Documentation
 
 - Added documentation
-  for [vllm_interface](https://github.com/nvidia-cosmos/cosmos-curate/tree/main/docs/curator/VLLM_INTERFACE_DESIGN.md)
+  for [vllm_interface](https://github.com/nvidia-cosmos/cosmos-curate/tree/main/docs/curator/design/VLLM_INTERFACE.md)
   which simplifies the integration of new vLLM-powered VLMs for captioning.
 
 ## [1.1.7]

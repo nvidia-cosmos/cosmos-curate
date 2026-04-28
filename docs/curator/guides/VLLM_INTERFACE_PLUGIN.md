@@ -10,7 +10,7 @@ This guide walks you through adding a new vLLM model to cosmos-curate by impleme
 - Model weights downloaded locally (see model download guide)
 
 **Related Documentation:**
-- **[VLLM_INTERFACE_DESIGN.md](VLLM_INTERFACE_DESIGN.md)**: Architecture and API reference
+- **[VLLM_INTERFACE.md](../design/VLLM_INTERFACE.md)**: Architecture and API reference
 - **[VLLM_INTERFACE_DEBUG.md](VLLM_INTERFACE_DEBUG.md)**: Debugging and troubleshooting
 
 ## Quick Start
@@ -1165,6 +1165,6 @@ class VllmVideoLLaMA(VllmPlugin):
   - `cosmos_curate/models/vllm_nemotron.py` - Video + metadata format
   - `cosmos_curate/models/vllm_cosmos_reason1_vl.py` - NVIDIA model
 - **vLLM Documentation**: https://docs.vllm.ai/
-- **Design Document**: [VLLM_INTERFACE_DESIGN.md](VLLM_INTERFACE_DESIGN.md)
+- **Design Document**: [VLLM_INTERFACE.md](../design/VLLM_INTERFACE.md)
 - **Debug Guide**: [VLLM_INTERFACE_DEBUG.md](VLLM_INTERFACE_DEBUG.md)
-- **Testing Guide**: [VLLM_INTERFACE_TEST_AND_PROFILE.md](VLLM_INTERFACE_TEST_AND_PROFILE.md)
+- **Profiling Guide**: [PROFILING.md](PROFILING.md)

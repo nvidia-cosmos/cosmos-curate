@@ -259,7 +259,7 @@ class MyStage(CuratorStage):
 For the full deep-dive -- public span API (`TracedSpan`, `traced_span`,
 `@traced`), Ray tracing hook internals, trace context propagation,
 library auto-instrumentation, environment variables, and Jaeger setup --
-see the **[Distributed Tracing Guide](DISTRIBUTED_TRACING_GUIDE.md)**.
+see the **[Distributed Tracing Guide](../reference/DISTRIBUTED_TRACING.md)**.
 
 ### Output and Post-processing
 
@@ -278,7 +278,7 @@ Quick reference for viewing results:
 For the full deep-dive -- backend internals, dynamic subclass architecture,
 LIFO nesting, `profiling_scope` driver setup, file naming convention,
 artifact delivery flow, profile merging scripts, and error handling --
-see the **[Profiling Guide](PROFILING_GUIDE.md)**.
+see the **[Profiling Guide](PROFILING.md)**.
 
 ## Performance Metrics
 
@@ -333,7 +333,7 @@ sum by (stage) (ray_pipeline_actor_resource_usage{stage!="", resource="memory"})
 
 ## Grafana Dashboard
 
-An awesome monitoring dashboard is provided at [cosmos-curate-oss.json](../../examples/observability/grafana/cosmos-curate-oss.json).
+An awesome monitoring dashboard is provided at [cosmos-curate-oss.json](../../../examples/observability/grafana/cosmos-curate-oss.json).
 
 The panels are organized in the following rows:
 - `Pipeline`:
@@ -356,18 +356,18 @@ The panels are organized in the following rows:
   - cross-stage data movement size (this goes through front-end CPU network and hence should not be too large)
   - timing of main loop of streaming executor (whether the main orchestration thread is the bottleneck)
 
-![Monitoring Dashboard](../assets/cosmos-curate-dashboard.png)
+![Monitoring Dashboard](../../assets/cosmos-curate-dashboard.png)
 
 ## Deployment
 
 ### K8s-based Platforms
 
 On K8s-based platforms, including [NVCF](https://docs.nvidia.com/cloud-functions/user-guide/latest/cloud-function/overview.html),
-the [Helm chart](../../charts/cosmos-curate/README.md) provided includes a [Prometheus Agent](https://prometheus.io/blog/2021/11/16/agent/)
+the [Helm chart](../../../charts/cosmos-curate/README.md) provided includes a [Prometheus Agent](https://prometheus.io/blog/2021/11/16/agent/)
 which can scrape the metrics endpoint and [remote-write](https://prometheus.io/docs/specs/prw/remote_write_spec/)
 to a [Thanos-like](https://thanos.io/) endpoint.
 
-The relevant configurable entries in the chart can be found in [values.yaml](../../charts/cosmos-curate/values.yaml):
+The relevant configurable entries in the chart can be found in [values.yaml](../../../charts/cosmos-curate/values.yaml):
 
 ```yaml
 metrics:

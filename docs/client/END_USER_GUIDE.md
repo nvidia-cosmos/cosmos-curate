@@ -164,7 +164,7 @@ The hello-world example pipeline aims to provide a minimal example to help under
   - stage 3: call GPT2 to generate some output;
 - Call `cosmos_curate.core.interfaces.pipeline_interface.run_pipeline`.
 
-There is a detailed walk-through in [Pipeline Design Guide](../curator/PIPELINE_DESIGN_GUIDE.md) to help understand how to build a pipeline.
+There is a detailed walk-through in [Pipeline Design Guide](../curator/guides/PIPELINE_DESIGN.md) to help understand how to build a pipeline.
 The steps below only shows how to run the pipeline.
 
 ```bash
@@ -213,7 +213,7 @@ cosmos-curate local launch --image-name cosmos-curate --image-tag 1.0.0 -- pixi 
      - `limit` specifies how many input videos under `input_video_path` to process.
      - Note when running locally with e.g. one GPU, a small `limit` value (like `1`) is needed to avoid running out of memory or disk.
    - **CPU-constrained hosts**
-     - Split-annotate default per-stage CPU counts are tuned for server-class hosts and can over-subscribe workstations. If the pipeline fails to schedule with a CPU-resource error, lower the `--*-cpus-per-worker` flags — see [Split-Annotate Pipeline Configurable Options](../curator/REFERENCE_PIPELINES_VIDEO.md#split-annotate-pipeline-configurable-options) for a concrete 8-core recipe.
+     - Split-annotate default per-stage CPU counts are tuned for server-class hosts and can over-subscribe workstations. If the pipeline fails to schedule with a CPU-resource error, lower the `--*-cpus-per-worker` flags — see [Split-Annotate Pipeline Configurable Options](../curator/reference/VIDEO_PIPELINES.md#split-annotate-pipeline-configurable-options) for a concrete 8-core recipe.
    - **Failure recovery**
      - Failures are often inevitable due to hardware failures/glitches, kernel/driver/library bugs, etc., therefore this pipeline is carefully designed such that it can handle any crash gracefully without loss of compute time and a simple restart would resume from where it left resulting in correct behavior.
 
@@ -233,7 +233,7 @@ At a high level, this pipeline
 - generates one descriptive caption for each 256-frame window in each clip
 - stores the mp4 clips and metadatas to the specified `output_clip_path`
 
-For more details, please refer to [Split-Annotate Pipeline](../curator/REFERENCE_PIPELINES_VIDEO.md#split-annotate-pipeline) section in [Reference Pipelines Guide](../curator/REFERENCE_PIPELINES_VIDEO.md).
+For more details, please refer to [Split-Annotate Pipeline](../curator/reference/VIDEO_PIPELINES.md#split-annotate-pipeline) section in [Reference Pipelines Guide](../curator/reference/VIDEO_PIPELINES.md).
 
 ### Use Gemini for Captioning
 
@@ -352,7 +352,7 @@ the host. The Ray cluster runs inside the container and is managed by the servic
 
 ### Generate Dataset for Cosmos-Predict2 Post-Training
 
-The [Split-Annotate Pipeline](../curator/REFERENCE_PIPELINES_VIDEO.md#split-annotate-pipeline) above has first-class support
+The [Split-Annotate Pipeline](../curator/reference/VIDEO_PIPELINES.md#split-annotate-pipeline) above has first-class support
 for [Cosmos-Predict2 Video2World post-training](https://github.com/nvidia-cosmos/cosmos-predict2/blob/main/documentations/post-training_video2world.md).
 
 The following arguments are needed for `split-annotate` pipeline to generate the datasets for Cosmos-Predict2:
@@ -795,7 +795,7 @@ Therefore, it is critical to have good observability in place to help debug reli
 
 We have implemented a set of metrics in [Cosmos-Xenna](https://github.com/nvidia-cosmos/cosmos-xenna)
 and included a [Grafana dashboard](../../examples/observability/grafana/cosmos-curate-oss.json) for `Cosmos-Curate` pipelines.
-More details can be found in [Observability Guide](../curator/OBSERVABILITY_GUIDE.md).
+More details can be found in [Observability Guide](../curator/guides/OBSERVABILITY.md).
 
 ## Build the Client package
 
@@ -812,11 +812,11 @@ If you encounter any issues:
 2. Verify that you have sufficient disk space for model downloads
 3. Check that Docker is running and accessible
 4. Check that [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html) is installed and `docker.service` is restarted after the installation of NVIDIA Container Toolkit.
-5. For debugging specific pipeline stages, see the [Stage Replay Guide](../curator/STAGE_REPLAY.md)
+5. For debugging specific pipeline stages, see the [Stage Replay Guide](../curator/guides/STAGE_REPLAY.md)
 6. Ensure you have the correct Python version installed
 
 ## Support
 For additional support or to report issues, please contact the development team or create an issue in the repository.
 
 ## Responsible Use of AI Models
-[Responsible Use](./RESPONSIBLE_USE.md)
+[Responsible Use](../../RESPONSIBLE_USE.md)

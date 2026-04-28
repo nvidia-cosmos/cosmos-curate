@@ -6,16 +6,17 @@
     - [2. Architecture Guide and Pipeline Design Guide](#2-architecture-guide-and-pipeline-design-guide)
     - [3. Observability Guide and Deployment Guide for NVCF](#3-observability-guide-and-deployment-guide-for-nvcf)
     - [4. Developer Guide](#4-developer-guide)
+    - [5. Curator Pipeline Docs](#5-curator-pipeline-docs)
   - [Guide Relationships](#guide-relationships)
   - [Getting Started](#getting-started)
   - [Support](#support)
   - [Contributing to Documentation](#contributing-to-documentation)
 
-Welcome to the Cosmos-Curate documentation. This documentation is organized into four main categories to help you understand and use the system effectively.
+Welcome to the Cosmos-Curate documentation. This documentation is organized into five main categories to help you understand and use the system effectively.
 
 ## Documentation Structure
 
-### 1. [End User Guide](client/END_USER_GUIDE.md) and Reference Pipelines Guide for [Video](curator/REFERENCE_PIPELINES_VIDEO.md), [AV](curator/REFERENCE_PIPELINES_AV.md), and [Image](curator/REFERENCE_PIPELINES_IMAGE.md)
+### 1. [End User Guide](client/END_USER_GUIDE.md) and Reference Pipelines Guide for [Video](curator/reference/VIDEO_PIPELINES.md), [AV](curator/reference/AV_PIPELINES.md), and [Image](curator/reference/IMAGE_PIPELINE.md)
 The end user guide is designed for users who want to use the Cosmos-Curate to process and curate videos and images:
 - Prerequisites and environment setup
 - Basic usage instructions
@@ -31,7 +32,7 @@ The reference pipelines guides are for users to understand the details of refere
 - If you want to run existing pipelines
 - If you need help with basic operations
 
-### 2. [Architecture Guide](curator/ARCHITECTURE_GUIDE.md) and [Pipeline Design Guide](curator/PIPELINE_DESIGN_GUIDE.md)
+### 2. [Architecture Guide](curator/reference/ARCHITECTURE.md) and [Pipeline Design Guide](curator/guides/PIPELINE_DESIGN.md)
 The architecture and pipeline design guides are for developers who want to create new pipelines or modify existing ones:
 - Core architecture
 - Pipeline development
@@ -43,7 +44,7 @@ The architecture and pipeline design guides are for developers who want to creat
 - If you're modifying an existing pipeline
 - If you need to understand the pipeline architecture
 
-### 3. [Observability Guide](curator/OBSERVABILITY_GUIDE.md) and Deployment Guide for [NVCF](client/NVCF_GUIDE.md)
+### 3. [Observability Guide](curator/guides/OBSERVABILITY.md) and Deployment Guide for [NVCF](client/NVCF_GUIDE.md)
 
 The observability and deployment guides are for users who want to run curation pipelines at scale:
 - List of key PromQL queries
@@ -67,8 +68,14 @@ The developer guide is for contributors who want to work on the Cosmos-Curate co
 - If you need to understand the development workflow
 
 **Additional Development Resources:**
-- [Stage Replay Guide](curator/STAGE_REPLAY.md) - Debug pipeline stages in isolation without re-running entire pipelines
-- [Interactive Slurm Development Guide](curator/SLURM_INTERACTIVE.md) - Iterate on Cosmos-Curate from an interactive Slurm allocation
+- [Stage Replay Guide](curator/guides/STAGE_REPLAY.md) - Debug pipeline stages in isolation without re-running entire pipelines
+- [Interactive Slurm Development Guide](curator/guides/SLURM_INTERACTIVE.md) - Iterate on Cosmos-Curate from an interactive Slurm allocation
+
+### 5. [Curator Pipeline Docs](curator/README.md)
+The curator docs are organized by purpose:
+- Guides for workflows and debugging tasks
+- Reference docs for current behavior, APIs, output formats, and operational contracts
+- Design docs for architecture direction, rationale, plans, and open questions
 
 ## Guide Relationships
 
@@ -85,13 +92,13 @@ graph TD
 
 1. **New Users**:
    - Start with the [End User Guide](client/END_USER_GUIDE.md) to learn how to use the system
-   - Refer to the [Reference Video Pipelines Guide](curator/REFERENCE_PIPELINES_VIDEO.md) to explore the many options to configure the reference pipelines targeting general videos
-   - Refer to the [Reference AV Pipelines Guide](curator/REFERENCE_PIPELINES_AV.md) to explore the many options to configure the reference pipelines targeting autonomous vehicle
-   - Refer to the [Reference Image Pipeline Guide](curator/REFERENCE_PIPELINES_IMAGE.md) for the image annotate pipeline (load, optional captioning, write)
+   - Refer to the [Reference Video Pipelines Guide](curator/reference/VIDEO_PIPELINES.md) to explore the many options to configure the reference pipelines targeting general videos
+   - Refer to the [Reference AV Pipelines Guide](curator/reference/AV_PIPELINES.md) to explore the many options to configure the reference pipelines targeting autonomous vehicle
+   - Refer to the [Reference Image Pipeline Guide](curator/reference/IMAGE_PIPELINE.md) for the image annotate pipeline (load, optional captioning, write)
 2. **Developers**:
    - Begin with the [Developer Guide](DEVELOPER_GUIDE.md) to set up your development environment
-   - Read the [Architecture Guide](curator/ARCHITECTURE_GUIDE.md) to understand the big picture
-   - Use the [Pipeline Design Guide](curator/PIPELINE_DESIGN_GUIDE.md) to modify existing pipelines or create new pipelines
+   - Read the [Architecture Guide](curator/reference/ARCHITECTURE.md) to understand the big picture
+   - Use the [Pipeline Design Guide](curator/guides/PIPELINE_DESIGN.md) to modify existing pipelines or create new pipelines
 
 ## Support
 

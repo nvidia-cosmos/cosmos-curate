@@ -63,7 +63,7 @@ Stage lifecycle: `stage_setup_on_node()` (once per node) → `stage_setup()` (on
 
 **Running**: `run_pipeline(input_tasks, stages)` — accepts bare `CuratorStage` or `CuratorStageSpec`. Use `CuratorStageSpec(MyStage(), num_workers_per_node=N)` for tuning.
 
-See `cosmos_curate/pipelines/examples/hello_world_pipeline.py` and `docs/curator/PIPELINE_DESIGN_GUIDE.md`
+See `cosmos_curate/pipelines/examples/hello_world_pipeline.py` and `docs/curator/guides/PIPELINE_DESIGN.md`
 
 ## Pixi Environments
 

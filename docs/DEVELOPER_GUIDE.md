@@ -137,8 +137,8 @@ Note: For pipeline execution, always use the Docker container as shown in the te
 ### Interactive Slurm Development
 
 For GPU development on a Slurm compute node, use the
-[Interactive Slurm Development Guide](./curator/SLURM_INTERACTIVE.md). It covers starting the slim container from an
-interactive allocation, using a live Lustre checkout, running a pipeline command, and troubleshooting common
+[Interactive Slurm Development Guide](./curator/guides/SLURM_INTERACTIVE.md). It covers starting the slim container
+from an interactive allocation, using a live Lustre checkout, running a pipeline command, and troubleshooting common
 environment issues.
 
 ## Code Quality Checks
@@ -299,7 +299,7 @@ set them manually.
 | `COSMOS_CURATE_DOCKER_BUILD_ULIMIT` | User (optional) | Custom `nofile` ulimit for Docker image builds (default 65536). |
 
 For details on the artifact delivery mechanism and why env vars are
-used, see the [Artifact Transport Guide](./curator/ARTIFACT_TRANSPORT_GUIDE.md#environment-variables).
+used, see the [Artifact Transport Guide](./curator/reference/ARTIFACT_TRANSPORT.md#environment-variables).
 
 ## Contributing
 
@@ -323,12 +323,12 @@ If you encounter issues during development:
    - Check for conflicting dependencies
 
 3. **Pipeline Stage Debugging**:
-   - Use [Stage Replay](./curator/STAGE_REPLAY.md) to debug specific stages without re-running entire pipelines
+   - Use [Stage Replay](./curator/guides/STAGE_REPLAY.md) to debug specific stages without re-running entire pipelines
    - Save task inputs from problematic stages and replay them in isolation
    - Iterate rapidly on stage logic by replaying saved tasks
 
 ## Responsible Use of AI Models
-[Responsible Use](./RESPONSIBLE_USE.md)
+[Responsible Use](../RESPONSIBLE_USE.md)
 
 ## Support
 

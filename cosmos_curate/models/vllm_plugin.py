@@ -23,7 +23,7 @@ To add a new model:
 4. Add model ID mapping in cosmos_curate/models/vllm_model_ids.py
 
 References:
-[VLLM_INTERFACE_PLUGIN.md](../../docs/curator/VLLM_INTERFACE_PLUGIN.md)
+[VLLM_INTERFACE_PLUGIN.md](../../docs/curator/guides/VLLM_INTERFACE_PLUGIN.md)
 [Complete Example](vllm_qwen.py)
 
 """

@@ -219,7 +219,7 @@ def build_input_data(
             logger.info(tree_output)
 
         # TODO(jbowles): input_videos_relative is used for summary writing, which needs to be
-        # updated to support multicam. See docs/curator/MULTICAM_DESIGN.md for the plan for
+        # updated to support multicam. See docs/curator/design/MULTICAM.md for the plan for
         # this update.
         input_videos_relative: list[str] = []
         num_processed = 0
