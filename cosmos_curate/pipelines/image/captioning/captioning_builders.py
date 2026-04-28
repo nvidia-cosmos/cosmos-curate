@@ -28,7 +28,7 @@ from cosmos_curate.pipelines.image.captioning.image_vllm_stages import ImageVllm
 from cosmos_curate.pipelines.video.utils.data_model import VllmConfig, VllmSamplingConfig
 
 IMAGE_CAPTION_ALGOS: frozenset[str] = frozenset(
-    {"qwen", "qwen3_vl_30b", "qwen3_vl_30b_fp8", "qwen3_vl_235b", "qwen3_vl_235b_fp8"}
+    {"qwen", "qwen3_5_27b", "qwen3_vl_30b", "qwen3_vl_30b_fp8", "qwen3_vl_235b", "qwen3_vl_235b_fp8"}
     | {"nemotron", "cosmos_r1", "cosmos_r2", "openai", "gemini"}
 )
 

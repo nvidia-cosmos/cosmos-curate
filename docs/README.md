@@ -94,7 +94,7 @@ graph TD
    - Start with the [End User Guide](client/END_USER_GUIDE.md) to learn how to use the system
    - Refer to the [Reference Video Pipelines Guide](curator/reference/VIDEO_PIPELINES.md) to explore the many options to configure the reference pipelines targeting general videos
    - Refer to the [Reference AV Pipelines Guide](curator/reference/AV_PIPELINES.md) to explore the many options to configure the reference pipelines targeting autonomous vehicle
-   - Refer to the [Reference Image Pipeline Guide](curator/reference/IMAGE_PIPELINE.md) for the image annotate pipeline (load, optional captioning, write)
+   - Refer to the [Reference Image Pipeline Guide](curator/reference/IMAGE_PIPELINE.md) for the image annotate pipeline, including filtering, embedding, captioning, outputs, and key configuration options
 2. **Developers**:
    - Begin with the [Developer Guide](DEVELOPER_GUIDE.md) to set up your development environment
    - Read the [Architecture Guide](curator/reference/ARCHITECTURE.md) to understand the big picture
