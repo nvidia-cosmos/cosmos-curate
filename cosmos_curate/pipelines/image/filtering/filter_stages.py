@@ -30,6 +30,27 @@ from cosmos_curate.pipelines.common.semantic_filter_postprocess import (
 from cosmos_curate.pipelines.image.utils.data_model import ImagePipeTask
 
 
+def _mark_missing_filter_caption(
+    task: ImagePipeTask,
+    *,
+    model_variant: str,
+    filter_caption_key: str,
+    rejection_stage: str,
+    score_only: bool = False,
+) -> None:
+    """Handle tasks whose filter caption text is missing."""
+    image = task.image
+    status = image.filter_caption_status.get(filter_caption_key)
+    if status in {"blocked", "error"}:
+        image.qwen_rejection_stage = None if score_only else rejection_stage
+        image.is_filtered = not score_only
+        return
+
+    image.errors[model_variant] = "all_windows_failed_preparation"
+    image.qwen_rejection_stage = None if score_only else rejection_stage
+    image.is_filtered = not score_only
+
+
 class ImageSemanticFilterStage(CuratorStage):
     """CPU post-processing stage for image semantic filtering."""
 
@@ -84,9 +105,13 @@ class ImageSemanticFilterStage(CuratorStage):
             with self._timer.time_process():
                 caption = image.filter_captions.get(self._filter_caption_key)
                 if caption is None:
-                    image.errors["qwen"] = "all_windows_failed_preparation"
-                    image.qwen_rejection_stage = None if self._score_only else "semantic"
-                    image.is_filtered = not self._score_only
+                    _mark_missing_filter_caption(
+                        task,
+                        model_variant=self._model_variant,
+                        filter_caption_key=self._filter_caption_key,
+                        rejection_stage="semantic",
+                        score_only=self._score_only,
+                    )
                 else:
                     clip_should_pass, all_issues, _, per_window_errors = evaluate_semantic_window_results(
                         [(0, caption)],
@@ -95,7 +120,7 @@ class ImageSemanticFilterStage(CuratorStage):
                         score_only=self._score_only,
                     )
                     if per_window_errors:
-                        image.errors["qwen"] = next(iter(per_window_errors.values()))
+                        image.errors[self._model_variant] = next(iter(per_window_errors.values()))
                     image.is_filtered = not clip_should_pass
                     image.qwen_rejection_stage = "semantic" if not clip_should_pass else None
                     if all_issues and (self._score_only or not clip_should_pass):
@@ -170,9 +195,12 @@ class ImageClassifierStage(CuratorStage):
             with self._timer.time_process():
                 caption = image.filter_captions.get(self._filter_caption_key)
                 if caption is None:
-                    image.errors["qwen"] = "all_windows_failed_preparation"
-                    image.qwen_rejection_stage = "classifier"
-                    image.is_filtered = True
+                    _mark_missing_filter_caption(
+                        task,
+                        model_variant=self._model_variant,
+                        filter_caption_key=self._filter_caption_key,
+                        rejection_stage="classifier",
+                    )
                 else:
                     clip_should_pass, all_issues, per_window_reasons, per_window_errors, classification = (
                         evaluate_classifier_window_results(
@@ -187,7 +215,7 @@ class ImageClassifierStage(CuratorStage):
                         )
                     )
                     if per_window_errors:
-                        image.errors["qwen"] = next(iter(per_window_errors.values()))
+                        image.errors[self._model_variant] = next(iter(per_window_errors.values()))
                     image.qwen_type_classification = classification
                     image.is_filtered = not clip_should_pass
                     if not clip_should_pass:

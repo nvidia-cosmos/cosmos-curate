@@ -124,6 +124,38 @@ def test_openai_stage_setup_creates_client(monkeypatch: pytest.MonkeyPatch) -> N
     assert stage._model_name == "served-model"
 
 
+def test_openai_stage_setup_uses_filter_endpoint(monkeypatch: pytest.MonkeyPatch) -> None:
+    """stage_setup should read the configured non-caption OpenAI endpoint when requested."""
+    captured: dict[str, object] = {}
+
+    class _FakeClient:
+        def __init__(self, **kwargs: object) -> None:
+            captured.update(kwargs)
+
+        class models:  # noqa: N801
+            @staticmethod
+            def list() -> SimpleNamespace:
+                return SimpleNamespace(data=[SimpleNamespace(id="served-model")])
+
+    fake_openai = _fake_openai_module()
+    fake_openai.OpenAI = _FakeClient
+    monkeypatch.setattr(image_api_caption_stages, "openai", fake_openai, raising=False)
+    monkeypatch.setattr(
+        image_api_caption_stages,
+        "maybe_load_config",
+        lambda: ConfigFileData(
+            openai=OpenAIConfig(filter=OpenAIEndpointConfig(api_key="filter-key", base_url="https://example.test/v1"))
+        ),
+    )
+
+    stage = ImageOpenAICaptionStage(model_name="auto", endpoint_key="filter")
+    stage.stage_setup()
+
+    assert captured["api_key"] == "filter-key"
+    assert captured["base_url"] == "https://example.test/v1"
+    assert stage._model_name == "served-model"
+
+
 def test_openai_stage_uses_preprocessed_payload_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
     """OpenAI caption stage should upload the cached PNG payload when available."""
     stage = ImageOpenAICaptionStage(model_name="model", max_caption_retries=1, retry_delay_seconds=0)
@@ -164,6 +196,83 @@ def test_openai_stage_raw_mode_uses_original_bytes(monkeypatch: pytest.MonkeyPat
     image_url = call_kwargs["messages"][0]["content"][0]["image_url"]["url"]
     encoded = base64.b64encode(bytes(task.image.encoded_data.resolve())).decode("utf-8")
     assert image_url == f"data:image/jpeg;base64,{encoded}"
+
+
+def test_openai_stage_can_write_filter_caption(monkeypatch: pytest.MonkeyPatch) -> None:
+    """OpenAI endpoint stages should support writing into filter_captions."""
+    stage = ImageOpenAICaptionStage(
+        model_name="model",
+        endpoint_key="filter",
+        result_target="filter_caption",
+        result_key="semantic:openai",
+        max_caption_retries=1,
+        retry_delay_seconds=0,
+    )
+    fake_openai = _fake_openai_module()
+    monkeypatch.setattr(image_api_caption_stages, "openai", fake_openai, raising=False)
+    task = _make_task()
+
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = _FakeResponse([_FakeChoice("filter-result")])
+    stage._client = mock_client
+
+    stage.process_data([task])
+
+    assert task.image.filter_captions["semantic:openai"] == "filter-result"
+    assert task.image.filter_caption_status["semantic:openai"] == "success"
+    assert task.image.caption == ""
+
+
+def test_openai_stage_filter_caption_blocked_sets_status_without_caption(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Blocked OpenAI filter requests should record status even without filter caption text."""
+    stage = ImageOpenAICaptionStage(
+        model_name="model",
+        endpoint_key="filter",
+        result_target="filter_caption",
+        result_key="semantic:openai",
+        max_caption_retries=1,
+        retry_delay_seconds=0,
+    )
+    fake_openai = _fake_openai_module()
+    monkeypatch.setattr(image_api_caption_stages, "openai", fake_openai, raising=False)
+    task = _make_task()
+
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = _FakeResponse(
+        [_FakeChoice("ignored", finish_reason="content_filter")]
+    )
+    stage._client = mock_client
+
+    stage.process_data([task])
+
+    assert task.image.filter_caption_status["semantic:openai"] == "blocked"
+    assert "semantic:openai" not in task.image.filter_captions
+
+
+def test_openai_stage_filter_caption_error_records_detail(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Errored OpenAI filter requests should record status, failure reason, and detail."""
+    stage = ImageOpenAICaptionStage(
+        model_name="model",
+        endpoint_key="filter",
+        result_target="filter_caption",
+        result_key="semantic:openai",
+        max_caption_retries=1,
+        retry_delay_seconds=0,
+    )
+    fake_openai = _fake_openai_module()
+    monkeypatch.setattr(image_api_caption_stages, "openai", fake_openai, raising=False)
+    task = _make_task()
+
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.side_effect = fake_openai.AuthenticationError("bad key")
+    stage._client = mock_client
+
+    stage.process_data([task])
+
+    assert task.image.filter_caption_status["semantic:openai"] == "error"
+    assert task.image.filter_caption_failure_reason["semantic:openai"] == "exception"
+    assert task.image.errors["semantic:openai_filter_caption"] == "bad key"
+    assert "semantic:openai" not in task.image.filter_captions
 
 
 def test_guess_media_type_ignores_non_image_guess() -> None:
@@ -288,6 +397,76 @@ def test_gemini_stage_generates_caption(monkeypatch: pytest.MonkeyPatch) -> None
 
     assert task.image.caption == "caption"
     assert task.image.caption_status == "success"
+
+
+def test_gemini_stage_can_write_filter_caption(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Gemini endpoint stages should support writing into filter_captions."""
+    monkeypatch.setattr(
+        image_api_caption_stages,
+        "load_config",
+        lambda: ConfigFileData(gemini=Gemini(api_key="dummy-key")),
+    )
+    monkeypatch.setattr(
+        image_api_caption_stages,
+        "genai_types",
+        SimpleNamespace(
+            Blob=lambda data, mime_type: SimpleNamespace(data=data, mime_type=mime_type),
+            Part=lambda inline_data=None, text=None: SimpleNamespace(inline_data=inline_data, text=text),
+            Content=lambda parts: SimpleNamespace(parts=parts),
+            GenerateContentConfig=lambda max_output_tokens: SimpleNamespace(max_output_tokens=max_output_tokens),
+        ),
+        raising=False,
+    )
+    stage = ImageGeminiCaptionStage(
+        result_target="filter_caption",
+        result_key="classifier:gemini",
+        max_caption_retries=1,
+        retry_delay_seconds=0,
+    )
+    stage._client = SimpleNamespace(
+        models=SimpleNamespace(generate_content=lambda **_: SimpleNamespace(text="class-result"))
+    )
+    task = _make_task()
+
+    stage.process_data([task])
+
+    assert task.image.filter_captions["classifier:gemini"] == "class-result"
+    assert task.image.filter_caption_status["classifier:gemini"] == "success"
+    assert task.image.caption == ""
+
+
+def test_gemini_stage_filter_caption_blocked_sets_status_without_caption(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Blocked Gemini filter requests should record status even without filter caption text."""
+    monkeypatch.setattr(
+        image_api_caption_stages,
+        "load_config",
+        lambda: ConfigFileData(gemini=Gemini(api_key="dummy-key")),
+    )
+    monkeypatch.setattr(
+        image_api_caption_stages,
+        "genai_types",
+        SimpleNamespace(
+            Blob=lambda data, mime_type: SimpleNamespace(data=data, mime_type=mime_type),
+            Part=lambda inline_data=None, text=None: SimpleNamespace(inline_data=inline_data, text=text),
+            Content=lambda parts: SimpleNamespace(parts=parts),
+            GenerateContentConfig=lambda max_output_tokens: SimpleNamespace(max_output_tokens=max_output_tokens),
+        ),
+        raising=False,
+    )
+    response = SimpleNamespace(prompt_feedback=SimpleNamespace(block_reason="SAFETY"))
+    stage = ImageGeminiCaptionStage(
+        result_target="filter_caption",
+        result_key="classifier:gemini",
+        max_caption_retries=1,
+        retry_delay_seconds=0,
+    )
+    stage._client = SimpleNamespace(models=SimpleNamespace(generate_content=lambda **_: response))
+    task = _make_task()
+
+    stage.process_data([task])
+
+    assert task.image.filter_caption_status["classifier:gemini"] == "blocked"
+    assert "classifier:gemini" not in task.image.filter_captions
 
 
 def test_gemini_stage_maps_max_tokens_to_truncated(monkeypatch: pytest.MonkeyPatch) -> None:

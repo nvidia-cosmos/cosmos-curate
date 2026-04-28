@@ -208,6 +208,74 @@ def test_assemble_stages_with_local_semantic_filter_returns_filter_specs(tmp_pat
     assert stages[6].stage._result_target == "caption"
 
 
+def test_assemble_stages_with_openai_semantic_filter_returns_endpoint_specs(tmp_path: pathlib.Path) -> None:
+    """OpenAI semantic filtering should run endpoint stages before normal captioning."""
+    parser = argparse.ArgumentParser()
+    subparsers = parser.add_subparsers(dest="command")
+    add_annotate_command(subparsers)
+    args = parser.parse_args(
+        [
+            "annotate",
+            "--input-image-path",
+            str(tmp_path / "in"),
+            "--output-path",
+            str(tmp_path / "out"),
+            "--semantic-filter",
+            "enable",
+            "--semantic-filter-model-variant",
+            "openai",
+        ]
+    )
+
+    stages = _assemble_stages(args)
+    assert len(stages) == 8
+    assert isinstance(stages[1], CuratorStageSpec)
+    assert isinstance(stages[2], CuratorStageSpec)
+    assert isinstance(stages[3], CuratorStageSpec)
+    assert isinstance(stages[1].stage, ImageOpenAIPrepStage)
+    assert isinstance(stages[2].stage, ImageOpenAICaptionStage)
+    assert stages[2].stage._endpoint_key == "filter"
+    assert stages[2].stage._result_target == "filter_caption"
+    assert isinstance(stages[3].stage, ImageSemanticFilterStage)
+    assert isinstance(stages[4].stage, ImageInternVideo2EmbeddingStage)
+    assert isinstance(stages[5].stage, ImageVllmPrepStage)
+    assert isinstance(stages[6].stage, ImageVllmCaptionStage)
+
+
+def test_assemble_stages_with_gemini_semantic_filter_returns_endpoint_specs(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Gemini semantic filtering should run endpoint stages before normal captioning."""
+    monkeypatch.setattr(image_api_caption_stages, "load_config", lambda: ConfigFileData(gemini=Gemini(api_key="k")))
+    parser = argparse.ArgumentParser()
+    subparsers = parser.add_subparsers(dest="command")
+    add_annotate_command(subparsers)
+    args = parser.parse_args(
+        [
+            "annotate",
+            "--input-image-path",
+            str(tmp_path / "in"),
+            "--output-path",
+            str(tmp_path / "out"),
+            "--semantic-filter",
+            "enable",
+            "--semantic-filter-model-variant",
+            "gemini",
+        ]
+    )
+
+    stages = _assemble_stages(args)
+    assert len(stages) == 7
+    assert isinstance(stages[1], CuratorStageSpec)
+    assert isinstance(stages[2], CuratorStageSpec)
+    assert isinstance(stages[1].stage, ImageGeminiCaptionStage)
+    assert stages[1].stage._result_target == "filter_caption"
+    assert isinstance(stages[2].stage, ImageSemanticFilterStage)
+    assert isinstance(stages[3].stage, ImageInternVideo2EmbeddingStage)
+    assert isinstance(stages[4].stage, ImageVllmPrepStage)
+    assert isinstance(stages[5].stage, ImageVllmCaptionStage)
+
+
 def test_assemble_stages_with_local_classifier_returns_classifier_specs(tmp_path: pathlib.Path) -> None:
     """Local image classifier should run before the main embedding and caption stages."""
     parser = argparse.ArgumentParser()
@@ -244,6 +312,80 @@ def test_assemble_stages_with_local_classifier_returns_classifier_specs(tmp_path
     assert isinstance(stages[6].stage, ImageVllmCaptionStage)
     assert stages[2].stage._result_target == "filter_caption"
     assert stages[6].stage._result_target == "caption"
+
+
+def test_assemble_stages_with_openai_classifier_returns_endpoint_specs(tmp_path: pathlib.Path) -> None:
+    """OpenAI classifier should run endpoint stages before normal captioning."""
+    parser = argparse.ArgumentParser()
+    subparsers = parser.add_subparsers(dest="command")
+    add_annotate_command(subparsers)
+    args = parser.parse_args(
+        [
+            "annotate",
+            "--input-image-path",
+            str(tmp_path / "in"),
+            "--output-path",
+            str(tmp_path / "out"),
+            "--image-classifier",
+            "enable",
+            "--image-classifier-model-variant",
+            "openai",
+            "--image-classifier-use-custom-categories",
+            "--image-classifier-allow",
+            "planet_earth",
+        ]
+    )
+
+    stages = _assemble_stages(args)
+    assert len(stages) == 8
+    assert isinstance(stages[1], CuratorStageSpec)
+    assert isinstance(stages[2], CuratorStageSpec)
+    assert isinstance(stages[3], CuratorStageSpec)
+    assert isinstance(stages[1].stage, ImageOpenAIPrepStage)
+    assert isinstance(stages[2].stage, ImageOpenAICaptionStage)
+    assert stages[2].stage._endpoint_key == "classifier"
+    assert stages[2].stage._result_target == "filter_caption"
+    assert isinstance(stages[3].stage, ImageClassifierStage)
+    assert isinstance(stages[4].stage, ImageInternVideo2EmbeddingStage)
+    assert isinstance(stages[5].stage, ImageVllmPrepStage)
+    assert isinstance(stages[6].stage, ImageVllmCaptionStage)
+
+
+def test_assemble_stages_with_gemini_classifier_returns_endpoint_specs(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Gemini classifier should run endpoint stages before normal captioning."""
+    monkeypatch.setattr(image_api_caption_stages, "load_config", lambda: ConfigFileData(gemini=Gemini(api_key="k")))
+    parser = argparse.ArgumentParser()
+    subparsers = parser.add_subparsers(dest="command")
+    add_annotate_command(subparsers)
+    args = parser.parse_args(
+        [
+            "annotate",
+            "--input-image-path",
+            str(tmp_path / "in"),
+            "--output-path",
+            str(tmp_path / "out"),
+            "--image-classifier",
+            "enable",
+            "--image-classifier-model-variant",
+            "gemini",
+            "--image-classifier-use-custom-categories",
+            "--image-classifier-allow",
+            "planet_earth",
+        ]
+    )
+
+    stages = _assemble_stages(args)
+    assert len(stages) == 7
+    assert isinstance(stages[1], CuratorStageSpec)
+    assert isinstance(stages[2], CuratorStageSpec)
+    assert isinstance(stages[1].stage, ImageGeminiCaptionStage)
+    assert stages[1].stage._result_target == "filter_caption"
+    assert isinstance(stages[2].stage, ImageClassifierStage)
+    assert isinstance(stages[3].stage, ImageInternVideo2EmbeddingStage)
+    assert isinstance(stages[4].stage, ImageVllmPrepStage)
+    assert isinstance(stages[5].stage, ImageVllmCaptionStage)
 
 
 def test_write_summary_includes_embedding_fields(tmp_path: pathlib.Path) -> None:

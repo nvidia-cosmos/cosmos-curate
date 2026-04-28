@@ -194,6 +194,12 @@ def _assemble_stages(args: argparse.Namespace) -> list[CuratorStage | CuratorSta
                         batch_size=args.semantic_filter_batch_size,
                         max_output_tokens=args.semantic_filter_max_output_tokens,
                         num_gpus=args.semantic_filter_num_gpus,
+                        openai_model_name=args.semantic_filter_openai_model_name,
+                        openai_max_caption_retries=args.semantic_filter_openai_retries,
+                        openai_retry_delay_seconds=args.semantic_filter_openai_retry_delay_seconds,
+                        gemini_model_name=args.semantic_filter_gemini_model_name,
+                        gemini_max_caption_retries=args.semantic_filter_gemini_retries,
+                        gemini_retry_delay_seconds=args.semantic_filter_gemini_retry_delay_seconds,
                         caption_prep_min_pixels=args.caption_prep_min_pixels,
                         caption_prep_max_pixels=args.caption_prep_max_pixels,
                         num_prep_workers_per_node=args.num_caption_prep_workers_per_node,
@@ -211,6 +217,12 @@ def _assemble_stages(args: argparse.Namespace) -> list[CuratorStage | CuratorSta
                         batch_size=args.image_classifier_batch_size,
                         max_output_tokens=args.image_classifier_max_output_tokens,
                         num_gpus=args.image_classifier_num_gpus,
+                        openai_model_name=args.image_classifier_openai_model_name,
+                        openai_max_caption_retries=args.image_classifier_openai_retries,
+                        openai_retry_delay_seconds=args.image_classifier_openai_retry_delay_seconds,
+                        gemini_model_name=args.image_classifier_gemini_model_name,
+                        gemini_max_caption_retries=args.image_classifier_gemini_retries,
+                        gemini_retry_delay_seconds=args.image_classifier_gemini_retry_delay_seconds,
                         caption_prep_min_pixels=args.caption_prep_min_pixels,
                         caption_prep_max_pixels=args.caption_prep_max_pixels,
                         num_prep_workers_per_node=args.num_caption_prep_workers_per_node,
@@ -317,7 +329,7 @@ def annotate(args: argparse.Namespace) -> None:
     )
 
 
-def _setup_parser(parser: argparse.ArgumentParser) -> None:
+def _setup_parser(parser: argparse.ArgumentParser) -> None:  # noqa: PLR0915
     """Add image annotate arguments to the parser."""
     parser.add_argument(
         "--input-image-path",
@@ -465,8 +477,8 @@ def _setup_parser(parser: argparse.ArgumentParser) -> None:
         "--semantic-filter-model-variant",
         type=str,
         default="qwen",
-        choices=sorted(IMAGE_CAPTION_ALGOS - {"openai", "gemini"}),
-        help="Local vLLM model variant for image semantic filtering.",
+        choices=sorted(IMAGE_CAPTION_ALGOS),
+        help="Model/backend variant for image semantic filtering.",
     )
     parser.add_argument(
         "--semantic-filter-prompt-variant",
@@ -505,6 +517,42 @@ def _setup_parser(parser: argparse.ArgumentParser) -> None:
         help="Number of GPUs per worker for local image semantic filtering.",
     )
     parser.add_argument(
+        "--semantic-filter-openai-model-name",
+        type=str,
+        default="auto",
+        help="Model name for the OpenAI-compatible semantic-filter endpoint.",
+    )
+    parser.add_argument(
+        "--semantic-filter-openai-retries",
+        type=int,
+        default=3,
+        help="Max retries per image for the OpenAI-compatible semantic-filter endpoint.",
+    )
+    parser.add_argument(
+        "--semantic-filter-openai-retry-delay-seconds",
+        type=float,
+        default=1.0,
+        help="Delay in seconds between retries for the OpenAI-compatible semantic-filter endpoint.",
+    )
+    parser.add_argument(
+        "--semantic-filter-gemini-model-name",
+        type=str,
+        default="models/gemini-2.5-pro",
+        help="Gemini model name for the semantic-filter endpoint.",
+    )
+    parser.add_argument(
+        "--semantic-filter-gemini-retries",
+        type=int,
+        default=3,
+        help="Max retries per image for the Gemini semantic-filter endpoint.",
+    )
+    parser.add_argument(
+        "--semantic-filter-gemini-retry-delay-seconds",
+        type=float,
+        default=1.0,
+        help="Delay in seconds between retries for the Gemini semantic-filter endpoint.",
+    )
+    parser.add_argument(
         "--image-classifier",
         dest="image_classifier",
         choices=["enable", "disable"],
@@ -516,7 +564,7 @@ def _setup_parser(parser: argparse.ArgumentParser) -> None:
         type=str,
         default="qwen",
         choices=sorted(IMAGE_CAPTION_ALGOS),
-        help="Local vLLM model variant for image classifier filtering.",
+        help="Model/backend variant for image classifier filtering.",
     )
     parser.add_argument(
         "--image-classifier-rejection-threshold",
@@ -571,6 +619,42 @@ def _setup_parser(parser: argparse.ArgumentParser) -> None:
         type=int,
         default=1,
         help="Number of GPUs per worker for local image classifier caption generation.",
+    )
+    parser.add_argument(
+        "--image-classifier-openai-model-name",
+        type=str,
+        default="auto",
+        help="Model name for the OpenAI-compatible classifier endpoint.",
+    )
+    parser.add_argument(
+        "--image-classifier-openai-retries",
+        type=int,
+        default=3,
+        help="Max retries per image for the OpenAI-compatible classifier endpoint.",
+    )
+    parser.add_argument(
+        "--image-classifier-openai-retry-delay-seconds",
+        type=float,
+        default=1.0,
+        help="Delay in seconds between retries for the OpenAI-compatible classifier endpoint.",
+    )
+    parser.add_argument(
+        "--image-classifier-gemini-model-name",
+        type=str,
+        default="models/gemini-2.5-pro",
+        help="Gemini model name for the classifier endpoint.",
+    )
+    parser.add_argument(
+        "--image-classifier-gemini-retries",
+        type=int,
+        default=3,
+        help="Max retries per image for the Gemini classifier endpoint.",
+    )
+    parser.add_argument(
+        "--image-classifier-gemini-retry-delay-seconds",
+        type=float,
+        default=1.0,
+        help="Delay in seconds between retries for the Gemini classifier endpoint.",
     )
     parser.add_argument(
         "--no-generate-embeddings",

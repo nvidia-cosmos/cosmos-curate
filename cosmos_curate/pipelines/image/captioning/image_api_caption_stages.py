@@ -17,7 +17,8 @@
 
 import base64
 import mimetypes
-from typing import TYPE_CHECKING, Any
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, Literal
 
 import nvtx  # type: ignore[import-untyped]
 import tenacity
@@ -89,6 +90,129 @@ def _write_caption_result(image: Image, model_variant: str, result: CaptionResul
     image.caption_failure_reason = result.failure_reason if result.outcome == CaptionOutcome.ERROR else None
 
 
+def _write_result(
+    image: Image,
+    model_variant: str,
+    result: CaptionResult,
+    *,
+    result_target: Literal["caption", "filter_caption"] = "caption",
+    result_key: str | None = None,
+) -> None:
+    """Write a normalized result back to the requested image output field."""
+    if result_target == "caption":
+        _write_caption_result(image, model_variant, result)
+        return
+
+    storage_key = result_key or model_variant
+    if result.text is not None:
+        image.filter_captions[storage_key] = result.text
+    image.filter_caption_status[storage_key] = result.outcome.value
+    image.filter_caption_failure_reason[storage_key] = (
+        result.failure_reason if result.outcome == CaptionOutcome.ERROR else None
+    )
+
+
+def _has_target_result(
+    image: Image,
+    *,
+    result_target: Literal["caption", "filter_caption"] = "caption",
+    result_key: str | None = None,
+    model_variant: str,
+) -> bool:
+    """Return whether the image already has the requested result."""
+    if result_target == "caption":
+        return image.has_caption()
+    return (result_key or model_variant) in image.filter_captions
+
+
+def _get_result_error_key(
+    *,
+    result_target: Literal["caption", "filter_caption"] = "caption",
+    result_key: str | None = None,
+    model_variant: str,
+) -> str:
+    """Return the image.errors key used for the requested result target."""
+    return f"{result_key or model_variant}_{result_target}"
+
+
+@dataclass
+class _ImageCaptionProcessContext:
+    """Shared state for processing image caption/filter-caption tasks."""
+
+    stage: CuratorStage
+    timer: StageTimer
+    model_variant: str
+    result_target: Literal["caption", "filter_caption"]
+    result_key: str | None
+    verbose: bool
+    log_stats: bool
+    provider_name: str
+    generate_with_detail: Any
+    cleanup_image: Any | None = None
+
+    def _error_key(self) -> str:
+        """Return the image.errors key used for this processing context."""
+        return _get_result_error_key(
+            result_target=self.result_target,
+            result_key=self.result_key,
+            model_variant=self.model_variant,
+        )
+
+    def _has_target_result(self, image: Image) -> bool:
+        """Return whether the image already has the requested result."""
+        return _has_target_result(
+            image,
+            result_target=self.result_target,
+            result_key=self.result_key,
+            model_variant=self.model_variant,
+        )
+
+    def _handle_result_outcome(self, task: ImagePipeTask, result: CaptionResult, detail: str | None) -> None:
+        """Record outcome-specific logging and error state for one image request."""
+        if result.outcome == CaptionOutcome.ERROR:
+            error_msg = detail or result.failure_reason or "unknown"
+            task.image.errors[self._error_key()] = error_msg
+            logger.warning(f"{self.provider_name} captioning failed for image {task.session_id}: {error_msg}")
+        elif result.outcome == CaptionOutcome.BLOCKED:
+            logger.warning(f"{self.provider_name} captioning blocked for image {task.session_id}")
+        elif self.verbose and result.text is not None:
+            logger.info(f"{self.provider_name} caption for image {task.session_id}: {result.text}")
+
+    def process_tasks(self, tasks: list[ImagePipeTask]) -> list[ImagePipeTask]:
+        """Run the caption/filter-caption request function over a batch of image tasks."""
+        for task in tasks:
+            image = task.image
+            self.timer.reinit(self.stage, task.get_major_size())
+            if image.is_filtered or self._has_target_result(image):
+                continue
+            with self.timer.time_process():
+                try:
+                    result, detail = self.generate_with_detail(image)
+                except Exception as exc:  # noqa: BLE001
+                    result = CaptionResult(outcome=CaptionOutcome.ERROR, failure_reason="exception")
+                    detail = str(exc)
+                    image.errors[self._error_key()] = detail
+                    if self.verbose:
+                        logger.exception(f"{self.provider_name} captioning failed for image {task.session_id}")
+                    else:
+                        logger.warning(f"{self.provider_name} captioning failed for image {task.session_id}: {exc}")
+                else:
+                    self._handle_result_outcome(task, result, detail)
+            _write_result(
+                image,
+                self.model_variant,
+                result,
+                result_target=self.result_target,
+                result_key=self.result_key,
+            )
+            if self.cleanup_image is not None:
+                self.cleanup_image(image)
+            if self.log_stats:
+                stage_name, stage_perf_stats = self.timer.log_stats()
+                task.stage_perf[stage_name] = stage_perf_stats
+        return tasks
+
+
 class ImageOpenAIPrepStage(CuratorStage):
     """Prepare resized endpoint payloads for OpenAI-compatible image captioning."""
 
@@ -123,6 +247,8 @@ class ImageOpenAIPrepStage(CuratorStage):
         for task in tasks:
             image = task.image
             self._timer.reinit(self, task.get_major_size())
+            if image.is_filtered:
+                continue
             if image.image_data is None:
                 image.errors["caption_prep"] = "no image_data"
                 continue
@@ -165,6 +291,8 @@ class ImageGeminiCaptionStage(CuratorStage):
         max_output_tokens: int = 8192,
         max_caption_retries: int = 3,
         retry_delay_seconds: float = 1.0,
+        result_target: Literal["caption", "filter_caption"] = "caption",
+        result_key: str | None = None,
         verbose: bool = False,
         log_stats: bool = False,
     ) -> None:
@@ -176,6 +304,8 @@ class ImageGeminiCaptionStage(CuratorStage):
         self._max_output_tokens = max_output_tokens
         self._max_caption_retries = max_caption_retries
         self._retry_delay_seconds = retry_delay_seconds
+        self._result_target = result_target
+        self._result_key = result_key
         self._verbose = verbose
         self._log_stats = log_stats
         config = load_config()
@@ -247,36 +377,17 @@ class ImageGeminiCaptionStage(CuratorStage):
     @nvtx.annotate("ImageGeminiCaptionStage")  # type: ignore[untyped-decorator]
     def process_data(self, tasks: list[ImagePipeTask]) -> list[ImagePipeTask] | None:
         """Caption images in the batch using the Gemini API."""
-        for task in tasks:
-            image = task.image
-            self._timer.reinit(self, task.get_major_size())
-            if image.has_caption():
-                continue
-            with self._timer.time_process():
-                try:
-                    result, detail = self._generate_caption_with_error_detail(image)
-                except Exception as exc:  # noqa: BLE001
-                    result = CaptionResult(outcome=CaptionOutcome.ERROR, failure_reason="exception")
-                    detail = str(exc)
-                    image.errors[f"{self._model_variant}_caption"] = detail
-                    if self._verbose:
-                        logger.exception(f"Gemini captioning failed for image {task.session_id}")
-                    else:
-                        logger.warning(f"Gemini captioning failed for image {task.session_id}: {exc}")
-                else:
-                    if result.outcome == CaptionOutcome.ERROR:
-                        error_msg = detail or result.failure_reason or "unknown"
-                        image.errors[f"{self._model_variant}_caption"] = error_msg
-                        logger.warning(f"Gemini captioning failed for image {task.session_id}: {error_msg}")
-                    elif result.outcome == CaptionOutcome.BLOCKED:
-                        logger.warning(f"Gemini captioning blocked for image {task.session_id}")
-                    elif self._verbose and result.text is not None:
-                        logger.info(f"Gemini caption for image {task.session_id}: {result.text}")
-            _write_caption_result(image, self._model_variant, result)
-            if self._log_stats:
-                stage_name, stage_perf_stats = self._timer.log_stats()
-                task.stage_perf[stage_name] = stage_perf_stats
-        return tasks
+        return _ImageCaptionProcessContext(
+            stage=self,
+            timer=self._timer,
+            model_variant=self._model_variant,
+            result_target=self._result_target,
+            result_key=self._result_key,
+            verbose=self._verbose,
+            log_stats=self._log_stats,
+            provider_name="Gemini",
+            generate_with_detail=self._generate_caption_with_error_detail,
+        ).process_tasks(tasks)
 
 
 class ImageOpenAICaptionStage(CuratorStage):
@@ -292,6 +403,9 @@ class ImageOpenAICaptionStage(CuratorStage):
         max_output_tokens: int = 8192,
         max_caption_retries: int = 3,
         retry_delay_seconds: float = 1.0,
+        endpoint_key: Literal["caption", "filter", "classifier"] = "caption",
+        result_target: Literal["caption", "filter_caption"] = "caption",
+        result_key: str | None = None,
         verbose: bool = False,
         log_stats: bool = False,
     ) -> None:
@@ -303,6 +417,9 @@ class ImageOpenAICaptionStage(CuratorStage):
         self._max_output_tokens = max_output_tokens
         self._max_caption_retries = max_caption_retries
         self._retry_delay_seconds = retry_delay_seconds
+        self._endpoint_key = endpoint_key
+        self._result_target = result_target
+        self._result_key = result_key
         self._verbose = verbose
         self._log_stats = log_stats
         self._client: openai.OpenAI | None = None
@@ -320,11 +437,15 @@ class ImageOpenAICaptionStage(CuratorStage):
     def stage_setup(self) -> None:
         """Initialize the OpenAI client using endpoint config."""
         config = maybe_load_config()
-        endpoint = config.openai.caption if config is not None and config.openai is not None else None
+        endpoint = (
+            getattr(config.openai, self._endpoint_key, None)
+            if config is not None and config.openai is not None
+            else None
+        )
         if endpoint is None or not endpoint.api_key:
             msg = (
-                "OpenAI caption configuration not found. "
-                "Provide openai.caption.api_key in ~/.config/cosmos_curate/config.yaml"
+                f"OpenAI {self._endpoint_key} configuration not found. "
+                f"Provide openai.{self._endpoint_key}.api_key in ~/.config/cosmos_curate/config.yaml"
             )
             raise RuntimeError(msg)
         self._client, self._model_name = create_openai_client_and_resolve_model(
@@ -332,7 +453,7 @@ class ImageOpenAICaptionStage(CuratorStage):
             api_key=endpoint.api_key,
             base_url=endpoint.base_url,
             model_name=self._model_name,
-            endpoint_label="OpenAI caption",
+            endpoint_label=f"OpenAI {self._endpoint_key}",
         )
 
     def _resolve_payload(self, image: Image) -> tuple[bytes, str]:
@@ -387,34 +508,15 @@ class ImageOpenAICaptionStage(CuratorStage):
     @nvtx.annotate("ImageOpenAICaptionStage")  # type: ignore[untyped-decorator]
     def process_data(self, tasks: list[ImagePipeTask]) -> list[ImagePipeTask] | None:
         """Caption images in the batch using the OpenAI-compatible API."""
-        for task in tasks:
-            image = task.image
-            self._timer.reinit(self, task.get_major_size())
-            if image.has_caption():
-                continue
-            with self._timer.time_process():
-                try:
-                    result, detail = self._generate_caption_with_error_detail(image)
-                except Exception as exc:  # noqa: BLE001
-                    result = CaptionResult(outcome=CaptionOutcome.ERROR, failure_reason="exception")
-                    detail = str(exc)
-                    image.errors[f"{self._model_variant}_caption"] = detail
-                    if self._verbose:
-                        logger.exception(f"OpenAI captioning failed for image {task.session_id}")
-                    else:
-                        logger.warning(f"OpenAI captioning failed for image {task.session_id}: {exc}")
-                else:
-                    if result.outcome == CaptionOutcome.ERROR:
-                        error_msg = detail or result.failure_reason or "unknown"
-                        image.errors[f"{self._model_variant}_caption"] = error_msg
-                        logger.warning(f"OpenAI captioning failed for image {task.session_id}: {error_msg}")
-                    elif result.outcome == CaptionOutcome.BLOCKED:
-                        logger.warning(f"OpenAI captioning blocked for image {task.session_id}")
-                    elif self._verbose and result.text is not None:
-                        logger.info(f"OpenAI caption for image {task.session_id}: {result.text}")
-            _write_caption_result(image, self._model_variant, result)
-            image.model_input.pop("openai", None)
-            if self._log_stats:
-                stage_name, stage_perf_stats = self._timer.log_stats()
-                task.stage_perf[stage_name] = stage_perf_stats
-        return tasks
+        return _ImageCaptionProcessContext(
+            stage=self,
+            timer=self._timer,
+            model_variant=self._model_variant,
+            result_target=self._result_target,
+            result_key=self._result_key,
+            verbose=self._verbose,
+            log_stats=self._log_stats,
+            provider_name="OpenAI",
+            generate_with_detail=self._generate_caption_with_error_detail,
+            cleanup_image=lambda image: image.model_input.pop("openai", None),
+        ).process_tasks(tasks)

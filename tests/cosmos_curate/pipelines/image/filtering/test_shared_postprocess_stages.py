@@ -6,10 +6,19 @@
 import pathlib
 
 import numpy as np
+import pytest
 
+from cosmos_curate.core.interfaces.pipeline_interface import run_pipeline
+from cosmos_curate.core.interfaces.runner_interface import RunnerInterface
 from cosmos_curate.core.utils.data.lazy_data import LazyData
 from cosmos_curate.pipelines.image.captioning.image_vllm_stages import _collect_caption_inputs
 from cosmos_curate.pipelines.image.filtering.filter_stages import ImageClassifierStage, ImageSemanticFilterStage
+from cosmos_curate.pipelines.image.filtering.filtering_builders import (
+    ImageClassifierConfig,
+    ImageSemanticFilterConfig,
+    build_image_filter_classifier_stages,
+)
+from cosmos_curate.pipelines.image.read_write.image_load_stage import ImageLoadStage
 from cosmos_curate.pipelines.image.utils.data_model import Image, ImagePipeTask
 
 
@@ -206,3 +215,78 @@ def test_image_classifier_stage_allow_list_rejection_includes_reasons() -> None:
     assert task.image.qwen_rejection_stage == "classifier"
     assert task.image.qwen_rejection_reasons is not None
     assert "planet_earth" in task.image.qwen_rejection_reasons
+
+
+@pytest.mark.env("unified")
+def test_gpu_image_semantic_filter_rejects_sample_fixture(
+    sample_image_task: ImagePipeTask,
+    sequential_runner: RunnerInterface,
+    image_data_dir: pathlib.Path,
+) -> None:
+    """GPU semantic filtering should reject the sample fixture as synthetic without adding caption/embed stages."""
+    stages = [
+        ImageLoadStage(
+            input_path=str(image_data_dir),
+            input_s3_profile_name="default",
+            verbose=False,
+            log_stats=False,
+        ),
+        *build_image_filter_classifier_stages(
+            filter_config=ImageSemanticFilterConfig(
+                enabled=True,
+                model_variant="qwen",
+                filter_categories="synthetic image",
+                rejection_threshold=0.0,
+            )
+        ),
+    ]
+
+    tasks = run_pipeline([sample_image_task], stages, runner=sequential_runner)
+
+    assert tasks is not None
+    assert len(tasks) == 1
+    image = tasks[0].image
+    assert image.caption_status is None
+    assert image.caption == ""
+    assert image.embeddings == {}
+    assert image.filter_caption_status.get("semantic:qwen") in {"success", "truncated"}
+    assert image.is_filtered is True
+    assert image.qwen_rejection_stage == "semantic"
+    assert image.qwen_rejection_reasons is not None
+    assert "synthetic image" in image.qwen_rejection_reasons
+
+
+@pytest.mark.env("unified")
+def test_gpu_image_classifier_populates_labels_without_caption_or_embedding_stages(
+    sample_image_task: ImagePipeTask,
+    sequential_runner: RunnerInterface,
+    image_data_dir: pathlib.Path,
+) -> None:
+    """GPU classifier should populate type labels without adding caption/embed stages."""
+    stages = [
+        ImageLoadStage(
+            input_path=str(image_data_dir),
+            input_s3_profile_name="default",
+            verbose=False,
+            log_stats=False,
+        ),
+        *build_image_filter_classifier_stages(
+            classifier_config=ImageClassifierConfig(
+                enabled=True,
+                model_variant="qwen",
+            )
+        ),
+    ]
+
+    tasks = run_pipeline([sample_image_task], stages, runner=sequential_runner)
+
+    assert tasks is not None
+    assert len(tasks) == 1
+    image = tasks[0].image
+    assert image.caption_status is None
+    assert image.caption == ""
+    assert image.embeddings == {}
+    assert image.filter_caption_status.get("classifier:qwen") in {"success", "truncated"}
+    assert image.qwen_type_classification is not None
+    assert "person/crowd" in image.qwen_type_classification
+    assert "video_game" in image.qwen_type_classification
