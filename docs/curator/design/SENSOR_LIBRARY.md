@@ -113,13 +113,17 @@ This library:
 ### Alignment Contract
 
 Cross-sensor alignment is defined by shared reference timestamps, not by shared
-raw sample counts.
+source-sample counts.
+
+In this section, a source sample means a decoded source measurement before
+alignment or aggregation. It does not mean raw vendor bytes, container packets,
+or encoded payloads.
 
 For a given window:
 
 - every sensor is sampled against the same reference timestamps
 - each output row corresponds to one reference timestamp
-- each sensor payload records the raw sensor timestamp or timestamps actually
+- each sensor payload records the source sensor timestamp or timestamps actually
   used to build that row
 
 Downstream consumers should read an aligned batch as:
@@ -128,7 +132,7 @@ Downstream consumers should read an aligned batch as:
 
 not:
 
-- “these are all raw sensor samples that happened to occur during this
+- “these are all source samples that happened to occur during this
   wall-clock interval”
 
 ### Reference-Grid Sampling Contract
@@ -146,7 +150,7 @@ Sampling and alignment are related but not identical:
 
 A yielded `SamplingWindow` should be interpreted as one sampling interval plus
 the active alignment timestamps that belong to it, not as a promise about how
-many raw sensor samples exist in that wall-clock span.
+many source samples exist in that wall-clock span.
 
 For one window:
 
@@ -166,22 +170,25 @@ sampling rule is sensor-specific:
 - Cameras typically use nearest-neighbour frame selection.
 - Lidar may collect, interpolate, or aggregate rays near the reference
   timestamp.
-- IMU may preintegrate or interpolate over a band around the reference
-  timestamp.
+- IMU may select decoded source samples, interpolate, or preintegrate over a
+  band around the reference timestamp. The first generic IMU data structure,
+  `ImuData`, represents point samples rather than preintegrated windows; see
+  `cosmos_curate/core/sensors/data/imu_data.py` and the design rationale in
+  `SENSOR_LIBRARY_IMU_DATA.md`.
 
 This has several important consequences:
 
-- Raw sensor timestamps that fall inside the wall-clock span of the window may
-  be unused.
-- Multiple reference timestamps may map to the same raw sensor sample.
-- A sensor may use one raw sample, many raw samples, or an interpolation of
-  raw samples to produce one aligned payload row.
-- Equal-sized aligned batches come from the reference grid, not from raw sensor
+- Source sensor timestamps that fall inside the wall-clock span of the window
+  may be unused.
+- Multiple reference timestamps may map to the same source sample.
+- A sensor may use one source sample, many source samples, or an interpolation
+  of source samples to produce one aligned payload row.
+- Equal-sized aligned batches come from the reference grid, not from source
   sample counts.
 
 This is intentional. The goal is to project heterogeneous, jittery, drifting
 sensor timelines onto a clean shared reference grid in a resampling model,
-rather than simply returning all raw samples that fall inside each window.
+rather than simply returning all source samples that fall inside each window.
 
 ### Half-Open Window Semantics
 
@@ -191,19 +198,19 @@ This convention exists to define batch boundaries and avoid double-counting at
 window edges. A timestamp exactly equal to `window.exclusive_end_ns` belongs to
 the next window, not the current one.
 
-The half-open interval should not be interpreted to mean that every raw sensor
-sample inside that interval must appear in the sampled output. A raw sample may
-be unused if it is not selected by the sensor’s sampling rule for any reference
-timestamp in `window.timestamps_ns`.
+The half-open interval should not be interpreted to mean that every source
+sample inside that interval must appear in the sampled output. A source sample
+may be unused if it is not selected by the sensor’s sampling rule for any
+reference timestamp in `window.timestamps_ns`.
 
 ## Sampling Data by Timestamp
 
 Two ways of sampling data by timestamp are supported:
 
-- nearest_neighbor: for each reference timestamp, pick the closest raw sensor
+- nearest_neighbor: for each reference timestamp, pick the closest source
   sample
 - time_spans: for each reference timestamp, derive a time span and collect or
-  aggregate raw samples inside that span
+  aggregate source samples inside that span
   - Auto-generated time spans from a list of reference timestamps
     - center: map each t_i such that t_i is centered between [t_i - 1, t_i + 1]
     - next: map each t_i -> [t_i, t_i+1)
@@ -225,9 +232,9 @@ In real life, there's timestamp jitter, drift and drop, so timestamps may arrive
  t0'     t1'                t2'
 ```
 
-Reference timestamps are the primary object. Raw timestamps are projected onto
+Reference timestamps are the primary object. Source timestamps are projected onto
 that reference grid. In this example, `t2'` may be reused if it is the closest
-sample for more than one reference timestamp, and some raw timestamps may be
+sample for more than one reference timestamp, and some source timestamps may be
 unused if they are not the closest sample for any reference timestamp.
 
 For example, if the nearest-neighbour matches land that way, the sampled data
@@ -436,7 +443,7 @@ for frame in sensor_group.sample(spec):
     frame.align_timestamps_ns  # (N,) active alignment timestamps for this batch
     frame["cam0"]   # CameraData: frames (N, H, W, 3) uint8 RGB
     frame["cam1"]   # CameraData: same layout; H, W from stream metadata
-    frame["imu0"]   # ImuData, SoA, preintegrated
+    frame["imu0"]   # ImuData, SoA, point samples aligned to the reference grid
     frame["gps0"]   # GpsData, SoA, nearest-neighbor or interpolated
     frame["lidar0"]  # LidarData, rays aggregated or bucketed around the same reference timestamps
 ```
@@ -482,6 +489,13 @@ passes, so it is not a supported input to this library.
 - **SensorGroup**: Group of sensors. Holds `sensors`; provides `start_ns`, `end_ns` from sensor bounds. Call `.sample(spec)` to iterate.
 - **SensorGroup.sample()**: Takes **`spec: SamplingSpec`**. Walks **`spec.grid`** in window order (`for window in spec.grid`). For each **`window`**, `window.timestamps_ns` is the alignment batch; each sensor's **`sample(spec)`** is advanced in lockstep so every payload has batch dimension `N`. Uses **`spec.policy`** for cross-sensor checks (e.g. minimum temporal overlap, tolerance). Assembles `AlignedFrame(align_timestamps_ns=window.timestamps_ns, sensor_data=…)`.
 - **AlignedFrame**: Batch of timestamp-aligned data (SoA). Fields: `align_timestamps_ns` `(N,)` (that window’s active alignment times from the `SamplingGrid`), and `sensor_data: dict[str, SensorData]` (e.g. `CameraData` with `align_timestamps_ns`, `sensor_timestamps_ns`, `frames` each of length `N`). Index with `frame[sensor_id]` or `frame.sensor_data[sensor_id]`. See `cosmos_curate/core/sensors/data/aligned_frame.py`.
+- **ImuData**: `cosmos_curate/core/sensors/data/imu_data.py` implements the
+  first generic IMU payload as SoA point samples with required angular velocity
+  and linear acceleration vectors plus optional orientation, covariance,
+  validity, host timestamp, sequence, and temperature fields. The design
+  rationale in `docs/curator/design/SENSOR_LIBRARY_IMU_DATA.md` also documents
+  why preintegrated windows and ragged source-sample windows should remain
+  separate future structures.
 
 ## Module Layout
 

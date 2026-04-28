@@ -21,12 +21,16 @@ import pytest
 from cosmos_curate.core.sensors.utils.validation import (
     _require_1d_bool,
     _require_1d_int64,
+    _require_1d_uint64,
     bool_array,
+    finite_float64_array,
     int64_array,
     nondecreasing_int64_array,
+    require_finite_float64_array,
     require_strictly_increasing,
     strictly_increasing_int64_array,
     uint8_frame_batch,
+    uint64_array,
 )
 
 
@@ -68,6 +72,47 @@ def test_require_1d_bool_rejects_invalid_shape_or_dtype(values: np.ndarray, matc
     """Non-vector or non-bool arrays should fail base bool validation."""
     with pytest.raises(ValueError, match=match):
         _require_1d_bool("values", values)
+
+
+def test_require_1d_uint64_accepts_uint64_vector() -> None:
+    """A 1-D uint64 array should pass base unsigned-integer validation."""
+    values = np.array([0, 10, 20], dtype=np.uint64)
+
+    _require_1d_uint64("values", values)
+
+
+@pytest.mark.parametrize(
+    ("values", "match"),
+    [
+        (np.array([[0, 10, 20]], dtype=np.uint64), r"values must be 1-D, got ndim=2"),
+        (np.array([0, 10, 20], dtype=np.int64), r"values must have dtype uint64, got int64"),
+    ],
+)
+def test_require_1d_uint64_rejects_invalid_shape_or_dtype(values: np.ndarray, match: str) -> None:
+    """Non-vector or non-uint64 arrays should fail base unsigned-integer validation."""
+    with pytest.raises(ValueError, match=match):
+        _require_1d_uint64("values", values)
+
+
+def test_require_finite_float64_array_accepts_finite_float64_array() -> None:
+    """A finite float64 array of any rank should pass finite-float validation."""
+    values = np.zeros((2, 3), dtype=np.float64)
+
+    require_finite_float64_array("values", values)
+
+
+@pytest.mark.parametrize(
+    ("values", "match"),
+    [
+        (np.array([0.0, 1.0], dtype=np.float32), r"values must have dtype float64, got float32"),
+        (np.array([0.0, np.inf], dtype=np.float64), r"values must contain only finite values"),
+        (np.array([0.0, np.nan], dtype=np.float64), r"values must contain only finite values"),
+    ],
+)
+def test_require_finite_float64_array_rejects_invalid_values(values: np.ndarray, match: str) -> None:
+    """Non-float64 or non-finite arrays should fail finite-float validation."""
+    with pytest.raises(ValueError, match=match):
+        require_finite_float64_array("values", values)
 
 
 def test_require_strictly_increasing_accepts_sorted_values() -> None:
@@ -197,6 +242,61 @@ def test_int64_array_accepts_int64_vector() -> None:
     """Int64-array validator should accept a 1-D int64 array."""
     values = np.array([1, 2], dtype=np.int64)
     holder = _Int64ArrayHolder(values=values)
+    np.testing.assert_array_equal(holder.values, values)
+
+
+@attrs.define
+class _Uint64ArrayHolder:
+    """Test fixture for the uint64 array attrs validator."""
+
+    values: np.ndarray = attrs.field(validator=uint64_array)
+
+
+@pytest.mark.parametrize(
+    ("values", "match"),
+    [
+        (np.array([[1, 2]], dtype=np.uint64), r"values must be 1-D, got ndim=2"),
+        (np.array([1, 2], dtype=np.int64), r"values must have dtype uint64, got int64"),
+    ],
+)
+def test_uint64_array_rejects_invalid_inputs(values: np.ndarray, match: str) -> None:
+    """Uint64-array validator should reject non-vector or non-uint64 arrays."""
+    with pytest.raises(ValueError, match=match):
+        _Uint64ArrayHolder(values=values)
+
+
+def test_uint64_array_accepts_uint64_vector() -> None:
+    """Uint64-array validator should accept a 1-D uint64 array."""
+    values = np.array([1, 2], dtype=np.uint64)
+    holder = _Uint64ArrayHolder(values=values)
+    np.testing.assert_array_equal(holder.values, values)
+
+
+@attrs.define
+class _FiniteFloat64ArrayHolder:
+    """Test fixture for the finite float64 attrs validator."""
+
+    values: np.ndarray = attrs.field(validator=finite_float64_array)
+
+
+@pytest.mark.parametrize(
+    ("values", "match"),
+    [
+        (np.array([0.0, 1.0], dtype=np.float32), r"values must have dtype float64, got float32"),
+        (np.array([0.0, np.inf], dtype=np.float64), r"values must contain only finite values"),
+        (np.array([0.0, np.nan], dtype=np.float64), r"values must contain only finite values"),
+    ],
+)
+def test_finite_float64_array_rejects_invalid_inputs(values: np.ndarray, match: str) -> None:
+    """Finite-float validator should reject non-float64 or non-finite arrays."""
+    with pytest.raises(ValueError, match=match):
+        _FiniteFloat64ArrayHolder(values=values)
+
+
+def test_finite_float64_array_accepts_finite_float64_array() -> None:
+    """Finite-float validator should accept finite float64 arrays of any rank."""
+    values = np.ones((2, 3), dtype=np.float64)
+    holder = _FiniteFloat64ArrayHolder(values=values)
     np.testing.assert_array_equal(holder.values, values)
 
 

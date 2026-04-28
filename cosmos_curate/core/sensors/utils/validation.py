@@ -46,6 +46,26 @@ def _require_1d_bool(name: str, values: npt.NDArray[np.bool_]) -> None:
         raise ValueError(msg)
 
 
+def _require_1d_uint64(name: str, values: npt.NDArray[np.uint64]) -> None:
+    """Raise if *values* is not a 1-D ``uint64`` array."""
+    if values.ndim != 1:
+        msg = f"{name} must be 1-D, got ndim={values.ndim}"
+        raise ValueError(msg)
+    if values.dtype != np.uint64:
+        msg = f"{name} must have dtype uint64, got {values.dtype}"
+        raise ValueError(msg)
+
+
+def require_finite_float64_array(name: str, values: npt.NDArray[np.float64]) -> None:
+    """Raise if *values* is not a finite ``float64`` array."""
+    if values.dtype != np.float64:
+        msg = f"{name} must have dtype float64, got {values.dtype}"
+        raise ValueError(msg)
+    if not np.all(np.isfinite(values)):
+        msg = f"{name} must contain only finite values"
+        raise ValueError(msg)
+
+
 def require_strictly_increasing(name: str, values: npt.NDArray[np.int64]) -> None:
     """Raise if *values* is not strictly sorted in ascending order."""
     if len(values) > 1 and not np.all(values[:-1] < values[1:]):
@@ -96,6 +116,24 @@ def bool_array(
 ) -> None:
     """Attrs validator for a 1-D ``bool`` array."""
     _require_1d_bool(attribute.name, value)
+
+
+def uint64_array(
+    instance: object,  # noqa: ARG001
+    attribute: AttrsAttribute,
+    value: npt.NDArray[np.uint64],
+) -> None:
+    """Attrs validator for a 1-D ``uint64`` array."""
+    _require_1d_uint64(attribute.name, value)
+
+
+def finite_float64_array(
+    instance: object,  # noqa: ARG001
+    attribute: AttrsAttribute,
+    value: npt.NDArray[np.float64],
+) -> None:
+    """Attrs validator for a finite ``float64`` array."""
+    require_finite_float64_array(attribute.name, value)
 
 
 def uint8_frame_batch(
