@@ -206,6 +206,90 @@ def test_make_ts_grid_raises_when_rounding_makes_grid_non_increasing() -> None:
         make_ts_grid(0, 10, 1.5e9)
 
 
+def test_make_ts_grid_exclusive_end_aligned_boundary() -> None:
+    """Aligned exclusive_end_ns should be returned unchanged and stop strictly before the boundary."""
+    start_ns = 0
+    sample_rate_hz = 10.0
+    exclusive_end_ns = 1_000_000_000  # 10 samples at 10 Hz lands exactly on the boundary
+
+    got_start_ns, got_exclusive_end_ns, got_timestamps_ns = make_ts_grid(
+        start_ns,
+        sample_rate_hz=sample_rate_hz,
+        exclusive_end_ns=exclusive_end_ns,
+    )
+
+    assert got_start_ns == start_ns
+    assert got_exclusive_end_ns == exclusive_end_ns
+    assert int(got_timestamps_ns[-1]) < exclusive_end_ns
+    expected_step_ns = int(np.round(1_000_000_000 / sample_rate_hz))
+    deltas = np.diff(got_timestamps_ns)
+    assert np.all(deltas > 0)
+    assert np.all(np.abs(deltas - expected_step_ns) <= 1)
+
+
+def test_make_ts_grid_exclusive_end_non_aligned_boundary() -> None:
+    """Non-aligned exclusive_end_ns should be returned unchanged with timestamps strictly inside it."""
+    start_ns = 0
+    sample_rate_hz = 30.0
+    exclusive_end_ns = 5_000_000_000
+
+    got_start_ns, got_exclusive_end_ns, got_timestamps_ns = make_ts_grid(
+        start_ns,
+        sample_rate_hz=sample_rate_hz,
+        exclusive_end_ns=exclusive_end_ns,
+    )
+
+    assert got_start_ns == start_ns
+    assert got_exclusive_end_ns == exclusive_end_ns
+    assert int(got_timestamps_ns[-1]) < exclusive_end_ns
+    assert exclusive_end_ns not in got_timestamps_ns
+
+
+def test_make_ts_grid_exclusive_end_with_sampling_grid() -> None:
+    """make_ts_grid with exclusive_end_ns should compose cleanly with SamplingGrid."""
+    start_ns = 0
+    sample_rate_hz = 10.0
+    exclusive_end_ns = 500_000_000  # 0.5 s
+    stride_ns = 200_000_000
+    duration_ns = 200_000_000
+
+    got_start_ns, got_exclusive_end_ns, got_timestamps_ns = make_ts_grid(
+        start_ns,
+        sample_rate_hz=sample_rate_hz,
+        exclusive_end_ns=exclusive_end_ns,
+    )
+    grid = SamplingGrid(
+        start_ns=got_start_ns,
+        exclusive_end_ns=got_exclusive_end_ns,
+        timestamps_ns=got_timestamps_ns,
+        stride_ns=stride_ns,
+        duration_ns=duration_ns,
+    )
+    windows = list(grid)
+
+    assert grid.exclusive_end_ns == exclusive_end_ns
+    assert all(w.exclusive_end_ns <= exclusive_end_ns for w in windows)
+    assert all(int(w.timestamps_ns[-1]) < exclusive_end_ns for w in windows if len(w) > 0)
+
+
+def test_make_ts_grid_raises_when_both_ends_supplied() -> None:
+    """make_ts_grid should reject having both end_ns and exclusive_end_ns supplied."""
+    with pytest.raises(ValueError, match="exactly one of end_ns or exclusive_end_ns"):
+        make_ts_grid(0, 1_000_000_000, 30.0, exclusive_end_ns=1_000_000_000)
+
+
+def test_make_ts_grid_raises_when_neither_end_supplied() -> None:
+    """make_ts_grid should reject having neither end_ns nor exclusive_end_ns supplied."""
+    with pytest.raises(ValueError, match="exactly one of end_ns or exclusive_end_ns"):
+        make_ts_grid(0, sample_rate_hz=30.0)
+
+
+def test_make_ts_grid_raises_when_exclusive_end_le_start() -> None:
+    """make_ts_grid should reject exclusive_end_ns that is not strictly greater than start_ns."""
+    with pytest.raises(ValueError, match="exclusive_end_ns must be greater than start_ns"):
+        make_ts_grid(100, sample_rate_hz=30.0, exclusive_end_ns=100)
+
+
 def _expected_window_count(first: int, last: int, stride_ns: int) -> int:
     """Windows emitted while start <= last with start = first + k * stride_ns."""
     if stride_ns <= 0 or first > last:

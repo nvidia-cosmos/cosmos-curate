@@ -47,44 +47,82 @@ def _end_ns_ge_start_ns(
 
 def make_ts_grid(
     start_ns: int,
-    end_ns: int,
-    sample_rate_hz: float,
+    end_ns: int | None = None,
+    sample_rate_hz: float | None = None,
+    *,
+    exclusive_end_ns: int | None = None,
 ) -> tuple[int, int, npt.NDArray[np.int64]]:
     """Make a grid of timestamps in nanoseconds.
 
     Samples are ``start_ns + k * (1/sample_rate_hz)`` in float space, rounded
-    to int64 nanoseconds.
+    to int64 nanoseconds. The grid always includes ``start_ns`` and the
+    returned ``timestamps_ns`` is strictly ascending and read-only.
 
-    The returned timestamps stay on that regular sample interval, the grid
-    always includes ``start_ns`` and continues until the final timestamp is
-    strictly greater than ``end_ns``.
+    Exactly one of ``end_ns`` and ``exclusive_end_ns`` must be supplied.
 
-    The final timestamp is retained as an exclusive boundary marker so the
-    requested ``end_ns`` remains reachable under half-open sampling-window
-    semantics, even when ``end_ns - start_ns`` is not evenly divisible by the
-    sample interval.
+    Inclusive end (``end_ns``):
+        ``end_ns`` is the last timestamp to *include*. The grid continues
+        until the final sample is strictly greater than ``end_ns``; that
+        sample is retained as an exclusive boundary marker so the requested
+        ``end_ns`` remains reachable under half-open sampling-window
+        semantics, even when ``end_ns - start_ns`` is not evenly divisible by
+        the sample interval. The returned tuple satisfies
+        ``timestamps_ns[-1] <= end_ns < exclusive_end_ns``.
+
+    Exclusive end (``exclusive_end_ns``):
+        ``exclusive_end_ns`` is the half-open right boundary; the grid stops
+        strictly before it. The supplied value is returned unchanged as the
+        second element of the tuple, which makes this convenient for clip
+        spans that already use ``[start_s, end_s)`` semantics. The returned
+        tuple satisfies ``timestamps_ns[-1] < exclusive_end_ns`` and
+        ``exclusive_end_ns`` equals the supplied value exactly.
 
     Args:
-        start_ns: the start timestamp in nanoseconds
-        end_ns: the end timestamp in nanoseconds. The returned tuple satisfies
-            ``timestamps_ns[-1] <= end_ns < exclusive_end_ns``.
-        sample_rate_hz: the sample rate in Hz
+        start_ns: the start timestamp in nanoseconds.
+        end_ns: optional inclusive end timestamp in nanoseconds. Mutually
+            exclusive with ``exclusive_end_ns``.
+        sample_rate_hz: the sample rate in Hz. Required.
+        exclusive_end_ns: optional exclusive end timestamp in nanoseconds.
+            Mutually exclusive with ``end_ns``.
 
     Returns:
         A ``(start_ns, exclusive_end_ns, timestamps_ns)`` tuple where
         ``timestamps_ns`` is a strictly ascending, read-only ``int64`` array.
 
+    Raises:
+        ValueError: if neither or both of ``end_ns`` and ``exclusive_end_ns``
+            are supplied, if ``sample_rate_hz`` is missing or non-positive,
+            if the supplied bound precedes ``start_ns``, or if rounding to
+            nanoseconds does not produce a strictly increasing grid.
+
     """
-    if sample_rate_hz <= 0:
+    if sample_rate_hz is None or sample_rate_hz <= 0:
         msg = f"sample_rate_hz must be greater than 0, got {sample_rate_hz=}"
         raise ValueError(msg)
-    if end_ns < start_ns:
-        msg = f"end_ns must be greater than or equal to start_ns, got {start_ns=} {end_ns=}"
+    if end_ns is not None and exclusive_end_ns is not None:
+        msg = f"exactly one of end_ns or exclusive_end_ns must be supplied, got both {end_ns=} and {exclusive_end_ns=}"
+        raise ValueError(msg)
+
+    # Reduce the half-open form to the existing inclusive-end algorithm by
+    # shifting one nanosecond inward, then override the returned boundary so
+    # the supplied exclusive_end_ns is preserved exactly.
+    if exclusive_end_ns is not None:
+        if exclusive_end_ns <= start_ns:
+            msg = f"exclusive_end_ns must be greater than start_ns, got {start_ns=} {exclusive_end_ns=}"
+            raise ValueError(msg)
+        inclusive_end_ns = exclusive_end_ns - 1
+    elif end_ns is not None:
+        if end_ns < start_ns:
+            msg = f"end_ns must be greater than or equal to start_ns, got {start_ns=} {end_ns=}"
+            raise ValueError(msg)
+        inclusive_end_ns = end_ns
+    else:
+        msg = "exactly one of end_ns or exclusive_end_ns must be supplied, got neither"
         raise ValueError(msg)
 
     sample_interval = 1.0 / sample_rate_hz
     start = start_ns / 1_000_000_000
-    end = end_ns / 1_000_000_000
+    end = inclusive_end_ns / 1_000_000_000
 
     # Calculate the number of samples needed to cover the range, guarding against
     # floating-point roundoff at exact boundaries
@@ -103,9 +141,9 @@ def make_ts_grid(
     retval.flags.writeable = False
 
     start_ns = int(retval[0])
-    exclusive_end_ns = int(retval[-1])
     timestamps_ns = retval[:-1]
-    return start_ns, exclusive_end_ns, timestamps_ns
+    out_exclusive_end_ns = exclusive_end_ns if exclusive_end_ns is not None else int(retval[-1])
+    return start_ns, out_exclusive_end_ns, timestamps_ns
 
 
 def _start_ns_le_first_timestamp(
