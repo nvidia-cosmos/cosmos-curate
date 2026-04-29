@@ -535,11 +535,13 @@ def _get_video_index_from_header(
     return offset, size, pts, is_keyframe, is_discard
 
 
-def make_index_and_metadata(
+def make_index_and_metadata(  # noqa: PLR0913
     data: DataSource,
     stream_idx: int = 0,
     video_format: str | None = None,
     index_method: VideoIndexCreationMethod = VideoIndexCreationMethod.FROM_HEADER,
+    client_params: dict[str, Any] | None = None,
+    allow_header_fallback: bool = True,  # noqa: FBT001, FBT002
 ) -> tuple[VideoIndex, VideoMetadata]:
     """Build a :class:`VideoIndex` and :class:`VideoMetadata` from a video source.
 
@@ -558,6 +560,11 @@ def make_index_and_metadata(
         index_method: how to collect per-packet metadata.  ``FROM_HEADER`` (default)
             reads from the container index (fast).  ``FULL_DEMUX`` scans every
             packet (slow; for tests or rare validation).
+        client_params: Extra arguments for ``smart_open`` when ``data`` is a cloud URI.
+        allow_header_fallback: If ``True`` and ``FROM_HEADER`` is unavailable,
+            transparently fall back to ``FULL_DEMUX``. If ``False``, raise the
+            header-index error instead. Diagnostics should set this to ``False``
+            when they need to know whether the embedded header index is usable.
 
     Returns:
         ``(index, metadata)`` where ``index`` holds per-packet arrays and
@@ -570,7 +577,7 @@ def make_index_and_metadata(
 
     """
     with (
-        open_data_source(data, mode="rb") as stream,
+        open_data_source(data, mode="rb", client_params=client_params) as stream,
         open_video_container(cast("BinaryIO", stream), stream_idx=stream_idx, video_format=video_format) as (
             container,
             video_stream,
@@ -587,6 +594,8 @@ def make_index_and_metadata(
                 try:
                     offset, size, pts, is_keyframe, is_discard = _get_video_index_from_header(video_stream)
                 except _HeaderIndexUnavailableError as e:
+                    if not allow_header_fallback:
+                        raise
                     logger.warning(
                         "FROM_HEADER unavailable for stream {} ({}); falling back to FULL_DEMUX",
                         stream_idx,

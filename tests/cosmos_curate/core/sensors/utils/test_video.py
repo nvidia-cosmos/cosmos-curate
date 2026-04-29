@@ -358,6 +358,97 @@ def test_make_index_and_metadata_from_header_falls_back_to_full_demux() -> None:
     np.testing.assert_array_equal(index.pts_stream, np.array([0, 1], dtype=np.int64))
 
 
+def test_make_index_and_metadata_from_header_can_disable_fallback() -> None:
+    """Diagnostics should be able to fail if the header index is unavailable."""
+    video_stream = SimpleNamespace(
+        time_base=Fraction(1, 30),
+        average_rate=Fraction(30, 1),
+        width=16,
+        height=16,
+        codec_context=SimpleNamespace(name="h264", max_b_frames=0, profile="Main", pix_fmt="yuv420p"),
+    )
+    container = SimpleNamespace(format=SimpleNamespace(name="mp4"))
+
+    with (
+        patch(
+            "cosmos_curate.core.sensors.utils.video.open_data_source",
+            return_value=nullcontext(io.BytesIO(b"")),
+        ),
+        patch(
+            "cosmos_curate.core.sensors.utils.video.open_video_container",
+            return_value=nullcontext((container, video_stream)),
+        ),
+        patch(
+            "cosmos_curate.core.sensors.utils.video._get_video_index_from_header",
+            side_effect=_HeaderIndexUnavailableError("retry with FULL_DEMUX"),
+        ),
+        patch("cosmos_curate.core.sensors.utils.video._get_video_index_full_demux") as full_demux,
+        pytest.raises(_HeaderIndexUnavailableError, match="retry with FULL_DEMUX"),
+    ):
+        make_index_and_metadata(
+            b"",
+            index_method=VideoIndexCreationMethod.FROM_HEADER,
+            allow_header_fallback=False,
+        )
+
+    full_demux.assert_not_called()
+
+
+def test_make_index_and_metadata_forwards_client_params_to_open_data_source() -> None:
+    """Video indexing should follow the sensor package client_params pattern for remote sources."""
+    expected_client_params = {"transport_params": {"client": object()}}
+    captured: dict[str, object] = {}
+    video_stream = SimpleNamespace(
+        time_base=Fraction(1, 30),
+        average_rate=Fraction(30, 1),
+        width=16,
+        height=16,
+        codec_context=SimpleNamespace(name="h264", max_b_frames=0, profile="Main", pix_fmt="yuv420p"),
+    )
+    container = SimpleNamespace(format=SimpleNamespace(name="mp4"))
+    demux_result = (
+        [0, 10],
+        [100, 100],
+        [0, 1],
+        [True, False],
+        [False, False],
+    )
+
+    def fake_open_data_source(
+        data: object,
+        mode: str = "rb",
+        client_params: dict[str, object] | None = None,
+    ) -> object:
+        captured["data"] = data
+        captured["mode"] = mode
+        captured["client_params"] = client_params
+        return nullcontext(io.BytesIO(b""))
+
+    with (
+        patch(
+            "cosmos_curate.core.sensors.utils.video.open_data_source",
+            side_effect=fake_open_data_source,
+        ),
+        patch(
+            "cosmos_curate.core.sensors.utils.video.open_video_container",
+            return_value=nullcontext((container, video_stream)),
+        ),
+        patch(
+            "cosmos_curate.core.sensors.utils.video._get_video_index_full_demux",
+            return_value=demux_result,
+        ),
+    ):
+        make_index_and_metadata(
+            "s3://bucket/video.mp4",
+            index_method=VideoIndexCreationMethod.FULL_DEMUX,
+            client_params=expected_client_params,
+        )
+
+    assert captured["data"] == "s3://bucket/video.mp4"
+    assert captured["mode"] == "rb"
+    assert captured["client_params"] is expected_client_params
+
+
 def test_make_index_and_metadata_raises_on_unsupported_index_method() -> None:
     """make_index_and_metadata should reject unsupported index methods explicitly."""
     video_stream = SimpleNamespace(time_base=Fraction(1, 30))
