@@ -22,6 +22,7 @@ import numpy.typing as npt
 import pytest
 
 from cosmos_curate.core.sensors.data.camera_data import CameraData, MotionVectorData
+from cosmos_curate.core.sensors.data.extrinsics import SensorExtrinsics
 from cosmos_curate.core.sensors.data.video import VideoMetadata
 
 
@@ -51,6 +52,11 @@ def _make_camera_data() -> CameraData:
         frames=frames,
         metadata=_make_metadata(),
     )
+
+
+def _make_extrinsics() -> SensorExtrinsics:
+    """Build a minimal SensorExtrinsics instance."""
+    return SensorExtrinsics(matrix=np.eye(4, dtype=np.float64))
 
 
 def test_camera_data_raises_on_motion_vector_length_mismatch() -> None:
@@ -209,6 +215,29 @@ def test_camera_data_does_not_mutate_caller_owned_arrays() -> None:
     assert np.shares_memory(camera_data.sensor_timestamps_ns, sensor_timestamps_ns)
     assert np.shares_memory(camera_data.pts_stream, pts_stream)
     assert np.shares_memory(camera_data.frames, frames)
+
+
+def test_camera_data_defaults_extrinsics_to_none() -> None:
+    """CameraData should keep extrinsics optional for existing callers."""
+    camera_data = _make_camera_data()
+
+    assert camera_data.extrinsics is None
+
+
+def test_camera_data_preserves_provided_extrinsics() -> None:
+    """CameraData should store an explicitly provided SensorExtrinsics object unchanged."""
+    extrinsics = _make_extrinsics()
+
+    camera_data = CameraData(
+        align_timestamps_ns=np.array([1], dtype=np.int64),
+        sensor_timestamps_ns=np.array([1], dtype=np.int64),
+        pts_stream=np.array([1], dtype=np.int64),
+        frames=np.zeros((1, 1, 1, 3), dtype=np.uint8),
+        metadata=_make_metadata(),
+        extrinsics=extrinsics,
+    )
+
+    assert camera_data.extrinsics is extrinsics
 
 
 @pytest.mark.parametrize(

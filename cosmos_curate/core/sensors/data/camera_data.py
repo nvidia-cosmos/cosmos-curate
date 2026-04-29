@@ -21,6 +21,7 @@ import attrs
 import numpy as np
 import numpy.typing as npt
 
+from cosmos_curate.core.sensors.data.extrinsics import SensorExtrinsics
 from cosmos_curate.core.sensors.data.video import VideoMetadata
 from cosmos_curate.core.sensors.utils.helpers import as_readonly_view, as_readonly_view_tuple
 from cosmos_curate.core.sensors.utils.validation import (
@@ -145,6 +146,7 @@ class CameraData:
         frames: decoded RGB, shape ``(N, H, W, 3)``, ``uint8``; row ``i`` is the image at index ``i``
         metadata: stream geometry and related fields (``VideoMetadata``)
         motion_vectors: optional per-frame motion vectors; when set, length ``N`` matches ``frames``
+        extrinsics: optional rigid transform from the camera frame to a caller-defined reference frame
 
     """
 
@@ -177,3 +179,4 @@ class CameraData:
         default=None,
         validator=_motion_vectors,
     )  # optional; requires decoder with export_mvs
+    extrinsics: SensorExtrinsics | None = attrs.field(default=None)

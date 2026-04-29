@@ -14,3 +14,54 @@
 # limitations under the License.
 
 """Extrinsics data structures for cosmos_curate.core.sensors package."""
+
+from typing import TYPE_CHECKING, Any
+
+import attrs
+import numpy as np
+import numpy.typing as npt
+
+from cosmos_curate.core.sensors.utils.helpers import as_readonly_view
+
+if TYPE_CHECKING:
+    AttrsAttribute = attrs.Attribute[Any]
+else:
+    AttrsAttribute = attrs.Attribute
+
+_EXTRINSICS_SHAPE = (4, 4)
+
+
+def _float64_matrix_4x4(
+    _instance: object,
+    attribute: AttrsAttribute,
+    value: npt.NDArray[np.float64],
+) -> None:
+    """Validate a homogeneous transform matrix."""
+    if value.dtype != np.float64:
+        msg = f"{attribute.name} must have dtype float64, got {value.dtype}"
+        raise ValueError(msg)
+    if value.shape != _EXTRINSICS_SHAPE:
+        msg = f"{attribute.name} must have shape {_EXTRINSICS_SHAPE}, got {value.shape}"
+        raise ValueError(msg)
+
+
+@attrs.define(hash=False, frozen=True)
+class SensorExtrinsics:
+    """Rigid transform from a sensor frame to a caller-defined reference frame.
+
+    The matrix is a row-major homogeneous transform with the expected structure::
+
+        [R | t]
+        [0 | 1]
+
+    where ``R`` is a ``3x3`` rotation matrix and ``t`` is a ``3x1`` translation
+    vector. The reference frame is caller-defined, for example a vehicle body or
+    rig frame.
+    """
+
+    __hash__ = None  # type: ignore[assignment]
+
+    matrix: npt.NDArray[np.float64] = attrs.field(
+        converter=as_readonly_view,
+        validator=_float64_matrix_4x4,
+    )
