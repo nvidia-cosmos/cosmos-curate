@@ -175,6 +175,14 @@ sampling rule is sensor-specific:
   `ImuData`, represents point samples rather than preintegrated windows; see
   `cosmos_curate/core/sensors/data/imu_data.py` and the design rationale in
   `SENSOR_LIBRARY_IMU_DATA.md`.
+- GPS/GNSS may select the nearest decoded fix, meaning the receiver's computed
+  position solution at one point in time, or interpolate between decoded fixes.
+  GNSS is the broader satellite-positioning category that includes GPS; WGS-84
+  is the global latitude/longitude/ellipsoid-altitude coordinate reference
+  system commonly used by GPS/GNSS receivers. The first generic GPS data
+  structure, `GpsData`, represents WGS-84 fix rows rather than map-projected
+  localization output. See
+  `SENSOR_LIBRARY_GPS_DATA.md`.
 
 This has several important consequences:
 
@@ -444,7 +452,7 @@ for frame in sensor_group.sample(spec):
     frame["cam0"]   # CameraData: frames (N, H, W, 3) uint8 RGB
     frame["cam1"]   # CameraData: same layout; H, W from stream metadata
     frame["imu0"]   # ImuData, SoA, point samples aligned to the reference grid
-    frame["gps0"]   # GpsData, SoA, nearest-neighbor or interpolated
+    frame["gps0"]   # GpsData, SoA, WGS-84 fixes selected or interpolated
     frame["lidar0"]  # LidarData, rays aggregated or bucketed around the same reference timestamps
 ```
 
@@ -496,6 +504,11 @@ passes, so it is not a supported input to this library.
   rationale in `docs/curator/design/SENSOR_LIBRARY_IMU_DATA.md` also documents
   why preintegrated windows and ragged source-sample windows should remain
   separate future structures.
+- **GpsData**: The first generic GPS/GNSS payload is a SoA batch of
+  WGS-84 fix rows with required latitude, longitude, altitude, and position
+  validity plus optional covariance, velocity, fix type, satellite count,
+  accuracy, dilution of precision, host/UTC timestamps, and sequence fields.
+  See `docs/curator/design/SENSOR_LIBRARY_GPS_DATA.md`.
 
 ## Module Layout
 
@@ -529,6 +542,7 @@ cosmos_curate
         └── data
              ├── __init__.py       # Structure-of-Arrays (SoA) data structures
              ├── camera.py         # CameraData, MotionVectorData, CameraIntrinsics
+             ├── gps_data.py       # GpsData
              ├── lidar.py          # LidarData, LidarRays
              ├── aligned_frame.py  # AlignedFrame
              ├── extrinsics.py     # SensorExtrinsics

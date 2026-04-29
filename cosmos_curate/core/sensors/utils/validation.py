@@ -46,6 +46,26 @@ def _require_1d_bool(name: str, values: npt.NDArray[np.bool_]) -> None:
         raise ValueError(msg)
 
 
+def _require_1d_uint8(name: str, values: npt.NDArray[np.uint8]) -> None:
+    """Raise if *values* is not a 1-D ``uint8`` array."""
+    if values.ndim != 1:
+        msg = f"{name} must be 1-D, got ndim={values.ndim}"
+        raise ValueError(msg)
+    if values.dtype != np.uint8:
+        msg = f"{name} must have dtype uint8, got {values.dtype}"
+        raise ValueError(msg)
+
+
+def _require_1d_uint16(name: str, values: npt.NDArray[np.uint16]) -> None:
+    """Raise if *values* is not a 1-D ``uint16`` array."""
+    if values.ndim != 1:
+        msg = f"{name} must be 1-D, got ndim={values.ndim}"
+        raise ValueError(msg)
+    if values.dtype != np.uint16:
+        msg = f"{name} must have dtype uint16, got {values.dtype}"
+        raise ValueError(msg)
+
+
 def _require_1d_uint64(name: str, values: npt.NDArray[np.uint64]) -> None:
     """Raise if *values* is not a 1-D ``uint64`` array."""
     if values.ndim != 1:
@@ -116,6 +136,24 @@ def bool_array(
 ) -> None:
     """Attrs validator for a 1-D ``bool`` array."""
     _require_1d_bool(attribute.name, value)
+
+
+def uint8_array(
+    instance: object,  # noqa: ARG001
+    attribute: AttrsAttribute,
+    value: npt.NDArray[np.uint8],
+) -> None:
+    """Attrs validator for a 1-D ``uint8`` array."""
+    _require_1d_uint8(attribute.name, value)
+
+
+def uint16_array(
+    instance: object,  # noqa: ARG001
+    attribute: AttrsAttribute,
+    value: npt.NDArray[np.uint16],
+) -> None:
+    """Attrs validator for a 1-D ``uint16`` array."""
+    _require_1d_uint16(attribute.name, value)
 
 
 def uint64_array(
