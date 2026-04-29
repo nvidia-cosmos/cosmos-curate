@@ -25,7 +25,7 @@ import logging
 import os
 import time
 import warnings
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 import attrs
 import numpy as np
@@ -92,6 +92,21 @@ else:
 
 
 _module_logger = make_tagged_logger("[asyncvLLM]")
+
+
+def _build_render_payload(
+    prompt_text: str,
+    decoded_rgb_frames: npt.NDArray[np.uint8],
+    mm_processor_kwargs_json: str,
+) -> dict[str, Any]:
+    """Build a fresh renderer payload from stable prompt primitives."""
+    payload: dict[str, Any] = {
+        "prompt": prompt_text,
+        "multi_modal_data": {"video": [decoded_rgb_frames]},
+    }
+    if mm_processor_kwargs_json:
+        payload["mm_processor_kwargs"] = json.loads(mm_processor_kwargs_json)
+    return payload
 
 
 def resolve_model_path(model_id: str) -> str:
@@ -598,8 +613,17 @@ class VllmAsyncPromptRenderStage(CuratorStage):
             return
 
         for chunk in itertools.batched(windows_to_render, self.RENDER_CHUNK_SIZE):
-            prompts = [w[3]["prompt_input"] for w in chunk]
             try:
+                prompt_primitives: list[tuple[str, npt.NDArray[np.uint8]]] = []
+                for _clip, _wi, _window, cached in chunk:
+                    prompt_input = cached["prompt_input"]
+                    prompt_text = prompt_input["prompt"]
+                    decoded_rgb_frames = prompt_input["multi_modal_data"]["video"][0]
+                    prompt_primitives.append((prompt_text, decoded_rgb_frames))
+                prompts = [
+                    _build_render_payload(prompt_text, decoded_rgb_frames, self._serve_config.mm_processor_kwargs)
+                    for prompt_text, decoded_rgb_frames in prompt_primitives
+                ]
                 rendered_list = await renderer.render_cmpl_async(prompts)
             except Exception as e:  # noqa: BLE001
                 for clip, wi, window, _cached in chunk:
@@ -613,11 +637,14 @@ class VllmAsyncPromptRenderStage(CuratorStage):
                 )
                 continue
 
-            for (_clip, _wi, window, cached), rendered in zip(chunk, rendered_list, strict=True):
+            for (_clip, _wi, window, cached), (prompt_text, decoded_rgb_frames), rendered in zip(
+                chunk, prompt_primitives, rendered_list, strict=True
+            ):
                 window.model_input[variant] = {
                     "rendered_prompt": rendered,
                     "frames_shape": cached["frames_shape"],
-                    "raw_prompt_input": cached["prompt_input"],
+                    "raw_prompt": prompt_text,
+                    "decoded_rgb_frames": decoded_rgb_frames,
                 }
 
     def process_data(self, tasks: list[SplitPipeTask]) -> list[SplitPipeTask]:
@@ -666,7 +693,8 @@ class _RenderedWindow:
     rendered_prompt: "ProcessorInputs | None"
     sampling_params: "SamplingParams"
     frames_shape: tuple[int, ...]
-    raw_prompt_input: dict[str, Any] | None
+    raw_prompt: str | None
+    decoded_rgb_frames: npt.NDArray[np.uint8] | None
 
 
 @attrs.define(frozen=True)
@@ -1019,7 +1047,8 @@ class VllmAsyncCaptionStage(CuratorStage):
                                 rendered_prompt=rendered_prompt,
                                 sampling_params=self._sampling_params,
                                 frames_shape=cached["frames_shape"],
-                                raw_prompt_input=cached.get("raw_prompt_input"),
+                                raw_prompt=cached.get("raw_prompt"),
+                                decoded_rgb_frames=cached.get("decoded_rgb_frames"),
                             )
                         )
                     except Exception as exc:  # noqa: BLE001
@@ -1107,7 +1136,8 @@ class VllmAsyncCaptionStage(CuratorStage):
                     )
             finally:
                 if not stage2_enqueued:
-                    rw.raw_prompt_input = None
+                    rw.raw_prompt = None
+                    rw.decoded_rgb_frames = None
 
     async def _stage2_refine_and_assign(
         self,
@@ -1130,9 +1160,9 @@ class VllmAsyncCaptionStage(CuratorStage):
         ):
             caption = stage1_caption
             try:
-                if rw.raw_prompt_input is None:
+                if rw.raw_prompt is None or rw.decoded_rgb_frames is None:
                     self._logger.warning(
-                        "stage-2 skipped for clip {} window {}: raw_prompt_input is None",
+                        "stage-2 skipped for clip {} window {}: prompt primitives are missing",
                         rw.clip.uuid,
                         rw.window_index,
                     )
@@ -1143,14 +1173,13 @@ class VllmAsyncCaptionStage(CuratorStage):
                     stage1_caption,
                     self._stage2_prompt_text,
                 )
-                (stage2_rendered,) = await engine.renderer.render_cmpl_async(
-                    [
-                        {
-                            "prompt": refined_prompt,
-                            "multi_modal_data": rw.raw_prompt_input["multi_modal_data"],
-                        }
-                    ]
+                stage2_prompt_input = _build_render_payload(
+                    refined_prompt,
+                    rw.decoded_rgb_frames,
+                    self._serve_config.mm_processor_kwargs,
                 )
+                renderer = cast("Any", engine).renderer
+                (stage2_rendered,) = await renderer.render_cmpl_async([stage2_prompt_input])
                 try:
                     async with semaphore:
                         caption, s2_tc = await self._generate_caption_async(
@@ -1192,7 +1221,8 @@ class VllmAsyncCaptionStage(CuratorStage):
                 )
                 caption = stage1_caption  # best-effort: use stage-1 result
             finally:
-                rw.raw_prompt_input = None
+                rw.raw_prompt = None
+                rw.decoded_rgb_frames = None
 
             self._mark_window_success(rw.window, caption)
             if self._verbose:

@@ -22,7 +22,7 @@ from typing import Any, Literal
 import attrs
 
 from cosmos_curate.pipelines.video.utils.data_model import VllmSamplingConfig
-from cosmos_curate.pipelines.video.utils.vision_process import VIDEO_MAX_PIXELS
+from cosmos_curate.pipelines.video.utils.vision_process import VIDEO_MAX_PIXELS, VIDEO_MIN_PIXELS
 
 # Mirrors vllm.config.model.ModelDType without a heavyweight vllm import.
 ModelDType = Literal["auto", "half", "float16", "bfloat16", "float", "float32"]
@@ -30,11 +30,25 @@ ModelDType = Literal["auto", "half", "float16", "bfloat16", "float", "float32"]
 # Matches cosmos_curate.pipelines.video.utils.vision_process.FPS.
 _DEFAULT_VIDEO_SAMPLE_FPS: float = 2.0
 
+# Model-specific overrides are applied only by build_vllm_async_config()
+# (CLI > _MODEL_DEFAULTS > attrs defaults). Direct VllmAsyncConfig(...)
+# construction does not inject these values automatically.
 _MODEL_DEFAULTS: dict[str, dict[str, Any]] = {
     # Qwen-specific overrides
     "qwen": {
         "max_model_len": 32768,
         "max_num_batched_tokens": 32768,
+        # Qwen-family-compatible nested video kwargs; currently applied only to "qwen".
+        "mm_processor_kwargs": json.dumps(
+            {
+                "videos_kwargs": {
+                    "size": {
+                        "shortest_edge": VIDEO_MIN_PIXELS,
+                        "longest_edge": VIDEO_MAX_PIXELS,
+                    }
+                }
+            }
+        ),
     },
 }
 
@@ -350,9 +364,9 @@ _VLLM_ARG_SPECS: tuple[_VllmArgSpec, ...] = (
         arg_type=str,
         help=(
             "JSON dict of multimodal processor kwargs (maps to --mm-processor-kwargs). "
-            "Primary key: 'max_pixels' caps per-frame pixel count for the vision encoder. "
-            "Default: '{\"max_pixels\": 602112}' (= VIDEO_MAX_PIXELS from vision_process.py). "
-            "Empty string = no override."
+            f"Default: '{{\"max_pixels\": {VIDEO_MAX_PIXELS}}}' (= VIDEO_MAX_PIXELS). "
+            "Some model variants override this - see _MODEL_DEFAULTS. "
+            "Empty string disables any model-specific override and falls back to the field default."
         ),
     ),
     _VllmArgSpec(
@@ -403,6 +417,8 @@ def build_vllm_async_config(
         # skip model overrides and let the attrs field default apply.
         # Example: --vllm-async-quantization="" overrides qwen's
         # default "fp8" with the attrs default None (no quantization).
+        # For mm_processor_kwargs, the attrs field default is the
+        # legacy flat {"max_pixels": VIDEO_MAX_PIXELS} value.
         if cli_val is not None and not (spec.arg_type is str and cli_val == ""):
             kwargs[spec.field] = cli_val
         elif cli_val is None and spec.field in model_overrides:

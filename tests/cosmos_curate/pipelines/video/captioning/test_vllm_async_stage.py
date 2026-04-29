@@ -48,6 +48,7 @@ from cosmos_curate.pipelines.video.captioning.vllm_async_stage import (
     VllmAsyncPromptRenderStage,
     _build_engine_args,
     _build_render_engine_args,
+    _build_render_payload,
     _RenderedWindow,
     _resolve_mode,
     _VllmAsyncModel,
@@ -62,6 +63,7 @@ from cosmos_curate.pipelines.video.utils.data_model import (
     VllmSamplingConfig,
     Window,
 )
+from cosmos_curate.pipelines.video.utils.vision_process import VIDEO_MAX_PIXELS, VIDEO_MIN_PIXELS
 from cosmos_curate.pipelines.video.utils.windowing_utils import WindowFrameInfo
 
 
@@ -117,6 +119,23 @@ def _mock_renderer(mock_engine: MagicMock) -> None:
     mock_engine.renderer.render_cmpl_async = AsyncMock(side_effect=lambda prompts: prompts)
 
 
+def _rendered_prompt_state(frames: np.ndarray, *, prompt: str = "test") -> dict[str, object]:
+    """Build cached prompt primitives stored after render-stage processing."""
+    return {"raw_prompt": prompt, "decoded_rgb_frames": frames}
+
+
+def _qwen_video_mm_processor_kwargs() -> dict[str, object]:
+    """Return the nested Qwen video processor kwargs used in async config defaults."""
+    return {
+        "videos_kwargs": {
+            "size": {
+                "shortest_edge": VIDEO_MIN_PIXELS,
+                "longest_edge": VIDEO_MAX_PIXELS,
+            }
+        }
+    }
+
+
 class TestResolveModelPath:
     """Tests for resolve_model_path() -- local weight cache resolution."""
 
@@ -140,6 +159,33 @@ class TestResolveModelPath:
 
         with pytest.raises(FileNotFoundError, match="Pre-downloaded model weights not found"):
             resolve_model_path("Qwen/Qwen2.5-VL-7B-Instruct")
+
+
+class TestRenderPayloadHelpers:
+    """Tests for helper functions that build async renderer payloads."""
+
+    def test_build_render_payload_uses_fresh_containers(self) -> None:
+        """Each render payload should get fresh wrapper state around decoded frames."""
+        frames = np.zeros((4, 224, 224, 3), dtype=np.uint8)
+        mm_kwargs = json.dumps(_qwen_video_mm_processor_kwargs())
+
+        first = _build_render_payload("describe", frames, mm_kwargs)
+        second = _build_render_payload("describe", frames, mm_kwargs)
+
+        assert first["prompt"] == "describe"
+        assert first["multi_modal_data"] is not second["multi_modal_data"]
+        assert first["multi_modal_data"]["video"] is not second["multi_modal_data"]["video"]
+        assert first["multi_modal_data"]["video"][0] is frames
+        assert first["mm_processor_kwargs"] == _qwen_video_mm_processor_kwargs()
+        assert first["mm_processor_kwargs"] is not second["mm_processor_kwargs"]
+
+    def test_build_render_payload_omits_empty_mm_processor_kwargs(self) -> None:
+        """Empty processor kwargs should not add a per-prompt override."""
+        frames = np.zeros((4, 224, 224, 3), dtype=np.uint8)
+
+        payload = _build_render_payload("describe", frames, "")
+
+        assert "mm_processor_kwargs" not in payload
 
 
 class TestVllmAsyncModel:
@@ -770,7 +816,7 @@ class TestVllmAsyncCaptionStage:
                 window.model_input["vllm_async"] = {
                     "rendered_prompt": rendered_mock,
                     "frames_shape": fake_frames.shape,
-                    "raw_prompt_input": {"prompt": "describe", "multi_modal_data": {"video": [fake_frames]}},
+                    **_rendered_prompt_state(fake_frames, prompt="describe"),
                 }
         result = stage.process_data([task])
 
@@ -803,7 +849,7 @@ class TestVllmAsyncCaptionStage:
                     window.model_input["vllm_async"] = {
                         "rendered_prompt": MagicMock(),
                         "frames_shape": fake_frames.shape,
-                        "raw_prompt_input": {"prompt": "describe", "multi_modal_data": {"video": [fake_frames]}},
+                        **_rendered_prompt_state(fake_frames, prompt="describe"),
                     }
         result = stage.process_data([task1, task2])
 
@@ -854,7 +900,7 @@ class TestVllmAsyncCaptionStage:
                     window.model_input["vllm_async"] = {
                         "rendered_prompt": MagicMock(),
                         "frames_shape": fake_frames.shape,
-                        "raw_prompt_input": {"prompt": "test", "multi_modal_data": {"video": [fake_frames]}},
+                        **_rendered_prompt_state(fake_frames),
                     }
             result = stage.process_data([task])
             assert result[0].video.clips[0].windows[0].caption["vllm_async"] == "Test caption"
@@ -1049,7 +1095,7 @@ class TestEngineDeath:
                 window.model_input["vllm_async"] = {
                     "rendered_prompt": MagicMock(),
                     "frames_shape": fake_frames.shape,
-                    "raw_prompt_input": {"prompt": "test", "multi_modal_data": {"video": [fake_frames]}},
+                    **_rendered_prompt_state(fake_frames),
                 }
         with pytest.raises(RuntimeError, match="EngineDeadError"):
             stage.process_data([task])
@@ -1082,7 +1128,7 @@ class TestEngineDeath:
                 window.model_input["vllm_async"] = {
                     "rendered_prompt": MagicMock(),
                     "frames_shape": fake_frames.shape,
-                    "raw_prompt_input": {"prompt": "test", "multi_modal_data": {"video": [fake_frames]}},
+                    **_rendered_prompt_state(fake_frames),
                 }
         with pytest.raises(RuntimeError, match="EngineDeadError"):
             stage.process_data([task])
@@ -1131,8 +1177,7 @@ class TestVllmAsyncConfig:
         assert config.stream_interval == 9999
         assert config.distributed_executor_backend == "ray"
         assert config.skip_mm_profiling is True
-        mm_kwargs = json.loads(config.mm_processor_kwargs)
-        assert mm_kwargs == {"max_pixels": 602112}
+        assert json.loads(config.mm_processor_kwargs) == {"max_pixels": VIDEO_MAX_PIXELS}
         assert config.extra_env_vars == ""
 
     def test_total_gpus_single_gpu(self) -> None:
@@ -1235,12 +1280,20 @@ class TestVllmAsyncConfig:
         config = VllmAsyncConfig(model_variant="test/model", mm_processor_kwargs="")
         assert config.mm_processor_kwargs == ""
 
+    def test_direct_construction_returns_field_default_not_qwen_override(self) -> None:
+        """Direct construction returns the field default instead of the builder's qwen override."""
+        config = VllmAsyncConfig(model_variant="qwen")
+        assert json.loads(config.mm_processor_kwargs) == {"max_pixels": VIDEO_MAX_PIXELS}
+
     def test_mm_processor_kwargs_wired_to_engine_args(self) -> None:
         """mm_processor_kwargs JSON should be parsed to a dict in AsyncEngineArgs."""
         with self._patch_engine() as (mock_engine_args_cls, _):
-            config = VllmAsyncConfig(model_variant="test/model", mm_processor_kwargs='{"max_pixels": 602112}')
+            config = VllmAsyncConfig(
+                model_variant="test/model",
+                mm_processor_kwargs=json.dumps(_qwen_video_mm_processor_kwargs()),
+            )
             _build_engine_args(config, "/tmp/model")  # noqa: S108
-        assert mock_engine_args_cls.call_args.kwargs["mm_processor_kwargs"] == {"max_pixels": 602112}
+        assert mock_engine_args_cls.call_args.kwargs["mm_processor_kwargs"] == _qwen_video_mm_processor_kwargs()
 
     def test_mm_processor_kwargs_empty_wired_as_none(self) -> None:
         """Empty mm_processor_kwargs should be wired as None to AsyncEngineArgs."""
@@ -1344,7 +1397,7 @@ class TestBuildVllmAsyncConfig:
         assert config.max_model_len == 4096
 
     def test_model_defaults_applied_when_no_cli_override(self) -> None:
-        """When CLI does not set a field, _MODEL_DEFAULTS for that model apply."""
+        """When CLI does not set a field, the builder-managed qwen defaults apply."""
         args = self._make_args(vllm_async_model_name="qwen")
         config = build_vllm_async_config(args, sampling_config=self._default_sampling_config())
 
@@ -1357,10 +1410,30 @@ class TestBuildVllmAsyncConfig:
         assert config.kv_cache_dtype == "auto"
         assert config.quantization is None
         assert config.max_num_batched_tokens == 32768
+        assert json.loads(config.mm_processor_kwargs) == _qwen_video_mm_processor_kwargs()
         assert config.skip_mm_profiling is True
 
+    def test_non_qwen_mm_processor_kwargs_keep_legacy_field_default(self) -> None:
+        """Non-Qwen variants should keep the legacy field default when no model override applies."""
+        args = self._make_args(vllm_async_model_name="nemotron")
+        config = build_vllm_async_config(args, sampling_config=self._default_sampling_config())
+
+        assert config is not None
+        assert json.loads(config.mm_processor_kwargs) == {"max_pixels": VIDEO_MAX_PIXELS}
+
+    def test_empty_string_mm_processor_kwargs_disables_qwen_override_only(self) -> None:
+        """Explicit empty CLI value should disable Qwen's builder override and fall back to the field default."""
+        args = self._make_args(
+            vllm_async_model_name="qwen",
+            vllm_async_mm_processor_kwargs="",
+        )
+        config = build_vllm_async_config(args, sampling_config=self._default_sampling_config())
+
+        assert config is not None
+        assert json.loads(config.mm_processor_kwargs) == {"max_pixels": VIDEO_MAX_PIXELS}
+
     def test_cli_overrides_model_default(self) -> None:
-        """Explicit CLI value should override _MODEL_DEFAULTS for that model."""
+        """Explicit CLI value should override the builder-managed default for that model."""
         args = self._make_args(
             vllm_async_model_name="nemotron",
             vllm_async_gpu_memory_utilization=0.8,
@@ -2114,14 +2187,14 @@ class TestCaptionStageModelInputExtraction:
 
         frames_shape = (10, 384, 672, 3)
         rendered_mock = MagicMock()
-        raw_prompt = {"prompt": "test", "multi_modal_data": {"video": [np.zeros((10, 2, 2, 3))]}}
+        frames = np.zeros((10, 2, 2, 3), dtype=np.uint8)
 
         task = _make_task(b"\x00", num_windows=1)
         window = task.video.clips[0].windows[0]
         window.model_input["vllm_async"] = {
             "rendered_prompt": rendered_mock,
             "frames_shape": frames_shape,
-            "raw_prompt_input": raw_prompt,
+            **_rendered_prompt_state(frames),
         }
 
         result = stage._extract_rendered_windows([task])
@@ -2130,7 +2203,8 @@ class TestCaptionStageModelInputExtraction:
         assert isinstance(rw, _RenderedWindow)
         assert rw.rendered_prompt is rendered_mock
         assert rw.frames_shape == frames_shape
-        assert rw.raw_prompt_input is raw_prompt
+        assert rw.raw_prompt == "test"
+        assert rw.decoded_rgb_frames is frames
         assert "vllm_async" not in window.model_input
 
     def test_raises_on_missing_rendered_prompt(self) -> None:
@@ -2236,7 +2310,8 @@ class TestStage2CaptionRefinement:
             rendered_prompt=MagicMock(),
             sampling_params=MagicMock(),
             frames_shape=(4, 224, 224, 3),
-            raw_prompt_input={"prompt": "test", "multi_modal_data": {"video": [frames]}},
+            raw_prompt="test",
+            decoded_rgb_frames=frames,
         )
 
         stage2_queue: collections.deque[tuple[_RenderedWindow, str]] = collections.deque()
@@ -2252,7 +2327,8 @@ class TestStage2CaptionRefinement:
         assert window.caption_status == "success"
         assert window.caption_failure_reason is None
         assert rw.rendered_prompt is None
-        assert rw.raw_prompt_input is None  # cleaned: uint8 frames released when no stage-2
+        assert rw.raw_prompt is None
+        assert rw.decoded_rgb_frames is None  # cleaned: uint8 frames released when no stage-2
         assert len(stage2_queue) == 0
 
     def test_generate_and_assign_stage2_enqueues(self) -> None:
@@ -2274,7 +2350,8 @@ class TestStage2CaptionRefinement:
             rendered_prompt=MagicMock(),
             sampling_params=MagicMock(),
             frames_shape=(4, 224, 224, 3),
-            raw_prompt_input={"prompt": "test", "multi_modal_data": {"video": [frames]}},
+            raw_prompt="test",
+            decoded_rgb_frames=frames,
         )
 
         stage2_queue: collections.deque[tuple[_RenderedWindow, str]] = collections.deque()
@@ -2310,7 +2387,8 @@ class TestStage2CaptionRefinement:
             rendered_prompt=MagicMock(),
             sampling_params=MagicMock(),
             frames_shape=(4, 224, 224, 3),
-            raw_prompt_input={"prompt": "test", "multi_modal_data": {"video": [frames]}},
+            raw_prompt="test",
+            decoded_rgb_frames=frames,
         )
 
         stage2_queue: collections.deque[tuple[_RenderedWindow, str]] = collections.deque()
@@ -2326,8 +2404,8 @@ class TestStage2CaptionRefinement:
         assert window.caption_failure_reason is None
         assert len(stage2_queue) == 0
 
-    def test_generate_and_assign_error_cleans_raw_prompt_input(self) -> None:
-        """Error in _generate_caption_async must still clean raw_prompt_input (no memory leak)."""
+    def test_generate_and_assign_error_cleans_decoded_rgb_frames(self) -> None:
+        """Error in _generate_caption_async must still clean decoded frames (no memory leak)."""
         stage = self._make_stage(stage2_caption=False)
         stage._engine = MagicMock()
         stage._sampling_params = MagicMock()
@@ -2344,7 +2422,8 @@ class TestStage2CaptionRefinement:
             rendered_prompt=MagicMock(),
             sampling_params=MagicMock(),
             frames_shape=(4, 224, 224, 3),
-            raw_prompt_input={"prompt": "test", "multi_modal_data": {"video": [frames]}},
+            raw_prompt="test",
+            decoded_rgb_frames=frames,
         )
 
         stage2_queue: collections.deque[tuple[_RenderedWindow, str]] = collections.deque()
@@ -2353,14 +2432,15 @@ class TestStage2CaptionRefinement:
             asyncio.run(stage._generate_and_assign(rw, asyncio.Semaphore(1), stage2_queue))
 
         assert rw.rendered_prompt is None
-        assert rw.raw_prompt_input is None  # must be cleaned on error path too
+        assert rw.raw_prompt is None
+        assert rw.decoded_rgb_frames is None  # must be cleaned on error path too
         assert "vllm_async_caption_0" in clip.errors
         assert "vllm_async" not in window.caption
         assert window.caption_status == "error"
         assert window.caption_failure_reason == "exception"
 
     def test_rendered_window_cleanup_after_processing(self) -> None:
-        """Full lifecycle: generate cleans rendered_prompt, stage2 cleans raw_prompt_input."""
+        """Full lifecycle: generate cleans rendered_prompt, stage2 cleans decoded frames."""
         stage = self._make_stage(stage2_caption=True, stage2_prompt_text="Refine it.")
         mock_engine = MagicMock()
         _mock_renderer(mock_engine)
@@ -2380,7 +2460,8 @@ class TestStage2CaptionRefinement:
             rendered_prompt=MagicMock(),
             sampling_params=MagicMock(),
             frames_shape=(4, 224, 224, 3),
-            raw_prompt_input={"prompt": "test", "multi_modal_data": {"video": [frames]}},
+            raw_prompt="test",
+            decoded_rgb_frames=frames,
         )
 
         stage2_queue: collections.deque[tuple[_RenderedWindow, str]] = collections.deque()
@@ -2389,7 +2470,7 @@ class TestStage2CaptionRefinement:
             asyncio.run(stage._generate_and_assign(rw, asyncio.Semaphore(1), stage2_queue))
 
         assert rw.rendered_prompt is None
-        assert rw.raw_prompt_input is not None
+        assert rw.decoded_rgb_frames is not None
         assert len(stage2_queue) == 1
 
         queued_rw, stage1_caption = stage2_queue[0]
@@ -2403,9 +2484,64 @@ class TestStage2CaptionRefinement:
             asyncio.run(stage._stage2_refine_and_assign(queued_rw, stage1_caption, mock_engine, asyncio.Semaphore(1)))
 
         assert rw.rendered_prompt is None
-        assert rw.raw_prompt_input is None
+        assert rw.raw_prompt is None
+        assert rw.decoded_rgb_frames is None
         assert window.caption_status == "success"
         assert window.caption_failure_reason is None
+
+    def test_stage2_rebuilds_fresh_prompt_payload(self) -> None:
+        """Stage-2 should rebuild a fresh render payload and reparse processor kwargs."""
+        config = VllmAsyncConfig(
+            model_variant="qwen",
+            num_gpus=1,
+            mm_processor_kwargs=json.dumps(_qwen_video_mm_processor_kwargs()),
+        )
+        stage = VllmAsyncCaptionStage(
+            serve_config=config,
+            model_name="qwen",
+            stage2_caption=True,
+            stage2_prompt_text="Refine it.",
+        )
+        mock_engine = MagicMock()
+        _mock_renderer(mock_engine)
+        stage._engine = mock_engine
+        stage._sampling_params = MagicMock()
+        stage._stage2_processor = MagicMock()
+
+        window = Window(start_frame=0, end_frame=10)
+        frames = np.zeros((4, 224, 224, 3), dtype=np.uint8)
+        clip = Clip(uuid=uuid4(), source_video="test.mp4", span=(0.0, 1.0))
+        clip.windows = [window]
+
+        rw = _RenderedWindow(
+            clip=clip,
+            window_index=0,
+            window=window,
+            rendered_prompt=None,
+            sampling_params=MagicMock(),
+            frames_shape=(4, 224, 224, 3),
+            raw_prompt="test",
+            decoded_rgb_frames=frames,
+        )
+
+        with (
+            patch.object(stage, "_generate_caption_async", return_value=("Refined caption", TokenCounts(10, 5))),
+            patch(
+                "cosmos_curate.pipelines.video.captioning.vllm_async_stage.build_refinement_prompt_text",
+                return_value="<refined>",
+            ),
+        ):
+            asyncio.run(stage._stage2_refine_and_assign(rw, "Stage-1 text", mock_engine, asyncio.Semaphore(1)))
+
+        (render_prompt,) = mock_engine.renderer.render_cmpl_async.call_args.args[0]
+        assert render_prompt["prompt"] == "<refined>"
+        assert render_prompt["multi_modal_data"]["video"][0] is frames
+        assert render_prompt["mm_processor_kwargs"] == _qwen_video_mm_processor_kwargs()
+
+        render_prompt["mm_processor_kwargs"]["videos_kwargs"]["size"]["shortest_edge"] = 1
+        second_payload = _build_render_payload("<refined-2>", frames, config.mm_processor_kwargs)
+        assert second_payload["mm_processor_kwargs"]["videos_kwargs"]["size"]["shortest_edge"] == VIDEO_MIN_PIXELS
+        assert window.caption["vllm_async"] == "Refined caption"
 
     def test_stage2_failure_falls_back_to_stage1_caption(self) -> None:
         """If stage-2 generate fails, _stage2_refine_and_assign falls back to stage-1 caption."""
@@ -2428,7 +2564,8 @@ class TestStage2CaptionRefinement:
             rendered_prompt=None,
             sampling_params=MagicMock(),
             frames_shape=(4, 224, 224, 3),
-            raw_prompt_input={"prompt": "test", "multi_modal_data": {"video": [frames]}},
+            raw_prompt="test",
+            decoded_rgb_frames=frames,
         )
 
         with (
@@ -2447,7 +2584,8 @@ class TestStage2CaptionRefinement:
         assert window.caption["vllm_async"] == "Stage-1 caption"
         assert window.caption_status == "success"
         assert window.caption_failure_reason is None
-        assert rw.raw_prompt_input is None
+        assert rw.raw_prompt is None
+        assert rw.decoded_rgb_frames is None
         err_key = f"{stage._model_variant}_caption_0"
         assert err_key in clip.errors
         assert "stage-2 refinement failed" in clip.errors[err_key]
@@ -2474,7 +2612,8 @@ class TestStage2CaptionRefinement:
             rendered_prompt=None,
             sampling_params=MagicMock(),
             frames_shape=(4, 224, 224, 3),
-            raw_prompt_input={"prompt": "test", "multi_modal_data": {"video": [frames]}},
+            raw_prompt="test",
+            decoded_rgb_frames=frames,
         )
 
         with (
@@ -2512,7 +2651,8 @@ class TestStage2CaptionRefinement:
             rendered_prompt=None,
             sampling_params=MagicMock(),
             frames_shape=(4, 224, 224, 3),
-            raw_prompt_input={"prompt": "test", "multi_modal_data": {"video": [frames]}},
+            raw_prompt="test",
+            decoded_rgb_frames=frames,
         )
 
         with (
@@ -2529,8 +2669,8 @@ class TestStage2CaptionRefinement:
         assert window.caption_status == "success"
         assert window.caption_failure_reason is None
 
-    def test_stage2_skips_when_raw_prompt_input_is_none(self) -> None:
-        """When raw_prompt_input is None, stage-2 should assign stage-1 caption and return early."""
+    def test_stage2_skips_when_prompt_primitives_are_missing(self) -> None:
+        """When prompt primitives are missing, stage-2 should assign stage-1 caption and return early."""
         stage = self._make_stage(stage2_caption=True, stage2_prompt_text="Refine it.")
         mock_engine = MagicMock()
         _mock_renderer(mock_engine)
@@ -2549,7 +2689,8 @@ class TestStage2CaptionRefinement:
             rendered_prompt=None,
             sampling_params=MagicMock(),
             frames_shape=(4, 224, 224, 3),
-            raw_prompt_input=None,
+            raw_prompt=None,
+            decoded_rgb_frames=None,
         )
 
         asyncio.run(stage._stage2_refine_and_assign(rw, "Stage-1 only", mock_engine, asyncio.Semaphore(1)))
@@ -2580,7 +2721,8 @@ class TestStage2CaptionRefinement:
             rendered_prompt=None,
             sampling_params=MagicMock(),
             frames_shape=(4, 224, 224, 3),
-            raw_prompt_input={"prompt": "test", "multi_modal_data": {"video": [frames]}},
+            raw_prompt="test",
+            decoded_rgb_frames=frames,
         )
 
         with (
@@ -2603,7 +2745,8 @@ class TestStage2CaptionRefinement:
         err_key = f"{stage._model_variant}_caption_0"
         assert err_key in clip.errors
         assert "EngineDeadError during stage-2" in clip.errors[err_key]
-        assert rw.raw_prompt_input is None
+        assert rw.raw_prompt is None
+        assert rw.decoded_rgb_frames is None
 
 
 class TestVllmAsyncPromptRenderStage:
@@ -2666,7 +2809,78 @@ class TestVllmAsyncPromptRenderStage:
         assert rendered_data is not None
         assert rendered_data["rendered_prompt"] is rendered_mock
         assert rendered_data["frames_shape"] == fake_frames.shape
-        assert rendered_data["raw_prompt_input"] is prompt_input
+        assert rendered_data["raw_prompt"] == "describe"
+        assert rendered_data["decoded_rgb_frames"] is fake_frames
+        stage._runner.close()
+
+    def test_process_data_omits_mm_processor_kwargs_when_serve_config_is_empty(self) -> None:
+        """Render stage should omit prompt-level processor kwargs when serve_config carries no override."""
+        stage = self._make_stage(mm_processor_kwargs="")
+
+        mock_renderer = MagicMock()
+        mock_renderer.render_cmpl_async = AsyncMock(return_value=[MagicMock()])
+        stage._renderer = mock_renderer
+        stage._runner = asyncio.Runner()
+
+        task = _make_task(b"\x00\x01", num_windows=1)
+        fake_frames = np.zeros((4, 224, 224, 3), dtype=np.uint8)
+        prompt_input = {"prompt": "describe", "multi_modal_data": {"video": [fake_frames]}}
+        for clip in task.video.clips:
+            for window in clip.windows:
+                window.model_input["vllm_async"] = {
+                    "prompt_input": prompt_input,
+                    "frames_shape": fake_frames.shape,
+                }
+
+        stage.process_data([task])
+
+        (render_prompt,) = mock_renderer.render_cmpl_async.call_args.args[0]
+        assert "mm_processor_kwargs" not in render_prompt
+        stage._runner.close()
+
+    def test_process_data_rebuilds_fresh_prompt_payloads_per_window(self) -> None:
+        """Render stage should isolate prompt payloads across windows in the same render batch."""
+        mm_processor_kwargs = json.dumps(_qwen_video_mm_processor_kwargs())
+        stage = self._make_stage(mm_processor_kwargs=mm_processor_kwargs)
+
+        mock_renderer = MagicMock()
+        rendered_mocks = [MagicMock(), MagicMock()]
+
+        async def _render(prompts: list[dict[str, object]]) -> list[MagicMock]:
+            assert len(prompts) == 2
+            assert prompts[0] is not prompts[1]
+            assert prompts[0]["multi_modal_data"] is not prompts[1]["multi_modal_data"]
+            assert prompts[0]["multi_modal_data"]["video"] is not prompts[1]["multi_modal_data"]["video"]
+            assert prompts[0]["mm_processor_kwargs"] is not prompts[1]["mm_processor_kwargs"]
+
+            prompts[0]["mm_processor_kwargs"]["videos_kwargs"]["size"]["shortest_edge"] = 1
+            assert prompts[1]["mm_processor_kwargs"]["videos_kwargs"]["size"]["shortest_edge"] == VIDEO_MIN_PIXELS
+            return rendered_mocks
+
+        mock_renderer.render_cmpl_async = AsyncMock(side_effect=_render)
+        stage._renderer = mock_renderer
+        stage._runner = asyncio.Runner()
+
+        task = _make_task(b"\x00\x01", num_windows=2)
+        fake_frames_by_window: list[np.ndarray] = []
+        for wi, window in enumerate(task.video.clips[0].windows):
+            fake_frames = np.full((4, 224, 224, 3), wi, dtype=np.uint8)
+            prompt_input = {"prompt": f"describe-{wi}", "multi_modal_data": {"video": [fake_frames]}}
+            fake_frames_by_window.append(fake_frames)
+            window.model_input["vllm_async"] = {
+                "prompt_input": prompt_input,
+                "frames_shape": fake_frames.shape,
+            }
+
+        result = stage.process_data([task])
+        windows = result[0].video.clips[0].windows
+        for wi, window in enumerate(windows):
+            rendered_data = window.model_input.get("vllm_async")
+            assert rendered_data is not None
+            assert rendered_data["rendered_prompt"] is rendered_mocks[wi]
+            assert rendered_data["raw_prompt"] == f"describe-{wi}"
+            assert rendered_data["decoded_rgb_frames"] is fake_frames_by_window[wi]
+
         stage._runner.close()
 
     def test_process_data_chunk_render_failure_records_errors(self) -> None:
@@ -2804,7 +3018,7 @@ class TestVllmAsyncPromptRenderStage:
 
         result = stage.process_data(tasks)
         assert len(result) == 2
-        # 4 windows < RENDER_CHUNK_SIZE (8), so exactly one chunk call
+        # 4 windows < RENDER_CHUNK_SIZE (32), so exactly one chunk call
         assert mock_renderer.render_cmpl_async.call_count == 1
         call_args = mock_renderer.render_cmpl_async.call_args
         assert len(call_args[0][0]) == 4  # 2 tasks * 1 clip * 2 windows
@@ -2816,7 +3030,8 @@ class TestVllmAsyncPromptRenderStage:
                     assert rendered_data is not None
                     assert "rendered_prompt" in rendered_data
                     assert "frames_shape" in rendered_data
-                    assert "raw_prompt_input" in rendered_data
+                    assert "raw_prompt" in rendered_data
+                    assert "decoded_rgb_frames" in rendered_data
         stage._runner.close()
 
     def test_process_data_chunk_isolation_on_failure(self) -> None:
