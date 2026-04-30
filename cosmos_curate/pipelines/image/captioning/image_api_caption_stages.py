@@ -15,9 +15,9 @@
 
 """Remote API-backed image captioning stages for Gemini and OpenAI-compatible endpoints."""
 
+import asyncio
 import base64
 import mimetypes
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 
 import nvtx  # type: ignore[import-untyped]
@@ -37,6 +37,12 @@ from cosmos_curate.pipelines.common.api_caption_utils import (
     normalize_openai_response_with_detail,
     openai_error_result_from_exception,
     should_retry_gemini_exception,
+)
+from cosmos_curate.pipelines.common.api_stage_async_utils import (
+    ApiTaskProcessContext,
+    AsyncGenerateWithDetail,
+    CleanupItem,
+    destroy_api_clients,
 )
 from cosmos_curate.pipelines.image.captioning.image_prep_utils import (
     DEFAULT_PREP_MAX_PIXELS,
@@ -135,36 +141,57 @@ def _get_result_error_key(
     return f"{result_key or model_variant}_{result_target}"
 
 
-@dataclass
-class _ImageCaptionProcessContext:
-    """Shared state for processing image caption/filter-caption tasks."""
+class _ImageCaptionProcessContext(ApiTaskProcessContext[ImagePipeTask, Image]):
+    """Image-specific wrapper around shared API task execution plumbing."""
 
-    stage: CuratorStage
-    timer: StageTimer
-    model_variant: str
-    result_target: Literal["caption", "filter_caption"]
-    result_key: str | None
-    verbose: bool
-    log_stats: bool
-    provider_name: str
-    generate_with_detail: Any
-    cleanup_image: Any | None = None
+    def __init__(  # noqa: PLR0913
+        self,
+        *,
+        stage: CuratorStage,
+        timer: StageTimer,
+        model_variant: str,
+        result_target: Literal["caption", "filter_caption"],
+        result_key: str | None,
+        verbose: bool,
+        log_stats: bool,
+        provider_name: str,
+        async_generate_with_detail: AsyncGenerateWithDetail[Image],
+        cleanup_image: CleanupItem[Image] | None = None,
+    ) -> None:
+        self._model_variant = model_variant
+        self._result_target = result_target
+        self._result_key = result_key
+        self._verbose = verbose
+        self._provider_name = provider_name
+        super().__init__(
+            stage=stage,
+            timer=timer,
+            log_stats=log_stats,
+            get_item=lambda task: task.image,
+            get_major_size=lambda task: task.get_major_size(),
+            has_target_result=self._has_target_result,
+            async_generate_with_detail=async_generate_with_detail,
+            handle_result_outcome=self._handle_result_outcome,
+            write_result=self._write_result,
+            handle_exception=self._handle_exception,
+            cleanup_item=cleanup_image,
+        )
 
     def _error_key(self) -> str:
         """Return the image.errors key used for this processing context."""
         return _get_result_error_key(
-            result_target=self.result_target,
-            result_key=self.result_key,
-            model_variant=self.model_variant,
+            result_target=self._result_target,
+            result_key=self._result_key,
+            model_variant=self._model_variant,
         )
 
     def _has_target_result(self, image: Image) -> bool:
         """Return whether the image already has the requested result."""
         return _has_target_result(
             image,
-            result_target=self.result_target,
-            result_key=self.result_key,
-            model_variant=self.model_variant,
+            result_target=self._result_target,
+            result_key=self._result_key,
+            model_variant=self._model_variant,
         )
 
     def _handle_result_outcome(self, task: ImagePipeTask, result: CaptionResult, detail: str | None) -> None:
@@ -172,45 +199,36 @@ class _ImageCaptionProcessContext:
         if result.outcome == CaptionOutcome.ERROR:
             error_msg = detail or result.failure_reason or "unknown"
             task.image.errors[self._error_key()] = error_msg
-            logger.warning(f"{self.provider_name} captioning failed for image {task.session_id}: {error_msg}")
+            logger.warning(f"{self._provider_name} captioning failed for image {task.session_id}: {error_msg}")
         elif result.outcome == CaptionOutcome.BLOCKED:
-            logger.warning(f"{self.provider_name} captioning blocked for image {task.session_id}")
-        elif self.verbose and result.text is not None:
-            logger.info(f"{self.provider_name} caption for image {task.session_id}: {result.text}")
+            logger.warning(f"{self._provider_name} captioning blocked for image {task.session_id}")
+        elif self._verbose and result.text is not None:
+            logger.info(f"{self._provider_name} caption for image {task.session_id}: {result.text}")
 
-    def process_tasks(self, tasks: list[ImagePipeTask]) -> list[ImagePipeTask]:
-        """Run the caption/filter-caption request function over a batch of image tasks."""
-        for task in tasks:
-            image = task.image
-            self.timer.reinit(self.stage, task.get_major_size())
-            if image.is_filtered or self._has_target_result(image):
-                continue
-            with self.timer.time_process():
-                try:
-                    result, detail = self.generate_with_detail(image)
-                except Exception as exc:  # noqa: BLE001
-                    result = CaptionResult(outcome=CaptionOutcome.ERROR, failure_reason="exception")
-                    detail = str(exc)
-                    image.errors[self._error_key()] = detail
-                    if self.verbose:
-                        logger.exception(f"{self.provider_name} captioning failed for image {task.session_id}")
-                    else:
-                        logger.warning(f"{self.provider_name} captioning failed for image {task.session_id}: {exc}")
-                else:
-                    self._handle_result_outcome(task, result, detail)
-            _write_result(
-                image,
-                self.model_variant,
-                result,
-                result_target=self.result_target,
-                result_key=self.result_key,
-            )
-            if self.cleanup_image is not None:
-                self.cleanup_image(image)
-            if self.log_stats:
-                stage_name, stage_perf_stats = self.timer.log_stats()
-                task.stage_perf[stage_name] = stage_perf_stats
-        return tasks
+    def _write_result(self, image: Image, result: CaptionResult) -> None:
+        """Write the result into the requested image target."""
+        _write_result(
+            image,
+            self._model_variant,
+            result,
+            result_target=self._result_target,
+            result_key=self._result_key,
+        )
+
+    def _handle_exception(
+        self,
+        task: ImagePipeTask,
+        image: Image,
+        exc: Exception,
+    ) -> tuple[CaptionResult, str]:
+        """Convert an unexpected provider exception into an error result."""
+        detail = str(exc)
+        image.errors[self._error_key()] = detail
+        if self._verbose:
+            logger.exception(f"{self._provider_name} captioning failed for image {task.session_id}")
+        else:
+            logger.warning(f"{self._provider_name} captioning failed for image {task.session_id}: {exc}")
+        return CaptionResult(outcome=CaptionOutcome.ERROR, failure_reason="exception"), detail
 
 
 class ImageOpenAIPrepStage(CuratorStage):
@@ -291,6 +309,7 @@ class ImageGeminiCaptionStage(CuratorStage):
         max_output_tokens: int = 8192,
         max_caption_retries: int = 3,
         retry_delay_seconds: float = 1.0,
+        batch_size: int = 1,
         result_target: Literal["caption", "filter_caption"] = "caption",
         result_key: str | None = None,
         verbose: bool = False,
@@ -304,6 +323,7 @@ class ImageGeminiCaptionStage(CuratorStage):
         self._max_output_tokens = max_output_tokens
         self._max_caption_retries = max_caption_retries
         self._retry_delay_seconds = retry_delay_seconds
+        self._batch_size = max(1, batch_size)
         self._result_target = result_target
         self._result_key = result_key
         self._verbose = verbose
@@ -314,6 +334,8 @@ class ImageGeminiCaptionStage(CuratorStage):
             raise RuntimeError(msg)
         self._api_key: str = config.gemini.api_key
         self._client: genai.Client | None = None
+        self._async_client: Any | None = None
+        self._runner: asyncio.Runner | None = None
 
     @property
     def resources(self) -> CuratorStageResource:
@@ -325,14 +347,21 @@ class ImageGeminiCaptionStage(CuratorStage):
         """Return the conda environment name required by this stage."""
         return "unified"
 
+    @property
+    def stage_batch_size(self) -> int:
+        """Return the batch size used for async concurrency and stage scheduling."""
+        return self._batch_size
+
     def stage_setup(self) -> None:
         """Initialize the Gemini client using the API key loaded at construction."""
         self._client = genai.Client(api_key=self._api_key)
+        self._async_client = self._client.aio
+        self._runner = asyncio.Runner()
 
-    def _generate_caption_with_error_detail(self, image: Image) -> tuple[CaptionResult, str | None]:
-        client = self._client
+    async def _generate_caption_with_error_detail_async(self, image: Image) -> tuple[CaptionResult, str | None]:
+        client = self._async_client
         if client is None:
-            msg = "Gemini client not initialized; call stage_setup before generating captions."
+            msg = "Gemini async client not initialized; call stage_setup before generating captions."
             raise RuntimeError(msg)
         raw = image.encoded_data.resolve()
         if raw is None:
@@ -353,31 +382,41 @@ class ImageGeminiCaptionStage(CuratorStage):
             "config": genai_types.GenerateContentConfig(max_output_tokens=self._max_output_tokens),
         }
 
-        @tenacity.retry(
-            stop=tenacity.stop_after_attempt(self._max_caption_retries),
-            wait=tenacity.wait_fixed(self._retry_delay_seconds),
-            retry=tenacity.retry_if_exception(should_retry_gemini_exception),
-            reraise=True,
-        )
-        def _call() -> object:
-            try:
-                return client.models.generate_content(**generate_kwargs)
-            except Exception as exc:
-                new_exc = handle_gemini_client_exception(exc)
-                if new_exc is exc:
-                    raise
-                raise new_exc from exc
+        async def _call() -> object:
+            async for attempt in tenacity.AsyncRetrying(
+                stop=tenacity.stop_after_attempt(self._max_caption_retries),
+                wait=tenacity.wait_fixed(self._retry_delay_seconds),
+                retry=tenacity.retry_if_exception(should_retry_gemini_exception),
+                reraise=True,
+            ):
+                with attempt:
+                    try:
+                        return await client.models.generate_content(**generate_kwargs)
+                    except Exception as exc:
+                        new_exc = handle_gemini_client_exception(exc)
+                        if new_exc is exc:
+                            raise
+                        raise new_exc from exc
+            msg = "Gemini async retry loop exited without a result."
+            raise RuntimeError(msg)
 
         try:
-            response = _call()
+            response = await _call()
         except Exception as exc:  # noqa: BLE001
             return gemini_error_result_from_exception(exc, timeout_error_type=DeadlineExceeded)
         return normalize_gemini_response_with_detail(response)
 
+    def destroy(self) -> None:
+        """Close the async runner and any provider clients."""
+        destroy_api_clients(async_client=self._async_client, runner=self._runner, sync_client=self._client)
+        self._async_client = None
+        self._runner = None
+        self._client = None
+
     @nvtx.annotate("ImageGeminiCaptionStage")  # type: ignore[untyped-decorator]
     def process_data(self, tasks: list[ImagePipeTask]) -> list[ImagePipeTask] | None:
         """Caption images in the batch using the Gemini API."""
-        return _ImageCaptionProcessContext(
+        context = _ImageCaptionProcessContext(
             stage=self,
             timer=self._timer,
             model_variant=self._model_variant,
@@ -386,8 +425,12 @@ class ImageGeminiCaptionStage(CuratorStage):
             verbose=self._verbose,
             log_stats=self._log_stats,
             provider_name="Gemini",
-            generate_with_detail=self._generate_caption_with_error_detail,
-        ).process_tasks(tasks)
+            async_generate_with_detail=self._generate_caption_with_error_detail_async,
+        )
+        if self._runner is None:
+            msg = "Gemini async runner not initialized; call stage_setup before processing data."
+            raise RuntimeError(msg)
+        return self._runner.run(context.process_tasks_async(tasks, max_concurrent_requests=self._batch_size))
 
 
 class ImageOpenAICaptionStage(CuratorStage):
@@ -403,6 +446,7 @@ class ImageOpenAICaptionStage(CuratorStage):
         max_output_tokens: int = 8192,
         max_caption_retries: int = 3,
         retry_delay_seconds: float = 1.0,
+        batch_size: int = 1,
         endpoint_key: Literal["caption", "filter", "classifier"] = "caption",
         result_target: Literal["caption", "filter_caption"] = "caption",
         result_key: str | None = None,
@@ -417,12 +461,15 @@ class ImageOpenAICaptionStage(CuratorStage):
         self._max_output_tokens = max_output_tokens
         self._max_caption_retries = max_caption_retries
         self._retry_delay_seconds = retry_delay_seconds
+        self._batch_size = max(1, batch_size)
         self._endpoint_key = endpoint_key
         self._result_target = result_target
         self._result_key = result_key
         self._verbose = verbose
         self._log_stats = log_stats
         self._client: openai.OpenAI | None = None
+        self._async_client: Any | None = None
+        self._runner: asyncio.Runner | None = None
 
     @property
     def resources(self) -> CuratorStageResource:
@@ -433,6 +480,11 @@ class ImageOpenAICaptionStage(CuratorStage):
     def conda_env_name(self) -> str:
         """Return the conda environment name required by this stage."""
         return "unified"
+
+    @property
+    def stage_batch_size(self) -> int:
+        """Return the batch size used for async concurrency and stage scheduling."""
+        return self._batch_size
 
     def stage_setup(self) -> None:
         """Initialize the OpenAI client using endpoint config."""
@@ -455,6 +507,11 @@ class ImageOpenAICaptionStage(CuratorStage):
             model_name=self._model_name,
             endpoint_label=f"OpenAI {self._endpoint_key}",
         )
+        client_kwargs: dict[str, Any] = {"api_key": endpoint.api_key}
+        if endpoint.base_url:
+            client_kwargs["base_url"] = endpoint.base_url
+        self._async_client = openai.AsyncOpenAI(**client_kwargs)
+        self._runner = asyncio.Runner()
 
     def _resolve_payload(self, image: Image) -> tuple[bytes, str]:
         cached = image.model_input.get("openai")
@@ -470,10 +527,10 @@ class ImageOpenAICaptionStage(CuratorStage):
         raw_bytes = bytes(raw)
         return raw_bytes, _guess_media_type(image, raw_bytes)
 
-    def _generate_caption_with_error_detail(self, image: Image) -> tuple[CaptionResult, str | None]:
-        client = self._client
+    async def _generate_caption_with_error_detail_async(self, image: Image) -> tuple[CaptionResult, str | None]:
+        client = self._async_client
         if client is None:
-            msg = "OpenAI client not initialized; call stage_setup before generating captions."
+            msg = "OpenAI async client not initialized; call stage_setup before generating captions."
             raise RuntimeError(msg)
         payload_bytes, media_type = self._resolve_payload(image)
         image_b64 = base64.b64encode(payload_bytes).decode("utf-8")
@@ -487,28 +544,38 @@ class ImageOpenAICaptionStage(CuratorStage):
             "max_tokens": self._max_output_tokens,
         }
 
-        @tenacity.retry(
-            stop=tenacity.stop_after_attempt(self._max_caption_retries),
-            wait=tenacity.wait_fixed(self._retry_delay_seconds),
-            retry=tenacity.retry_if_not_exception_type(
-                (openai.AuthenticationError, openai.NotFoundError, openai.BadRequestError),
-            ),
-            reraise=True,
-        )
-        def _call() -> object:
-            return client.chat.completions.create(**request_kwargs)
+        async def _call() -> object:
+            async for attempt in tenacity.AsyncRetrying(
+                stop=tenacity.stop_after_attempt(self._max_caption_retries),
+                wait=tenacity.wait_fixed(self._retry_delay_seconds),
+                retry=tenacity.retry_if_not_exception_type(
+                    (openai.AuthenticationError, openai.NotFoundError, openai.BadRequestError),
+                ),
+                reraise=True,
+            ):
+                with attempt:
+                    return await client.chat.completions.create(**request_kwargs)
+            msg = "OpenAI async retry loop exited without a result."
+            raise RuntimeError(msg)
 
         try:
-            response = _call()
+            response = await _call()
         except Exception as exc:  # noqa: BLE001
             timeout_error = getattr(openai, "APITimeoutError", None)
             return openai_error_result_from_exception(exc, timeout_error_type=timeout_error)
         return normalize_openai_response_with_detail(response)
 
+    def destroy(self) -> None:
+        """Close the async runner and any provider clients."""
+        destroy_api_clients(async_client=self._async_client, runner=self._runner, sync_client=self._client)
+        self._async_client = None
+        self._runner = None
+        self._client = None
+
     @nvtx.annotate("ImageOpenAICaptionStage")  # type: ignore[untyped-decorator]
     def process_data(self, tasks: list[ImagePipeTask]) -> list[ImagePipeTask] | None:
         """Caption images in the batch using the OpenAI-compatible API."""
-        return _ImageCaptionProcessContext(
+        context = _ImageCaptionProcessContext(
             stage=self,
             timer=self._timer,
             model_variant=self._model_variant,
@@ -517,6 +584,10 @@ class ImageOpenAICaptionStage(CuratorStage):
             verbose=self._verbose,
             log_stats=self._log_stats,
             provider_name="OpenAI",
-            generate_with_detail=self._generate_caption_with_error_detail,
+            async_generate_with_detail=self._generate_caption_with_error_detail_async,
             cleanup_image=lambda image: image.model_input.pop("openai", None),
-        ).process_tasks(tasks)
+        )
+        if self._runner is None:
+            msg = "OpenAI async runner not initialized; call stage_setup before processing data."
+            raise RuntimeError(msg)
+        return self._runner.run(context.process_tasks_async(tasks, max_concurrent_requests=self._batch_size))

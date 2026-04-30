@@ -78,6 +78,7 @@ def test_build_caption_stage_openai_forwards_config_params() -> None:
             max_output_tokens=4096,
             caption_retries=5,
             retry_delay_seconds=2.0,
+            batch_size=6,
         ),
         window_config=WindowConfig(),
     )
@@ -87,6 +88,7 @@ def test_build_caption_stage_openai_forwards_config_params() -> None:
     assert stage._max_output_tokens == 4096
     assert stage._max_caption_retries == 5
     assert stage._retry_delay_seconds == 2.0
+    assert stage._batch_size == 6
 
 
 def test_build_caption_stage_unsupported_backend_raises() -> None:

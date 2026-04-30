@@ -14,7 +14,9 @@
 # limitations under the License.
 """OpenAI-compatible API captioning stage for remote VLM inference (e.g. vLLM serving)."""
 
+import asyncio
 import base64
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 
 import nvtx  # type: ignore[import-untyped]
@@ -31,9 +33,11 @@ from cosmos_curate.pipelines.common.api_caption_utils import (
     normalize_openai_response_with_detail,
     openai_error_result_from_exception,
 )
+from cosmos_curate.pipelines.common.api_stage_async_utils import destroy_api_clients
 from cosmos_curate.pipelines.video.utils.data_model import (
     CaptionOutcome,
     CaptionResult,
+    Clip,
     SplitPipeTask,
     Window,
 )
@@ -44,6 +48,15 @@ if TYPE_CHECKING:
 
 if conda_utils.is_running_in_env("unified"):
     import openai
+
+
+@dataclass(frozen=True)
+class _WindowCaptionTask:
+    """One captioning work item bound to a specific window."""
+
+    clip: Clip
+    window: Window
+    window_index: int
 
 
 class OpenAICaptionStage(CuratorStage):
@@ -64,6 +77,7 @@ class OpenAICaptionStage(CuratorStage):
         max_output_tokens: int = 8192,
         max_caption_retries: int = 3,
         retry_delay_seconds: float = 1.0,
+        batch_size: int = 1,
         use_filter_windows: bool = False,
         endpoint_key: Literal["caption", "enhance", "embedding", "filter", "classifier"] = "caption",
         verbose: bool = False,
@@ -79,6 +93,7 @@ class OpenAICaptionStage(CuratorStage):
             max_output_tokens: Maximum output tokens requested from the API.
             max_caption_retries: Number of retries per window before giving up.
             retry_delay_seconds: Delay between retries.
+            batch_size: Stage batch size and async concurrency limit.
             use_filter_windows: If True, iterate clip.filter_windows instead of clip.windows.
             endpoint_key: Key under config.openai to read credentials from; must be one of the
                 fields defined on OpenAIConfig ("caption", "enhance", "embedding", "filter", "classifier").
@@ -94,11 +109,14 @@ class OpenAICaptionStage(CuratorStage):
         self._max_output_tokens = max_output_tokens
         self._max_caption_retries = max_caption_retries
         self._retry_delay_seconds = retry_delay_seconds
+        self._batch_size = max(1, batch_size)
         self._use_filter_windows = use_filter_windows
         self._endpoint_key = endpoint_key
         self._verbose = verbose
         self._log_stats = log_stats
         self._client: openai.OpenAI | None = None
+        self._async_client: Any | None = None
+        self._runner: asyncio.Runner | None = None
 
     def secondary_name(self) -> str:
         """Return the model variant for logging."""
@@ -113,6 +131,11 @@ class OpenAICaptionStage(CuratorStage):
     def conda_env_name(self) -> str:
         """Use the unified environment (openai package lives there)."""
         return "unified"
+
+    @property
+    def stage_batch_size(self) -> int:
+        """Return the batch size used for scheduling and async concurrency."""
+        return self._batch_size
 
     def stage_setup(self) -> None:
         """Create the OpenAI API client using credentials from the config file."""
@@ -136,6 +159,11 @@ class OpenAICaptionStage(CuratorStage):
             model_name=self._model_name,
             endpoint_label=f"OpenAI {self._endpoint_key}",
         )
+        client_kwargs: dict[str, Any] = {"api_key": endpoint.api_key}
+        if endpoint.base_url:
+            client_kwargs["base_url"] = endpoint.base_url
+        self._async_client = openai.AsyncOpenAI(**client_kwargs)
+        self._runner = asyncio.Runner()
 
     @staticmethod
     def _write_caption_result(window: Window, model_variant: str, result: CaptionResult) -> None:
@@ -145,11 +173,11 @@ class OpenAICaptionStage(CuratorStage):
         window.caption_status = result.outcome.value
         window.caption_failure_reason = result.failure_reason if result.outcome == CaptionOutcome.ERROR else None
 
-    def _generate_caption_with_error_detail(self, window: Window) -> tuple[CaptionResult, str | None]:
-        """Generate a caption result for a single window with error detail when available."""
-        client = self._client
+    async def _generate_caption_with_error_detail_async(self, window: Window) -> tuple[CaptionResult, str | None]:
+        """Generate a caption result for a single window using the async client."""
+        client = self._async_client
         if client is None:
-            msg = "OpenAI client not initialized; call stage_setup before generating captions."
+            msg = "OpenAI async client not initialized; call stage_setup before generating captions."
             raise RuntimeError(msg)
 
         mp4_data = window.mp4_bytes.resolve()
@@ -161,7 +189,6 @@ class OpenAICaptionStage(CuratorStage):
 
         video_b64 = base64.b64encode(bytes(mp4_data)).decode("utf-8")
         instruction = self._prompt.strip()
-
         content_parts: list[dict[str, Any]] = [
             {
                 "type": "video_url",
@@ -169,78 +196,124 @@ class OpenAICaptionStage(CuratorStage):
             },
             {"type": "text", "text": instruction},
         ]
-
         request_kwargs: dict[str, Any] = {
             "model": self._model_name,
             "messages": [{"role": "user", "content": content_parts}],
             "max_tokens": self._max_output_tokens,
         }
 
-        @tenacity.retry(
-            stop=tenacity.stop_after_attempt(self._max_caption_retries),
-            wait=tenacity.wait_fixed(self._retry_delay_seconds),
-            retry=tenacity.retry_if_not_exception_type(
-                (openai.AuthenticationError, openai.NotFoundError, openai.BadRequestError),
-            ),
-            reraise=True,
-        )
-        def _call() -> object:
-            return client.chat.completions.create(**request_kwargs)
+        async def _call() -> object:
+            async for attempt in tenacity.AsyncRetrying(
+                stop=tenacity.stop_after_attempt(self._max_caption_retries),
+                wait=tenacity.wait_fixed(self._retry_delay_seconds),
+                retry=tenacity.retry_if_not_exception_type(
+                    (openai.AuthenticationError, openai.NotFoundError, openai.BadRequestError),
+                ),
+                reraise=True,
+            ):
+                with attempt:
+                    return await client.chat.completions.create(**request_kwargs)
+            msg = "OpenAI async retry loop exited without a result."
+            raise RuntimeError(msg)
 
         try:
-            response = _call()
+            response = await _call()
         except Exception as exc:  # noqa: BLE001
             timeout_error = getattr(openai, "APITimeoutError", None)
             return openai_error_result_from_exception(exc, timeout_error_type=timeout_error)
         return normalize_openai_response_with_detail(response)
 
-    def _generate_caption(self, window: Window) -> CaptionResult:
-        """Generate a caption result for a single window."""
-        result, _detail = self._generate_caption_with_error_detail(window)
-        return result
-
-    def _process_task(self, task: SplitPipeTask) -> None:
-        """Process a single SplitPipeTask and populate captions."""
+    def _iter_window_tasks(self, task: SplitPipeTask) -> list[_WindowCaptionTask]:
+        """Flatten a SplitPipeTask into caption work items."""
+        window_tasks: list[_WindowCaptionTask] = []
         for clip in task.video.clips:
             window_source = clip.filter_windows if self._use_filter_windows else clip.windows
             for window_index, window in enumerate(window_source):
-                try:
-                    result, error_detail = self._generate_caption_with_error_detail(window)
-                except Exception as exc:  # noqa: BLE001
-                    result = CaptionResult(outcome=CaptionOutcome.ERROR, failure_reason="exception")
-                    clip.errors[f"{self._model_variant}_caption_{window_index}"] = str(exc)
-                    if self._verbose:
-                        logger.exception(f"OpenAI API captioning failed for clip {clip.uuid} window {window_index}")
-                    else:
-                        logger.warning(
-                            f"OpenAI API captioning failed for clip {clip.uuid} window {window_index}: {exc}"
-                        )
-                else:
-                    if result.outcome == CaptionOutcome.ERROR:
-                        clip.errors[f"{self._model_variant}_caption_{window_index}"] = error_detail or (
-                            f"OpenAI API captioning failed: {result.failure_reason}"
-                        )
-                        logger.warning(
-                            f"OpenAI API captioning failed for clip {clip.uuid} window {window_index}: "
-                            f"{clip.errors[f'{self._model_variant}_caption_{window_index}']}"
-                        )
-                    elif result.outcome == CaptionOutcome.BLOCKED:
-                        logger.warning(f"OpenAI API captioning blocked for clip {clip.uuid} window {window_index}")
-                    elif self._verbose and result.text is not None:
-                        logger.info(f"OpenAI API caption clip {clip.uuid} window {window_index}: {result.text}")
-                self._write_caption_result(window, self._model_variant, result)
+                window_tasks.append(_WindowCaptionTask(clip=clip, window=window, window_index=window_index))
+        return window_tasks
+
+    def _process_window_caption_result(
+        self,
+        window_task: _WindowCaptionTask,
+        result: CaptionResult,
+        error_detail: str | None,
+    ) -> None:
+        """Write one caption result and handle provider-specific logging."""
+        clip = window_task.clip
+        window = window_task.window
+        window_index = window_task.window_index
+        if result.outcome == CaptionOutcome.ERROR:
+            clip.errors[f"{self._model_variant}_caption_{window_index}"] = error_detail or (
+                f"OpenAI API captioning failed: {result.failure_reason}"
+            )
+            logger.warning(
+                f"OpenAI API captioning failed for clip {clip.uuid} window {window_index}: "
+                f"{clip.errors[f'{self._model_variant}_caption_{window_index}']}"
+            )
+        elif result.outcome == CaptionOutcome.BLOCKED:
+            logger.warning(f"OpenAI API captioning blocked for clip {clip.uuid} window {window_index}")
+        elif self._verbose and result.text is not None:
+            logger.info(f"OpenAI API caption clip {clip.uuid} window {window_index}: {result.text}")
+        self._write_caption_result(window, self._model_variant, result)
+
+    async def _process_one_window_async(
+        self,
+        window_task: _WindowCaptionTask,
+        semaphore: asyncio.Semaphore,
+    ) -> None:
+        """Caption one window asynchronously."""
+        clip = window_task.clip
+        window_index = window_task.window_index
+        try:
+            async with semaphore:
+                result, error_detail = await self._generate_caption_with_error_detail_async(window_task.window)
+        except Exception as exc:  # noqa: BLE001
+            result = CaptionResult(outcome=CaptionOutcome.ERROR, failure_reason="exception")
+            clip.errors[f"{self._model_variant}_caption_{window_index}"] = str(exc)
+            if self._verbose:
+                logger.exception(f"OpenAI API captioning failed for clip {clip.uuid} window {window_index}")
+            else:
+                logger.warning(f"OpenAI API captioning failed for clip {clip.uuid} window {window_index}: {exc}")
+            self._write_caption_result(window_task.window, self._model_variant, result)
+            return
+        self._process_window_caption_result(window_task, result, error_detail)
+
+    async def _process_task_async(
+        self,
+        task: SplitPipeTask,
+        semaphore: asyncio.Semaphore,
+    ) -> None:
+        """Process one SplitPipeTask using concurrent async API requests."""
+        task_timer = StageTimer(self)
+        task_timer.reinit(self, task.get_major_size())
+        with task_timer.time_process():
+            await asyncio.gather(
+                *(
+                    self._process_one_window_async(window_task, semaphore)
+                    for window_task in self._iter_window_tasks(task)
+                )
+            )
+        if self._log_stats:
+            stage_name, stage_perf_stats = task_timer.log_stats()
+            task.stage_perf[stage_name] = stage_perf_stats
+
+    async def _process_tasks_async(self, tasks: list[SplitPipeTask]) -> list[SplitPipeTask]:
+        """Process a batch of tasks using the async request path."""
+        semaphore = asyncio.Semaphore(max(1, self._batch_size))
+        await asyncio.gather(*(self._process_task_async(task, semaphore) for task in tasks))
+        return tasks
+
+    def destroy(self) -> None:
+        """Close the async runner and any provider clients."""
+        destroy_api_clients(async_client=self._async_client, runner=self._runner, sync_client=self._client)
+        self._async_client = None
+        self._runner = None
+        self._client = None
 
     @nvtx.annotate("OpenAICaptionStage")  # type: ignore[untyped-decorator]
     def process_data(self, tasks: list[SplitPipeTask]) -> list[SplitPipeTask]:
         """Caption each window in the provided tasks using the OpenAI-compatible API."""
-        for task in tasks:
-            major_size = task.get_major_size()
-            self._timer.reinit(self, major_size)
-            with self._timer.time_process():
-                self._process_task(task)
-
-            if self._log_stats:
-                stage_name, stage_perf_stats = self._timer.log_stats()
-                task.stage_perf[stage_name] = stage_perf_stats
-
-        return tasks
+        if self._runner is None:
+            msg = "OpenAI async runner not initialized; call stage_setup before processing data."
+            raise RuntimeError(msg)
+        return self._runner.run(self._process_tasks_async(tasks))

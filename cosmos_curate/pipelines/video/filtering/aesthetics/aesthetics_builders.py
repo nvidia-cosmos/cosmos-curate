@@ -223,6 +223,7 @@ def _build_external_classifier_stages(cc: VideoClassifierConfig) -> list[Curator
             endpoint_key="classifier",
             max_caption_retries=cc.openai_max_caption_retries,
             retry_delay_seconds=cc.openai_retry_delay_seconds,
+            batch_size=cc.batch_size,
             verbose=cc.verbose,
             log_stats=cc.perf_profile,
         )
@@ -236,6 +237,7 @@ def _build_external_classifier_stages(cc: VideoClassifierConfig) -> list[Curator
             use_filter_windows=True,
             max_caption_retries=cc.gemini_max_caption_retries,
             retry_delay_seconds=cc.gemini_retry_delay_seconds,
+            batch_size=cc.batch_size,
             verbose=cc.verbose,
             log_stats=cc.perf_profile,
         )
@@ -326,6 +328,7 @@ def _build_external_filter_stages(fc: VlmFilterConfig) -> list[CuratorStage | Cu
             endpoint_key="filter",
             max_caption_retries=fc.openai_max_caption_retries,
             retry_delay_seconds=fc.openai_retry_delay_seconds,
+            batch_size=fc.batch_size,
             verbose=fc.verbose,
             log_stats=fc.perf_profile,
         )
@@ -339,6 +342,7 @@ def _build_external_filter_stages(fc: VlmFilterConfig) -> list[CuratorStage | Cu
             use_filter_windows=True,
             max_caption_retries=fc.gemini_max_caption_retries,
             retry_delay_seconds=fc.gemini_retry_delay_seconds,
+            batch_size=fc.batch_size,
             verbose=fc.verbose,
             log_stats=fc.perf_profile,
         )

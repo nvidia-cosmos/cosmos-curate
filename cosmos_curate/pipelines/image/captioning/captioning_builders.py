@@ -75,6 +75,7 @@ def build_image_captioning_stages(config: ImageCaptioningConfig) -> list[Curator
                     max_output_tokens=config.max_output_tokens,
                     max_caption_retries=config.gemini_caption_retries,
                     retry_delay_seconds=config.gemini_retry_delay_seconds,
+                    batch_size=config.batch_size,
                     verbose=config.verbose,
                     log_stats=config.perf_profile,
                 )
@@ -104,6 +105,7 @@ def build_image_captioning_stages(config: ImageCaptioningConfig) -> list[Curator
                     max_output_tokens=config.max_output_tokens,
                     max_caption_retries=config.openai_caption_retries,
                     retry_delay_seconds=config.openai_retry_delay_seconds,
+                    batch_size=config.batch_size,
                     verbose=config.verbose,
                     log_stats=config.perf_profile,
                 )

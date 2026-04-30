@@ -15,9 +15,10 @@
 
 """Tests for the Gemini-backed API caption stage."""
 
+import asyncio
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
@@ -28,6 +29,7 @@ from cosmos_curate.pipelines.video.captioning import gemini_caption_stage
 from cosmos_curate.pipelines.video.captioning.gemini_caption_stage import ApiPrepStage, GeminiCaptionStage
 from cosmos_curate.pipelines.video.utils.data_model import (
     CaptionOutcome,
+    CaptionResult,
     Clip,
     SplitPipeTask,
     Video,
@@ -62,6 +64,20 @@ def _make_task(mp4_bytes: bytes | None) -> SplitPipeTask:
     video = Video(input_video=Path("source.mp4"))
     video.clips.append(clip)
     return SplitPipeTask(session_id="test-session", video=video)
+
+
+def _attach_gemini_async_client(stage: GeminiCaptionStage, generate_content: AsyncMock) -> None:
+    stage._async_client = SimpleNamespace(models=SimpleNamespace(generate_content=generate_content))
+    stage._runner = asyncio.Runner()
+
+
+def _run_caption(stage: GeminiCaptionStage, window: Window) -> CaptionResult:
+    stage._runner = asyncio.Runner()
+    try:
+        result, _detail = stage._runner.run(stage._generate_caption_with_error_detail_async(window))
+        return result
+    finally:
+        stage.destroy()
 
 
 @patch("cosmos_curate.pipelines.video.captioning.gemini_caption_stage.windowing_utils.make_windows_for_video")
@@ -107,7 +123,10 @@ def test_gemini_caption_stage_generates_captions(monkeypatch: pytest.MonkeyPatch
         max_output_tokens=64,
     )
     dummy_models = _DummyModels()
-    stage._client = _DummyClient(dummy_models)  # type: ignore[assignment]
+    _attach_gemini_async_client(
+        stage,
+        AsyncMock(side_effect=dummy_models.generate_content),
+    )
 
     task = _make_task(b"\x00\x01")
     result = stage.process_data([task])
@@ -128,10 +147,13 @@ def test_gemini_caption_stage_records_error_for_missing_mp4(monkeypatch: pytest.
         lambda: ConfigFileData(gemini=Gemini(api_key="dummy-key")),
     )
     stage = GeminiCaptionStage()
-    stage._client = _DummyClient(_DummyModels())  # type: ignore[assignment]
+    _attach_gemini_async_client(stage, AsyncMock(return_value=SimpleNamespace(text="ignored")))
 
     task = _make_task(None)
-    stage.process_data([task])
+    try:
+        stage.process_data([task])
+    finally:
+        stage.destroy()
 
     clip = task.video.clips[0]
     assert "gemini_caption_0" in clip.errors
@@ -146,6 +168,7 @@ def test_stage_setup_loads_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
     class _FakeClient:
         def __init__(self, api_key: str) -> None:
             self.api_key = api_key
+            self.aio = SimpleNamespace(models=SimpleNamespace())
 
     monkeypatch.setattr(gemini_caption_stage, "genai", SimpleNamespace(Client=_FakeClient))
     monkeypatch.setattr(gemini_caption_stage, "genai_types", object())
@@ -159,6 +182,31 @@ def test_stage_setup_loads_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
     stage.stage_setup()
     assert isinstance(stage._client, _FakeClient)
     assert stage._client.api_key == "config-key"  # type: ignore[unreachable]
+
+
+def test_stage_setup_creates_async_client(monkeypatch: pytest.MonkeyPatch) -> None:
+    """stage_setup should create the aio client and runner."""
+
+    class _FakeClient:
+        def __init__(self, api_key: str) -> None:
+            self.api_key = api_key
+            self.aio = SimpleNamespace(models=SimpleNamespace())
+
+    monkeypatch.setattr(gemini_caption_stage, "genai", SimpleNamespace(Client=_FakeClient))
+    monkeypatch.setattr(gemini_caption_stage, "genai_types", object())
+    monkeypatch.setattr(
+        gemini_caption_stage,
+        "load_config",
+        lambda: ConfigFileData(gemini=Gemini(api_key="config-key")),
+    )
+
+    stage = GeminiCaptionStage()
+    stage.stage_setup()
+
+    assert isinstance(stage._client, _FakeClient)
+    assert stage._async_client is stage._client.aio  # type: ignore[union-attr]
+    assert stage._runner is not None
+    stage.destroy()
 
 
 def test_gemini_caption_stage_logs_error_on_empty_response(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -176,12 +224,43 @@ def test_gemini_caption_stage_logs_error_on_empty_response(monkeypatch: pytest.M
     )
 
     stage = GeminiCaptionStage(verbose=True)
-    stage._client = _FakeClient()  # type: ignore[assignment]
+    _attach_gemini_async_client(
+        stage, AsyncMock(return_value=SimpleNamespace(candidates=[SimpleNamespace(content=SimpleNamespace(parts=[]))]))
+    )
     task = _make_task(b"\x00\x01")
-    stage.process_data([task])
+    try:
+        stage.process_data([task])
+    finally:
+        stage.destroy()
     clip = task.video.clips[0]
     assert "gemini_caption_0" in clip.errors
     assert clip.errors["gemini_caption_0"] == "Gemini response did not contain caption text."
+
+
+def test_gemini_caption_stage_async_processes_windows(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The async path should write captions back to the correct windows."""
+    monkeypatch.setattr(
+        gemini_caption_stage,
+        "load_config",
+        lambda: ConfigFileData(gemini=Gemini(api_key="dummy-key")),
+    )
+
+    async def _generate_content(**_kwargs: object) -> SimpleNamespace:
+        return SimpleNamespace(text="async caption")
+
+    stage = GeminiCaptionStage(batch_size=2)
+    _attach_gemini_async_client(stage, AsyncMock(side_effect=_generate_content))
+
+    task = _make_task(b"\x00\x01")
+    task.video.clips[0].windows.append(Window(start_frame=1, end_frame=2, mp4_bytes=b"\x00\x02"))
+    try:
+        stage.process_data([task])
+    finally:
+        stage.destroy()
+
+    clip = task.video.clips[0]
+    assert clip.windows[0].caption["gemini"] == "async caption"
+    assert clip.windows[1].caption["gemini"] == "async caption"
 
 
 def test_stage_setup_requires_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -256,15 +335,6 @@ def test_gemini_caption_stage_does_not_retry_invalid_api_key(monkeypatch: pytest
     class _FakeClientError(Exception):
         pass
 
-    class _FailingModels:
-        def __init__(self) -> None:
-            self.calls = 0
-
-        def generate_content(self, **_kwargs: object) -> SimpleNamespace:
-            self.calls += 1
-            msg = "API Key not found. Please pass a valid API key."
-            raise _FakeClientError(msg)
-
     monkeypatch.setattr(
         gemini_caption_stage,
         "load_config",
@@ -277,14 +347,18 @@ def test_gemini_caption_stage_does_not_retry_invalid_api_key(monkeypatch: pytest
     )
 
     stage = GeminiCaptionStage()
-    failing_models = _FailingModels()
-    stage._client = _DummyClient(failing_models)  # type: ignore[arg-type,assignment]
+    _attach_gemini_async_client(
+        stage,
+        AsyncMock(side_effect=_FakeClientError("API Key not found. Please pass a valid API key.")),
+    )
 
     task = _make_task(b"\x00\x01")
-    stage.process_data([task])
+    try:
+        stage.process_data([task])
+    finally:
+        stage.destroy()
 
     clip = task.video.clips[0]
-    assert failing_models.calls == 1
     assert clip.errors["gemini_caption_0"] == (
         "Gemini rejected the API key (API_KEY_INVALID). Update the cosmos-curate config with a valid Gemini API key."
     )
@@ -311,10 +385,25 @@ def test_gemini_caption_stage_writes_truncated_status(monkeypatch: pytest.Monkey
             )
 
     stage = GeminiCaptionStage()
-    stage._client = _DummyClient(_TruncatedModels())  # type: ignore[arg-type,assignment]
+    _attach_gemini_async_client(
+        stage,
+        AsyncMock(
+            return_value=SimpleNamespace(
+                candidates=[
+                    SimpleNamespace(
+                        content=SimpleNamespace(parts=[SimpleNamespace(text="partial caption")]),
+                        finish_reason="MAX_TOKENS",
+                    )
+                ]
+            )
+        ),
+    )
 
     task = _make_task(b"\x00\x01")
-    stage.process_data([task])
+    try:
+        stage.process_data([task])
+    finally:
+        stage.destroy()
 
     window = task.video.clips[0].windows[0]
     assert window.caption["gemini"] == "partial caption"
@@ -335,10 +424,15 @@ def test_gemini_caption_stage_writes_blocked_status(monkeypatch: pytest.MonkeyPa
             return SimpleNamespace(prompt_feedback=SimpleNamespace(block_reason="SAFETY"))
 
     stage = GeminiCaptionStage()
-    stage._client = _DummyClient(_BlockedModels())  # type: ignore[arg-type,assignment]
+    _attach_gemini_async_client(
+        stage, AsyncMock(return_value=SimpleNamespace(prompt_feedback=SimpleNamespace(block_reason="SAFETY")))
+    )
 
     task = _make_task(b"\x00\x01")
-    stage.process_data([task])
+    try:
+        stage.process_data([task])
+    finally:
+        stage.destroy()
 
     window = task.video.clips[0].windows[0]
     assert "gemini" not in window.caption
@@ -365,8 +459,8 @@ def test_generate_caption_timeout_maps_to_timeout_failure_reason(monkeypatch: py
     monkeypatch.setattr(gemini_caption_stage, "DeadlineExceeded", _FakeDeadlineExceededError)
 
     stage = GeminiCaptionStage(max_caption_retries=1, retry_delay_seconds=0)
-    stage._client = _DummyClient(_TimeoutModels())  # type: ignore[arg-type,assignment]
+    _attach_gemini_async_client(stage, AsyncMock(side_effect=_FakeDeadlineExceededError("slow")))
 
-    result = stage._generate_caption(Window(start_frame=0, end_frame=1, mp4_bytes=b"\x00"), 0, 0)
+    result = _run_caption(stage, Window(start_frame=0, end_frame=1, mp4_bytes=b"\x00"))
     assert result.outcome == CaptionOutcome.ERROR
     assert result.failure_reason == "timeout"

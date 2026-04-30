@@ -14,6 +14,8 @@
 # limitations under the License.
 """Remote API-backed caption preparation and captioning stages (Gemini)."""
 
+import asyncio
+from dataclasses import dataclass
 from typing import Any, TypeVar
 
 import nvtx  # type: ignore[import-untyped]
@@ -33,10 +35,12 @@ from cosmos_curate.pipelines.common.api_caption_utils import (
     normalize_gemini_response_with_detail,
     should_retry_gemini_exception,
 )
+from cosmos_curate.pipelines.common.api_stage_async_utils import destroy_api_clients
 from cosmos_curate.pipelines.video.utils import windowing_utils
 from cosmos_curate.pipelines.video.utils.data_model import (
     CaptionOutcome,
     CaptionResult,
+    Clip,
     SplitPipeTask,
     Video,
     Window,
@@ -45,6 +49,15 @@ from cosmos_curate.pipelines.video.utils.data_model import (
 )
 
 TTask = TypeVar("TTask", bound=PipelineTask)
+
+
+@dataclass(frozen=True)
+class _WindowCaptionTask:
+    """One captioning work item bound to a specific window."""
+
+    clip: Clip
+    window: Window
+    window_index: int
 
 
 class ApiPrepStage(CuratorStage):
@@ -136,6 +149,7 @@ class GeminiCaptionStage(CuratorStage):
         max_caption_retries: int = 3,
         retry_delay_seconds: float = 1.0,
         max_video_size_bytes: int = 20 * 1024 * 1024,
+        batch_size: int = 1,
         use_filter_windows: bool = False,
         verbose: bool = False,
         log_stats: bool = False,
@@ -151,6 +165,7 @@ class GeminiCaptionStage(CuratorStage):
             max_caption_retries: Number of retries per window before giving up.
             retry_delay_seconds: Delay between retries.
             max_video_size_bytes: Maximum inline video size supported by the API.
+            batch_size: Stage batch size and async concurrency limit.
             use_filter_windows: If True, iterate clip.filter_windows instead of clip.windows.
             verbose: Emit verbose logging.
             log_stats: Whether to record stage performance statistics.
@@ -168,6 +183,7 @@ class GeminiCaptionStage(CuratorStage):
         self._max_caption_retries = max_caption_retries
         self._retry_delay_seconds = retry_delay_seconds
         self._max_video_size_bytes = max_video_size_bytes
+        self._batch_size = max(1, batch_size)
         self._verbose = verbose
         self._log_stats = log_stats
         config = load_config()
@@ -176,15 +192,24 @@ class GeminiCaptionStage(CuratorStage):
             raise RuntimeError(msg)
         self._api_key = config.gemini.api_key
         self._client: genai.Client | None = None
+        self._async_client: Any | None = None
+        self._runner: asyncio.Runner | None = None
 
     @property
     def resources(self) -> CuratorStageResource:
         """Get the resource requirements for this stage."""
         return CuratorStageResource(cpus=1.0)
 
+    @property
+    def stage_batch_size(self) -> int:
+        """Return the batch size used for scheduling and async concurrency."""
+        return self._batch_size
+
     def stage_setup(self) -> None:
         """Create the Gemini API client."""
         self._client = genai.Client(api_key=self._api_key)
+        self._async_client = self._client.aio
+        self._runner = asyncio.Runner()
 
     @staticmethod
     def _write_caption_result(window: Window, model_variant: str, result: CaptionResult) -> None:
@@ -194,13 +219,11 @@ class GeminiCaptionStage(CuratorStage):
         window.caption_status = result.outcome.value
         window.caption_failure_reason = result.failure_reason if result.outcome == CaptionOutcome.ERROR else None
 
-    def _generate_caption_with_error_detail(
-        self, window: Window, _clip_index: int, _window_index: int
-    ) -> tuple[CaptionResult, str | None]:
-        """Generate a caption result for a single window with error detail when available."""
-        client = self._client
+    async def _generate_caption_with_error_detail_async(self, window: Window) -> tuple[CaptionResult, str | None]:
+        """Generate a caption result for a single window using the async client."""
+        client = self._async_client
         if client is None:
-            msg = "Gemini client not initialized; call stage_setup before generating captions."
+            msg = "Gemini async client not initialized; call stage_setup before generating captions."
             raise RuntimeError(msg)
 
         instruction = self._prompt.strip()
@@ -208,7 +231,7 @@ class GeminiCaptionStage(CuratorStage):
         if mp4_data is None:
             msg = "Window missing mp4 bytes; _validate_window must be called before _generate_caption."
             raise RuntimeError(msg)
-        # Gemini Blob requires bytes; bytes() copies from the zero-copy numpy backing.
+
         inline_data = genai_types.Blob(data=bytes(mp4_data), mime_type="video/mp4")
         content = genai_types.Content(
             parts=[
@@ -216,38 +239,35 @@ class GeminiCaptionStage(CuratorStage):
                 genai_types.Part(text=instruction),
             ]
         )
-
         generate_kwargs: dict[str, Any] = {
             "model": self._model_name,
             "contents": content,
             "config": genai_types.GenerateContentConfig(max_output_tokens=self._max_output_tokens),
         }
 
-        @tenacity.retry(
-            stop=tenacity.stop_after_attempt(self._max_caption_retries),
-            wait=tenacity.wait_fixed(self._retry_delay_seconds),
-            retry=tenacity.retry_if_exception(should_retry_gemini_exception),
-            reraise=True,
-        )
-        def _call() -> object:
-            try:
-                return client.models.generate_content(**generate_kwargs)
-            except Exception as exc:
-                new_exc = handle_gemini_client_exception(exc)
-                if new_exc is exc:
-                    raise
-                raise new_exc from exc
+        async def _call() -> object:
+            async for attempt in tenacity.AsyncRetrying(
+                stop=tenacity.stop_after_attempt(self._max_caption_retries),
+                wait=tenacity.wait_fixed(self._retry_delay_seconds),
+                retry=tenacity.retry_if_exception(should_retry_gemini_exception),
+                reraise=True,
+            ):
+                with attempt:
+                    try:
+                        return await client.models.generate_content(**generate_kwargs)
+                    except Exception as exc:
+                        new_exc = handle_gemini_client_exception(exc)
+                        if new_exc is exc:
+                            raise
+                        raise new_exc from exc
+            msg = "Gemini async retry loop exited without a result."
+            raise RuntimeError(msg)
 
         try:
-            response = _call()
+            response = await _call()
         except Exception as exc:  # noqa: BLE001
             return gemini_error_result_from_exception(exc, timeout_error_type=DeadlineExceeded)
         return normalize_gemini_response_with_detail(response)
-
-    def _generate_caption(self, window: Window, _clip_index: int, _window_index: int) -> CaptionResult:
-        """Generate a caption result for a single window."""
-        result, _detail = self._generate_caption_with_error_detail(window, _clip_index, _window_index)
-        return result
 
     def _validate_window(self, window: Window) -> None:
         """Validate that the window contains data suitable for Gemini."""
@@ -261,47 +281,99 @@ class GeminiCaptionStage(CuratorStage):
             msg = f"Window MP4 ({size_mb:.2f} MB) exceeds Gemini inline limit ({max_mb:.2f} MB)."
             raise RuntimeError(msg)
 
-    def _process_task(self, task: SplitPipeTask) -> None:
-        """Process a single SplitPipeTask and populate captions."""
-        for clip_index, clip in enumerate(task.video.clips):
+    def _iter_window_tasks(self, task: SplitPipeTask) -> list[_WindowCaptionTask]:
+        """Flatten a SplitPipeTask into caption work items."""
+        window_tasks: list[_WindowCaptionTask] = []
+        for clip in task.video.clips:
             window_source = clip.filter_windows if self._use_filter_windows else clip.windows
             for window_index, window in enumerate(window_source):
-                try:
-                    self._validate_window(window)
-                    result, error_detail = self._generate_caption_with_error_detail(window, clip_index, window_index)
-                except Exception as exc:  # noqa: BLE001
-                    result = CaptionResult(outcome=CaptionOutcome.ERROR, failure_reason="exception")
-                    clip.errors[f"{self._model_variant}_caption_{window_index}"] = str(exc)
-                    if self._verbose:
-                        logger.exception(f"Gemini captioning failed for clip {clip.uuid} window {window_index}")
-                    else:
-                        logger.warning(f"Gemini captioning failed for clip {clip.uuid} window {window_index}: {exc}")
-                else:
-                    if result.outcome == CaptionOutcome.ERROR:
-                        clip.errors[f"{self._model_variant}_caption_{window_index}"] = error_detail or (
-                            f"Gemini captioning failed: {result.failure_reason}"
-                        )
-                        logger.warning(
-                            f"Gemini captioning failed for clip {clip.uuid} window {window_index}: "
-                            f"{clip.errors[f'{self._model_variant}_caption_{window_index}']}"
-                        )
-                    elif result.outcome == CaptionOutcome.BLOCKED:
-                        logger.warning(f"Gemini captioning blocked for clip {clip.uuid} window {window_index}")
-                    elif self._verbose and result.text is not None:
-                        logger.info(f"Gemini caption clip {clip.uuid} window {window_index}: {result.text}")
-                self._write_caption_result(window, self._model_variant, result)
+                window_tasks.append(_WindowCaptionTask(clip=clip, window=window, window_index=window_index))
+        return window_tasks
+
+    def _process_window_caption_result(
+        self,
+        window_task: _WindowCaptionTask,
+        result: CaptionResult,
+        error_detail: str | None,
+    ) -> None:
+        """Write one caption result and handle provider-specific logging."""
+        clip = window_task.clip
+        window = window_task.window
+        window_index = window_task.window_index
+        if result.outcome == CaptionOutcome.ERROR:
+            clip.errors[f"{self._model_variant}_caption_{window_index}"] = error_detail or (
+                f"Gemini captioning failed: {result.failure_reason}"
+            )
+            logger.warning(
+                f"Gemini captioning failed for clip {clip.uuid} window {window_index}: "
+                f"{clip.errors[f'{self._model_variant}_caption_{window_index}']}"
+            )
+        elif result.outcome == CaptionOutcome.BLOCKED:
+            logger.warning(f"Gemini captioning blocked for clip {clip.uuid} window {window_index}")
+        elif self._verbose and result.text is not None:
+            logger.info(f"Gemini caption clip {clip.uuid} window {window_index}: {result.text}")
+        self._write_caption_result(window, self._model_variant, result)
+
+    async def _process_one_window_async(
+        self,
+        window_task: _WindowCaptionTask,
+        semaphore: asyncio.Semaphore,
+    ) -> None:
+        """Caption one window asynchronously."""
+        clip = window_task.clip
+        window = window_task.window
+        window_index = window_task.window_index
+        try:
+            self._validate_window(window)
+            async with semaphore:
+                result, error_detail = await self._generate_caption_with_error_detail_async(window)
+        except Exception as exc:  # noqa: BLE001
+            result = CaptionResult(outcome=CaptionOutcome.ERROR, failure_reason="exception")
+            clip.errors[f"{self._model_variant}_caption_{window_index}"] = str(exc)
+            if self._verbose:
+                logger.exception(f"Gemini captioning failed for clip {clip.uuid} window {window_index}")
+            else:
+                logger.warning(f"Gemini captioning failed for clip {clip.uuid} window {window_index}: {exc}")
+            self._write_caption_result(window, self._model_variant, result)
+            return
+        self._process_window_caption_result(window_task, result, error_detail)
+
+    async def _process_task_async(
+        self,
+        task: SplitPipeTask,
+        semaphore: asyncio.Semaphore,
+    ) -> None:
+        """Process one SplitPipeTask using concurrent async API requests."""
+        task_timer = StageTimer(self)
+        task_timer.reinit(self, task.get_major_size())
+        with task_timer.time_process():
+            await asyncio.gather(
+                *(
+                    self._process_one_window_async(window_task, semaphore)
+                    for window_task in self._iter_window_tasks(task)
+                )
+            )
+        if self._log_stats:
+            stage_name, stage_perf_stats = task_timer.log_stats()
+            task.stage_perf[stage_name] = stage_perf_stats
+
+    async def _process_tasks_async(self, tasks: list[SplitPipeTask]) -> list[SplitPipeTask]:
+        """Process a batch of tasks using the async request path."""
+        semaphore = asyncio.Semaphore(max(1, self._batch_size))
+        await asyncio.gather(*(self._process_task_async(task, semaphore) for task in tasks))
+        return tasks
+
+    def destroy(self) -> None:
+        """Close the async runner and any provider clients."""
+        destroy_api_clients(async_client=self._async_client, runner=self._runner, sync_client=self._client)
+        self._async_client = None
+        self._runner = None
+        self._client = None
 
     @nvtx.annotate("GeminiCaptionStage")  # type: ignore[untyped-decorator]
     def process_data(self, tasks: list[SplitPipeTask]) -> list[SplitPipeTask]:
         """Caption each window in the provided tasks using Gemini."""
-        for task in tasks:
-            major_size = task.get_major_size()
-            self._timer.reinit(self, major_size)
-            with self._timer.time_process():
-                self._process_task(task)
-
-            if self._log_stats:
-                stage_name, stage_perf_stats = self._timer.log_stats()
-                task.stage_perf[stage_name] = stage_perf_stats
-
-        return tasks
+        if self._runner is None:
+            msg = "Gemini async runner not initialized; call stage_setup before processing data."
+            raise RuntimeError(msg)
+        return self._runner.run(self._process_tasks_async(tasks))

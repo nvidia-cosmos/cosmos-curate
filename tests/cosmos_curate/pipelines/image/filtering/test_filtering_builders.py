@@ -91,6 +91,7 @@ def test_build_image_filter_stages_returns_openai_endpoint_chain() -> None:
     assert isinstance(stages[0].stage, ImageOpenAIPrepStage)
     assert isinstance(stages[1].stage, ImageOpenAICaptionStage)
     assert stages[1].stage._endpoint_key == "filter"
+    assert stages[1].stage.stage_batch_size == 16
     assert stages[1].stage._result_target == "filter_caption"
     assert stages[1].stage._result_key == "semantic:openai"
     assert isinstance(stages[2].stage, ImageSemanticFilterStage)
@@ -108,6 +109,7 @@ def test_build_image_filter_stages_returns_gemini_endpoint_chain(monkeypatch: py
     assert isinstance(stages[0], CuratorStageSpec)
     assert isinstance(stages[1], CuratorStageSpec)
     assert isinstance(stages[0].stage, ImageGeminiCaptionStage)
+    assert stages[0].stage.stage_batch_size == 16
     assert stages[0].stage._result_target == "filter_caption"
     assert stages[0].stage._result_key == "semantic:gemini"
     assert isinstance(stages[1].stage, ImageSemanticFilterStage)
@@ -132,6 +134,7 @@ def test_build_image_classifier_stages_returns_openai_endpoint_chain() -> None:
     assert isinstance(stages[0].stage, ImageOpenAIPrepStage)
     assert isinstance(stages[1].stage, ImageOpenAICaptionStage)
     assert stages[1].stage._endpoint_key == "classifier"
+    assert stages[1].stage.stage_batch_size == 16
     assert stages[1].stage._result_target == "filter_caption"
     assert stages[1].stage._result_key == "classifier:openai"
     assert isinstance(stages[2].stage, ImageClassifierStage)
@@ -156,6 +159,7 @@ def test_build_image_classifier_stages_returns_gemini_endpoint_chain(
     assert isinstance(stages[0], CuratorStageSpec)
     assert isinstance(stages[1], CuratorStageSpec)
     assert isinstance(stages[0].stage, ImageGeminiCaptionStage)
+    assert stages[0].stage.stage_batch_size == 16
     assert stages[0].stage._result_target == "filter_caption"
     assert stages[0].stage._result_key == "classifier:gemini"
     assert isinstance(stages[1].stage, ImageClassifierStage)

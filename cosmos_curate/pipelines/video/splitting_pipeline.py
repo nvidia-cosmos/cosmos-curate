@@ -720,6 +720,7 @@ def _assemble_stages(  # noqa: C901, PLR0912, PLR0915
                 caption_retries=args.gemini_caption_retries,
                 retry_delay_seconds=args.gemini_retry_delay_seconds,
                 max_inline_video_bytes=int(args.gemini_max_inline_mb * 1024 * 1024),
+                batch_size=args.api_caption_batch_size,
                 num_cpus_for_prepare=args.vllm_prepare_num_cpus_per_worker,
             )
         elif caption_algo == "openai":
@@ -730,6 +731,7 @@ def _assemble_stages(  # noqa: C901, PLR0912, PLR0915
                 prompt_text=args.captioning_prompt_text,
                 caption_retries=args.openai_caption_retries,
                 retry_delay_seconds=args.openai_retry_delay_seconds,
+                batch_size=args.api_caption_batch_size,
                 num_cpus_for_prepare=args.vllm_prepare_num_cpus_per_worker,
             )
         elif caption_algo == "vllm_async":
@@ -1927,7 +1929,6 @@ def _setup_parser(parser: argparse.ArgumentParser) -> None:  # noqa: PLR0915
         default=1.0,
         help="Delay between retries for OpenAI API caption requests.",
     )
-
     # --- vllm_async args (VllmAsyncCaptionStage in-process AsyncLLM) ---
     add_vllm_async_cli_args(parser)
     parser.add_argument(
@@ -1991,6 +1992,12 @@ def _setup_parser(parser: argparse.ArgumentParser) -> None:  # noqa: PLR0915
         type=int,
         default=8,
         help="Batch size for Qwen captioning stage.",
+    )
+    parser.add_argument(
+        "--api-caption-batch-size",
+        type=int,
+        default=8,
+        help="Batch size / async concurrency limit for OpenAI and Gemini captioning stages.",
     )
     parser.add_argument(
         "--qwen-use-vllm-mmcache",

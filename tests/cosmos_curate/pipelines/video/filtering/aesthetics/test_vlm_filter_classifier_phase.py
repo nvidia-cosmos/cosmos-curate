@@ -99,12 +99,13 @@ def test_vlm_filter_classifier_build_stages_both() -> None:
 
 def test_vlm_filter_build_stages_openai_endpoint() -> None:
     """OpenAI filter endpoint builds ApiPrepStage + OpenAICaptionStage(filter) + VllmFilteringStage."""
-    stages = build_vllm_filter_classifier_stages(filter_config=VlmFilterConfig(endpoint="openai"))
+    stages = build_vllm_filter_classifier_stages(filter_config=VlmFilterConfig(endpoint="openai", batch_size=7))
     assert len(stages) == 3
     assert isinstance(stages[0], ApiPrepStage)
     assert isinstance(stages[1], OpenAICaptionStage)
     assert stages[1]._endpoint_key == "filter"
     assert stages[1]._model_variant == "openai"
+    assert stages[1]._batch_size == 7
     assert isinstance(stages[2], CuratorStageSpec)
     assert isinstance(stages[2].stage, VllmFilteringStage)
 
@@ -112,23 +113,27 @@ def test_vlm_filter_build_stages_openai_endpoint() -> None:
 def test_vlm_filter_build_stages_gemini_endpoint(mock_gemini_config: MagicMock) -> None:
     """Gemini filter endpoint builds ApiPrepStage + GeminiCaptionStage + VllmFilteringStage."""
     with patch(_GEMINI_LOAD_CONFIG, return_value=mock_gemini_config):
-        stages = build_vllm_filter_classifier_stages(filter_config=VlmFilterConfig(endpoint="gemini"))
+        stages = build_vllm_filter_classifier_stages(filter_config=VlmFilterConfig(endpoint="gemini", batch_size=5))
     assert len(stages) == 3
     assert isinstance(stages[0], ApiPrepStage)
     assert isinstance(stages[1], GeminiCaptionStage)
     assert stages[1]._model_variant == "gemini"
+    assert stages[1]._batch_size == 5
     assert isinstance(stages[2], CuratorStageSpec)
     assert isinstance(stages[2].stage, VllmFilteringStage)
 
 
 def test_vlm_classifier_build_stages_openai_endpoint() -> None:
     """OpenAI classifier endpoint builds ApiPrepStage + OpenAICaptionStage(classifier) + VllmVideoClassifierStage."""
-    stages = build_vllm_filter_classifier_stages(classifier_config=VideoClassifierConfig(endpoint="openai"))
+    stages = build_vllm_filter_classifier_stages(
+        classifier_config=VideoClassifierConfig(endpoint="openai", batch_size=9)
+    )
     assert len(stages) == 3
     assert isinstance(stages[0], ApiPrepStage)
     assert isinstance(stages[1], OpenAICaptionStage)
     assert stages[1]._endpoint_key == "classifier"
     assert stages[1]._model_variant == "openai"
+    assert stages[1]._batch_size == 9
     assert isinstance(stages[2], CuratorStageSpec)
     assert isinstance(stages[2].stage, VllmVideoClassifierStage)
 
@@ -136,11 +141,14 @@ def test_vlm_classifier_build_stages_openai_endpoint() -> None:
 def test_vlm_classifier_build_stages_gemini_endpoint(mock_gemini_config: MagicMock) -> None:
     """Gemini classifier endpoint builds ApiPrepStage + GeminiCaptionStage + VllmVideoClassifierStage."""
     with patch(_GEMINI_LOAD_CONFIG, return_value=mock_gemini_config):
-        stages = build_vllm_filter_classifier_stages(classifier_config=VideoClassifierConfig(endpoint="gemini"))
+        stages = build_vllm_filter_classifier_stages(
+            classifier_config=VideoClassifierConfig(endpoint="gemini", batch_size=4)
+        )
     assert len(stages) == 3
     assert isinstance(stages[0], ApiPrepStage)
     assert isinstance(stages[1], GeminiCaptionStage)
     assert stages[1]._model_variant == "gemini"
+    assert stages[1]._batch_size == 4
     assert isinstance(stages[2], CuratorStageSpec)
     assert isinstance(stages[2].stage, VllmVideoClassifierStage)
 

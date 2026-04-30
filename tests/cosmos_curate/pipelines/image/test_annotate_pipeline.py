@@ -117,9 +117,9 @@ def test_assemble_stages_with_gemini_captioning_returns_embedding_and_output(
 
     stages = _assemble_stages(args)
     assert len(stages) == 4
-    assert isinstance(stages[1], CuratorStageSpec)
     assert isinstance(stages[1].stage, ImageInternVideo2EmbeddingStage)
     assert isinstance(stages[2].stage, ImageGeminiCaptionStage)
+    assert stages[2].stage.stage_batch_size == args.caption_batch_size
 
 
 def test_assemble_stages_with_openai_captioning_returns_five_specs(tmp_path: pathlib.Path) -> None:
@@ -142,10 +142,10 @@ def test_assemble_stages_with_openai_captioning_returns_five_specs(tmp_path: pat
     stages = _assemble_stages(args)
     assert len(stages) == 5
     assert isinstance(stages[1], CuratorStageSpec)
-    assert isinstance(stages[2], CuratorStageSpec)
     assert isinstance(stages[1].stage, ImageInternVideo2EmbeddingStage)
     assert isinstance(stages[2].stage, ImageOpenAIPrepStage)
     assert isinstance(stages[3].stage, ImageOpenAICaptionStage)
+    assert stages[3].stage.stage_batch_size == args.caption_batch_size
 
 
 def test_assemble_stages_with_openai_raw_image_skips_prep(tmp_path: pathlib.Path) -> None:
@@ -235,6 +235,7 @@ def test_assemble_stages_with_openai_semantic_filter_returns_endpoint_specs(tmp_
     assert isinstance(stages[1].stage, ImageOpenAIPrepStage)
     assert isinstance(stages[2].stage, ImageOpenAICaptionStage)
     assert stages[2].stage._endpoint_key == "filter"
+    assert stages[2].stage.stage_batch_size == args.semantic_filter_batch_size
     assert stages[2].stage._result_target == "filter_caption"
     assert isinstance(stages[3].stage, ImageSemanticFilterStage)
     assert isinstance(stages[4].stage, ImageInternVideo2EmbeddingStage)
@@ -269,6 +270,7 @@ def test_assemble_stages_with_gemini_semantic_filter_returns_endpoint_specs(
     assert isinstance(stages[1], CuratorStageSpec)
     assert isinstance(stages[2], CuratorStageSpec)
     assert isinstance(stages[1].stage, ImageGeminiCaptionStage)
+    assert stages[1].stage.stage_batch_size == args.semantic_filter_batch_size
     assert stages[1].stage._result_target == "filter_caption"
     assert isinstance(stages[2].stage, ImageSemanticFilterStage)
     assert isinstance(stages[3].stage, ImageInternVideo2EmbeddingStage)
@@ -344,6 +346,7 @@ def test_assemble_stages_with_openai_classifier_returns_endpoint_specs(tmp_path:
     assert isinstance(stages[1].stage, ImageOpenAIPrepStage)
     assert isinstance(stages[2].stage, ImageOpenAICaptionStage)
     assert stages[2].stage._endpoint_key == "classifier"
+    assert stages[2].stage.stage_batch_size == args.image_classifier_batch_size
     assert stages[2].stage._result_target == "filter_caption"
     assert isinstance(stages[3].stage, ImageClassifierStage)
     assert isinstance(stages[4].stage, ImageInternVideo2EmbeddingStage)
@@ -381,11 +384,89 @@ def test_assemble_stages_with_gemini_classifier_returns_endpoint_specs(
     assert isinstance(stages[1], CuratorStageSpec)
     assert isinstance(stages[2], CuratorStageSpec)
     assert isinstance(stages[1].stage, ImageGeminiCaptionStage)
+    assert stages[1].stage.stage_batch_size == args.image_classifier_batch_size
     assert stages[1].stage._result_target == "filter_caption"
     assert isinstance(stages[2].stage, ImageClassifierStage)
     assert isinstance(stages[3].stage, ImageInternVideo2EmbeddingStage)
     assert isinstance(stages[4].stage, ImageVllmPrepStage)
     assert isinstance(stages[5].stage, ImageVllmCaptionStage)
+
+
+def test_assemble_stages_builds_openai_api_stages(tmp_path: pathlib.Path) -> None:
+    """OpenAI image API stages should still be assembled across caption/filter/classifier flows."""
+    parser = argparse.ArgumentParser()
+    subparsers = parser.add_subparsers(dest="command")
+    add_annotate_command(subparsers)
+    args = parser.parse_args(
+        [
+            "annotate",
+            "--input-image-path",
+            str(tmp_path / "in"),
+            "--output-path",
+            str(tmp_path / "out"),
+            "--captioning-algorithm",
+            "openai",
+            "--semantic-filter",
+            "enable",
+            "--semantic-filter-model-variant",
+            "openai",
+            "--image-classifier",
+            "enable",
+            "--image-classifier-model-variant",
+            "openai",
+            "--image-classifier-use-custom-categories",
+            "--image-classifier-allow",
+            "planet_earth",
+        ]
+    )
+
+    stages = _assemble_stages(args)
+    openai_stages = [
+        stage.stage
+        for stage in stages
+        if isinstance(stage, CuratorStageSpec) and isinstance(stage.stage, ImageOpenAICaptionStage)
+    ]
+
+    assert openai_stages
+
+
+def test_assemble_stages_builds_gemini_api_stages(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Gemini image API stages should still be assembled across caption/filter/classifier flows."""
+    monkeypatch.setattr(image_api_caption_stages, "load_config", lambda: ConfigFileData(gemini=Gemini(api_key="k")))
+    parser = argparse.ArgumentParser()
+    subparsers = parser.add_subparsers(dest="command")
+    add_annotate_command(subparsers)
+    args = parser.parse_args(
+        [
+            "annotate",
+            "--input-image-path",
+            str(tmp_path / "in"),
+            "--output-path",
+            str(tmp_path / "out"),
+            "--captioning-algorithm",
+            "gemini",
+            "--semantic-filter",
+            "enable",
+            "--semantic-filter-model-variant",
+            "gemini",
+            "--image-classifier",
+            "enable",
+            "--image-classifier-model-variant",
+            "gemini",
+            "--image-classifier-use-custom-categories",
+            "--image-classifier-allow",
+            "planet_earth",
+        ]
+    )
+
+    stages = _assemble_stages(args)
+    gemini_stages = [
+        stage.stage
+        for stage in stages
+        if isinstance(stage, CuratorStageSpec) and isinstance(stage.stage, ImageGeminiCaptionStage)
+    ]
+
+    assert gemini_stages
 
 
 def test_write_summary_includes_embedding_fields(tmp_path: pathlib.Path) -> None:

@@ -60,6 +60,7 @@ class GeminiConfig:
     caption_retries: int = 3
     retry_delay_seconds: float = 1.0
     max_inline_video_bytes: int = 20 * 1024 * 1024
+    batch_size: int = 1
     num_cpus_for_prepare: float = 3.0
 
 
@@ -73,6 +74,7 @@ class OpenAIConfig:
     prompt_text: str | None = None
     caption_retries: int = 3
     retry_delay_seconds: float = 1.0
+    batch_size: int = 1
     num_cpus_for_prepare: float = 3.0
 
 
@@ -233,6 +235,7 @@ def _build_captioning_caption_stage(config: CaptioningConfig) -> CuratorStage | 
                 max_caption_retries=gcfg.caption_retries,
                 retry_delay_seconds=gcfg.retry_delay_seconds,
                 max_video_size_bytes=gcfg.max_inline_video_bytes,
+                batch_size=gcfg.batch_size,
                 verbose=config.verbose,
                 log_stats=config.perf_profile,
             )
@@ -245,6 +248,7 @@ def _build_captioning_caption_stage(config: CaptioningConfig) -> CuratorStage | 
                 max_output_tokens=ocfg.max_output_tokens,
                 max_caption_retries=ocfg.caption_retries,
                 retry_delay_seconds=ocfg.retry_delay_seconds,
+                batch_size=ocfg.batch_size,
                 verbose=config.verbose,
                 log_stats=config.perf_profile,
             )
