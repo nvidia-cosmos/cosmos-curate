@@ -22,6 +22,7 @@ import numpy as np
 import numpy.typing as npt
 
 from cosmos_curate.core.sensors.data.extrinsics import SensorExtrinsics
+from cosmos_curate.core.sensors.data.intrinsics import CameraIntrinsics
 from cosmos_curate.core.sensors.data.video import VideoMetadata
 from cosmos_curate.core.sensors.utils.helpers import as_readonly_view, as_readonly_view_tuple
 from cosmos_curate.core.sensors.utils.validation import (
@@ -44,6 +45,10 @@ class _HasCameraBatchFields(_HasCameraFrames, Protocol):
     align_timestamps_ns: npt.NDArray[np.int64]
     sensor_timestamps_ns: npt.NDArray[np.int64]
     pts_stream: npt.NDArray[np.int64]
+
+
+class _HasMetadata(Protocol):
+    metadata: VideoMetadata
 
 
 def _mvd_frames(
@@ -108,6 +113,24 @@ def _metadata_shape(
         raise ValueError(msg)
 
 
+def _intrinsics_dimensions_match_metadata(
+    instance: _HasMetadata,
+    _attribute: object,
+    value: CameraIntrinsics | None,
+) -> None:
+    """Validate optional intrinsics dimensions against the batch metadata."""
+    if value is None:
+        return
+    metadata = instance.metadata
+    if value.width != metadata.width or value.height != metadata.height:
+        msg = (
+            f"CameraIntrinsics dimensions ({value.width}x{value.height}) do not match "
+            f"VideoMetadata dimensions ({metadata.width}x{metadata.height}). "
+            "This may indicate either rig calibration errors or video encoding errors."
+        )
+        raise ValueError(msg)
+
+
 @attrs.define(hash=False, frozen=True)
 class MotionVectorData:
     """Per-frame motion vectors from H.264/HEVC (FFmpeg AVMotionVector). Variable num_blocks per frame."""
@@ -146,6 +169,7 @@ class CameraData:
         frames: decoded RGB, shape ``(N, H, W, 3)``, ``uint8``; row ``i`` is the image at index ``i``
         metadata: stream geometry and related fields (``VideoMetadata``)
         motion_vectors: optional per-frame motion vectors; when set, length ``N`` matches ``frames``
+        intrinsics: optional typed camera calibration for the same image geometry as ``metadata``
         extrinsics: optional rigid transform from the camera frame to a caller-defined reference frame
 
     """
@@ -179,4 +203,8 @@ class CameraData:
         default=None,
         validator=_motion_vectors,
     )  # optional; requires decoder with export_mvs
+    intrinsics: CameraIntrinsics | None = attrs.field(
+        default=None,
+        validator=_intrinsics_dimensions_match_metadata,
+    )
     extrinsics: SensorExtrinsics | None = attrs.field(default=None)

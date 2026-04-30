@@ -22,6 +22,7 @@ import numpy.typing as npt
 
 from cosmos_curate.core.sensors.data.camera_data import CameraData
 from cosmos_curate.core.sensors.data.extrinsics import SensorExtrinsics
+from cosmos_curate.core.sensors.data.intrinsics import CameraIntrinsics
 from cosmos_curate.core.sensors.data.video import VideoIndex, VideoMetadata
 from cosmos_curate.core.sensors.sampling.sampler import sample_window_indices
 from cosmos_curate.core.sensors.sampling.spec import SamplingSpec
@@ -59,12 +60,13 @@ class CameraSensor:
 
     """
 
-    def __init__(
+    def __init__(  # noqa: PLR0913
         self,
         source: DataSource,
         stream_idx: int = 0,
         decode_config: VideoDecodeConfig = DEFAULT_VIDEO_DECODE_CONFIG,
         index_method: VideoIndexCreationMethod = VideoIndexCreationMethod.FROM_HEADER,
+        intrinsics: CameraIntrinsics | None = None,
         extrinsics: SensorExtrinsics | None = None,
     ) -> None:
         """Initialize the camera sensor.
@@ -81,6 +83,9 @@ class CameraSensor:
                 :class:`~cosmos_curate.core.sensors.types.types.VideoIndexCreationMethod`.
                 Prefer ``FROM_HEADER``. Use ``FULL_DEMUX`` only for tests or rare
                 validation; if production needs full demux, file an issue.
+            intrinsics: Optional pre-parsed camera calibration for the decoded
+                image geometry. Callers using parser objects should parse them
+                before constructing ``CameraSensor``.
             extrinsics: Optional pre-parsed rigid transform from the camera frame
                 to a caller-defined reference frame.
 
@@ -88,6 +93,7 @@ class CameraSensor:
         self._source = source
         self._stream_idx = stream_idx
         self._decode_config = decode_config
+        self._intrinsics = intrinsics
         self._extrinsics = extrinsics
         self._video_index, self._video_metadata = make_index_and_metadata(
             self._source, self._stream_idx, index_method=index_method
@@ -184,6 +190,7 @@ class CameraSensor:
                 pts_stream=empty_ts,
                 frames=empty_frames,
                 metadata=self._video_metadata,
+                intrinsics=self._intrinsics,
                 extrinsics=self._extrinsics,
             )
         return self._empty_camera_data
@@ -253,5 +260,6 @@ class CameraSensor:
                     pts_stream=pts_stream_expanded,
                     frames=frames,
                     metadata=self._video_metadata,
+                    intrinsics=self._intrinsics,
                     extrinsics=self._extrinsics,
                 )

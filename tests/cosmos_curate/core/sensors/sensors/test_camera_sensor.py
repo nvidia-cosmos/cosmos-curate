@@ -31,6 +31,7 @@ import numpy.typing as npt
 import pytest
 
 from cosmos_curate.core.sensors.data.extrinsics import SensorExtrinsics
+from cosmos_curate.core.sensors.data.intrinsics import CameraIntrinsics
 from cosmos_curate.core.sensors.data.video import VideoIndex, VideoMetadata
 from cosmos_curate.core.sensors.sampling.grid import SamplingWindow
 from cosmos_curate.core.sensors.sampling.policy import SamplingPolicy
@@ -100,6 +101,17 @@ class _FakeDecoder:
 def _make_extrinsics() -> SensorExtrinsics:
     """Build a minimal SensorExtrinsics instance for CameraSensor tests."""
     return SensorExtrinsics(matrix=np.eye(4, dtype=np.float64))
+
+
+def _make_intrinsics(*, width: int = 2, height: int = 2) -> CameraIntrinsics:
+    """Build a minimal CameraIntrinsics instance for CameraSensor tests."""
+    return CameraIntrinsics(
+        camera_matrix=np.eye(3, dtype=np.float64),
+        distortion_coefficients=np.zeros(5, dtype=np.float64),
+        distortion_model="brown_conrady",
+        width=width,
+        height=height,
+    )
 
 
 @pytest.fixture
@@ -733,6 +745,129 @@ def test_camera_sensor_defaults_extrinsics_to_none(
     assert batch.extrinsics is None
 
 
+def test_camera_sensor_preserves_provided_intrinsics(
+    patch_camera_sensor_dependencies: Callable[..., None],
+) -> None:
+    """CameraSensor should attach configured intrinsics to sampled batches."""
+    index, metadata = _make_video_index_and_metadata(
+        pts_ns=[100, 200],
+        pts_stream=[10, 20],
+        is_keyframe=[True, False],
+        is_discard=[False, False],
+        kf_pts_ns=[100],
+        kf_pts_stream=[10],
+    )
+    intrinsics = _make_intrinsics(width=metadata.width, height=metadata.height)
+
+    def fake_make_index_and_metadata(
+        source: object,
+        stream_idx: int = 0,
+        index_method: object = None,
+    ) -> tuple[VideoIndex, VideoMetadata]:
+        del source, stream_idx, index_method
+        return index, metadata
+
+    def fake_decoder_open(
+        source: object,
+        stream_idx: int = 0,
+        config: object = None,
+        stats: object = None,
+    ) -> _FakeDecoder:
+        del source, stream_idx, config, stats
+        return _FakeDecoder(
+            time_base=index.time_base,
+            decode_fn=lambda decode_plan: np.zeros((2, metadata.height, metadata.width, 3), dtype=np.uint8),  # noqa: ARG005
+        )
+
+    def fake_sample_window_indices(
+        canonical: npt.NDArray[np.int64],
+        grid: npt.NDArray[np.int64],
+        *,
+        policy: object = None,
+        dedup: bool = True,
+    ) -> tuple[npt.NDArray[np.int64], npt.NDArray[np.int64]]:
+        del canonical, grid, policy, dedup
+        return np.array([0, 1], dtype=np.int64), np.array([1, 1], dtype=np.int64)
+
+    patch_camera_sensor_dependencies(
+        make_index_and_metadata_fn=fake_make_index_and_metadata,
+        decoder_open_fn=fake_decoder_open,
+        sample_window_indices_fn=fake_sample_window_indices,
+    )
+
+    sensor = CameraSensor(b"not-used", intrinsics=intrinsics)
+    grid = make_sampling_grid(
+        timestamps_ns=np.array([100, 200, 201], dtype=np.int64),
+        stride_ns=1_000,
+        duration_ns=1_000,
+    )
+
+    batch = next(sensor.sample(SamplingSpec(grid=grid)))
+
+    assert batch.intrinsics is intrinsics
+
+
+def test_camera_sensor_defaults_intrinsics_to_none(
+    patch_camera_sensor_dependencies: Callable[..., None],
+) -> None:
+    """CameraSensor should keep intrinsics optional for existing callers."""
+    index, metadata = _make_video_index_and_metadata(
+        pts_ns=[100, 200],
+        pts_stream=[10, 20],
+        is_keyframe=[True, False],
+        is_discard=[False, False],
+        kf_pts_ns=[100],
+        kf_pts_stream=[10],
+    )
+
+    def fake_make_index_and_metadata(
+        source: object,
+        stream_idx: int = 0,
+        index_method: object = None,
+    ) -> tuple[VideoIndex, VideoMetadata]:
+        del source, stream_idx, index_method
+        return index, metadata
+
+    def fake_decoder_open(
+        source: object,
+        stream_idx: int = 0,
+        config: object = None,
+        stats: object = None,
+    ) -> _FakeDecoder:
+        del source, stream_idx, config, stats
+        return _FakeDecoder(
+            time_base=index.time_base,
+            decode_fn=lambda decode_plan: np.zeros((2, metadata.height, metadata.width, 3), dtype=np.uint8),  # noqa: ARG005
+        )
+
+    def fake_sample_window_indices(
+        canonical: npt.NDArray[np.int64],
+        grid: npt.NDArray[np.int64],
+        *,
+        policy: object = None,
+        dedup: bool = True,
+    ) -> tuple[npt.NDArray[np.int64], npt.NDArray[np.int64]]:
+        del canonical, grid, policy, dedup
+        return np.array([0, 1], dtype=np.int64), np.array([1, 1], dtype=np.int64)
+
+    patch_camera_sensor_dependencies(
+        make_index_and_metadata_fn=fake_make_index_and_metadata,
+        decoder_open_fn=fake_decoder_open,
+        sample_window_indices_fn=fake_sample_window_indices,
+    )
+
+    sensor = CameraSensor(b"not-used")
+    grid = make_sampling_grid(
+        timestamps_ns=np.array([100, 200, 201], dtype=np.int64),
+        stride_ns=1_000,
+        duration_ns=1_000,
+    )
+
+    batch = next(sensor.sample(SamplingSpec(grid=grid)))
+
+    assert batch.intrinsics is None
+
+
 def test_camera_sensor_empty_batches_preserve_extrinsics(
     patch_camera_sensor_dependencies: Callable[..., None],
 ) -> None:
@@ -795,6 +930,71 @@ def test_camera_sensor_empty_batches_preserve_extrinsics(
 
     assert empty0.extrinsics is extrinsics
     assert empty1.extrinsics is extrinsics
+    assert empty0 is empty1
+
+
+def test_camera_sensor_empty_batches_preserve_intrinsics(
+    patch_camera_sensor_dependencies: Callable[..., None],
+) -> None:
+    """CameraSensor should attach configured intrinsics to cached empty batches."""
+    index, metadata = _make_video_index_and_metadata(
+        pts_ns=[100, 200],
+        pts_stream=[10, 20],
+        is_keyframe=[True, False],
+        is_discard=[False, False],
+        kf_pts_ns=[100],
+        kf_pts_stream=[10],
+    )
+    intrinsics = _make_intrinsics(width=metadata.width, height=metadata.height)
+
+    def fake_make_index_and_metadata(
+        source: object,
+        stream_idx: int = 0,
+        index_method: object = None,
+    ) -> tuple[VideoIndex, VideoMetadata]:
+        del source, stream_idx, index_method
+        return index, metadata
+
+    def fake_sample_window_indices(
+        canonical: npt.NDArray[np.int64],
+        grid: npt.NDArray[np.int64],
+        *,
+        policy: object = None,
+        dedup: bool = True,
+    ) -> tuple[npt.NDArray[np.int64], npt.NDArray[np.int64]]:
+        del canonical, grid, policy, dedup
+        return np.array([], dtype=np.int64), np.array([], dtype=np.int64)
+
+    def fake_decoder_open(
+        source: object,
+        stream_idx: int = 0,
+        config: object = None,
+        stats: object = None,
+    ) -> _FakeDecoder:
+        del source, stream_idx, config, stats
+        return _FakeDecoder(
+            time_base=index.time_base,
+            decode_fn=lambda decode_plan: np.empty((0, metadata.height, metadata.width, 3), dtype=np.uint8),  # noqa: ARG005
+        )
+
+    patch_camera_sensor_dependencies(
+        make_index_and_metadata_fn=fake_make_index_and_metadata,
+        decoder_open_fn=fake_decoder_open,
+        sample_window_indices_fn=fake_sample_window_indices,
+    )
+
+    sensor = CameraSensor(b"not-used", intrinsics=intrinsics)
+    grid = make_sampling_grid(
+        timestamps_ns=np.array([150, 250], dtype=np.int64),
+        stride_ns=1_000,
+        duration_ns=1_000,
+    )
+
+    empty0 = next(sensor.sample(SamplingSpec(grid=grid)))
+    empty1 = sensor._get_empty_camera_data()
+
+    assert empty0.intrinsics is intrinsics
+    assert empty1.intrinsics is intrinsics
     assert empty0 is empty1
 
 

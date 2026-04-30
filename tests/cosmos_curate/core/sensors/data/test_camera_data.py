@@ -23,6 +23,7 @@ import pytest
 
 from cosmos_curate.core.sensors.data.camera_data import CameraData, MotionVectorData
 from cosmos_curate.core.sensors.data.extrinsics import SensorExtrinsics
+from cosmos_curate.core.sensors.data.intrinsics import CameraIntrinsics
 from cosmos_curate.core.sensors.data.video import VideoMetadata
 
 
@@ -57,6 +58,17 @@ def _make_camera_data() -> CameraData:
 def _make_extrinsics() -> SensorExtrinsics:
     """Build a minimal SensorExtrinsics instance."""
     return SensorExtrinsics(matrix=np.eye(4, dtype=np.float64))
+
+
+def _make_intrinsics(*, width: int = 1, height: int = 1) -> CameraIntrinsics:
+    """Build a minimal CameraIntrinsics instance."""
+    return CameraIntrinsics(
+        camera_matrix=np.eye(3, dtype=np.float64),
+        distortion_coefficients=np.zeros(5, dtype=np.float64),
+        distortion_model="brown_conrady",
+        width=width,
+        height=height,
+    )
 
 
 def test_camera_data_raises_on_motion_vector_length_mismatch() -> None:
@@ -238,6 +250,50 @@ def test_camera_data_preserves_provided_extrinsics() -> None:
     )
 
     assert camera_data.extrinsics is extrinsics
+
+
+def test_camera_data_defaults_intrinsics_to_none() -> None:
+    """CameraData should keep intrinsics optional for existing callers."""
+    camera_data = _make_camera_data()
+
+    assert camera_data.intrinsics is None
+
+
+def test_camera_data_preserves_provided_intrinsics() -> None:
+    """CameraData should store an explicitly provided CameraIntrinsics object unchanged."""
+    intrinsics = _make_intrinsics()
+
+    camera_data = CameraData(
+        align_timestamps_ns=np.array([1], dtype=np.int64),
+        sensor_timestamps_ns=np.array([1], dtype=np.int64),
+        pts_stream=np.array([1], dtype=np.int64),
+        frames=np.zeros((1, 1, 1, 3), dtype=np.uint8),
+        metadata=_make_metadata(),
+        intrinsics=intrinsics,
+    )
+
+    assert camera_data.intrinsics is intrinsics
+
+
+def test_camera_data_raises_when_intrinsics_dimensions_do_not_match_metadata() -> None:
+    """CameraData should reject intrinsics whose image dimensions disagree with metadata."""
+    intrinsics = _make_intrinsics(width=2, height=3)
+
+    with pytest.raises(
+        ValueError,
+        match=(
+            r"CameraIntrinsics dimensions \(2x3\) do not match VideoMetadata dimensions \(1x1\)\. "
+            r"This may indicate either rig calibration errors or video encoding errors\."
+        ),
+    ):
+        CameraData(
+            align_timestamps_ns=np.array([1], dtype=np.int64),
+            sensor_timestamps_ns=np.array([1], dtype=np.int64),
+            pts_stream=np.array([1], dtype=np.int64),
+            frames=np.zeros((1, 1, 1, 3), dtype=np.uint8),
+            metadata=_make_metadata(),
+            intrinsics=intrinsics,
+        )
 
 
 @pytest.mark.parametrize(
