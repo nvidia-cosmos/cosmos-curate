@@ -2,6 +2,43 @@
 
 ## Latest
 
+## [1.4.0]
+
+### Released
+
+- 2026-05-01
+
+### Added
+
+- SAM3-based video object tracking, per-event VLM captioning, serialized SAM3 outputs, an example
+  event pipeline, and a demo tool.
+- Sensor library support for GPS, IMU, camera intrinsics, and camera extrinsics data.
+- MP4 header validation utilities for video-index checks.
+- Qwen3.5-27B support for image captioning.
+- External OpenAI/Gemini endpoint support for image semantic filtering and classification stages.
+- Async OpenAI/Gemini request handling with `batch_size`-controlled concurrency for image/video
+  captioning and external filter/classifier stages.
+- `exclusive_end_ns` support in `make_ts_grid` for half-open clip spans.
+
+### Fixed
+
+- Prevent Qwen from falling back to native-resolution inputs during resize.
+- Isolate vLLM async per-window payload handling.
+- Preserve model-variant-specific image filter errors.
+
+### Changed
+
+- Upgrade the `cosmos-xenna` Python package and submodule to v0.4.0.
+- Add a dedicated `sam3` pixi environment for Segment Anything 3 dependencies.
+- Include runtime prompt and config data files in built wheels.
+
+### Documentation
+
+- Reorganize curator documentation into design, guide, and reference sections.
+- Add the interactive Slurm guide.
+- Add GPS and IMU sensor-library design documentation.
+- Update image pipeline documentation, including Qwen3.5 coverage.
+
 ## [1.3.0]
 
 ### Released
@@ -12,6 +49,7 @@
 
 - Image curation pipeline with semantic filtering
 - Image embedding stages (Cosmos-Embed1, InternVideo2-MM, OpenAI-compatible) and image annotate pipeline
+- Qwen3.5-27B support for vLLM video captioning
 - OpenAI- and Gemini-compatible endpoints for image captioning, filtering, and classification
 - Artificial-text detection stage for the video filtering pipeline (PaddleOCR-based)
 - Sensor library (camera-only) with `SensorGroup`, mcap-based ingestion, and timestamp validation
