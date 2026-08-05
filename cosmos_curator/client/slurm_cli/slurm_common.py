@@ -20,6 +20,7 @@ import pwd
 import shlex
 import socket
 import sys
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Self
@@ -82,6 +83,7 @@ _SLURM_ENV_VARS_TO_FORWARD = (
     "SLURM_NNODES",
     "SLURM_NTASKS_PER_NODE",
     "SLURMD_NODENAME",
+    "SLURM_RESTART_COUNT",
 )
 # Structured-logging toggles forwarded from the launching environment into the
 # container (when set) so the Ray head and workers log identically.
@@ -444,6 +446,87 @@ def _get_cache_environment() -> dict[str, str]:
     }
 
 
+def _base_container_environment(
+    *,
+    conda_override_cuda: str | None,
+    pixi_envs: Sequence[str] | None,
+) -> dict[str, str]:
+    """Return container values shared by Slurm submit, shell, and managed Ray jobs."""
+    values = {
+        SLURM_RAY_ENV_VAR_NAME: "True",
+        # Bootstrap scripts are executed before cosmos_curator is installed in
+        # every Pixi environment. Keep the source package importable.
+        "PYTHONPATH": str(CONTAINER_PATHS_CODE_DIR),
+        "COSMOS_S3_PROFILE_PATH": str(_CONTAINER_S3_CREDS_PATH),
+        "COSMOS_AZURE_PROFILE_PATH": str(_CONTAINER_AZURE_CREDS_PATH),
+        "NVCF_REQUEST_STATUS": "false",
+        "TQDM_MININTERVAL": "9000",
+        **_get_cache_environment(),
+    }
+    if conda_override_cuda is not None:
+        values["CONDA_OVERRIDE_CUDA"] = conda_override_cuda
+    if pixi_envs is not None:
+        values["COSMOS_CURATOR_SLIM_ENVS"] = ",".join(pixi_envs)
+    return values
+
+
+def _resolve_forwarded_environment(
+    entries: Sequence[str],
+    *,
+    source: Mapping[str, str],
+) -> dict[str, str]:
+    """Resolve ``NAME`` or ``NAME=value`` entries against a launching environment."""
+    values: dict[str, str] = {}
+    for entry in entries:
+        if "=" in entry:
+            key, value = entry.split("=", 1)
+            values[key] = value
+        elif entry in source:
+            values[entry] = source[entry]
+        else:
+            logger.warning("Environment variable %s is not set; not forwarding it to the container", entry)
+    return values
+
+
+def _build_container_srun_argv(  # noqa: PLR0913
+    *,
+    container_image: str,
+    container_mounts: Sequence[str],
+    container_env_keys: Sequence[str],
+    command: Sequence[str],
+    slurm_args: Sequence[str] = (),
+    pty: bool = False,
+) -> list[str]:
+    """Build the common Pyxis ``srun`` argument vector used by all Slurm launchers."""
+    if not command:
+        msg = "A command must be provided"
+        raise ValueError(msg)
+
+    srun_command = ["srun"]
+    if pty:
+        srun_command.append("--pty")
+    srun_command.extend(slurm_args)
+    srun_command.extend(
+        [
+            "--container-writable",
+            "--no-container-mount-home",
+            "--no-container-remap-root",
+            "--container-image",
+            _resolve_container_image(container_image),
+            "--container-mounts",
+            ",".join(container_mounts),
+            "--container-env",
+            ",".join(dict.fromkeys(container_env_keys)),
+            "bash",
+            "-c",
+            _get_container_entrypoint_command(),
+            "_",
+            *command,
+        ]
+    )
+    return srun_command
+
+
 def _get_clean_subprocess_environment() -> dict[str, str]:
     """Return host environment without Pixi/Conda activation state from the launcher shell."""
     env = os.environ.copy()
@@ -503,37 +586,18 @@ def _get_srun_environment(
     opts: SlurmContainerRuntime, *, include_slurm_env: bool = True
 ) -> tuple[dict[str, str], list[str]]:
     env = _get_clean_subprocess_environment()
-    container_env = {
-        SLURM_RAY_ENV_VAR_NAME: "True",
-        # Bootstrap scripts are executed by file path before cosmos_curator is
-        # installed in the Pixi environments. Make the source package importable
-        # without changing their existing invocation or mutating sys.path.
-        "PYTHONPATH": str(CONTAINER_PATHS_CODE_DIR),
-        "COSMOS_S3_PROFILE_PATH": str(_CONTAINER_S3_CREDS_PATH),
-        "COSMOS_AZURE_PROFILE_PATH": str(_CONTAINER_AZURE_CREDS_PATH),
-        "NVCF_REQUEST_STATUS": "false",
-        "TQDM_MININTERVAL": "9000",
-        **_get_cache_environment(),
-    }
-    if opts.conda_override_cuda is not None:
-        container_env["CONDA_OVERRIDE_CUDA"] = opts.conda_override_cuda
+    container_env = _base_container_environment(
+        conda_override_cuda=opts.conda_override_cuda,
+        pixi_envs=opts.pixi_envs,
+    )
 
     env.update(container_env)
     container_env_keys = list(container_env)
-
-    for entry in opts.environment:
-        if "=" in entry:
-            key, value = entry.split("=", 1)
-            env[key] = value
-            container_env_keys.append(key)
-        elif entry in env:
-            container_env_keys.append(entry)
-        else:
-            logger.warning("Environment variable %s is not set; not forwarding it to the container", entry)
-
+    forwarded = _resolve_forwarded_environment(opts.environment, source=env)
+    env.update(forwarded)
+    container_env_keys.extend(forwarded)
     if opts.pixi_envs is not None:
         env["COSMOS_CURATOR_SLIM_ENVS"] = ",".join(opts.pixi_envs)
-        container_env_keys.append("COSMOS_CURATOR_SLIM_ENVS")
 
     # Forward structured-logging toggles present in the launching environment.
     container_env_keys.extend(name for name in _LOG_ENV_VARS_TO_FORWARD if name in env)
@@ -562,33 +626,13 @@ def _build_srun_command(
     container_mounts: list[str] | None = None,
     pty: bool = False,
 ) -> SrunCommand:
-    if not opts.command:
-        msg = "A command must be provided"
-        raise ValueError(msg)
-
     subprocess_env, container_env_keys = _get_srun_environment(opts)
-    srun_command = ["srun"]
-    if pty:
-        srun_command.append("--pty")
-    if slurm_args is not None:
-        srun_command.extend(slurm_args)
-
-    srun_command.extend(
-        [
-            "--container-writable",
-            "--no-container-mount-home",
-            "--no-container-remap-root",
-            "--container-image",
-            _resolve_container_image(opts.container_image),
-            "--container-mounts",
-            ",".join(container_mounts if container_mounts is not None else _get_srun_mounts(opts)),
-            "--container-env",
-            ",".join(container_env_keys),
-            "bash",
-            "-c",
-            _get_container_entrypoint_command(),
-            "_",
-            *opts.command,
-        ]
+    srun_command = _build_container_srun_argv(
+        container_image=opts.container_image,
+        container_mounts=container_mounts if container_mounts is not None else _get_srun_mounts(opts),
+        container_env_keys=container_env_keys,
+        command=opts.command,
+        slurm_args=slurm_args or (),
+        pty=pty,
     )
     return SrunCommand(command=srun_command, environment=subprocess_env, container_env_keys=container_env_keys)

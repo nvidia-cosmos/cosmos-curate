@@ -23,13 +23,23 @@ _SCAN_ROOTS = (
     _REPO_ROOT / "cosmos_curator",
     _REPO_ROOT / "tests",
 )
+# The rule assumes Python 3.12, where native annotations always evaluate. These modules run on a node's own
+# python3, so deferred annotations are what keeps PEP 585 and PEP 604 out of their runtime, and their own
+# contract tests require the import this one forbids. See the onnode package docstring.
+_EXEMPT_DIR = _REPO_ROOT / "cosmos_curator" / "client" / "slurm_cli" / "managed_ray" / "onnode"
 
 
 def _python_files() -> list[Path]:
     files: list[Path] = []
     for root in _SCAN_ROOTS:
-        files.extend(root.rglob("*.py"))
+        files.extend(path for path in root.rglob("*.py") if path.parent != _EXEMPT_DIR)
     return sorted(files)
+
+
+def test_exemption_covers_only_the_on_node_modules() -> None:
+    """The exemption is a directory, so it must not quietly widen as the launcher grows."""
+    exempt = sorted(path.name for path in _EXEMPT_DIR.glob("*.py"))
+    assert exempt == ["__init__.py", "slurm_ray_runtime.py", "slurm_ray_state.py"]
 
 
 def _code_before_comment(line: str) -> str:

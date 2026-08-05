@@ -122,6 +122,11 @@ extend-select = ["I"]
 "tests/**/*.py" = ["INP001", "SLF001", "PLR2004"]
 "cosmos_curator/pipelines/video/super_resolution/inference_seedvr2_window.py" = ["ALL"]
 
+# Uploaded into a Slurm run directory and run by a node's own python3. See the onnode package docstring for why
+# this floor exists; do not raise it to match the project.
+[tool.ruff.per-file-target-version]
+"cosmos_curator/client/slurm_cli/managed_ray/onnode/*.py" = "py38"
+
 [tool.ruff.lint.isort]
 known-first-party = ["cosmos_curator", "cosmos_xenna"]
 

@@ -81,8 +81,10 @@ Agent-friendly has two complementary meanings:
 - **Authoring.** Components expose clear, typed interfaces that coding agents can discover and combine.
 - **Operations.** Structured inputs and machine-readable results make runs reproducible and diagnosable by agentic tools.
 
-The [Orca design note](orca.md) explores the operations layer. Orca remains separate from the reusable toolkit; Curator
-components and recipes remain usable without it.
+Two design notes explore the operations layer from different ends: the [Orca design note](orca.md) covers agentic
+orchestration, and the [managed Ray clusters design](curator-next-slurm-ray.md) covers the cluster substrate those
+runs execute on. Both remain separate from the reusable toolkit; Curator components and recipes remain usable without
+either.
 
 ## Reference Recipes
 

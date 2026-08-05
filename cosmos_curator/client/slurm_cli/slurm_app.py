@@ -16,6 +16,7 @@
 
 import typer
 
+from cosmos_curator.client.slurm_cli.managed_ray import ray_cli
 from cosmos_curator.client.slurm_cli.slurm_shell import import_image_cli, shell_cli
 from cosmos_curator.client.slurm_cli.slurm_submit import job_log_cli, submit_cli
 
@@ -27,6 +28,7 @@ slurm_cli = typer.Typer(
     no_args_is_help=True,
 )
 
+slurm_cli.add_typer(ray_cli, name="ray")
 slurm_cli.command("submit", no_args_is_help=True)(submit_cli)
 slurm_cli.command("shell")(shell_cli)
 slurm_cli.command("import-image", no_args_is_help=True)(import_image_cli)

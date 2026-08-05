@@ -46,6 +46,7 @@ This directory collects documentation for Cosmos Curator. It is organized by the
 - [Data Integrity Design](design/data-integrity-design.md) - architecture, v1 API, and phased delivery plan for the sensor data-integrity framework.
 - [Data Integrity Metrics](design/data-integrity-metrics.md) - initial metric catalog for sensor data-integrity checks.
 - [Orca Agentic Curation](design/orca.md) - agentic orchestration direction for large-scale curation.
+- [Managed Ray Clusters for Curator Pipelines on Slurm](design/curator-next-slurm-ray.md) - run-scoped Ray clusters built from independent Slurm jobs.
 - [Schema-Validated Pipeline Configs](design/pipeline-configs.md) - Ray Data config input contract and implementation plan.
 - [Slim Image Design](design/slim-image.md) - slim container image design and rollout plan.
 - [Speed-of-Light Design](design/speed-of-light.md) - captioning throughput measurement and optimization direction.
