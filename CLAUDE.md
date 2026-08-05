@@ -22,6 +22,7 @@ Pre-commit hooks run ruff automatically. A submodule-check hook warns before com
 
 **Testing**:
 - CPU tests: `pytest` (env-marked tests are excluded by default via `pytest.ini`)
+- Tests that intentionally exercise CLI usage errors or other expected stderr/stdout output must capture and assert that output with `capsys`/`capfd`; passing tests should not leak expected errors into `pytest -s` CI logs.
 - GPU tests: `cosmos-curator local launch --curator-path . -- pixi run --as-is -e default gputest` (the `gputest` task scopes `-m env` to `tests/cosmos_curator/{pipelines,models}`; running `pytest -m env tests/` instead fails collection on dev-only client/benchmark deps like `fabric`/`invoke`). Requires model weights staged in the local workspace (`model_download`).
 - Mark GPU tests with `@pytest.mark.env("default")` (or other env name)
 - Place tests in `tests/` mirroring module paths. Uses `--import-mode=importlib`.

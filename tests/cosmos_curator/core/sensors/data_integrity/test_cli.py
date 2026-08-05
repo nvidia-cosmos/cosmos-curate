@@ -126,11 +126,17 @@ def test_threshold_flags_reach_the_check_engine(monkeypatch: pytest.MonkeyPatch)
         ("--max-jitter-percent", "inf"),
     ],
 )
-def test_invalid_threshold_values_are_rejected_by_argparse(flag: str, value: str) -> None:
+def test_invalid_threshold_values_are_rejected_by_argparse(
+    flag: str, value: str, capsys: pytest.CaptureFixture[str]
+) -> None:
     """Bad policy values fail at parse time rather than producing a meaningless verdict."""
     with pytest.raises(SystemExit) as excinfo:
         cli.main(["--source", "clip.mp4", flag, value])
     assert excinfo.value.code == 2  # argparse's own usage-error status
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert f"argument {flag}:" in captured.err
+    assert value in captured.err
 
 
 def test_interrupt_exits_without_a_traceback(
