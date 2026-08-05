@@ -14,9 +14,14 @@
 # limitations under the License.
 """Tests for heuristic caption quality flag annotations."""
 
+import attrs
 import pytest
 
-from cosmos_curator.pipelines.video.captioning.caption_quality_flags import apply_caption_quality_flags
+from cosmos_curator.pipelines.video.captioning.caption_quality_flags import (
+    DEFAULT_CAPTION_QUALITY_THRESHOLDS,
+    CaptionQualityThresholdConfig,
+    apply_caption_quality_flags,
+)
 from cosmos_curator.pipelines.video.utils.data_model import Window
 
 
@@ -37,6 +42,97 @@ def _caption_with_repeated_trigram(repeat_count: int) -> str:
     for index in range(repeat_count):
         tokens.extend(("alpha", "beta", "gamma", f"context{index}a", f"context{index}b"))
     return " ".join(tokens)
+
+
+def test_threshold_config_defaults_and_immutability() -> None:
+    """The immutable default policy should preserve the delivered thresholds."""
+    assert (
+        CaptionQualityThresholdConfig(
+            length_floor_words=4,
+            length_ceiling_words=1024,
+            repeated_trigram_min_count=5,
+            near_duplicate_jaccard_threshold=0.9,
+        )
+        == DEFAULT_CAPTION_QUALITY_THRESHOLDS
+    )
+
+    with pytest.raises(attrs.exceptions.FrozenInstanceError):
+        DEFAULT_CAPTION_QUALITY_THRESHOLDS.length_floor_words = 5  # type: ignore[misc]
+
+
+def test_threshold_config_accepts_inclusive_boundaries() -> None:
+    """All inclusive threshold boundaries should be valid."""
+    assert CaptionQualityThresholdConfig(
+        length_floor_words=0,
+        length_ceiling_words=1,
+        repeated_trigram_min_count=2,
+        near_duplicate_jaccard_threshold=1.0,
+    )
+    assert CaptionQualityThresholdConfig(length_floor_words=4, length_ceiling_words=4)
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"length_floor_words": -1},
+        {"length_floor_words": 0, "length_ceiling_words": 0},
+        {"length_floor_words": 5, "length_ceiling_words": 4},
+        {"repeated_trigram_min_count": 1},
+        {"near_duplicate_jaccard_threshold": 0.0},
+        {"near_duplicate_jaccard_threshold": 1.01},
+    ],
+)
+def test_threshold_config_rejects_invalid_bounds(overrides: dict[str, int | float]) -> None:
+    """Threshold values outside the selected bounds should fail validation."""
+    with pytest.raises(ValueError, match="must be"):
+        CaptionQualityThresholdConfig(**overrides)  # type: ignore[arg-type]
+
+
+def test_explicit_default_policy_matches_implicit_default() -> None:
+    """Passing the default policy explicitly should preserve existing flag behavior."""
+    implicit = _window("alpha beta gamma delta")
+    explicit = _window("alpha beta gamma delta")
+
+    apply_caption_quality_flags([[implicit]], "qwen")
+    apply_caption_quality_flags([[explicit]], "qwen", thresholds=DEFAULT_CAPTION_QUALITY_THRESHOLDS)
+
+    assert (implicit.flag_length_outlier, implicit.flag_repetition, implicit.flag_near_duplicate) == (
+        explicit.flag_length_outlier,
+        explicit.flag_repetition,
+        explicit.flag_near_duplicate,
+    )
+
+
+def test_length_floor_override_changes_length_flag() -> None:
+    """A larger word floor should flag captions accepted by the default policy."""
+    window = _window("one two three four")
+    apply_caption_quality_flags([[window]], "qwen", thresholds=CaptionQualityThresholdConfig(length_floor_words=5))
+    assert window.flag_length_outlier is True
+
+
+def test_length_ceiling_override_changes_length_flag() -> None:
+    """A smaller word ceiling should flag captions accepted by the default policy."""
+    window = _window("one two three four five")
+    apply_caption_quality_flags([[window]], "qwen", thresholds=CaptionQualityThresholdConfig(length_ceiling_words=4))
+    assert window.flag_length_outlier is True
+
+
+def test_repeated_trigram_override_changes_repetition_flag() -> None:
+    """A smaller trigram threshold should flag a four-repeat caption."""
+    window = _window(_caption_with_repeated_trigram(4))
+    thresholds = CaptionQualityThresholdConfig(repeated_trigram_min_count=4)
+    apply_caption_quality_flags([[window]], "qwen", thresholds=thresholds)
+    assert window.flag_repetition is True
+
+
+def test_near_duplicate_override_changes_duplicate_flag() -> None:
+    """A smaller Jaccard threshold should flag a pair below the default threshold."""
+    first = _window("alpha beta gamma delta epsilon zeta eta theta iota kappa", start_frame=0, end_frame=10)
+    second = _window("alpha beta gamma delta epsilon zeta eta theta iota lambda", start_frame=10, end_frame=20)
+    thresholds = CaptionQualityThresholdConfig(near_duplicate_jaccard_threshold=0.8)
+    apply_caption_quality_flags([[first, second]], "qwen", thresholds=thresholds)
+    assert first.flag_near_duplicate is True
+    assert second.flag_near_duplicate is True
 
 
 def test_normalization_trims_whitespace_case_and_trailing_punctuation() -> None:

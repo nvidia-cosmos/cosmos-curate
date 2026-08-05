@@ -18,6 +18,7 @@
 import pytest
 
 from cosmos_curator.core.interfaces.stage_interface import CuratorStageSpec
+from cosmos_curator.pipelines.video.captioning.caption_quality_flags import CaptionQualityThresholdConfig
 from cosmos_curator.pipelines.video.captioning.captioning_builders import (
     CaptioningConfig,
     OpenAIConfig,
@@ -103,12 +104,14 @@ def test_build_caption_stage_unsupported_backend_raises() -> None:
         _build_captioning_caption_stage(cfg)
 
 
-def test_build_caption_stage_vllm_forwards_caption_quality_flag() -> None:
-    """VllmCaptionStage should receive caption quality flag config."""
+def test_build_caption_stage_vllm_forwards_caption_quality_config() -> None:
+    """VllmCaptionStage should receive caption quality enablement and thresholds."""
+    thresholds = CaptionQualityThresholdConfig(length_floor_words=7)
     cfg = CaptioningConfig(
         backend=VllmConfig(model_variant="qwen"),
         window_config=WindowConfig(),
         caption_quality_flags_enabled=False,
+        caption_quality_thresholds=thresholds,
     )
 
     stage_spec = _build_captioning_caption_stage(cfg)
@@ -116,6 +119,7 @@ def test_build_caption_stage_vllm_forwards_caption_quality_flag() -> None:
     assert isinstance(stage_spec, CuratorStageSpec)
     assert isinstance(stage_spec.stage, VllmCaptionStage)
     assert stage_spec.stage._caption_quality_flags_enabled is False
+    assert stage_spec.stage._caption_quality_thresholds is thresholds
 
 
 # ---------------------------------------------------------------------------

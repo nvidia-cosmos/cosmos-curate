@@ -58,7 +58,11 @@ from cosmos_curator.models.vllm_exceptions import FatalVllmDecodeError
 from cosmos_curator.models.vllm_model_ids import get_vllm_model_id
 from cosmos_curator.models.vllm_sentinels import VLLM_UNKNOWN_CAPTION
 from cosmos_curator.pipelines.common.model_constraints import PreprocessMode
-from cosmos_curator.pipelines.video.captioning.caption_quality_flags import apply_caption_quality_flags
+from cosmos_curator.pipelines.video.captioning.caption_quality_flags import (
+    DEFAULT_CAPTION_QUALITY_THRESHOLDS,
+    CaptionQualityThresholdConfig,
+    apply_caption_quality_flags,
+)
 from cosmos_curator.pipelines.video.captioning.single_inference import SingleInferenceCaptionStage
 from cosmos_curator.pipelines.video.utils import windowing_utils
 from cosmos_curator.pipelines.video.utils.data_model import (
@@ -511,6 +515,7 @@ class VllmCaptionStage(SingleInferenceCaptionStage):
         log_stats: bool = False,
         use_filter_windows: bool = False,
         caption_quality_flags_enabled: bool = True,
+        caption_quality_thresholds: CaptionQualityThresholdConfig = DEFAULT_CAPTION_QUALITY_THRESHOLDS,
         caption_single_options: CaptionSingleOptions = _DEFAULT_CAPTION_SINGLE_OPTIONS,
     ) -> None:
         """Initialize the vLLM caption stage.
@@ -528,6 +533,7 @@ class VllmCaptionStage(SingleInferenceCaptionStage):
                 of clip.windows. Use this when paired with VllmPrepStage(use_filter_windows=True).
             caption_quality_flags_enabled: Whether to annotate subject-caption windows
                 with heuristic caption quality flags.
+            caption_quality_thresholds: Threshold policy for caption quality flags.
             caption_single_options: Sampling overrides applied only by
                 :meth:`caption_single`. The default empty struct keeps
                 the per-window batch path's ``SamplingParams`` and the
@@ -553,6 +559,7 @@ class VllmCaptionStage(SingleInferenceCaptionStage):
         self._inflight_batching = inflight_batching
         self._use_filter_windows = use_filter_windows
         self._caption_quality_flags_enabled = caption_quality_flags_enabled
+        self._caption_quality_thresholds = caption_quality_thresholds
         # caption_single overrides — unpacked to private fields so helper
         # methods can read them without ``self._caption_single_options.<field>``
         # bookkeeping. The dataclass is just a tidy constructor surface.
@@ -995,7 +1002,11 @@ class VllmCaptionStage(SingleInferenceCaptionStage):
             return
 
         window_groups = [clip.windows for task in tasks for clip in get_video_from_task(task).clips if clip.windows]
-        apply_caption_quality_flags(window_groups, self._vllm_config.model_variant)
+        apply_caption_quality_flags(
+            window_groups,
+            self._vllm_config.model_variant,
+            thresholds=self._caption_quality_thresholds,
+        )
 
     def _build_caption_single_sampling_params(self) -> "SamplingParams":
         """Return a fresh ``SamplingParams`` for ``caption_single`` with overrides applied.

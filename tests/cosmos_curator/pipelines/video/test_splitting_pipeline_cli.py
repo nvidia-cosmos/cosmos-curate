@@ -23,6 +23,10 @@ import pytest
 from cosmos_curator.core.interfaces.stage_interface import CuratorStage, CuratorStageSpec
 from cosmos_curator.core.utils.config.args_utils import fill_default_args
 from cosmos_curator.pipelines.common.model_constraints import PreprocessMode
+from cosmos_curator.pipelines.video.captioning.caption_quality_flags import (
+    DEFAULT_CAPTION_QUALITY_THRESHOLDS,
+    CaptionQualityThresholdConfig,
+)
 from cosmos_curator.pipelines.video.captioning.captioning_builders import CaptioningConfig, VllmAsyncCaptionConfig
 from cosmos_curator.pipelines.video.read_write.metadata_writer_stage import ClipWriterStage
 from cosmos_curator.pipelines.video.splitting_pipeline import _assemble_stages, _setup_parser
@@ -93,6 +97,62 @@ def test_no_caption_quality_flags_disables_flags() -> None:
     args = _parser().parse_args(["--no-caption-quality-flags"])
 
     assert args.caption_quality_flags_enabled is False
+
+
+def test_caption_quality_threshold_defaults() -> None:
+    """Split CLI defaults should come from the shared default policy."""
+    args = _parser().parse_args([])
+
+    assert args.caption_quality_length_floor_words == DEFAULT_CAPTION_QUALITY_THRESHOLDS.length_floor_words
+    assert args.caption_quality_length_ceiling_words == DEFAULT_CAPTION_QUALITY_THRESHOLDS.length_ceiling_words
+    assert (
+        args.caption_quality_repeated_trigram_min_count == DEFAULT_CAPTION_QUALITY_THRESHOLDS.repeated_trigram_min_count
+    )
+    assert (
+        args.caption_quality_near_duplicate_jaccard_threshold
+        == DEFAULT_CAPTION_QUALITY_THRESHOLDS.near_duplicate_jaccard_threshold
+    )
+
+
+def test_caption_quality_threshold_overrides_reach_captioning_config(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Split CLI threshold overrides should reach the captioning builder as one policy."""
+    captured = _capture_captioning_config(monkeypatch)
+    args = _caption_args(
+        [
+            "--caption-quality-length-floor-words",
+            "6",
+            "--caption-quality-length-ceiling-words",
+            "900",
+            "--caption-quality-repeated-trigram-min-count",
+            "3",
+            "--caption-quality-near-duplicate-jaccard-threshold",
+            "0.75",
+        ]
+    )
+
+    _assemble_stages(args)
+
+    assert captured["config"].caption_quality_thresholds == CaptionQualityThresholdConfig(
+        length_floor_words=6,
+        length_ceiling_words=900,
+        repeated_trigram_min_count=3,
+        near_duplicate_jaccard_threshold=0.75,
+    )
+
+
+def test_caption_quality_threshold_invalid_combination_fails_stage_assembly() -> None:
+    """Split stage assembly should validate the effective threshold policy."""
+    args = _caption_args(
+        [
+            "--caption-quality-length-floor-words",
+            "10",
+            "--caption-quality-length-ceiling-words",
+            "9",
+        ]
+    )
+
+    with pytest.raises(ValueError, match="length_ceiling_words"):
+        _assemble_stages(args)
 
 
 def test_caption_quality_stats_default_enabled() -> None:
@@ -243,6 +303,23 @@ def test_fill_default_args_does_not_inject_qwen_model_does_preprocess() -> None:
 
     fill_default_args(args, _setup_parser, omit_dests=frozenset({"qwen_model_does_preprocess"}))
     assert not hasattr(args, "qwen_model_does_preprocess")
+
+
+def test_fill_default_args_injects_caption_quality_threshold_defaults() -> None:
+    """JSON/API split configs should receive the shared threshold defaults when omitted."""
+    args = argparse.Namespace()
+
+    fill_default_args(args, _setup_parser)
+
+    assert args.caption_quality_length_floor_words == DEFAULT_CAPTION_QUALITY_THRESHOLDS.length_floor_words
+    assert args.caption_quality_length_ceiling_words == DEFAULT_CAPTION_QUALITY_THRESHOLDS.length_ceiling_words
+    assert (
+        args.caption_quality_repeated_trigram_min_count == DEFAULT_CAPTION_QUALITY_THRESHOLDS.repeated_trigram_min_count
+    )
+    assert (
+        args.caption_quality_near_duplicate_jaccard_threshold
+        == DEFAULT_CAPTION_QUALITY_THRESHOLDS.near_duplicate_jaccard_threshold
+    )
 
 
 def test_legacy_qwen_model_does_preprocess_false_in_json_config_is_ignored() -> None:

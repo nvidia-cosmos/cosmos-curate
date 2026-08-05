@@ -10,18 +10,58 @@
 """Test nvcf_split_benchmark."""
 
 import json
+import sys
 from pathlib import Path
 from secrets import randbelow
 from typing import Any
 from unittest.mock import MagicMock, mock_open, patch
 
+import pytest
+
 from benchmarks.secrets import KratosSecrets
 from benchmarks.split_pipeline.nvcf_split_benchmark import (
+    _caption_quality_threshold_values,
+    _parse_args,
     _read_optional_json,
     _run_benchmark_attempt,
     _summary_counts_are_valid,
     report_metrics,
 )
+from cosmos_curator.pipelines.video.captioning.caption_quality_flags import (
+    DEFAULT_CAPTION_QUALITY_THRESHOLDS,
+    CaptionQualityThresholdConfig,
+)
+
+_REQUIRED_NVCF_CLI_ARGS = [
+    "--funcid",
+    "test-function",
+    "--version",
+    "test-version",
+    "--captioning-algorithm",
+    "qwen",
+    "--splitting-algorithm",
+    "fixed-stride",
+    "--image",
+    "nvcr.io/test/cosmos-curator:test-tag",
+    "--metrics-endpoint",
+    "https://metrics.example.com",
+    "--backend",
+    "test-backend",
+    "--gpu",
+    "L40S",
+    "--instance-type",
+    "test-instance",
+    "--s3-input-prefix",
+    "s3://bucket/input",
+    "--s3-output-prefix",
+    "s3://bucket/output",
+    "--max-concurrency",
+    "1",
+    "--limit",
+    "1",
+    "--gpus-per-node",
+    "1",
+]
 
 
 def _make_caption_quality_stats() -> dict[str, Any]:
@@ -35,6 +75,12 @@ def _make_caption_quality_stats() -> dict[str, Any]:
             "blocked": 1,
             "error": 1,
             "skipped": 0,
+        },
+        "caption_quality_flags_evaluated_count": 3,
+        "caption_quality_flag_counts": {
+            "flag_length_outlier": 1,
+            "flag_repetition": 2,
+            "flag_near_duplicate": 0,
         },
         "empty_caption_count": 1,
         "sentinel_caption_count": 2,
@@ -50,6 +96,10 @@ def _make_caption_quality_metrics() -> dict[str, Any]:
         "caption_status_blocked": 1,
         "caption_status_error": 1,
         "caption_status_skipped": 0,
+        "caption_quality_flags_evaluated_count": 3,
+        "flag_length_outlier": 1,
+        "flag_repetition": 2,
+        "flag_near_duplicate": 0,
         "empty_caption_count": 1,
         "sentinel_caption_count": 2,
     }
@@ -58,6 +108,85 @@ def _make_caption_quality_metrics() -> dict[str, Any]:
 def _make_kratos_secrets() -> KratosSecrets:
     bearer_token = "test_token"  # noqa: S105
     return KratosSecrets(api_key="test_api", bearer_token=bearer_token)
+
+
+@pytest.mark.parametrize(
+    ("extra_args", "expected"),
+    [
+        ([], DEFAULT_CAPTION_QUALITY_THRESHOLDS),
+        (
+            [
+                "--caption-quality-length-floor-words",
+                "6",
+                "--caption-quality-length-ceiling-words",
+                "900",
+                "--caption-quality-repeated-trigram-min-count",
+                "3",
+                "--caption-quality-near-duplicate-jaccard-threshold",
+                "0.75",
+            ],
+            CaptionQualityThresholdConfig(
+                length_floor_words=6,
+                length_ceiling_words=900,
+                repeated_trigram_min_count=3,
+                near_duplicate_jaccard_threshold=0.75,
+            ),
+        ),
+    ],
+    ids=["defaults", "overrides"],
+)
+def test_parse_args_builds_caption_quality_threshold_config(
+    monkeypatch: pytest.MonkeyPatch,
+    extra_args: list[str],
+    expected: CaptionQualityThresholdConfig,
+) -> None:
+    """NVCF CLI values should build one validated shared threshold policy."""
+    monkeypatch.setattr(sys, "argv", ["nvcf_split_benchmark.py", *_REQUIRED_NVCF_CLI_ARGS, *extra_args])
+
+    args = _parse_args()
+
+    assert args.caption_quality_thresholds == expected
+
+
+def test_parse_args_rejects_invalid_caption_quality_thresholds(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """NVCF CLI should reject an invalid effective threshold policy."""
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "nvcf_split_benchmark.py",
+            *_REQUIRED_NVCF_CLI_ARGS,
+            "--caption-quality-length-floor-words",
+            "10",
+            "--caption-quality-length-ceiling-words",
+            "9",
+        ],
+    )
+
+    with pytest.raises(SystemExit):
+        _parse_args()
+
+    assert "length_ceiling_words" in capsys.readouterr().err
+
+
+def test_caption_quality_threshold_values_uses_split_config_keys() -> None:
+    """Serialize threshold values with the split JSON/API key spellings."""
+    thresholds = CaptionQualityThresholdConfig(
+        length_floor_words=6,
+        length_ceiling_words=900,
+        repeated_trigram_min_count=3,
+        near_duplicate_jaccard_threshold=0.75,
+    )
+
+    assert _caption_quality_threshold_values(thresholds) == {
+        "caption_quality_length_floor_words": 6,
+        "caption_quality_length_ceiling_words": 900,
+        "caption_quality_repeated_trigram_min_count": 3,
+        "caption_quality_near_duplicate_jaccard_threshold": 0.75,
+    }
 
 
 def test_run_benchmark_attempt_skips_status_logs(tmp_path: Path) -> None:

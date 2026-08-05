@@ -28,6 +28,10 @@ from benchmarks.secrets import KratosSecrets, NvcfSecrets, S3Secrets
 from benchmarks.summary import make_caption_quality_metrics, make_summary_metrics
 from cosmos_curator.client.nvcf_cli.ncf.launcher.nvcf_driver import _get_s3_config_str
 from cosmos_curator.client.nvcf_cli.ncf.launcher.nvcf_function import NvcfFunction, NvcfFunctionAlreadyDeployedError
+from cosmos_curator.pipelines.video.captioning.caption_quality_flags import (
+    DEFAULT_CAPTION_QUALITY_THRESHOLDS,
+    CaptionQualityThresholdConfig,
+)
 
 # Qwen's default temp is 0.000001
 DEFAULT_BENCHMARK_VLLM_SAMPLING_TEMPERATURE = 0.000001
@@ -48,6 +52,16 @@ def _split_image(image: str) -> tuple[str, str]:
         msg = f"image must be a full image reference with tag: {image}"
         raise ValueError(msg)
     return image_repository, image_tag
+
+
+def _caption_quality_threshold_values(config: CaptionQualityThresholdConfig) -> dict[str, int | float]:
+    """Serialize effective caption-quality thresholds for invoke args and metrics."""
+    return {
+        "caption_quality_length_floor_words": config.length_floor_words,
+        "caption_quality_length_ceiling_words": config.length_ceiling_words,
+        "caption_quality_repeated_trigram_min_count": config.repeated_trigram_min_count,
+        "caption_quality_near_duplicate_jaccard_threshold": config.near_duplicate_jaccard_threshold,
+    }
 
 
 def _log_retryable_attempt_failure(retry_state: tenacity.RetryCallState) -> None:
@@ -355,6 +369,7 @@ def nvcf_split_benchmark(  # noqa: PLR0913
     max_attempts: int,
     post_active_settle_seconds: int,
     *,
+    caption_quality_thresholds: CaptionQualityThresholdConfig,
     clip_re_chunk_size: int,
     qwen_use_fp8_weights: bool,
     report_metrics_to_kratos: bool,
@@ -380,6 +395,8 @@ def nvcf_split_benchmark(  # noqa: PLR0913
     with (template_dir / "invoke.json").open() as f:
         invoke_data = json.load(f)
 
+    caption_quality_threshold_values = _caption_quality_threshold_values(caption_quality_thresholds)
+
     # Update deploy configuration
     deploy_data["configuration"]["image"]["repository"] = image_repository
     deploy_data["configuration"]["image"]["tag"] = image_tag
@@ -399,6 +416,7 @@ def nvcf_split_benchmark(  # noqa: PLR0913
             "vllm_sampling_temperature": vllm_sampling_temperature,
             "vllm_use_inflight_batching": vllm_use_inflight_batching,
             "xenna_streaming_scheduler": xenna_streaming_scheduler,
+            **caption_quality_threshold_values,
         }
     )
 
@@ -500,6 +518,7 @@ aws_region = {s3_secrets.aws_region}
                 "output_path": s3_output_prefix,
                 "vllm_sampling_temperature": vllm_sampling_temperature,
                 "xenna_streaming_scheduler": xenna_streaming_scheduler,
+                **caption_quality_threshold_values,
             },
             kratos_secrets=kratos_secrets,
             kratos_metrics_endpoint=kratos_metrics_endpoint,
@@ -507,7 +526,7 @@ aws_region = {s3_secrets.aws_region}
         )
 
 
-def _parse_args() -> argparse.Namespace:
+def _parse_args() -> argparse.Namespace:  # noqa: PLR0915
     parser = argparse.ArgumentParser(description="Run benchmark tests on NVCF cluster.")
     parser.add_argument("--num-nodes", type=int, default=1, help="Number of nodes to use.")
     parser.add_argument("--caption", type=int, default=0, help="Whether to use captioning for the benchmark.")
@@ -638,6 +657,30 @@ def _parse_args() -> argparse.Namespace:
         help="Temperature for vLLM sampling in benchmark invoke args.",
     )
     parser.add_argument(
+        "--caption-quality-length-floor-words",
+        type=int,
+        default=DEFAULT_CAPTION_QUALITY_THRESHOLDS.length_floor_words,
+        help="Flag captions with fewer words than this value.",
+    )
+    parser.add_argument(
+        "--caption-quality-length-ceiling-words",
+        type=int,
+        default=DEFAULT_CAPTION_QUALITY_THRESHOLDS.length_ceiling_words,
+        help="Flag captions with more words than this value.",
+    )
+    parser.add_argument(
+        "--caption-quality-repeated-trigram-min-count",
+        type=int,
+        default=DEFAULT_CAPTION_QUALITY_THRESHOLDS.repeated_trigram_min_count,
+        help="Flag captions when any trigram occurs at least this many times.",
+    )
+    parser.add_argument(
+        "--caption-quality-near-duplicate-jaccard-threshold",
+        type=float,
+        default=DEFAULT_CAPTION_QUALITY_THRESHOLDS.near_duplicate_jaccard_threshold,
+        help="Flag adjacent captions at or above this word-set Jaccard similarity.",
+    )
+    parser.add_argument(
         "--xenna-streaming-scheduler",
         type=str,
         required=False,
@@ -669,6 +712,15 @@ def _parse_args() -> argparse.Namespace:
             parser.error(str(e))
     elif not args.image_repository or not args.image_tag:
         parser.error("either --image or both --image-repository and --image-tag are required.")
+    try:
+        args.caption_quality_thresholds = CaptionQualityThresholdConfig(
+            length_floor_words=args.caption_quality_length_floor_words,
+            length_ceiling_words=args.caption_quality_length_ceiling_words,
+            repeated_trigram_min_count=args.caption_quality_repeated_trigram_min_count,
+            near_duplicate_jaccard_threshold=args.caption_quality_near_duplicate_jaccard_threshold,
+        )
+    except ValueError as e:
+        parser.error(str(e))
     return args
 
 
@@ -738,6 +790,7 @@ def main() -> None:
         metrics_path=args.metrics_path,
         max_attempts=args.max_attempts,
         post_active_settle_seconds=args.post_active_settle_seconds,
+        caption_quality_thresholds=args.caption_quality_thresholds,
         report_metrics_to_kratos=args.report_metrics_to_kratos,
         clip_re_chunk_size=args.clip_re_chunk_size,
         qwen_use_fp8_weights=args.qwen_use_fp8_weights,

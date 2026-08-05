@@ -55,6 +55,10 @@ from cosmos_curator.pipelines.common.model_constraints import PreprocessMode, re
 from cosmos_curator.pipelines.pipeline_args import (
     add_common_args,
 )
+from cosmos_curator.pipelines.video.captioning.caption_quality_flags import (
+    DEFAULT_CAPTION_QUALITY_THRESHOLDS,
+    CaptionQualityThresholdConfig,
+)
 from cosmos_curator.pipelines.video.captioning.captioning_builders import (
     VLLM_CAPTION_ALGOS,
     CaptionBackendConfig,
@@ -449,8 +453,15 @@ def _assemble_stages(  # noqa: C901, PLR0912, PLR0915
     _validate_deprecated_vllm_preprocess_args(args)
 
     stages: list[CuratorStage | CuratorStageSpec] = []
-    # Keep caption-quality controls explicit; writer collection and summary emission use the same CLI request.
     caption_quality_flags_enabled = args.caption_quality_flags_enabled
+    # Construct the effective threshold policy once for the synchronous captioning path.
+    caption_quality_thresholds = CaptionQualityThresholdConfig(
+        length_floor_words=args.caption_quality_length_floor_words,
+        length_ceiling_words=args.caption_quality_length_ceiling_words,
+        repeated_trigram_min_count=args.caption_quality_repeated_trigram_min_count,
+        near_duplicate_jaccard_threshold=args.caption_quality_near_duplicate_jaccard_threshold,
+    )
+    # Writer collection and summary emission use the same CLI request.
     # Defensive: NVCF/API callers can build args without the parser; default to on.
     caption_quality_stats_requested = getattr(args, "caption_quality_stats_enabled", True)
     caption_quality_stats_enabled = args.generate_captions and caption_quality_stats_requested and not args.multi_cam
@@ -907,6 +918,7 @@ def _assemble_stages(  # noqa: C901, PLR0912, PLR0915
                     inflight_batching=args.vllm_use_inflight_batching,
                     enhance_config=enhance_config,
                     caption_quality_flags_enabled=caption_quality_flags_enabled,
+                    caption_quality_thresholds=caption_quality_thresholds,
                     caption_setup_attempts=args.captioning_setup_attempts,
                     verbose=args.verbose,
                     perf_profile=args.perf_profile,
@@ -1295,6 +1307,30 @@ def _setup_parser(parser: argparse.ArgumentParser) -> None:  # noqa: PLR0915
         action="store_false",
         default=True,
         help="Disable heuristic caption quality flag annotations for supported caption paths.",
+    )
+    parser.add_argument(
+        "--caption-quality-length-floor-words",
+        type=int,
+        default=DEFAULT_CAPTION_QUALITY_THRESHOLDS.length_floor_words,
+        help="Flag captions with fewer words than this value.",
+    )
+    parser.add_argument(
+        "--caption-quality-length-ceiling-words",
+        type=int,
+        default=DEFAULT_CAPTION_QUALITY_THRESHOLDS.length_ceiling_words,
+        help="Flag captions with more words than this value.",
+    )
+    parser.add_argument(
+        "--caption-quality-repeated-trigram-min-count",
+        type=int,
+        default=DEFAULT_CAPTION_QUALITY_THRESHOLDS.repeated_trigram_min_count,
+        help="Flag captions when any trigram occurs at least this many times.",
+    )
+    parser.add_argument(
+        "--caption-quality-near-duplicate-jaccard-threshold",
+        type=float,
+        default=DEFAULT_CAPTION_QUALITY_THRESHOLDS.near_duplicate_jaccard_threshold,
+        help="Flag adjacent captions at or above this word-set Jaccard similarity.",
     )
     parser.add_argument(
         "--no-caption-quality-stats",
