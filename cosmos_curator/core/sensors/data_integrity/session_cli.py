@@ -62,12 +62,15 @@ from cosmos_curator.core.sensors.data_integrity.cli_common import (
     report_interrupted,
     thresholds_from_args,
 )
-from cosmos_curator.core.sensors.data_integrity.report import OverallStatus, StreamResult, render_text, to_json
+from cosmos_curator.core.sensors.data_integrity.report import render_text, to_json
+from cosmos_curator.core.sensors.data_integrity.results import OverallStatus, StreamResult
 from cosmos_curator.core.sensors.data_integrity.session_runner import run_session
+from cosmos_curator.core.sensors.data_integrity.store_cli import add_store_args, persist_run
 from cosmos_curator.core.sensors.scripts._cli_cloud import (
     CloudCliError,
+    CloudObjectStat,
     add_cloud_credential_args,
-    get_cloud_object_size,
+    get_cloud_object_stat,
     is_cloud_uri,
     resolve_s3_endpoint_url,
 )
@@ -147,6 +150,7 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         ),
     )
     add_threshold_args(parser)
+    add_store_args(parser)
     add_cloud_credential_args(parser)
     return parser.parse_args(argv)
 
@@ -218,15 +222,20 @@ class _Progress:
 
     def __init__(
         self,
-        size_lookup: Callable[[str], int | None] | None = None,
+        stat_lookup: Callable[[str], CloudObjectStat] | None = None,
         *,
         live_byte_counter: bool = True,
+        collect_stats: bool = False,
     ) -> None:
         self._bytes: dict[int, int] = {}
         self._last_emit: dict[int, float] = {}
-        self._size_lookup = size_lookup
+        self._stat_lookup = stat_lookup
         self._live_byte_counter = live_byte_counter
+        self._collect_stats = collect_stats
         self._lock = threading.Lock()
+        #: Every ``HEAD`` response this run made, by source. Handed to the store so a
+        #: run that persists still issues exactly one per stream.
+        self.stats: dict[str, CloudObjectStat] = {}
 
     def _write(self, text: str) -> None:
         with self._lock:
@@ -242,17 +251,26 @@ class _Progress:
         # is injected, so guard it here instead of trusting every implementation to be
         # exception-safe -- a cosmetic byte count must never abandon the streams behind it.
         #
-        # Skipped outright without the live counter, because that counter is the only
-        # thing that reads the total: the finish line reports bytes actually read. The
-        # lookup is not free enough to spend on a discarded value -- on a cloud source it
-        # builds a fresh client per stream, and that parsing holds the interpreter lock,
-        # so a dozen concurrent streams serialise behind it.
-        total_bytes: int | None = None
-        if self._live_byte_counter and self._size_lookup is not None:
+        # Skipped outright when nothing will read the result, because the lookup is not
+        # free: on a cloud source it builds a fresh client per stream, and that parsing
+        # holds the interpreter lock, so a dozen concurrent streams serialise behind it.
+        # Two things read it -- the live counter (the finish line reports bytes actually
+        # read, so it needs no total) and the store, which records the same response as
+        # content identity rather than issuing a second HEAD of its own.
+        stat = CloudObjectStat()
+        if self._stat_lookup is not None and (self._live_byte_counter or self._collect_stats):
             try:
-                total_bytes = self._size_lookup(source)
-            except Exception:  # noqa: BLE001 - progress detail only; unknown size is fine
-                total_bytes = None
+                stat = self._stat_lookup(source)
+            except Exception:  # noqa: BLE001 - advisory only; unknown size is fine
+                stat = CloudObjectStat()
+            # Only a lookup that learned something is worth handing on. Caching an
+            # empty one would satisfy the store's "use the caller's stat" path and
+            # persist a null ETag and size for an object whose HEAD merely failed
+            # here; leaving it out lets the store try again for itself.
+            if not stat.is_empty:
+                with self._lock:
+                    self.stats[source] = stat
+        total_bytes = stat.size_bytes
 
         def _wrap(stream: BinaryIO) -> BinaryIO:
             def _on_bytes(count: int) -> None:
@@ -287,17 +305,25 @@ def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
     endpoint_url = resolve_s3_endpoint_url(args.endpoint_url)
 
-    def _size_lookup(source: str) -> int | None:
+    def _stat_lookup(source: str) -> CloudObjectStat:
         if not is_cloud_uri(source):
-            return None
-        return get_cloud_object_size(
+            return CloudObjectStat()
+        return get_cloud_object_stat(
             source,
             s3_profile_name=args.s3_profile_name,
             azure_profile_name=args.azure_profile_name,
             endpoint_url=endpoint_url,
         )
 
-    progress = _Progress(size_lookup=_size_lookup, live_byte_counter=args.max_workers == 1) if args.progress else None
+    progress = (
+        _Progress(
+            stat_lookup=_stat_lookup,
+            live_byte_counter=args.max_workers == 1,
+            collect_stats=args.store_path is not None,
+        )
+        if args.progress
+        else None
+    )
     with interrupt_guard() as interrupted:
         try:
             return _run(args, endpoint_url, progress, interrupted)
@@ -318,11 +344,12 @@ def _run(
             abort as a decode error. :func:`main` turns it into the exit code.
 
     """
+    thresholds = thresholds_from_args(args)
     try:
         report = run_session(
             args.session_path,
             expected_hz=args.expected_hz,
-            thresholds=thresholds_from_args(args),
+            thresholds=thresholds,
             batch_size=args.batch_size,
             limit=args.limit,
             s3_profile_name=args.s3_profile_name,
@@ -343,6 +370,24 @@ def _run(
         # (non-finite measurements) and so can the write itself (a closed pipe), and both
         # owe the caller exit code 2 rather than a traceback.
         sys.stdout.write((to_json(report) if args.json else render_text(report)) + "\n")
+        if args.store_path is not None:
+            # After the report, so the operator keeps the verdict even when persisting
+            # fails -- but a failure is still exit code 2, because saving the results
+            # was part of what was asked for.
+            try:
+                persist_run(
+                    args.store_path,
+                    report.streams,
+                    session_path=report.session_path,
+                    thresholds=thresholds,
+                    tool="di-session",
+                    cloud_stats=progress.stats if progress is not None else None,
+                    s3_profile_name=args.s3_profile_name,
+                    azure_profile_name=args.azure_profile_name,
+                    endpoint_url=endpoint_url,
+                )
+            except Exception as e:  # noqa: BLE001 - the store can fail in as many ways as its backend
+                return report_error(f"checked session {args.session_path!r} but could not write the store: {e}")
         return _EXIT_CODES[report.status]
     except (CloudCliError, FileNotFoundError) as e:
         return report_error(str(e))

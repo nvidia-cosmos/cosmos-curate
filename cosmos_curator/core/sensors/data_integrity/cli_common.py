@@ -21,20 +21,22 @@ against one video stream and judging them*. Both entry points build on it:
 * the single-video ``di-check`` CLI (:mod:`cosmos_curator.core.sensors.data_integrity.cli`)
 * the single-session tool (:mod:`cosmos_curator.core.sensors.data_integrity.session_runner`)
 
-It owns the vocabulary that surrounds the kernel
-(:mod:`cosmos_curator.core.sensors.data_integrity.metrics` / ``.evaluation``):
-the kernel only ever judges a *well-defined* measurement as ``PASS`` / ``FAIL``,
-so this module adds :class:`CheckStatus` (which also carries ``SKIPPED`` for an
-undefined measurement or a missing rate prerequisite), the :class:`Thresholds`
-pass/fail policy, the effective-rate resolution (:func:`resolve_expected_hz`),
-and JSON-safe serialisation of measurements / evaluations.
+What it adds on top of the kernel
+(:mod:`cosmos_curator.core.sensors.data_integrity.metrics` / ``.evaluation``) is the
+running: opening a source, streaming its timeline into every metric, and resolving
+the effective expected rate (:func:`resolve_expected_hz`). Also the argparse surface
+both CLIs share -- validators, threshold flags, exit codes, Ctrl-C handling.
+
+The vocabulary the results are expressed in lives in :mod:`.results`, and which
+threshold applies to which measurement in :mod:`.instruments`; ``Thresholds`` /
+``DEFAULT_THRESHOLDS`` are re-exported from here for callers that already import the
+policy alongside the engine.
 
 Rendering and aggregation live with the callers: the single-video report shapes
 in :mod:`.cli`, the session rollup in :mod:`.report`.
 """
 
 import argparse
-import enum
 import io
 import math
 import os
@@ -44,19 +46,20 @@ import sys
 import threading
 import time
 import types
-from collections.abc import Callable, Generator, Iterator
+from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from typing import BinaryIO, Protocol, cast
 
-import attrs
-import numpy as np
-from numpy.typing import NDArray
-
-from cosmos_curator.core.sensors.data.video import VideoMetadata
-from cosmos_curator.core.sensors.data_integrity.evaluation import (
-    EvaluationResult,
-    EvaluationStatus,
-    below_threshold,
+from cosmos_curator.core.sensors.data_integrity.instruments import (
+    DEFAULT_THRESHOLDS,
+    INSTRUMENTS,
+    NAME_GAP,
+    NAME_JITTER,
+    NAME_ORDERING,
+    NAME_RATE,
+    NAME_REORDERING,
+    Thresholds,
+    evaluate_metric,
 )
 from cosmos_curator.core.sensors.data_integrity.metrics import (
     FrameReorderingPresentMetric,
@@ -66,16 +69,17 @@ from cosmos_curator.core.sensors.data_integrity.metrics import (
     TimestampGapMetric,
     TimestampOrderingMetric,
 )
+from cosmos_curator.core.sensors.data_integrity.results import (
+    CheckResult,
+    CheckStatus,
+    ExpectedHzSource,
+    IntegritySensor,
+    ResolvedConfig,
+    VideoInfo,
+)
 from cosmos_curator.core.sensors.scripts._cli_cloud import is_cloud_uri, open_cloud_source
 from cosmos_curator.core.sensors.sensors.camera_sensor import CameraSensor
 from cosmos_curator.core.sensors.types.types import DataSource
-
-# Metric identifiers used verbatim in both CLIs' human and JSON reports.
-NAME_ORDERING = "timestamp_ordering"
-NAME_RATE = "rate"
-NAME_GAP = "timestamp_gap"
-NAME_JITTER = "jitter"
-NAME_REORDERING = "frame_reordering_present"
 
 # Reason attached to a rate-dependent check that has no usable expected rate.
 REASON_MISSING_HZ = "skipped: --expected-hz not provided and container header lacks a nominal frame rate"
@@ -331,69 +335,6 @@ def available_cpu_count() -> int:
     return max(1, os.cpu_count() or 1)
 
 
-class CheckStatus(enum.Enum):
-    """Per-metric check status, deliberately distinct from :class:`EvaluationStatus`.
-
-    Kernel evaluators only ever return PASS/FAIL over a well-defined measurement.
-    ``SKIPPED`` lives here because it covers the cases the kernel cannot evaluate
-    at all: an undefined measurement (a kernel invariant not to evaluate) or a
-    missing prerequisite (no usable expected rate from either ``--expected-hz`` or
-    the container header).
-    """
-
-    PASS = "PASS"  # noqa: S105
-    FAIL = "FAIL"
-    SKIPPED = "SKIPPED"
-
-
-class ExpectedHzSource(enum.Enum):
-    """Origin of the effective expected sample rate used by rate-dependent metrics.
-
-    Variants, in fallback priority:
-
-    * ``USER`` -- user-supplied ``--expected-hz``; the authoritative baseline.
-    * ``HEADER`` -- from :attr:`VideoMetadata.avg_frame_rate`; best-effort only,
-      and not a sound basis for the rate check (see :func:`resolve_expected_hz`).
-    * ``UNAVAILABLE`` -- neither is usable; rate-dependent metrics SKIP.
-
-    Reported alongside the rate itself so a reader can tell which of those three
-    situations produced a given verdict.
-    """
-
-    USER = "user"
-    HEADER = "header"
-    UNAVAILABLE = "unavailable"
-
-
-@attrs.define(frozen=True)
-class Thresholds:
-    """Pass/fail policy applied by :func:`run_metrics`.
-
-    Defaults are neutral, first-principles limits (an ideal stream is strictly
-    increasing, on-cadence, gap-free), not values tuned on any dataset.
-
-    Attributes:
-        max_strict_violations: max allowed ordering violations (backward +
-            duplicate steps); default 0 (require strictly increasing).
-        max_rate_deviation_percent: max mean-period deviation from the expected
-            cadence, in percent.
-        max_gaps: max allowed inferred gaps; default 0.
-        max_jitter_percent: max inter-sample jitter, in percent of the period.
-        allow_frame_reordering: when False (default), a B-frame / frame-reordering
-            flag fails the frame-reordering metric.
-
-    """
-
-    max_strict_violations: int = 0
-    max_rate_deviation_percent: float = 5.0
-    max_gaps: int = 0
-    max_jitter_percent: float = 10.0
-    allow_frame_reordering: bool = False
-
-
-DEFAULT_THRESHOLDS = Thresholds()
-
-
 def add_threshold_args(parser: argparse.ArgumentParser) -> None:
     """Add the pass/fail policy flags, one per :class:`Thresholds` field.
 
@@ -461,131 +402,6 @@ def thresholds_from_args(args: argparse.Namespace) -> Thresholds:
     )
 
 
-@attrs.define(frozen=True)
-class CheckResult:
-    """Result of one metric on one stream.
-
-    Attributes:
-        name: metric identifier (one of the ``NAME_*`` constants).
-        status: PASS / FAIL / SKIPPED for this metric on this stream.
-        reason: human-readable one-line summary (value and threshold, or why it
-            was skipped), shown verbatim in the human report.
-        measurement: JSON-safe dict of the raw measurement, or ``None`` when the
-            metric was skipped before a measurement existed.
-        evaluation: JSON-safe dict of the kernel evaluation (status + margin), or
-            ``None`` when the measurement was undefined / skipped.
-
-    """
-
-    name: str
-    status: CheckStatus
-    reason: str
-    measurement: dict[str, object] | None
-    evaluation: dict[str, object] | None
-
-
-@attrs.define(frozen=True)
-class ResolvedConfig:
-    """Effective expected rate resolved from user args + sensor metadata.
-
-    ``expected_hz`` is ``None`` iff ``expected_hz_source`` is ``UNAVAILABLE``; the
-    invariant is enforced by :func:`resolve_expected_hz`.
-    """
-
-    expected_hz: float | None
-    expected_hz_source: ExpectedHzSource
-
-
-@attrs.define(frozen=True)
-class VideoInfo:
-    """Small snapshot of sensor-level facts shared by both reports."""
-
-    codec_name: str
-    has_bframes: bool
-    num_samples: int
-    start_ns: int | None
-    end_ns: int | None
-
-    def to_dict(self) -> dict[str, object]:
-        """Return a plain JSON-serialisable dict of the fields."""
-        return {
-            "codec_name": self.codec_name,
-            "has_bframes": self.has_bframes,
-            "num_samples": self.num_samples,
-            "start_ns": self.start_ns,
-            "end_ns": self.end_ns,
-        }
-
-
-class IntegritySensor(Protocol):  # pragma: no cover
-    """Structural sensor surface :func:`run_metrics` needs (``CameraSensor`` satisfies it)."""
-
-    @property
-    def codec_name(self) -> str:
-        """Video codec name (e.g. ``h264``)."""
-        ...
-
-    @property
-    def has_bframes(self) -> bool:
-        """Whether the stream signals frame reordering (B-frames)."""
-        ...
-
-    @property
-    def start_ns(self) -> int:
-        """First timestamp in nanoseconds."""
-        ...
-
-    @property
-    def end_ns(self) -> int:
-        """Last timestamp in nanoseconds."""
-        ...
-
-    @property
-    def timestamps_ns(self) -> NDArray[np.int64]:
-        """The full decoded timeline in ``int64`` nanoseconds."""
-        ...
-
-    @property
-    def video_metadata(self) -> VideoMetadata:
-        """Scalar stream metadata (carries the nominal ``avg_frame_rate``)."""
-        ...
-
-    def stream_timestamps(self, batch_size: int = 0) -> Iterator[NDArray[np.int64]]:
-        """Yield the timeline in ``int64`` ns batches (``0`` = one batch)."""
-        ...
-
-
-def _json_safe(value: object) -> object:
-    """Convert numpy scalars, NaN, and infinities into JSON-serialisable equivalents.
-
-    NaN and infinity have no JSON representation; ``allow_nan=False`` in
-    :func:`json.dumps` would otherwise raise, silently promoting a rare corruption
-    into a hard crash on reporting. Both map to ``None`` so the report survives an
-    undefined field while staying loudly wrong (rather than ``0.0``, which would
-    look defined).
-    """
-    if isinstance(value, dict):
-        return {k: _json_safe(v) for k, v in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [_json_safe(v) for v in value]
-    if isinstance(value, np.generic):
-        return _json_safe(value.item())
-    if isinstance(value, float) and not math.isfinite(value):
-        return None
-    return value
-
-
-def measurement_to_dict(measurement: Measurement) -> dict[str, object]:
-    """Serialise a metric measurement into a JSON-safe dict."""
-    raw = attrs.asdict(measurement)  # type: ignore[arg-type]  # protocol vs. attrs class
-    return _json_safe(raw)  # type: ignore[return-value]
-
-
-def evaluation_to_dict(result: EvaluationResult[int] | EvaluationResult[float]) -> dict[str, object]:
-    """Serialise an :class:`EvaluationResult` into a JSON-safe dict."""
-    return {"status": result.status.value, "margin": _json_safe(result.margin)}
-
-
 def resolve_expected_hz(user_hz: float | None, sensor: IntegritySensor) -> ResolvedConfig:
     """Resolve the effective expected sample rate and record its origin.
 
@@ -643,100 +459,12 @@ def _skipped_missing_hz(name: str) -> CheckResult:
     )
 
 
-def _evaluate_scalar[M: Measurement, T: (int, float)](
-    *,
-    name: str,
-    measurement: M,
-    threshold: T,
-    accessor: Callable[[M], T],
-    reason: str,
-) -> CheckResult:
-    """Package one below-threshold check as a :class:`CheckResult`.
+class _MetricInstrument(Protocol):  # pragma: no cover
+    """The one thing :func:`run_metrics` needs of a metric once it has been fed."""
 
-    SKIPPED when the measurement is undefined; the ``num_samples=<N>`` /
-    ``insufficient data`` distinction follows whether the measurement carries a
-    ``num_samples`` field (:class:`FrameReorderingPresentMeasurement` does not).
-    """
-    if not measurement.is_defined:
-        n = getattr(measurement, "num_samples", None)
-        detail = f"num_samples={n}" if n is not None else "insufficient data"
-        return CheckResult(
-            name=name,
-            status=CheckStatus.SKIPPED,
-            reason=f"measurement undefined ({detail})",
-            measurement=measurement_to_dict(measurement),
-            evaluation=None,
-        )
-    result = below_threshold(threshold=threshold, measurement=measurement, accessor=accessor)
-    status = CheckStatus.PASS if result.status is EvaluationStatus.PASS else CheckStatus.FAIL
-    return CheckResult(
-        name=name,
-        status=status,
-        reason=reason,
-        measurement=measurement_to_dict(measurement),
-        evaluation=evaluation_to_dict(result),
-    )
-
-
-def _evaluate_ordering(metric: TimestampOrderingMetric, thresholds: Thresholds) -> CheckResult:
-    m = metric.measurement()
-    threshold = thresholds.max_strict_violations
-    return _evaluate_scalar(
-        name=NAME_ORDERING,
-        measurement=m,
-        threshold=threshold,
-        accessor=lambda x: x.strict_violation_count,
-        reason=f"strict_violation_count={m.strict_violation_count} (threshold={threshold})",
-    )
-
-
-def _evaluate_rate(metric: RateMetric, thresholds: Thresholds) -> CheckResult:
-    m = metric.measurement()
-    threshold = thresholds.max_rate_deviation_percent
-    return _evaluate_scalar(
-        name=NAME_RATE,
-        measurement=m,
-        threshold=threshold,
-        accessor=lambda x: x.period_deviation_percent,
-        reason=f"period_deviation_percent={m.period_deviation_percent:.4f} (threshold={threshold:.4f}%)",
-    )
-
-
-def _evaluate_gap(metric: TimestampGapMetric, thresholds: Thresholds) -> CheckResult:
-    m = metric.measurement()
-    threshold = thresholds.max_gaps
-    return _evaluate_scalar(
-        name=NAME_GAP,
-        measurement=m,
-        threshold=threshold,
-        accessor=lambda x: x.num_gaps,
-        reason=f"num_gaps={m.num_gaps} (threshold={threshold})",
-    )
-
-
-def _evaluate_jitter(metric: JitterMetric, thresholds: Thresholds) -> CheckResult:
-    m = metric.measurement()
-    threshold = thresholds.max_jitter_percent
-    return _evaluate_scalar(
-        name=NAME_JITTER,
-        measurement=m,
-        threshold=threshold,
-        accessor=lambda x: x.jitter_percent,
-        reason=f"jitter_percent={m.jitter_percent:.4f} (threshold={threshold:.4f}%)",
-    )
-
-
-def _evaluate_reordering(metric: FrameReorderingPresentMetric, thresholds: Thresholds) -> CheckResult:
-    m = metric.measurement()
-    # threshold 0 fails when a reordering flag is set; 1 permits it.
-    threshold = 1 if thresholds.allow_frame_reordering else 0
-    return _evaluate_scalar(
-        name=NAME_REORDERING,
-        measurement=m,
-        threshold=threshold,
-        accessor=lambda x: int(bool(x.has_reordering)),
-        reason=f"has_reordering={bool(m.has_reordering)} (threshold={threshold})",
-    )
+    def measurement(self) -> Measurement:
+        """Finalize the immutable measurement."""
+        ...
 
 
 def run_metrics(
@@ -796,16 +524,25 @@ def run_metrics(
     if stats is not None:
         stats["stream_ms"] = (time.perf_counter() - t0) * 1000
 
-    # Ordering (correctness of the timeline itself) -> rate/gap/jitter (need a rate
-    # to judge) -> codec-level reordering. Sequenced so timeline defects read first.
+    # Report order comes from the registry: ordering (correctness of the timeline
+    # itself) -> rate/gap/jitter (need a rate to judge) -> codec-level reordering, so
+    # timeline defects read first. A rate-dependent metric with no usable rate was
+    # never constructed above and so has no measurement to judge at all.
+    built: dict[str, _MetricInstrument | None] = {
+        NAME_ORDERING: ordering,
+        NAME_RATE: rate,
+        NAME_GAP: gap,
+        NAME_JITTER: jitter,
+        NAME_REORDERING: reordering,
+    }
     t0 = time.perf_counter()
-    results: list[CheckResult] = [
-        _evaluate_ordering(ordering, thresholds),
-        _evaluate_rate(rate, thresholds) if rate is not None else _skipped_missing_hz(NAME_RATE),
-        _evaluate_gap(gap, thresholds) if gap is not None else _skipped_missing_hz(NAME_GAP),
-        _evaluate_jitter(jitter, thresholds) if jitter is not None else _skipped_missing_hz(NAME_JITTER),
-        _evaluate_reordering(reordering, thresholds),
-    ]
+    results: list[CheckResult] = []
+    for spec in INSTRUMENTS:
+        instrument = built[spec.name]
+        if instrument is None:
+            results.append(_skipped_missing_hz(spec.name))
+        else:
+            results.append(evaluate_metric(spec, instrument.measurement(), thresholds))
     if stats is not None:
         stats["evaluate_ms"] = (time.perf_counter() - t0) * 1000
     return results, video_info(sensor), resolved_cfg
@@ -909,8 +646,3 @@ def run_checks(  # noqa: PLR0913
         if stats is not None:
             stats["sensor_init_ms"] = (time.perf_counter() - t0) * 1000
         return run_metrics(sensor, expected_hz=expected_hz, thresholds=thresholds, batch_size=batch_size, stats=stats)
-
-
-def overall_status(results: list[CheckResult]) -> CheckStatus:
-    """FAIL if any check failed; SKIPPED never fails the run, otherwise PASS."""
-    return CheckStatus.FAIL if any(r.status is CheckStatus.FAIL for r in results) else CheckStatus.PASS

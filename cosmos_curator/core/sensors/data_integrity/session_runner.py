@@ -35,12 +35,6 @@ from typing import BinaryIO
 from loguru import logger
 
 from cosmos_curator.core.sensors.data_integrity.cli_common import (
-    DEFAULT_THRESHOLDS,
-    CheckResult,
-    IntegritySensor,
-    ResolvedConfig,
-    Thresholds,
-    VideoInfo,
     cancellable_reader,
     raise_if_interrupted,
     run_checks,
@@ -50,24 +44,13 @@ from cosmos_curator.core.sensors.data_integrity.cli_common import (
     validate_positive_int,
 )
 from cosmos_curator.core.sensors.data_integrity.discovery import discover_streams
-from cosmos_curator.core.sensors.data_integrity.report import SessionReport, StreamResult
-
-
-def _stream_result(
-    source: str, metrics: list[CheckResult], video_info: VideoInfo, resolved_cfg: ResolvedConfig
-) -> StreamResult:
-    """Package a successful per-stream engine run as a :class:`StreamResult`."""
-    return StreamResult(
-        source=source,
-        codec_name=video_info.codec_name,
-        has_bframes=video_info.has_bframes,
-        num_samples=video_info.num_samples,
-        start_ns=video_info.start_ns,
-        end_ns=video_info.end_ns,
-        metrics=metrics,
-        expected_hz=resolved_cfg.expected_hz,
-        expected_hz_source=resolved_cfg.expected_hz_source,
-    )
+from cosmos_curator.core.sensors.data_integrity.instruments import DEFAULT_THRESHOLDS, Thresholds
+from cosmos_curator.core.sensors.data_integrity.results import (
+    IntegritySensor,
+    SessionReport,
+    StreamResult,
+    stream_result,
+)
 
 
 def run_stream(
@@ -100,7 +83,7 @@ def run_stream(
     metrics, video_info, resolved_cfg = run_metrics(
         sensor, expected_hz=expected_hz, thresholds=thresholds, batch_size=batch_size
     )
-    return _stream_result(source, metrics, video_info, resolved_cfg)
+    return stream_result(source, metrics, video_info, resolved_cfg)
 
 
 def _run_one_stream(  # noqa: PLR0913
@@ -154,7 +137,7 @@ def _run_one_stream(  # noqa: PLR0913
             metrics=[],
             error=str(exc),
         )
-    return _stream_result(source, metrics, video_info, resolved_cfg)
+    return stream_result(source, metrics, video_info, resolved_cfg)
 
 
 def run_session(  # noqa: PLR0913

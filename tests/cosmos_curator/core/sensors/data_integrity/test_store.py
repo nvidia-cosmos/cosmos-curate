@@ -1,0 +1,499 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Unit tests for the Lance-backed data-integrity store."""
+
+import ast
+import datetime
+import json
+import math
+import pathlib
+from collections.abc import Callable
+from fractions import Fraction
+
+import pytest
+
+from cosmos_curator.core.sensors.data_integrity import identity, store, store_schema
+from cosmos_curator.core.sensors.data_integrity.instruments import (
+    DEFAULT_THRESHOLDS,
+    INSTRUMENTS,
+    Thresholds,
+)
+from cosmos_curator.core.sensors.data_integrity.results import StreamResult
+from cosmos_curator.core.sensors.scripts._cli_cloud import CloudCliError, CloudObjectStat
+
+#: The zero-numerator sentinel for "the container declares no rate", which is what
+#: makes rate / gap / jitter never run at all.
+NO_HEADER_RATE = Fraction(0, 1)
+
+SESSION = "/data/session"
+FRONT = "/data/session/front.mp4"
+
+
+def _write(  # noqa: PLR0913 -- one optional argument per fact a test may want to vary
+    root: str,
+    streams: list[StreamResult],
+    *,
+    session_path: str | None = SESSION,
+    thresholds: Thresholds = DEFAULT_THRESHOLDS,
+    created_at: datetime.datetime | None = None,
+    cloud_stats: dict[str, CloudObjectStat] | None = None,
+) -> str:
+    """Write one session run with the defaults most of these tests want."""
+    return store.write_run(
+        root,
+        streams,
+        session_path=session_path,
+        thresholds=thresholds,
+        tool="di-session",
+        created_at=created_at,
+        cloud_stats=cloud_stats,
+    )
+
+
+#: Modules the storage layer sits *below*. It shares the result vocabulary with them
+#: (:mod:`results`) rather than importing them, so a store write cannot end up
+#: depending on how a CLI happens to render or parse anything.
+_CLI_MODULES = frozenset(
+    {
+        "cosmos_curator.core.sensors.data_integrity.cli",
+        "cosmos_curator.core.sensors.data_integrity.cli_common",
+        "cosmos_curator.core.sensors.data_integrity.session_cli",
+        "cosmos_curator.core.sensors.data_integrity.session_runner",
+        "cosmos_curator.core.sensors.data_integrity.report",
+    }
+)
+
+
+@pytest.mark.parametrize("module", ["store", "store_schema", "reevaluate", "results", "instruments", "identity"])
+def test_the_storage_layer_does_not_import_the_cli(module: str) -> None:
+    """Layering, checked rather than remembered: results flow up to the CLIs, never down."""
+    path = pathlib.Path(store.__file__).parent / f"{module}.py"
+    imported = {
+        node.module
+        for node in ast.walk(ast.parse(path.read_text()))
+        if isinstance(node, ast.ImportFrom) and node.module
+    }
+    assert imported & _CLI_MODULES == set()
+
+
+def test_first_write_creates_the_store(
+    store_root: str, make_stream: Callable[..., StreamResult], perfect: Callable[..., list[int]]
+) -> None:
+    """The root does not have to exist; a first run creates every dataset it needs."""
+    _write(store_root, [make_stream(FRONT, perfect())])
+    root = pathlib.Path(store_root)
+    assert (root / store_schema.STREAM_DATASET).exists()
+    assert (root / store_schema.EVALUATION_DATASET).exists()
+    assert (root / store_schema.RUN_DATASET).exists()
+    for spec in INSTRUMENTS:
+        assert (root / store_schema.metric_dataset_path(spec.name)).exists()
+    assert (root / store_schema.MANIFEST_NAME).exists()
+
+
+def test_stream_row_carries_identity_and_session_context(
+    store_root: str, make_stream: Callable[..., StreamResult], perfect: Callable[..., list[int]]
+) -> None:
+    """The dedup key, the descriptive columns, and the session context all land together."""
+    _write(store_root, [make_stream(FRONT, perfect())])
+    (row,) = store.read_streams(store_root)
+    assert row["stream_id"] == identity.stream_id(FRONT)
+    assert row["source"] == FRONT
+    assert row["relative_key"] == "front.mp4"
+    assert row["session_id"] == identity.session_id(SESSION)
+    assert row["locator_namespace"] == identity.NAMESPACE_LOCAL
+    assert row["selector_type"] == identity.SELECTOR_VIDEO_STREAM
+    assert row["selector_value"] == "0"
+
+
+def test_two_stream_indices_of_one_file_are_two_streams(
+    store_root: str, make_stream: Callable[..., StreamResult], perfect: Callable[..., list[int]]
+) -> None:
+    """``--stream-idx 0`` and ``--stream-idx 1`` measured different bytes, so neither may win."""
+    _write(store_root, [make_stream(FRONT, perfect(), selector_value="0")])
+    _write(store_root, [make_stream(FRONT, perfect(), selector_value="1")])
+
+    rows = {str(row["selector_value"]): row for row in store.read_streams(store_root)}
+    assert set(rows) == {"0", "1"}
+    assert rows["0"]["stream_id"] != rows["1"]["stream_id"]
+    # ...and the metric rows follow the same key rather than collapsing onto one.
+    assert len({row["stream_id"] for row in store.read_measurements(store_root, "rate")}) == 2
+
+
+def test_single_stream_run_has_no_session(
+    store_root: str, make_stream: Callable[..., StreamResult], perfect: Callable[..., list[int]]
+) -> None:
+    """A null session_path is the only structural difference between the two CLIs' rows."""
+    _write(store_root, [make_stream("/data/front.mp4", perfect())], session_path=None)
+    (row,) = store.read_streams(store_root)
+    assert row["session_path"] is None
+    assert row["session_id"] is None
+    assert row["relative_key"] is None
+
+
+def test_errored_stream_is_recorded_with_no_measurements(
+    store_root: str, make_errored_stream: Callable[..., StreamResult]
+) -> None:
+    """The case the store exists for: a stream that could not be opened must not vanish."""
+    _write(store_root, [make_errored_stream("/data/session/rear.mp4")])
+    (row,) = store.read_streams(store_root)
+    assert row["error"] == "moov atom not found"
+    assert row["codec_name"] is None
+    for spec in INSTRUMENTS:
+        assert store.read_measurements(store_root, spec.name) == []
+    assert store.read_evaluations(store_root) == []
+
+
+def test_measured_but_undefined_keeps_its_numbers(
+    store_root: str, make_stream: Callable[..., StreamResult], perfect: Callable[..., list[int]]
+) -> None:
+    """``is_defined`` False still has real values to save, NaN included where one was produced."""
+    _write(store_root, [make_stream("/data/session/one_frame.mp4", perfect(1))])
+    (rate,) = store.read_measurements(store_root, "rate")
+    assert rate["is_defined"] is False
+    # NaN survives as a float64 bit pattern; it is emphatically not null.
+    assert rate["period_deviation_percent"] is not None
+    assert math.isnan(rate["period_deviation_percent"])  # type: ignore[arg-type]
+    # The other metrics carry real values even when undefined, so is_defined False
+    # does not imply NaN.
+    (ordering,) = store.read_measurements(store_root, "timestamp_ordering")
+    assert ordering["is_defined"] is False
+    assert ordering["num_samples"] == 1
+
+
+def test_metric_that_never_ran_is_an_explicit_null_row(
+    store_root: str, make_stream: Callable[..., StreamResult], perfect: Callable[..., list[int]]
+) -> None:
+    """A metric considered but unable to run stays distinguishable from one not in the run."""
+    # No user rate and no header rate, so rate / gap / jitter are never constructed.
+    stream = make_stream("/data/session/no_rate.mp4", perfect(), expected_hz=None, avg_frame_rate=NO_HEADER_RATE)
+    _write(store_root, [stream])
+
+    (rate,) = store.read_measurements(store_root, "rate")
+    assert rate["is_defined"] is None
+    assert all(rate[name] is None for name in ("period_deviation_percent", "expected_hz", "num_samples"))
+
+    # The row exists rather than being absent, and its verdict is SKIPPED.
+    verdicts = {row["metric_name"]: row for row in store.read_evaluations(store_root)}
+    assert verdicts["rate"]["check_status"] == "SKIPPED"
+    assert verdicts["rate"]["margin"] is None
+    assert verdicts["rate"]["threshold"] is None
+    # Ordering does not need a rate, so it still ran.
+    assert verdicts["timestamp_ordering"]["check_status"] == "PASS"
+
+
+def test_verdict_carries_margin_threshold_and_both_run_ids(
+    store_root: str, make_stream: Callable[..., StreamResult], perfect: Callable[..., list[int]]
+) -> None:
+    """A stored verdict explains itself: what was applied, how far off, and whose facts."""
+    run_id = _write(store_root, [make_stream(FRONT, perfect())])
+    rate = next(row for row in store.read_evaluations(store_root) if row["metric_name"] == "rate")
+    assert rate["run_id"] == run_id
+    # Measured and judged in one go, so the two ids agree on a first pass.
+    assert rate["measurement_run_id"] == run_id
+    assert rate["threshold"] == DEFAULT_THRESHOLDS.max_rate_deviation_percent
+    assert rate["margin"] is not None
+    assert json.loads(str(rate["thresholds_json"]))["max_gaps"] == DEFAULT_THRESHOLDS.max_gaps
+
+
+def test_failing_check_is_stored_as_fail(
+    store_root: str, make_stream: Callable[..., StreamResult], drifting: Callable[..., list[int]]
+) -> None:
+    """A verdict outside the policy is FAIL with a negative margin."""
+    thresholds = Thresholds(max_rate_deviation_percent=0.5)
+    stream = make_stream("/data/session/drift.mp4", drifting(percent=3.0), thresholds=thresholds)
+    _write(store_root, [stream], thresholds=thresholds)
+    rate = next(row for row in store.read_evaluations(store_root) if row["metric_name"] == "rate")
+    assert rate["check_status"] == "FAIL"
+    assert float(rate["margin"]) < 0  # type: ignore[arg-type]
+
+
+def test_re_running_supersedes_rather_than_duplicating(
+    store_root: str, make_stream: Callable[..., StreamResult], perfect: Callable[..., list[int]]
+) -> None:
+    """Append-only keeps history, but "current state" is one row per key."""
+    first = _write(store_root, [make_stream(FRONT, perfect())])
+    second = _write(
+        store_root,
+        [make_stream(FRONT, perfect())],
+        created_at=datetime.datetime(2030, 1, 1, tzinfo=datetime.UTC),
+    )
+    assert first != second
+
+    assert len(store.read_streams(store_root, latest=False)) == 2
+    (latest,) = store.read_streams(store_root)
+    assert latest["run_id"] == second
+
+    assert len(store.read_measurements(store_root, "rate", latest=False)) == 2
+    assert len(store.read_measurements(store_root, "rate")) == 1
+
+
+def test_run_id_breaks_a_timestamp_tie_deterministically(
+    store_root: str, make_stream: Callable[..., StreamResult], perfect: Callable[..., list[int]]
+) -> None:
+    """Every row one run writes shares a timestamp, so timestamps alone give no total order."""
+    at = datetime.datetime(2026, 5, 1, tzinfo=datetime.UTC)
+    written = sorted(_write(store_root, [make_stream(FRONT, perfect())], created_at=at) for _ in range(2))
+    (winner,) = store.read_streams(store_root)
+    assert winner["run_id"] == written[-1]
+    # Deterministic, not merely stable within one call.
+    assert store.read_streams(store_root)[0]["run_id"] == winner["run_id"]
+
+
+def test_instrument_version_is_not_part_of_the_measurement_key(
+    store_root: str, make_stream: Callable[..., StreamResult], perfect: Callable[..., list[int]]
+) -> None:
+    """Re-measuring with newer code supersedes the old row rather than sitting beside it."""
+    _write(store_root, [make_stream(FRONT, perfect())])
+    _write(
+        store_root,
+        [make_stream(FRONT, perfect())],
+        created_at=datetime.datetime(2030, 1, 1, tzinfo=datetime.UTC),
+    )
+    assert len(store.read_measurements(store_root, "rate")) == 1
+
+
+def _fail_the_commit(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Kill a run between its dataset writes and its commit, the way a crash would."""
+
+    def _boom(*_args: object, **_kwargs: object) -> None:
+        msg = "killed before the commit"
+        raise RuntimeError(msg)
+
+    monkeypatch.setattr(store, "commit_run", _boom)
+
+
+def test_a_run_that_never_committed_is_not_readable(
+    store_root: str,
+    monkeypatch: pytest.MonkeyPatch,
+    make_stream: Callable[..., StreamResult],
+    perfect: Callable[..., list[int]],
+) -> None:
+    """A write spans several datasets, so rows without a commit describe a torn write."""
+    _fail_the_commit(monkeypatch)
+    with pytest.raises(RuntimeError, match="killed before the commit"):
+        _write(store_root, [make_stream(FRONT, perfect())])
+
+    assert store.read_streams(store_root) == []
+    assert store.read_measurements(store_root, "rate") == []
+    assert store.read_evaluations(store_root) == []
+    # Still on disk, and reachable when the question is "what happened here".
+    assert len(store.read_streams(store_root, include_incomplete=True)) == 1
+
+
+def test_an_uncommitted_run_does_not_hide_the_committed_row_beneath_it(
+    store_root: str,
+    monkeypatch: pytest.MonkeyPatch,
+    make_stream: Callable[..., StreamResult],
+    perfect: Callable[..., list[int]],
+) -> None:
+    """The newest row wins only among committed ones, or a crash would blank the key."""
+    good = _write(store_root, [make_stream(FRONT, perfect())])
+
+    _fail_the_commit(monkeypatch)
+    with pytest.raises(RuntimeError, match="killed before the commit"):
+        _write(
+            store_root,
+            [make_stream(FRONT, perfect())],
+            created_at=datetime.datetime(2030, 1, 1, tzinfo=datetime.UTC),
+        )
+
+    (row,) = store.read_streams(store_root)
+    assert row["run_id"] == good
+
+
+def test_the_run_ledger_records_every_finished_run(
+    store_root: str, make_stream: Callable[..., StreamResult], perfect: Callable[..., list[int]]
+) -> None:
+    """The commit row is the run's provenance: who wrote it, under what policy, and when."""
+    run_id = _write(store_root, [make_stream(FRONT, perfect())])
+    assert store.completed_runs(store_root) == frozenset({run_id})
+
+    (row,) = store.read_runs(store_root)
+    assert row["run_id"] == run_id
+    assert row["tool"] == "di-session"
+    assert row["session_path"] == SESSION
+    assert row["policy_id"] == store.policy_id(DEFAULT_THRESHOLDS)
+    assert row["num_streams"] == 1
+    assert row["store_schema_version"] == store_schema.STORE_SCHEMA_VERSION
+    assert row["committed_at"] >= row["created_at"]
+
+
+def test_session_rollup_matches_the_live_report_precedence(
+    store_root: str,
+    make_stream: Callable[..., StreamResult],
+    make_errored_stream: Callable[..., StreamResult],
+    perfect: Callable[..., list[int]],
+    drifting: Callable[..., list[int]],
+) -> None:
+    """ERROR outranks FAIL, because an errored stream was never measured at all."""
+    thresholds = Thresholds(max_rate_deviation_percent=0.5)
+    streams = [
+        make_stream("/data/session/good.mp4", perfect(), thresholds=thresholds),
+        make_stream("/data/session/drift.mp4", drifting(percent=3.0), thresholds=thresholds),
+        make_errored_stream("/data/session/broken.mp4"),
+    ]
+    _write(store_root, streams, thresholds=thresholds)
+
+    rollup = store.session_rollup(store_root)
+    assert rollup["status"] == "ERROR"
+    assert rollup["num_streams"] == 3
+    assert rollup["stream_status_counts"] == {"PASS": 1, "FAIL": 1, "ERROR": 1}
+
+
+def test_session_rollup_of_an_empty_store_is_an_error(store_root: str) -> None:
+    """Nothing measured is not the same as nothing wrong."""
+    _write(store_root, [])
+    assert store.session_rollup(store_root)["status"] == "ERROR"
+
+
+def test_session_rollup_under_a_policy_nothing_was_judged_by_is_an_error(
+    store_root: str, make_stream: Callable[..., StreamResult], perfect: Callable[..., list[int]]
+) -> None:
+    """A store with no verdicts for the requested policy has nothing to call a pass."""
+    _write(store_root, [make_stream(FRONT, perfect())])
+    stored = store.session_rollup(store_root, policy=store.policy_id(DEFAULT_THRESHOLDS))
+    assert stored["status"] == "PASS"
+
+    other = store.session_rollup(store_root, policy=store.policy_id(Thresholds(max_gaps=99)))
+    assert other["status"] == "ERROR"
+    assert other["stream_status_counts"] == {"PASS": 0, "FAIL": 0, "ERROR": 1}
+
+
+def test_manifest_records_the_run(
+    store_root: str, make_stream: Callable[..., StreamResult], perfect: Callable[..., list[int]]
+) -> None:
+    """Provenance for the most recent run; per-run detail lives on the rows themselves."""
+    run_id = _write(store_root, [make_stream(FRONT, perfect())])
+    manifest = store.read_manifest(store_root)
+    assert manifest["run_id"] == run_id
+    assert manifest["tool"] == "di-session"
+    assert manifest["store_schema_version"] == store_schema.STORE_SCHEMA_VERSION
+    assert manifest["policy_id"] == store.policy_id(DEFAULT_THRESHOLDS)
+    assert manifest["instruments"] == {spec.name: spec.version for spec in INSTRUMENTS}
+
+
+def test_policy_id_is_a_function_of_the_thresholds() -> None:
+    """Identical policies collide on purpose; a changed one opens a new verdict generation."""
+    assert store.policy_id(Thresholds()) == store.policy_id(Thresholds())
+    assert store.policy_id(Thresholds()) != store.policy_id(Thresholds(max_gaps=1))
+
+
+def test_local_content_identity_comes_from_a_stat(tmp_path: pathlib.Path) -> None:
+    """Local files have a size and mtime but no ETag."""
+    path = tmp_path / "clip.mp4"
+    path.write_bytes(b"x" * 1234)
+    content = store.content_identity(str(path))
+    assert content.size_bytes == 1234
+    assert content.last_modified is not None
+    assert content.etag is None
+
+
+def test_content_identity_of_a_missing_file_is_empty(tmp_path: pathlib.Path) -> None:
+    """Provenance is best-effort; an unreadable source must not fail a store write."""
+    assert store.content_identity(str(tmp_path / "gone.mp4")) == store.ContentIdentity()
+
+
+def test_cloud_stats_are_reused_rather_than_refetched(
+    store_root: str, make_stream: Callable[..., StreamResult], perfect: Callable[..., list[int]]
+) -> None:
+    """The session CLI already issued the HEAD, so the store must not issue a second one.
+
+    A second HEAD here would also fail outright, since nothing in this test can reach
+    S3 -- which is precisely what makes the assertion meaningful.
+    """
+    source = "s3://bucket/session/front.mp4"
+    stat = CloudObjectStat(
+        size_bytes=4096,
+        etag="d41d8cd98f00b204e9800998ecf8427e",
+        last_modified=datetime.datetime(2026, 3, 1, tzinfo=datetime.UTC),
+    )
+    _write(
+        store_root,
+        [make_stream(source, perfect())],
+        session_path="s3://bucket/session",
+        cloud_stats={source: stat},
+    )
+    (row,) = store.read_streams(store_root)
+    assert row["content_etag"] == stat.etag
+    assert row["content_size_bytes"] == stat.size_bytes
+    assert row["content_last_modified"] == stat.last_modified
+
+
+def test_an_empty_stat_is_not_mistaken_for_a_response(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A failed HEAD upstream must not be recorded as "this object has no ETag"."""
+    fetched: list[str] = []
+
+    def _stat(source: str, **_kwargs: object) -> CloudObjectStat:
+        fetched.append(source)
+        return CloudObjectStat(size_bytes=7, etag="abc")
+
+    monkeypatch.setattr(store, "get_cloud_object_stat", _stat)
+    source = "s3://bucket/session/front.mp4"
+    content = store.content_identity(source, stat=CloudObjectStat())
+    assert fetched == [source]
+    assert content.etag == "abc"
+
+
+def test_staleness_is_flagged_when_the_bytes_change(
+    store_root: str,
+    tmp_path: pathlib.Path,
+    make_stream: Callable[..., StreamResult],
+    perfect: Callable[..., list[int]],
+) -> None:
+    """The one staleness signal neither the instrument version nor the schema can see."""
+    source = tmp_path / "clip.mp4"
+    source.write_bytes(b"x" * 100)
+    _write(store_root, [make_stream(str(source), perfect())], session_path=str(tmp_path))
+    (stream_row,) = store.read_streams(store_root)
+    (rate_row,) = store.read_measurements(store_root, "rate")
+
+    unchanged = store.content_identity(str(source))
+    assert store.stale_reasons("rate", rate_row, stream_row=stream_row, content=unchanged) == []
+
+    source.write_bytes(b"y" * 200)
+    changed = store.content_identity(str(source))
+    assert store.stale_reasons("rate", rate_row, stream_row=stream_row, content=changed) == [
+        "content_size_bytes changed"
+    ]
+
+
+def test_staleness_is_flagged_when_the_instrument_moves_on(
+    store_root: str, make_stream: Callable[..., StreamResult], perfect: Callable[..., list[int]]
+) -> None:
+    """A hand-bumped version is the signal only a human can give."""
+    _write(store_root, [make_stream(FRONT, perfect())])
+    (row,) = store.read_measurements(store_root, "rate")
+    assert store.stale_reasons("rate", row) == []
+    assert store.stale_reasons("rate", {**row, "instrument_version": 0}) == ["instrument_version 0 != 1"]
+
+
+def test_reading_a_store_that_was_never_written_yields_no_rows(tmp_path: pathlib.Path) -> None:
+    """A dataset that does not exist is not an error for a reader."""
+    empty = str(tmp_path / "never-written")
+    assert store.read_measurements(empty, "rate") == []
+    assert store.read_streams(empty) == []
+
+
+def test_unknown_metric_is_rejected_before_any_io(store_root: str) -> None:
+    """A typo should name the alternatives, not read an empty dataset and look fine."""
+    with pytest.raises(KeyError, match="known metrics"):
+        store.read_measurements(store_root, "no_such_metric")
+
+
+def test_azure_store_is_rejected_explicitly() -> None:
+    """Lance's Azure options are a different set of keys; guessing would fail opaquely later."""
+    with pytest.raises(CloudCliError, match="az://"):
+        store.read_streams("az://container/store")

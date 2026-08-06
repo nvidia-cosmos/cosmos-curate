@@ -48,15 +48,10 @@ import time
 from cosmos_curator.core.sensors.data_integrity.cli_common import (
     FAIL_EXIT_CODE,
     PASS_EXIT_CODE,
-    CheckResult,
-    CheckStatus,
-    ResolvedConfig,
-    VideoInfo,
     add_threshold_args,
     cancellable_reader,
     interrupt_guard,
     non_negative_int,
-    overall_status,
     positive_finite_float,
     raise_if_interrupted,
     report_error,
@@ -64,6 +59,15 @@ from cosmos_curator.core.sensors.data_integrity.cli_common import (
     run_checks,
     thresholds_from_args,
 )
+from cosmos_curator.core.sensors.data_integrity.results import (
+    CheckResult,
+    CheckStatus,
+    ResolvedConfig,
+    VideoInfo,
+    overall_status,
+    stream_result,
+)
+from cosmos_curator.core.sensors.data_integrity.store_cli import add_store_args, persist_run
 from cosmos_curator.core.sensors.scripts._cli_cloud import (
     CloudCliError,
     add_cloud_credential_args,
@@ -203,6 +207,7 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         help="Emit per-phase wall-clock timings to stderr after the report.",
     )
     add_threshold_args(parser)
+    add_store_args(parser)
     add_cloud_credential_args(parser)
     return parser.parse_args(argv)
 
@@ -231,15 +236,17 @@ def _run(args: argparse.Namespace, stats: dict[str, float] | None, interrupted: 
     """
     try:
         validate_source(args.source)
+        thresholds = thresholds_from_args(args)
+        endpoint_url = resolve_s3_endpoint_url(args.endpoint_url)
         results, video_info, resolved_cfg = run_checks(
             args.source,
             expected_hz=args.expected_hz,
-            thresholds=thresholds_from_args(args),
+            thresholds=thresholds,
             stream_idx=args.stream_idx,
             batch_size=args.batch_size,
             s3_profile_name=args.s3_profile_name,
             azure_profile_name=args.azure_profile_name,
-            endpoint_url=resolve_s3_endpoint_url(args.endpoint_url),
+            endpoint_url=endpoint_url,
             stats=stats,
             stream_wrapper=lambda stream: cancellable_reader(stream, interrupted),
         )
@@ -265,6 +272,31 @@ def _run(args: argparse.Namespace, stats: dict[str, float] | None, interrupted: 
             # Flush the report first so interactive users see it above the perf block.
             sys.stdout.flush()
             sys.stderr.write(_render_perf(stats, video_info=video_info, batch_size=args.batch_size))
+        if args.store_path is not None:
+            # After the report, so the operator keeps the verdict even when persisting
+            # fails -- but a failure is still exit code 2, because saving the results
+            # was part of what was asked for.
+            try:
+                persist_run(
+                    args.store_path,
+                    # The stream index rides along: --stream-idx 0 and --stream-idx 1
+                    # of one file are two streams, and the store keys on that.
+                    [
+                        stream_result(
+                            args.source, results, video_info, resolved_cfg, selector_value=str(args.stream_idx)
+                        )
+                    ],
+                    # A single-video run has no session; that null is the only
+                    # structural difference between what the two CLIs write.
+                    session_path=None,
+                    thresholds=thresholds,
+                    tool="di-check",
+                    s3_profile_name=args.s3_profile_name,
+                    azure_profile_name=args.azure_profile_name,
+                    endpoint_url=endpoint_url,
+                )
+            except Exception as e:  # noqa: BLE001 - the store can fail in as many ways as its backend
+                return report_error(f"checked {args.source!r} but could not write the store: {e}")
         return FAIL_EXIT_CODE if overall_status(results) is CheckStatus.FAIL else PASS_EXIT_CODE
     except CloudCliError as e:
         return report_error(str(e))

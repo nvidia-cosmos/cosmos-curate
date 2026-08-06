@@ -42,6 +42,8 @@ intact.
 
 import argparse
 import configparser
+import dataclasses
+import datetime
 import os
 import pathlib
 from collections.abc import Generator
@@ -417,7 +419,64 @@ def list_cloud_objects(  # noqa: PLR0913
     raise CloudCliError(msg)
 
 
-def get_cloud_object_size(  # noqa: PLR0913
+@dataclasses.dataclass(frozen=True)
+class CloudObjectStat:
+    """What one ``HEAD`` tells us about a cloud object.
+
+    Attributes:
+        size_bytes: object size, or ``None`` if the backend did not report one.
+        etag: the backend's entity tag. Treat it as an **opaque change token, not a
+            checksum**: S3 returns an MD5 for a single-part upload but a
+            ``<hash>-<part-count>`` composite for a multipart one, so identical bytes
+            can carry different tags depending on how they were uploaded. A changed
+            tag reliably means something happened; an unchanged tag alongside an
+            unchanged size is good evidence nothing did.
+        last_modified: server-side modification time, timezone-aware.
+
+    """
+
+    size_bytes: int | None = None
+    etag: str | None = None
+    last_modified: datetime.datetime | None = None
+
+    @property
+    def is_empty(self) -> bool:
+        """Whether this stat learned nothing at all.
+
+        The lookup never raises, so an all-``None`` stat is how a failed ``HEAD``
+        arrives. Callers need to tell that apart from a real response: passing an
+        empty one along as if it were a fact would record a null ETag for an object
+        that was merely unlucky the first time.
+        """
+        return self.size_bytes is None and self.etag is None and self.last_modified is None
+
+
+def _s3_object_stat(source: str, s3: BaseClient) -> CloudObjectStat:
+    bucket, key = _split_s3_uri(source)
+    # head_object is a dynamically generated botocore method (not on BaseClient's stub).
+    head = cast("Any", s3).head_object(Bucket=bucket, Key=key)
+    size = head.get("ContentLength")
+    etag = head.get("ETag")
+    return CloudObjectStat(
+        size_bytes=int(size) if size is not None else None,
+        # boto3 hands back the tag quoted, as it appears on the wire. Unquoted here so
+        # a stored value compares cleanly against one from another client.
+        etag=str(etag).strip('"') if etag is not None else None,
+        last_modified=head.get("LastModified"),
+    )
+
+
+def _azure_object_stat(source: str, azure: BlobServiceClient) -> CloudObjectStat:
+    container, blob = _split_azure_uri(source)
+    props = azure.get_container_client(container).get_blob_client(blob).get_blob_properties()
+    return CloudObjectStat(
+        size_bytes=int(props.size) if props.size is not None else None,
+        etag=str(props.etag).strip('"') if props.etag is not None else None,
+        last_modified=props.last_modified,
+    )
+
+
+def get_cloud_object_stat(  # noqa: PLR0913
     source: str,
     *,
     s3_client: BaseClient | None = None,
@@ -425,13 +484,17 @@ def get_cloud_object_size(  # noqa: PLR0913
     s3_profile_name: str | None = None,
     azure_profile_name: str = "default",
     endpoint_url: str | None = None,
-) -> int | None:
-    """Return the byte size of a single cloud object, or ``None`` if it can't be determined.
+) -> CloudObjectStat:
+    """Return what one ``HEAD`` says about a cloud object; empty when it can't be determined.
 
-    Best-effort: issues a single ``HEAD`` (S3) / ``get_blob_properties`` (Azure)
-    for ``source``. Any failure (non-cloud URI, missing object, credential error)
-    returns ``None`` rather than raising, because this is only used to enrich a
-    progress display and must never break the actual check.
+    Best-effort: issues a single ``HEAD`` (S3) / ``get_blob_properties`` (Azure) for
+    ``source``. Any failure (non-cloud URI, missing object, credential error) yields
+    an all-``None`` :class:`CloudObjectStat` rather than raising, because both callers
+    -- a progress display and a staleness record -- are enrichment and must never
+    break the actual check.
+
+    Size, ETag and last-modified all come out of that same one response, so recording
+    content identity alongside the progress total costs no extra round trip.
 
     Args:
         source: ``s3://`` or ``az://`` URI of the object.
@@ -445,17 +508,137 @@ def get_cloud_object_size(  # noqa: PLR0913
     try:
         if is_s3_uri(source):
             s3 = s3_client if s3_client is not None else make_s3_client(source, s3_profile_name, endpoint_url)
-            bucket, key = _split_s3_uri(source)
-            # head_object is a dynamically generated botocore method (not on BaseClient's stub).
-            return int(cast("Any", s3).head_object(Bucket=bucket, Key=key)["ContentLength"])
+            return _s3_object_stat(source, s3)
         if is_azure_uri(source):
             azure = azure_client if azure_client is not None else make_azure_client(source, azure_profile_name)
-            container, blob = _split_azure_uri(source)
-            props = azure.get_container_client(container).get_blob_client(blob).get_blob_properties()
-            return int(props.size)
-    except Exception:  # noqa: BLE001 - size is advisory only; never fail the caller over it
+            return _azure_object_stat(source, azure)
+    except Exception:  # noqa: BLE001 - advisory only; never fail the caller over it
+        return CloudObjectStat()
+    return CloudObjectStat()
+
+
+def get_cloud_object_size(  # noqa: PLR0913
+    source: str,
+    *,
+    s3_client: BaseClient | None = None,
+    azure_client: BlobServiceClient | None = None,
+    s3_profile_name: str | None = None,
+    azure_profile_name: str = "default",
+    endpoint_url: str | None = None,
+) -> int | None:
+    """Return the byte size of a single cloud object, or ``None`` if it can't be determined.
+
+    Thin wrapper over :func:`get_cloud_object_stat` for callers that only want the
+    size (the progress display); same one ``HEAD``, same never-raises contract.
+    """
+    return get_cloud_object_stat(
+        source,
+        s3_client=s3_client,
+        azure_client=azure_client,
+        s3_profile_name=s3_profile_name,
+        azure_profile_name=azure_profile_name,
+        endpoint_url=endpoint_url,
+    ).size_bytes
+
+
+def put_cloud_text(
+    uri: str,
+    text: str,
+    *,
+    s3_profile_name: str | None = None,
+    endpoint_url: str | None = None,
+) -> None:
+    """Write ``text`` to an ``s3://`` URI as UTF-8.
+
+    Small-document helper for the store's manifest; a whole-object ``PUT``, so it is
+    not for anything that should be streamed.
+
+    Raises:
+        CloudCliError: if ``uri`` is not an ``s3://`` URI.
+
+    """
+    if not is_s3_uri(uri):
+        msg = f"expected an s3:// URI, got {uri!r}"
+        raise CloudCliError(msg)
+    bucket, key = _split_s3_uri(uri)
+    client = make_s3_client(uri, s3_profile_name, endpoint_url)
+    cast("Any", client).put_object(Bucket=bucket, Key=key, Body=text.encode())
+
+
+def get_cloud_text(
+    uri: str,
+    *,
+    s3_profile_name: str | None = None,
+    endpoint_url: str | None = None,
+) -> str:
+    """Read an ``s3://`` object as UTF-8 text.
+
+    Raises:
+        CloudCliError: if ``uri`` is not an ``s3://`` URI.
+
+    """
+    if not is_s3_uri(uri):
+        msg = f"expected an s3:// URI, got {uri!r}"
+        raise CloudCliError(msg)
+    bucket, key = _split_s3_uri(uri)
+    client = make_s3_client(uri, s3_profile_name, endpoint_url)
+    body = cast("Any", client).get_object(Bucket=bucket, Key=key)["Body"].read()
+    return str(body.decode())
+
+
+def get_lance_storage_options(
+    uri: str,
+    *,
+    s3_profile_name: str | None = None,
+    endpoint_url: str | None = None,
+) -> dict[str, str] | None:
+    """Build Lance ``storage_options`` for ``uri``, or ``None`` for a local path.
+
+    A boundary-respecting equivalent of
+    ``cosmos_curator.core.utils.storage.storage_utils.get_lance_storage_options``,
+    which modules under ``cosmos_curator/core/sensors/`` may not import (see the
+    self-containment rule in ``cosmos_curator/core/sensors/__init__.py``). Same
+    option names, resolved from the same boto3 session the rest of this module uses,
+    so a store written here is readable by the pipeline side and vice versa.
+
+    Azure raises rather than silently writing an unauthenticated store: Lance's Azure
+    options are a different set of keys, and a wrong guess would surface as an opaque
+    permission error at write time.
+
+    Raises:
+        CloudCliError: if ``uri`` is an ``az://`` URI, or S3 credentials cannot be
+            resolved.
+
+    """
+    if is_azure_uri(uri):
+        msg = f"the data-integrity store does not support az:// yet: {uri!r}; use a local path or an s3:// URI"
+        raise CloudCliError(msg)
+    if not is_s3_uri(uri):
         return None
-    return None
+
+    endpoint_url = resolve_s3_endpoint_url(endpoint_url)
+    try:
+        session = boto3.Session(profile_name=s3_profile_name) if s3_profile_name else boto3.Session()
+        credentials = session.get_credentials()
+    except (BotoCoreError, ProfileNotFound) as e:
+        msg = f"could not configure S3 access for {uri!r}: {e}\n{S3_CREDENTIALS_HINT}"
+        raise CloudCliError(msg) from e
+    if credentials is None:
+        msg = f"could not configure S3 access for {uri!r}: {NoCredentialsError()}\n{S3_CREDENTIALS_HINT}"
+        raise CloudCliError(msg)
+
+    # frozen_credentials resolves whatever the chain produced (static keys, SSO, an
+    # assumed role) into concrete values, which is what Lance's object store needs --
+    # it cannot call back into boto3 to refresh them.
+    frozen = credentials.get_frozen_credentials()
+    options = {
+        "aws_access_key_id": frozen.access_key,
+        "aws_secret_access_key": frozen.secret_key,
+        "aws_session_token": frozen.token,
+        "aws_region": session.region_name,
+        "aws_endpoint": endpoint_url,
+    }
+    return {key: value for key, value in options.items() if value} or None
 
 
 def add_cloud_credential_args(parser: argparse.ArgumentParser) -> None:
