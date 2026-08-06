@@ -30,6 +30,7 @@ from cosmos_curator.client.slurm_cli.slurm_common import (
     _DEFAULT_CACHE_PATH,
     _DEFAULT_CONTAINER_IMAGE,
     _SLURM_ACCOUNT_ENV_VAR,
+    _is_valid_slurm_memory,
 )
 from cosmos_curator.core.utils import environment
 
@@ -37,9 +38,6 @@ _CONFIG_MODEL = ConfigDict(extra="forbid", frozen=True, strict=True)
 _ENVIRONMENT_NAME_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _JOB_NAME_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+$")
 _STARTUP_TIMEOUT_PATTERN = re.compile(r"^(?P<value>[1-9][0-9]*)(?P<unit>[smhd])$")
-# sbatch --mem sizes: a positive number with an optional K/M/G/T suffix. `0` means "all of the node" and is
-# rejected, because a head that asks for a whole node's memory cannot share one.
-_MEMORY_PATTERN = re.compile(r"^[1-9][0-9]*[KMGT]?$")
 # The six walltime spellings sbatch accepts. A leading ``D-`` makes the first field days; otherwise the number of
 # colons decides, so `30` is minutes, `30:00` is minutes:seconds, and `4:00:00` is hours:minutes:seconds.
 _SLURM_TIME_PATTERN = re.compile(r"^(?:(?P<days>\d+)-)?(?P<first>\d+)(?::(?P<second>\d+))?(?::(?P<third>\d+))?$")
@@ -227,7 +225,7 @@ class SlurmRayHeadConfig(SlurmRayAllocationConfig):
     @field_validator("memory")
     @classmethod
     def _validate_memory(cls, value: str) -> str:
-        if not _MEMORY_PATTERN.fullmatch(value):
+        if not _is_valid_slurm_memory(value):
             msg = f"slurm.head.memory must be a positive sbatch size such as 64G or 65536M, got {value!r}"
             raise ValueError(msg)
         return value

@@ -592,8 +592,14 @@ rclone copy -P ${COSMOS_CURATOR_LOCAL_WORKSPACE_PREFIX:-$HOME}/cosmos_curator_lo
 ### Create sqsh Image and Copy to the Slurm Cluster
 
 If the Docker image is reachable from the Slurm cluster, import it directly on the cluster. The command runs
-`enroot import` through `srun`, defaults to the `cpu` partition, writes to `~/container_images`, and overwrites the
-default output file `cosmos-curator+1.0.0.sqsh` unless `--no-overwrite` is provided:
+`enroot import` through `srun`, defaults to the `cpu` partition with 16 CPUs and 64 GB of memory, writes to
+`~/container_images`, and overwrites the default output file `cosmos-curator+1.0.0.sqsh` unless `--no-overwrite` is
+provided. Use `--cpus-per-task` (`-c`) and `--mem` to override the resource defaults for a particular cluster or
+image:
+
+```bash
+cosmos-curator slurm import-image -c 8 --mem 32G my-image:tag
+```
 
 For private registries, create `~/.config/enroot/.credentials` on the Slurm cluster login node so it is stored in the
 home directory visible to Enroot on that cluster. Ignore registries you do not use; entries can be added later.

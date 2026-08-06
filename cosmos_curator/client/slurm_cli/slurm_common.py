@@ -17,6 +17,7 @@
 import logging
 import os
 import pwd
+import re
 import shlex
 import socket
 import sys
@@ -51,6 +52,7 @@ _DEFAULT_CONTAINER_IMAGE = "~/container_images/cosmos-curator+1.0.0.sqsh"
 _DEFAULT_CONDA_OVERRIDE_CUDA = "13.0.2"
 _DEFAULT_LOGIN_NODE = "localhost"
 _SLURM_ACCOUNT_ENV_VAR = "SBATCH_ACCOUNT"
+_SLURM_MEMORY_PATTERN = re.compile(r"^[1-9][0-9]*[KMGT]?$")
 _SOURCE_DIRNAMES = ("cosmos_curator", "tools")
 _SOURCE_FILENAMES = ("pixi.toml", "pixi.lock", "pyproject.toml", "pytest.ini", ".coveragerc")
 _PIXI_ACTIVATION_ENV_VARS = (
@@ -296,6 +298,11 @@ def _normalize_optional_slurm_directive(value: str | None) -> str | None:
         return None
     value = value.strip()
     return value or None
+
+
+def _is_valid_slurm_memory(value: str) -> bool:
+    """Return whether a value is a positive Slurm memory size."""
+    return _SLURM_MEMORY_PATTERN.fullmatch(value) is not None
 
 
 def _resolve_slurm_account(account: str | None) -> str | None:
