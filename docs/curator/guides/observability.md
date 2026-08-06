@@ -348,6 +348,9 @@ carry Ray's job/worker context:
 | `pid` | `os.getpid()` | Process id |
 | `run_id` | `CURATOR_RUN_ID` env | Run/request id (NVCF request id on NVCF) |
 | `seq` | per-process counter | Gap-free monotonic tiebreaker |
+| `trace_id` | active OTel span | 32-char lowercase-hex id of the enclosing trace. Only when tracing is enabled **and** a span is active; otherwise the key is absent |
+| `span_id` | active OTel span | 16-char lowercase-hex id of the span that emitted the line (same conditions as `trace_id`) |
+| `trace_sampled` | active OTel span | Boolean: whether the trace was sampled, i.e. whether the backend actually retained it |
 | `job_id`, `worker_id`, `node_id`, `task_*` | Ray | Ray context (Ray lines only) |
 
 All identity/order fields (`pod`, `replica`, `pid`, `run_id`, `seq`) are top-level in
@@ -355,6 +358,25 @@ every source, and Ray's `JSONFormatter` surfaces them alongside its own context.
 logger `name` is requested from Ray via `additional_log_standard_attrs=["name"]` so
 Ray lines match the fallback/launcher schema (older Ray without that parameter simply
 omits `name`).
+
+### Span correlation fields
+
+Running with `--profile-tracing` on top of `PYTHON_LOG_FORMAT=json` stamps `trace_id`,
+`span_id`, and `trace_sampled` onto every record created while a span is active — no
+extra toggle. Records emitted outside a span carry none of the three keys, so a log UI
+never renders a link to a trace that does not exist.
+
+Both halves are settable purely from the environment, so correlation can be turned on
+for a whole deployment rather than per invocation: `PYTHON_LOG_FORMAT=json` plus
+`COSMOS_CURATOR_PROFILE_TRACING=1`, both forwarded into the container by the local and
+Slurm launchers. Set `COSMOS_CURATOR_PROFILE_TRACING=0` for a single run to opt out of a
+cluster-wide default.
+
+Turning `trace_id` into a clickable link to the trace is a function of your log backend
+and is not configured from this repo — the mechanism differs enough between stacks that
+there is no portable recipe. See the
+**[Distributed Tracing reference](../reference/distributed-tracing.md)** for how to
+enable tracing and export spans to a collector.
 
 ### Elasticsearch / log-shipper recommendations
 

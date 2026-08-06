@@ -87,8 +87,8 @@ _SLURM_ENV_VARS_TO_FORWARD = (
     "SLURMD_NODENAME",
     "SLURM_RESTART_COUNT",
 )
-# Structured-logging toggles forwarded from the launching environment into the
-# container (when set) so the Ray head and workers log identically.
+# Structured-logging and tracing toggles forwarded from the launching environment into
+# the container (when set) so the Ray head and workers log identically.
 _LOG_ENV_VARS_TO_FORWARD = (
     "PYTHON_LOG",
     "PYTHON_LOG_FORMAT",
@@ -96,6 +96,7 @@ _LOG_ENV_VARS_TO_FORWARD = (
     "PYTHON_LOG_RAY_LEVEL",
     "RAY_BACKEND_LOG_JSON",
     "CURATOR_RUN_ID",
+    "COSMOS_CURATOR_PROFILE_TRACING",
 )
 
 
@@ -606,7 +607,7 @@ def _get_srun_environment(
     if opts.pixi_envs is not None:
         env["COSMOS_CURATOR_SLIM_ENVS"] = ",".join(opts.pixi_envs)
 
-    # Forward structured-logging toggles present in the launching environment.
+    # Forward structured-logging and tracing toggles present in the launching environment.
     container_env_keys.extend(name for name in _LOG_ENV_VARS_TO_FORWARD if name in env)
 
     if include_slurm_env:

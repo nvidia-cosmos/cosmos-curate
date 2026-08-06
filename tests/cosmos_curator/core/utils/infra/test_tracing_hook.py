@@ -36,6 +36,7 @@ functions.
     |   suppress + disable + re-raise  |  |   wrapped error, non-conn re-raise   |
     | _reset_tracing_after_fork()      |  | Call directly, assert same backend,  |
     |   dup2 fd redirect to new file   |  |   unique filename, fd writes to new  |
+    | _inject_span_context() log hook  |  | Fake span -> hex ids, JSON-native    |
     +----------------------------------+  +--------------------------------------+
 
 Test setup:
@@ -59,18 +60,23 @@ Test setup:
 """
 
 import errno
+import json
+import logging
+import os
 import pathlib
 from collections.abc import Generator, Sequence
 from unittest.mock import MagicMock
 
 import pytest
-from opentelemetry import trace
+from opentelemetry import context, trace
 from opentelemetry.sdk.trace import ReadableSpan, TracerProvider
 from opentelemetry.sdk.trace.export import SpanExportResult
+from opentelemetry.trace import NonRecordingSpan, SpanContext, TraceFlags
 
 import cosmos_curator.core.utils.infra.tracing_hook as _hook_module  # module-level singleton access
 from cosmos_curator.core.utils.infra.tracing_hook import (
     TracingConfig,
+    _inject_span_context,
     _is_connection_error,
     _ResilientOtlpExporter,
     _TracingBackend,
@@ -668,18 +674,21 @@ class TestFlushKeepsFileOpen:
 class TestAttachRemoteParent:
     """Verify attach_remote_parent() sets the OTel context correctly.
 
-    The function parses a ``"trace_id_hex:span_id_hex"`` string and
-    attaches a remote span context so subsequent spans share the same
-    ``trace_id`` and become children of the remote parent.
+    The function parses a W3C ``traceparent`` and attaches a remote span
+    context so subsequent spans share the same ``trace_id``, inherit the
+    root's sampling decision, and become children of the remote parent.
+    The flagless legacy ``"trace_id_hex:span_id_hex"`` form is still
+    accepted.
 
     ::
 
-        attach_remote_parent("abc123:def456")
+        attach_remote_parent("00-abc123-def456-01")
             |
             v
         trace.get_current_span().get_span_context()
             -> trace_id = 0xabc123
             -> span_id  = 0xdef456 (parent of next span)
+            -> sampled  = True
 
         tracer.start_span("child")
             -> parent_span_id = 0xdef456  (linked to remote parent)
@@ -738,3 +747,128 @@ class TestAttachRemoteParent:
         # and logs a warning via loguru (which goes to stderr, not
         # Python's logging module).
         attach_remote_parent("not-a-valid-traceparent")
+
+    def test_w3c_traceparent_preserves_unsampled_flag(self) -> None:
+        """An unsampled root stays unsampled across the process boundary.
+
+        ``ParentBased`` samplers defer to the parent, so losing this flag
+        would force every worker span to sample regardless of
+        ``--profile-tracing-sampling``.
+        """
+        trace_id_hex = "0000000000000000000000000000abce"
+        span_id_hex = "00000000000000f0"
+        attach_remote_parent(f"00-{trace_id_hex}-{span_id_hex}-00")
+
+        current = trace.get_current_span().get_span_context()
+        assert current.trace_id == int(trace_id_hex, 16)
+        assert current.span_id == int(span_id_hex, 16)
+        assert current.is_remote is True
+        assert current.trace_flags.sampled is False
+
+    def test_w3c_traceparent_preserves_sampled_flag(self) -> None:
+        """A sampled root is propagated as sampled."""
+        trace_id_hex = "0000000000000000000000000000abcf"
+        span_id_hex = "00000000000000f1"
+        attach_remote_parent(f"00-{trace_id_hex}-{span_id_hex}-01")
+
+        current = trace.get_current_span().get_span_context()
+        assert current.trace_id == int(trace_id_hex, 16)
+        assert current.trace_flags.sampled is True
+
+    def test_legacy_format_is_assumed_sampled(self) -> None:
+        """The flagless legacy form keeps the behaviour it had when it was the only format."""
+        trace_id_hex = "0000000000000000000000000000abd0"
+        span_id_hex = "00000000000000f2"
+        attach_remote_parent(f"{trace_id_hex}:{span_id_hex}")
+
+        current = trace.get_current_span().get_span_context()
+        assert current.trace_id == int(trace_id_hex, 16)
+        assert current.trace_flags.sampled is True
+
+    @pytest.mark.parametrize("sampled", [True, False])
+    def test_round_trip_through_propagate_context(
+        self,
+        tmp_path: pathlib.Path,
+        monkeypatch: pytest.MonkeyPatch,
+        sampled: bool,  # noqa: FBT001
+    ) -> None:
+        """propagate_context() writes a traceparent that attach_remote_parent() reads back intact."""
+        monkeypatch.delenv("COSMOS_CURATOR_TRACEPARENT", raising=False)
+        backend = _TracingBackend(TracingConfig(trace_dir=str(tmp_path), otlp_endpoint=""))
+        _reset_otel_provider_guard()
+        backend.setup_provider()
+
+        trace_id = int("0000000000000000000000000000abd1", 16)
+        span_id = int("00000000000000f3", 16)
+        flags = TraceFlags(TraceFlags.SAMPLED if sampled else TraceFlags.DEFAULT)
+        remote = SpanContext(trace_id=trace_id, span_id=span_id, is_remote=False, trace_flags=flags)
+
+        token = context.attach(trace.set_span_in_context(NonRecordingSpan(remote)))
+        try:
+            backend.propagate_context()
+        finally:
+            context.detach(token)
+
+        written = os.environ["COSMOS_CURATOR_TRACEPARENT"]
+        assert written == f"00-{trace_id:032x}-{span_id:016x}-{int(flags):02x}"
+
+        attach_remote_parent(written)
+        current = trace.get_current_span().get_span_context()
+        assert current.trace_id == trace_id
+        assert current.span_id == span_id
+        assert current.trace_flags.sampled is sampled
+
+        backend.shutdown()
+
+
+class TestInjectSpanContext:
+    """Verify the ``LoggingInstrumentor`` log hook stamps correlation fields.
+
+    The hook is what makes a structured (``PYTHON_LOG_FORMAT=json``) log line
+    resolvable to a trace, so the emitted values must be zero-padded lowercase
+    hex of the canonical widths and JSON-native types.
+    """
+
+    @staticmethod
+    def _span(*, trace_id: int, span_id: int, sampled: bool) -> trace.Span:
+        flags = trace.TraceFlags(trace.TraceFlags.SAMPLED if sampled else trace.TraceFlags.DEFAULT)
+        return trace.NonRecordingSpan(
+            trace.SpanContext(trace_id=trace_id, span_id=span_id, is_remote=False, trace_flags=flags)
+        )
+
+    @staticmethod
+    def _record() -> logging.LogRecord:
+        return logging.LogRecord(
+            name="cosmos_curator.test",
+            level=logging.INFO,
+            pathname=__file__,
+            lineno=1,
+            msg="traced",
+            args=(),
+            exc_info=None,
+        )
+
+    @pytest.mark.parametrize("sampled", [True, False])
+    def test_stamps_zero_padded_hex_ids(self, *, sampled: bool) -> None:
+        """Ids are padded to the 32/16 hex-char widths Tempo/Jaeger expect."""
+        record = self._record()
+
+        _inject_span_context(self._span(trace_id=0xABCD, span_id=0xEF, sampled=sampled), record)
+
+        assert record.__dict__["trace_id"] == "0000000000000000000000000000abcd"
+        assert record.__dict__["span_id"] == "00000000000000ef"
+        assert record.__dict__["trace_sampled"] is sampled
+
+    def test_values_are_json_native(self) -> None:
+        """Ray's JSONFormatter calls json.dumps without a ``default=``, so no OTel objects."""
+        record = self._record()
+        span = self._span(trace_id=0x0AF7651916CD43DD8448EB211C80319C, span_id=0xB7AD6B7169203331, sampled=True)
+
+        _inject_span_context(span, record)
+
+        fields = {key: record.__dict__[key] for key in ("trace_id", "span_id", "trace_sampled")}
+        assert json.loads(json.dumps(fields)) == {
+            "trace_id": "0af7651916cd43dd8448eb211c80319c",
+            "span_id": "b7ad6b7169203331",
+            "trace_sampled": True,
+        }

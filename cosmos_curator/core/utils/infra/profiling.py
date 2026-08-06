@@ -74,6 +74,7 @@ from cosmos_curator.core.utils.infra.tracing import (
     TracedSpan,
     artifact_id,
     process_tag,
+    profile_tracing_enabled_via_env,
     trace_root_anchor,
     traced_span,
 )
@@ -171,6 +172,10 @@ class ProfilingConfig:
             spans (scheduling, method invocations) as NDJSON files.
         tracing_sampling: Trace sampling rate (0.0--1.0) passed to
             ``enable_tracing()`` which sets standard OTel env vars.
+            Defaults to 1.0, matching ``--profile-tracing-sampling``:
+            the decision is made once at the trace root and inherited by
+            the whole run, so a fractional value drops entire runs rather
+            than thinning spans within one.
         tracing_otlp_endpoint: OTLP HTTP collector endpoint for
             remote span export.  Empty string (default) disables
             OTLP -- only the local file exporter is active.  Set via
@@ -196,8 +201,8 @@ class ProfilingConfig:
             with the stage config and available on workers even when
             the env var is not inherited (e.g. ``ray job submit``
             in NVCF).
-        traceparent: Driver's trace anchor context in
-            ``"{trace_id_hex}:{span_id_hex}"`` format.  May be empty
+        traceparent: Driver's trace anchor context as a W3C
+            ``traceparent`` string.  May be empty
             on the snapshot taken in ``_apply_profiling_config()`` if
             that runs before ``propagate_trace_context()`` (common when
             stage specs are built early).  Workers fall back to
@@ -217,7 +222,7 @@ class ProfilingConfig:
     memory_enabled: bool = False
     gpu_enabled: bool = False
     tracing_enabled: bool = False
-    tracing_sampling: float = 0.01
+    tracing_sampling: float = 1.0
     tracing_otlp_endpoint: str = ""
     otlp_metrics_push_enabled: bool = False
     otlp_metrics_push_endpoint: str = ""
@@ -1224,6 +1229,10 @@ def _apply_profiling_config(args: argparse.Namespace) -> ProfilingConfig | None:
     ``ProfilingConfig.profile_dir`` so that backends can derive
     their own subdirectories from it.
 
+    Tracing is additionally enabled by ``COSMOS_CURATOR_PROFILE_TRACING``
+    so it can be turned on for a whole deployment (Helm values, launcher
+    environment) rather than per invocation.  Either source enables it.
+
     Args:
         args: Parsed CLI namespace (must contain ``profile_cpu``,
             ``profile_memory``, ``profile_gpu``,
@@ -1236,7 +1245,7 @@ def _apply_profiling_config(args: argparse.Namespace) -> ProfilingConfig | None:
     cpu = getattr(args, "profile_cpu", False)
     mem = getattr(args, "profile_memory", False)
     gpu = getattr(args, "profile_gpu", False)
-    tracing = getattr(args, "profile_tracing", False)
+    tracing = getattr(args, "profile_tracing", False) or profile_tracing_enabled_via_env()
     # OTLP metrics push is not a sampled profiling backend; it lives on
     # ProfilingConfig purely as a transport carrier and must not flip
     # ``--perf-profile`` on its own.
@@ -1282,7 +1291,7 @@ def _apply_profiling_config(args: argparse.Namespace) -> ProfilingConfig | None:
         memory_enabled=mem,
         gpu_enabled=gpu,
         tracing_enabled=tracing,
-        tracing_sampling=getattr(args, "profile_tracing_sampling", 0.01),
+        tracing_sampling=getattr(args, "profile_tracing_sampling", 1.0),
         tracing_otlp_endpoint=getattr(args, "profile_tracing_otlp_endpoint", ""),
         otlp_metrics_push_enabled=metrics_push,
         otlp_metrics_push_endpoint=getattr(args, "otlp_metrics_push_endpoint", ""),

@@ -311,7 +311,9 @@ class CommonPipelineSettings:
                 "Enable distributed tracing (OpenTelemetry) via Ray's tracing hook. "
                 "Captures cross-actor spans (task scheduling, actor creation, method "
                 "invocations) as NDJSON files in <output-path>/profile/traces/. "
-                "Implies --perf-profile. "
+                "Implies --perf-profile. Can also be enabled for a whole deployment "
+                "by setting COSMOS_CURATOR_PROFILE_TRACING=1; set it to 0 to opt a "
+                "single run out of such a default. "
                 "Note: should be set to True by default once Xenna adds proper "
                 "tracing support."
             ),
@@ -325,10 +327,13 @@ class CommonPipelineSettings:
         metadata=cli(
             help=(
                 "Trace sampling rate when --profile-tracing is enabled. "
-                "Value between 0.0 (none) and 1.0 (all). Default: 0.01 (1%%). "
+                "Value between 0.0 (none) and 1.0 (all). Default: 1.0 (all). "
+                "The decision is made once at the trace root and inherited by "
+                "every span in the run, so a value below 1.0 drops whole runs "
+                "rather than thinning spans within a run. "
                 "Controls both cosmos-curator and vLLM native span sampling."
             ),
-            default=0.01,
+            default=1.0,
         ),
     )
     profile_tracing_otlp_endpoint: str = attrs.field(

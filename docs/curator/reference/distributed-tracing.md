@@ -424,9 +424,9 @@ profiling_scope()
       |
       +-- trace_root_anchor() starts    <-- anchor span (root, no parent)
       |     +-- anchor.end()            <-- exported immediately
-      |     +-- propagate_context()     <-- reads anchor's trace_id + span_id
+      |     +-- propagate_context()     <-- reads anchor's trace_id, span_id, flags
       |     |     +-- writes COSMOS_CURATOR_TRACEPARENT env var
-      |     |          format: "{trace_id_hex}:{span_id_hex}"
+      |     |          format: "{version}-{trace_id}-{span_id}-{trace_flags}"
       |     |
       |     +-- state.scope("main")     <-- _root.main (child of anchor)
       |     |     +-- yield (pipeline runs, workers start)
@@ -437,19 +437,27 @@ profiling_scope()
 [workers read COSMOS_CURATOR_TRACEPARENT in setup_tracing()]
       |
       +-- _attach_remote_parent()
-      |     Construct remote SpanContext(trace_id, span_id)
+      |     Construct remote SpanContext(trace_id, span_id, trace_flags)
       |     Attach as current OTel context
       |     All subsequent stage spans become children of the anchor
+      |     and inherit the anchor's sampling decision
 ```
 
-The propagation uses a custom env-var format
-(`"{trace_id_hex}:{span_id_hex}"`) rather than the standard W3C
-`traceparent` HTTP header because:
+The value is a standard W3C `traceparent`, but it travels in an
+environment variable rather than an HTTP header because:
 
 - Ray workers inherit environment variables at fork time, not
   HTTP headers.
 - The hook function takes no arguments, so the only communication
   channel is the environment.
+
+Carrying `trace_flags` is what lets workers inherit the root's
+sampling decision.  `ParentBased` samplers defer to the parent, so a
+parent reconstructed without the real flag would force every worker
+span to be sampled regardless of `--profile-tracing-sampling`.  An
+earlier flagless format (`"{trace_id_hex}:{span_id_hex}"`) is still
+accepted on read and assumed sampled, so a worker can attach to a
+driver that has not been upgraded.
 
 ### Root Anchor Span
 
@@ -515,7 +523,7 @@ span automatically.
 | **requests** | `opentelemetry-instrumentation-requests` | Outbound HTTP requests |
 | **urllib3** | `opentelemetry-instrumentation-urllib3` | Low-level HTTP transport (used by boto3, requests) |
 | **threading** | `opentelemetry-instrumentation-threading` | Context propagation across threads |
-| **logging** | `opentelemetry-instrumentation-logging` | Injects `otelTraceID` / `otelSpanID` into stdlib log records |
+| **logging** | `opentelemetry-instrumentation-logging` | Stamps `trace_id` / `span_id` / `trace_sampled` onto stdlib log records, but only while a span is active (untraced records get no span fields) |
 | **fastapi** | `opentelemetry-instrumentation-fastapi` | Inbound HTTP endpoint spans |
 
 Instrumentors are gated on `importlib.util.find_spec()`, so only
@@ -523,19 +531,34 @@ libraries that are actually installed in the current Pixi
 environment are patched.  No errors are raised for missing
 libraries.
 
-All instrumentor packages are included in the `profiling` Pixi
+The logging instrumentor is configured with
+`enable_log_auto_instrumentation=False`: curator configures no OTel
+logs pipeline, and the handler it would otherwise attach to the root
+logger suppresses xenna's fallback JSON handler.  With
+`PYTHON_LOG_FORMAT=json` the injected fields are emitted on every log
+line written inside a span — see
+[Span correlation fields](../guides/observability.md#span-correlation-fields).
+
+All instrumentor packages are included in the `tracing` Pixi
 feature.
 
 ## Configuration
 
 ### Environment Variables
 
-**Cosmos Curator specific:**
+**Cosmos Curator specific — operator input:**
+
+| Variable | Set by | Read by | Purpose |
+|---|---|---|---|
+| `COSMOS_CURATOR_PROFILE_TRACING` | You (deployment or launcher env) | `_build_profiling_config()` | Enables tracing without editing pipeline arguments. Truthy spellings `1`/`true`/`yes`/`on` (case-insensitive) enable it; anything else, including unset, leaves it off. Read alongside `--profile-tracing` — either source enables tracing, so set this to `0` to opt a single run out of a cluster-wide default |
+
+The remaining variables below are set by curator internally as plumbing between the
+driver and its workers — you do not normally set them yourself:
 
 | Variable | Set by | Read by | Purpose |
 |---|---|---|---|
 | `COSMOS_CURATOR_TRACE_DIR` | `enable_tracing()` | `setup_tracing()` (workers) | Local directory for span files (defaults to `<staging>/traces/`) |
-| `COSMOS_CURATOR_TRACEPARENT` | `propagate_trace_context()` | `setup_tracing()` (workers) | Trace context for correlating worker spans under a single trace |
+| `COSMOS_CURATOR_TRACEPARENT` | `propagate_trace_context()` | `setup_tracing()` (workers) | W3C traceparent correlating worker spans under a single trace, carrying the root's sampling decision |
 | `XENNA_RAY_TRACING_HOOK` | `enable_tracing()` | `init_or_connect_to_cluster()` | `"module:attribute"` string passed to `ray.init(_tracing_startup_hook=...)` |
 
 **Standard OTel environment variables:**

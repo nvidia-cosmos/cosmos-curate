@@ -74,6 +74,7 @@ from cosmos_curator.core.utils.infra.profiling import (
     _resolve_staging_path,
     profiling_wrapper,
 )
+from cosmos_curator.core.utils.infra.tracing import ENV_PROFILE_TRACING
 
 
 @pytest.fixture(autouse=True)
@@ -297,8 +298,20 @@ class TestProfilingConfig:
 class TestBuildProfilingConfig:
     """Verify _apply_profiling_config parses CLI args correctly."""
 
-    def test_no_flags_returns_none(self) -> None:
+    @staticmethod
+    def _tracing_args() -> argparse.Namespace:
+        return argparse.Namespace(
+            profile_cpu=False,
+            profile_memory=False,
+            profile_gpu=False,
+            profile_tracing=False,
+            perf_profile=False,
+            output_clip_path="/output/clips",
+        )
+
+    def test_no_flags_returns_none(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """With no profiling flags, the function returns None (zero overhead)."""
+        monkeypatch.delenv(ENV_PROFILE_TRACING, raising=False)
         args = argparse.Namespace(
             profile_cpu=False,
             profile_memory=False,
@@ -307,6 +320,37 @@ class TestBuildProfilingConfig:
             perf_profile=False,
         )
         assert _apply_profiling_config(args) is None
+
+    @pytest.mark.parametrize("value", ["1", "true", "TRUE", "Yes", "  on  "])
+    def test_env_var_enables_tracing_without_the_flag(self, monkeypatch: pytest.MonkeyPatch, value: str) -> None:
+        """COSMOS_CURATOR_PROFILE_TRACING turns tracing on for a whole deployment."""
+        monkeypatch.setenv(ENV_PROFILE_TRACING, value)
+        args = self._tracing_args()
+
+        config = _apply_profiling_config(args)
+
+        assert config is not None
+        assert config.tracing_enabled is True
+        # Tracing is a profiling backend, so it implies --perf-profile just like the flag.
+        assert args.perf_profile is True
+
+    @pytest.mark.parametrize("value", ["0", "false", "no", "off", "", "maybe"])
+    def test_non_truthy_env_var_leaves_tracing_off(self, monkeypatch: pytest.MonkeyPatch, value: str) -> None:
+        """Anything but an explicit truthy spelling keeps tracing opt-in."""
+        monkeypatch.setenv(ENV_PROFILE_TRACING, value)
+
+        assert _apply_profiling_config(self._tracing_args()) is None
+
+    def test_flag_still_enables_tracing_when_env_var_is_absent(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The CLI flag keeps working on its own."""
+        monkeypatch.delenv(ENV_PROFILE_TRACING, raising=False)
+        args = self._tracing_args()
+        args.profile_tracing = True
+
+        config = _apply_profiling_config(args)
+
+        assert config is not None
+        assert config.tracing_enabled is True
 
     def test_cpu_flag_returns_config_and_enables_perf(self) -> None:
         """--profile-cpu enables cpu_enabled and forces perf_profile=True."""

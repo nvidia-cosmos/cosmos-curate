@@ -343,8 +343,8 @@ def _get_code_mount_strings(opts: LaunchDocker) -> list[str]:
     return code_path_strings
 
 
-# Structured-logging toggles forwarded from the host into the container (when set)
-# so curator/xenna/Ray inside the container honor the same PYTHON_LOG_FORMAT.
+# Structured-logging and tracing toggles forwarded from the host into the container (when
+# set) so curator/xenna/Ray inside the container honor the same PYTHON_LOG_FORMAT.
 _LOG_ENV_VARS_TO_FORWARD = (
     "PYTHON_LOG",
     "PYTHON_LOG_FORMAT",
@@ -352,11 +352,12 @@ _LOG_ENV_VARS_TO_FORWARD = (
     "PYTHON_LOG_RAY_LEVEL",
     "RAY_BACKEND_LOG_JSON",
     "CURATOR_RUN_ID",
+    "COSMOS_CURATOR_PROFILE_TRACING",
 )
 
 
 def _get_log_env_forward_strings() -> list[str]:
-    """Return docker ``-e VAR=value`` args for logging toggles present in the host env."""
+    """Return docker ``-e VAR=value`` args for logging/tracing toggles present in the host env."""
     forward: list[str] = []
     for name in _LOG_ENV_VARS_TO_FORWARD:
         value = os.environ.get(name)

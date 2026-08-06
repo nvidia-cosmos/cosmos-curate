@@ -124,6 +124,35 @@ def test_json_formatter_pod_falls_back_to_hostname(monkeypatch: pytest.MonkeyPat
     assert obj["run_id"] == ""
 
 
+@pytest.mark.parametrize("sampled", [True, False])
+def test_json_formatter_includes_span_fields(monkeypatch: pytest.MonkeyPatch, *, sampled: bool) -> None:
+    """Trace-correlation attributes stamped by OTel's log hook reach the JSON line."""
+    monkeypatch.setenv("POD_NAME", "pod-3")
+    fmt = StructuredJsonFormatter()
+    rec = _record("traced")
+    rec.__dict__.update(
+        trace_id="0af7651916cd43dd8448eb211c80319c",
+        span_id="b7ad6b7169203331",
+        trace_sampled=sampled,
+    )
+
+    obj = json.loads(fmt.format(rec))
+
+    assert obj["trace_id"] == "0af7651916cd43dd8448eb211c80319c"
+    assert obj["span_id"] == "b7ad6b7169203331"
+    assert obj["trace_sampled"] is sampled
+
+
+def test_json_formatter_omits_span_fields_when_untraced(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Without an active span the keys are absent, so log UIs cannot build a dead link."""
+    monkeypatch.setenv("POD_NAME", "pod-4")
+    fmt = StructuredJsonFormatter()
+
+    obj = json.loads(fmt.format(_record("untraced")))
+
+    assert not {"trace_id", "span_id", "trace_sampled"} & obj.keys()
+
+
 def test_json_formatter_includes_exception(monkeypatch: pytest.MonkeyPatch) -> None:
     """Exception info is preserved under the top-level exception field in JSON mode."""
     monkeypatch.setenv("POD_NAME", "pod-1")
