@@ -20,11 +20,13 @@ tool, ``run_session`` for the session one -- so the rows under test are produced
 the real engine and the real store, with nothing faked but the source data.
 """
 
+import argparse
+import pathlib
 from collections.abc import Callable
 
 import pytest
 
-from cosmos_curator.core.sensors.data_integrity import cli, session_cli, store
+from cosmos_curator.core.sensors.data_integrity import cli, session_cli, store, store_cli
 from cosmos_curator.core.sensors.data_integrity.cli_common import (
     ERROR_EXIT_CODE,
     FAIL_EXIT_CODE,
@@ -41,6 +43,10 @@ from cosmos_curator.core.sensors.data_integrity.results import (
 
 SOURCE = "/data/front.mp4"
 SESSION = "/data/session"
+
+#: What argparse exits with when it rejects an argument, as opposed to the tool's own
+#: ERROR_EXIT_CODE for a run that started and then failed.
+USAGE_EXIT_CODE = 2
 
 EngineRun = tuple[list[CheckResult], VideoInfo, ResolvedConfig]
 
@@ -264,3 +270,63 @@ def test_both_tools_spell_the_flag_the_same_way() -> None:
     assert session_cli._parse_args(["--session-path", SESSION]).store_path is None
     assert cli._parse_args(["--source", SOURCE, "--store-path", "/s"]).store_path == "/s"
     assert session_cli._parse_args(["--session-path", SESSION, "--store-path", "/s"]).store_path == "/s"
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("", "store path is empty"),
+        ("   ", "store path is empty"),
+        ("az://container/store", "does not support az:// yet"),
+        ("gs://bucket/store", "unsupported store URI"),
+        ("file:///tmp/store", "unsupported store URI"),
+        ("s3://", "names no bucket"),
+        ("s3:///", "names no bucket"),
+    ],
+)
+def test_an_unusable_store_path_is_refused(value: str, expected: str) -> None:
+    """Each of these would otherwise be taken for a local directory and half-work.
+
+    An empty path resolves to the filesystem root, and an unsupported scheme creates a
+    directory named after the URI before failing somewhere deeper.
+    """
+    with pytest.raises(argparse.ArgumentTypeError, match=expected):
+        store_cli.validate_store_path(value)
+
+
+def test_a_home_relative_store_path_is_expanded() -> None:
+    """Otherwise the shell's ``~`` survives into a directory literally named ``~``."""
+    assert store_cli.validate_store_path("~/di-store") == str(pathlib.Path.home() / "di-store")
+
+
+def test_an_s3_store_path_is_passed_through_untouched() -> None:
+    """A bucket key is opaque, so normalizing it would risk naming a different object."""
+    assert store_cli.validate_store_path("s3://bucket/prefix/") == "s3://bucket/prefix/"
+    assert store_cli.validate_store_path("s3://bucket") == "s3://bucket", "a bucket root is a valid store"
+
+
+@pytest.mark.parametrize(
+    ("argv", "main"),
+    [
+        (["--source", SOURCE, "--store-path", "az://c/store"], cli.main),
+        (_session_argv("az://c/store"), session_cli.main),
+    ],
+)
+def test_an_unusable_store_path_is_refused_before_any_source_is_read(
+    argv: list[str], main: Callable[[list[str]], int], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The store is written last, so validating it late means paying for the whole run first.
+
+    Catching it at parse time is what turns a typo from a wasted session into a usage
+    error.
+    """
+
+    def _explode(*_args: object, **_kwargs: object) -> object:
+        pytest.fail("a source was read despite an unusable --store-path")
+
+    monkeypatch.setattr(cli, "run_checks", _explode)
+    monkeypatch.setattr(session_cli, "run_session", _explode)
+
+    with pytest.raises(SystemExit) as excinfo:
+        main(argv)
+    assert excinfo.value.code == USAGE_EXIT_CODE

@@ -22,11 +22,46 @@ to persist.
 """
 
 import argparse
+import pathlib
 from collections.abc import Mapping
 
 from cosmos_curator.core.sensors.data_integrity.instruments import Thresholds
 from cosmos_curator.core.sensors.data_integrity.results import StreamResult
-from cosmos_curator.core.sensors.scripts._cli_cloud import CloudObjectStat
+from cosmos_curator.core.sensors.scripts._cli_cloud import CloudObjectStat, is_azure_uri, is_s3_uri
+
+
+def validate_store_path(value: str) -> str:
+    """Validate and normalize a ``--store-path`` value, for use as an argparse ``type``.
+
+    Checked at parse time because the store is written last: an unusable root would
+    otherwise surface only after every source had been read and the report printed,
+    turning a typo into a wasted session. Nothing here touches the backend, so it
+    stays cheap enough to run before any work starts.
+
+    Raises:
+        argparse.ArgumentTypeError: if the value is blank, names an unsupported
+            scheme, or is an ``az://`` URI.
+
+    """
+    if not value.strip():
+        msg = "store path is empty; give a local directory or an s3:// prefix"
+        raise argparse.ArgumentTypeError(msg)
+    if is_azure_uri(value):
+        msg = f"the data-integrity store does not support az:// yet: {value!r}; use a local path or an s3:// prefix"
+        raise argparse.ArgumentTypeError(msg)
+    if is_s3_uri(value):
+        # A bucket is the least an S3 store needs. Without this, "s3://" is accepted
+        # here and fails far deeper, where the message belongs to Lance rather than us.
+        if not value.removeprefix("s3://").strip(" /"):
+            msg = f"store URI {value!r} names no bucket; use s3://bucket/prefix"
+            raise argparse.ArgumentTypeError(msg)
+        return value
+    # Anything else carrying a scheme would be taken for a local path and quietly
+    # create a directory named after it, so refuse rather than guess.
+    if "://" in value:
+        msg = f"unsupported store URI {value!r}; use a local path or an s3:// prefix"
+        raise argparse.ArgumentTypeError(msg)
+    return str(pathlib.Path(value).expanduser())
 
 
 def add_store_args(parser: argparse.ArgumentParser) -> None:
@@ -39,6 +74,7 @@ def add_store_args(parser: argparse.ArgumentParser) -> None:
         "--store-path",
         default=None,
         metavar="PATH",
+        type=validate_store_path,
         help=(
             "Persist measurements and verdicts to a Lance store at this local directory or s3:// prefix "
             "(created if absent, appended to if not). Stored measurements can be re-judged under new "
