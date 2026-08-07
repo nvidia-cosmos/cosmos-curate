@@ -28,6 +28,14 @@ from cosmos_curator.pipelines.video.captioning.caption_quality_flags import (
     CaptionQualityThresholdConfig,
 )
 from cosmos_curator.pipelines.video.captioning.captioning_builders import CaptioningConfig, VllmAsyncCaptionConfig
+from cosmos_curator.pipelines.video.clipping.clip_frame_extraction_stages import ClipFrameExtractionStage
+from cosmos_curator.pipelines.video.embedding.embedding_builders import (
+    CosmosEmbed1Config,
+    EmbeddingBackendConfig,
+    EmbeddingConfig,
+    InternVideo2Config,
+    OpenAIEmbeddingConfig,
+)
 from cosmos_curator.pipelines.video.read_write.metadata_writer_stage import ClipWriterStage
 from cosmos_curator.pipelines.video.splitting_pipeline import _assemble_stages, _setup_parser
 from cosmos_curator.pipelines.video.utils.data_model import (
@@ -57,6 +65,13 @@ def _stage_object(stage: CuratorStage | CuratorStageSpec) -> CuratorStage:
     return stage
 
 
+class _EmbeddingMarkerStage(CuratorStage):
+    """Lightweight marker returned by the patched embedding builder."""
+
+    def __init__(self, target_fps: float) -> None:
+        self.target_fps = target_fps
+
+
 def _caption_args(extra_args: list[str]) -> argparse.Namespace:
     input_path = Path.cwd() / "tmp-input"
     output_path = Path.cwd() / "tmp-output"
@@ -70,6 +85,156 @@ def _caption_args(extra_args: list[str]) -> argparse.Namespace:
             *extra_args,
         ]
     )
+
+
+def _embedding_args(extra_args: list[str]) -> argparse.Namespace:
+    input_path = Path.cwd() / "tmp-input"
+    output_path = Path.cwd() / "tmp-output"
+    return _parser().parse_args(
+        [
+            "--input-video-path",
+            input_path.as_posix(),
+            "--output-clip-path",
+            output_path.as_posix(),
+            "--no-generate-captions",
+            *extra_args,
+        ]
+    )
+
+
+def _capture_embedding_config(monkeypatch: pytest.MonkeyPatch) -> dict[str, EmbeddingConfig]:
+    captured: dict[str, EmbeddingConfig] = {}
+
+    def fake_build_embedding_stages(config: EmbeddingConfig) -> list[CuratorStage | CuratorStageSpec]:
+        captured["config"] = config
+        return [_EmbeddingMarkerStage(config.target_fps)]
+
+    monkeypatch.setattr(
+        "cosmos_curator.pipelines.video.splitting_pipeline.get_embedding_model_version",
+        lambda _config: "test-version",
+    )
+    monkeypatch.setattr(
+        "cosmos_curator.pipelines.video.splitting_pipeline.build_embedding_stages",
+        fake_build_embedding_stages,
+    )
+    return captured
+
+
+def test_embedding_sampling_fps_defaults_to_two() -> None:
+    """Omitting the option should preserve the existing 2-FPS behavior."""
+    assert _parser().parse_args([]).embedding_sampling_fps == 2.0
+
+
+def test_embedding_sampling_fps_help_names_default() -> None:
+    """Direct CLI help should make the backward-compatible default explicit."""
+    help_text = _parser().format_help()
+
+    assert "--embedding-sampling-fps" in help_text
+    assert "default: 2.0" in help_text
+
+
+@pytest.mark.parametrize(("value", "expected"), [("1", 1.0), ("1.5", 1.5), ("0.001", 0.001)])
+def test_embedding_sampling_fps_accepts_supported_values(value: str, expected: float) -> None:
+    """Integer, fractional, and minimum supported values should parse as floats."""
+    assert _parser().parse_args(["--embedding-sampling-fps", value]).embedding_sampling_fps == expected
+
+
+@pytest.mark.parametrize("value", ["0", "-1", "0.0009", "nan", "inf", "-inf", "invalid"])
+def test_embedding_sampling_fps_rejects_invalid_cli_values(
+    value: str,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Invalid direct CLI values should fail without leaking expected usage output."""
+    with pytest.raises(SystemExit):
+        _parser().parse_args([f"--embedding-sampling-fps={value}"])
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "--embedding-sampling-fps" in captured.err
+    assert "must be a finite number greater than or equal to 0.001" in captured.err
+    assert "normalize_embedding_sampling_fps" not in captured.err
+
+
+def test_fill_default_args_injects_embedding_sampling_fps_default() -> None:
+    """JSON/API configs should receive the 2-FPS default when the field is omitted."""
+    args = argparse.Namespace()
+
+    fill_default_args(args, _setup_parser)
+
+    assert args.embedding_sampling_fps == 2.0
+
+
+@pytest.mark.parametrize("extra_args", [[], ["--embedding-sampling-fps", "2"]], ids=["omitted", "explicit"])
+def test_embedding_sampling_fps_default_assembly_is_equivalent(
+    monkeypatch: pytest.MonkeyPatch,
+    extra_args: list[str],
+) -> None:
+    """Omission and an explicit 2-FPS value should assemble the same wiring."""
+    captured = _capture_embedding_config(monkeypatch)
+
+    stages = [_stage_object(stage) for stage in _assemble_stages(_embedding_args(extra_args))]
+
+    extraction_stage = next(stage for stage in stages if isinstance(stage, ClipFrameExtractionStage))
+    marker_stage = next(stage for stage in stages if isinstance(stage, _EmbeddingMarkerStage))
+    assert extraction_stage._target_fps == [2.0]
+    assert marker_stage.target_fps == 2.0
+    assert captured["config"].target_fps == 2.0
+
+
+@pytest.mark.parametrize(
+    ("algorithm", "backend_type"),
+    [
+        ("cosmos-embed1-336p", CosmosEmbed1Config),
+        ("internvideo2", InternVideo2Config),
+        ("openai", OpenAIEmbeddingConfig),
+    ],
+)
+def test_embedding_sampling_fps_override_reaches_extraction_and_backend_config(
+    monkeypatch: pytest.MonkeyPatch,
+    algorithm: str,
+    backend_type: type[EmbeddingBackendConfig],
+) -> None:
+    """Every backend should receive the same configured rate requested from extraction."""
+    captured = _capture_embedding_config(monkeypatch)
+    args = _embedding_args(
+        [
+            "--embedding-algorithm",
+            algorithm,
+            "--embedding-sampling-fps",
+            "1.5",
+        ]
+    )
+
+    stages = [_stage_object(stage) for stage in _assemble_stages(args)]
+
+    extraction_stage = next(stage for stage in stages if isinstance(stage, ClipFrameExtractionStage))
+    marker_stage = next(stage for stage in stages if isinstance(stage, _EmbeddingMarkerStage))
+    config = captured["config"]
+    assert isinstance(config.backend, backend_type)
+    assert config.target_fps == 1.5
+    assert extraction_stage._target_fps == [1.5]
+    assert marker_stage.target_fps == 1.5
+    assert stages.index(extraction_stage) < stages.index(marker_stage)
+
+
+def test_embedding_sampling_fps_is_not_constructed_when_embeddings_are_disabled() -> None:
+    """A config-only invalid value should not affect an aesthetics-only extraction requirement."""
+    args = _embedding_args(["--no-generate-embeddings", "--aesthetic-threshold", "3.5"])
+    args.embedding_sampling_fps = float("nan")
+
+    stages = [_stage_object(stage) for stage in _assemble_stages(args)]
+
+    extraction_stage = next(stage for stage in stages if isinstance(stage, ClipFrameExtractionStage))
+    assert extraction_stage._target_fps == [1.0]
+
+
+def test_embedding_sampling_fps_config_value_is_validated_when_embeddings_are_enabled() -> None:
+    """Config-file values should be validated when stage assembly constructs embedding config."""
+    args = _embedding_args([])
+    args.embedding_sampling_fps = "invalid"
+
+    with pytest.raises(ValueError, match=r"greater than or equal to 0\.001"):
+        _assemble_stages(args)
 
 
 def _capture_captioning_config(monkeypatch: pytest.MonkeyPatch) -> dict[str, CaptioningConfig]:
@@ -289,6 +454,14 @@ def test_split_invoke_templates_use_supported_vllm_preprocess_mode() -> None:
 
         assert deprecated_args.isdisjoint(invoke_args), template_path.as_posix()
         assert invoke_args["vllm_preprocess_mode"] == PreprocessMode.CURATOR.value
+
+
+def test_split_invoke_templates_expose_embedding_sampling_fps_default() -> None:
+    """Full JSON invocation templates should expose the configurable embedding sampling default."""
+    for template_path in _SPLIT_INVOKE_TEMPLATES:
+        invoke_args = json.loads(template_path.read_text())["args"]
+
+        assert invoke_args["embedding_sampling_fps"] == 2.0, template_path.as_posix()
 
 
 def test_fill_default_args_does_not_inject_qwen_model_does_preprocess() -> None:

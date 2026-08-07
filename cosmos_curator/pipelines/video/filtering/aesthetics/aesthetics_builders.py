@@ -47,6 +47,7 @@ class AestheticFilterConfig:
     gpus_per_worker: float = 0.25
     verbose: bool = False
     perf_profile: bool = False
+    preserve_extracted_frames: bool = False
 
 
 @attrs.define(frozen=True)
@@ -143,6 +144,7 @@ def build_aesthetic_filter_stages(config: AestheticFilterConfig) -> list[Curator
             score_threshold=config.score_threshold,
             reduction=config.reduction,
             num_gpus_per_worker=config.gpus_per_worker,
+            preserve_extracted_frames=config.preserve_extracted_frames,
             verbose=config.verbose,
             log_stats=config.perf_profile,
         ),

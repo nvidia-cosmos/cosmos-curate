@@ -14,6 +14,7 @@
 # limitations under the License.
 """Stage builder for clip embedding generation."""
 
+import math
 from typing import Literal, cast
 
 import attrs
@@ -31,6 +32,23 @@ from cosmos_curator.pipelines.video.embedding.internvideo2_stages import (
 from cosmos_curator.pipelines.video.embedding.openai_embedding_stage import OpenAIEmbeddingStage
 
 _COSMOS_EMBED1_VARIANTS: frozenset[str] = frozenset({"224p", "336p", "448p"})
+_MIN_EMBEDDING_SAMPLING_FPS = 0.001
+
+
+def normalize_embedding_sampling_fps(value: float | str) -> float:
+    """Normalize and validate an embedding candidate-frame sampling rate."""
+    msg = "Embedding sampling FPS must be a finite number greater than or equal to 0.001."
+    if isinstance(value, bool):
+        raise TypeError(msg)
+
+    try:
+        normalized = float(value)
+    except (TypeError, ValueError) as error:
+        raise ValueError(msg) from error
+
+    if not math.isfinite(normalized) or normalized < _MIN_EMBEDDING_SAMPLING_FPS:
+        raise ValueError(msg)
+    return normalized
 
 
 @attrs.define(frozen=True)
@@ -69,7 +87,7 @@ class EmbeddingConfig:
     """Configuration for clip embedding generation."""
 
     backend: EmbeddingBackendConfig = attrs.Factory(InternVideo2Config)
-    target_fps: float = 2.0
+    target_fps: float = attrs.field(default=2.0, converter=normalize_embedding_sampling_fps)
     gpus_per_worker: float = 0.25
     batch_size: int = 8
     verbose: bool = False

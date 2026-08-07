@@ -103,7 +103,9 @@ from cosmos_curator.pipelines.video.embedding.embedding_builders import (
     OpenAIEmbeddingConfig,
     build_embedding_stages,
     get_embedding_model_version,
+    normalize_embedding_sampling_fps,
 )
+from cosmos_curator.pipelines.video.filtering.aesthetics.aesthetic_filter_stages import AESTHETIC_SAMPLING_FPS
 from cosmos_curator.pipelines.video.filtering.aesthetics.aesthetics_builders import (
     AestheticFilterConfig,
     ArtificialTextFilterConfig,
@@ -155,6 +157,7 @@ from cosmos_curator.pipelines.video.utils.data_model import (
     VllmSamplingConfig,
     WindowConfig,
 )
+from cosmos_curator.pipelines.video.utils.decoder_utils import FrameExtractionPolicy, FrameExtractionSignature
 from cosmos_curator.pipelines.video.utils.video_pipe_input import (
     extract_multi_cam_split_tasks,
     extract_single_cam_split_tasks,
@@ -435,6 +438,14 @@ def _validate_deprecated_vllm_preprocess_args(args: argparse.Namespace) -> None:
         raise ValueError(msg)
 
 
+def _parse_embedding_sampling_fps(raw: str) -> float:
+    """Parse an embedding sampling rate while preserving the domain error for argparse."""
+    try:
+        return normalize_embedding_sampling_fps(raw)
+    except (TypeError, ValueError) as error:
+        raise argparse.ArgumentTypeError(str(error)) from error
+
+
 def _assemble_stages(  # noqa: C901, PLR0912, PLR0915
     args: argparse.Namespace,
 ) -> list[CuratorStage | CuratorStageSpec]:
@@ -567,17 +578,61 @@ def _assemble_stages(  # noqa: C901, PLR0912, PLR0915
 
     has_aesthetics = args.aesthetic_threshold is not None
     has_embeddings = args.generate_embeddings
+    embedding_cfg: EmbeddingConfig | None = None
+    if has_embeddings:
+        embedding_backend: EmbeddingBackendConfig
+        if args.embedding_algorithm == "openai":
+            embedding_backend = OpenAIEmbeddingConfig(
+                model_name=args.openai_embedding_model_name,
+                max_retries=args.openai_embedding_retries,
+                retry_delay_seconds=args.openai_embedding_retry_delay_seconds,
+                max_concurrent_requests=args.openai_embedding_max_concurrent_requests,
+            )
+        elif args.embedding_algorithm.startswith("cosmos-embed1-"):
+            embedding_backend = CosmosEmbed1Config(
+                variant=args.embedding_algorithm.removeprefix("cosmos-embed1-"),
+            )
+        else:
+            embedding_backend = InternVideo2Config()
+        embedding_cfg = EmbeddingConfig(
+            backend=embedding_backend,
+            target_fps=args.embedding_sampling_fps,
+            gpus_per_worker=args.embedding_gpus_per_worker,
+            batch_size=args.embedding_batch_size,
+            verbose=args.verbose,
+            perf_profile=args.perf_profile,
+        )
+
+    preserve_aesthetic_frames = False
+    if has_aesthetics and embedding_cfg is not None:
+        aesthetic_signature = FrameExtractionSignature(
+            extraction_policy=FrameExtractionPolicy.sequence,
+            target_fps=AESTHETIC_SAMPLING_FPS,
+        ).to_str()
+        embedding_signature = FrameExtractionSignature(
+            extraction_policy=FrameExtractionPolicy.sequence,
+            target_fps=embedding_cfg.target_fps,
+        ).to_str()
+        signatures_match = aesthetic_signature == embedding_signature
+        if signatures_match and embedding_cfg.target_fps != AESTHETIC_SAMPLING_FPS:
+            msg = (
+                f"Embedding sampling FPS {embedding_cfg.target_fps} conflicts with aesthetics sampling FPS "
+                f"{AESTHETIC_SAMPLING_FPS}: both map to the same frame extraction signature. "
+                f"Choose exactly {AESTHETIC_SAMPLING_FPS} FPS to share frames or a rate with a distinct signature."
+            )
+            raise ValueError(msg)
+        preserve_aesthetic_frames = signatures_match
+
     frame_extraction_target_fps: list[float | int] = []
     if has_aesthetics:
-        frame_extraction_target_fps.append(1)
-    if has_embeddings:
-        frame_extraction_target_fps.append(2)
+        frame_extraction_target_fps.append(AESTHETIC_SAMPLING_FPS)
+    if embedding_cfg is not None:
+        frame_extraction_target_fps.append(embedding_cfg.target_fps)
 
     # --- Shared clip frame extraction (optional) ---
-    # A single ClipFrameExtractionStage serves both motion filtering and the aesthetics/embedding
-    # frame consumers, so a clip is decoded at most once. It is placed before the motion filter,
-    # which consumes the exported motion vectors; when motion filtering is off it still precedes the
-    # aesthetics/embedding stages. Motion vectors are exported only when motion filtering runs.
+    # A single ClipFrameExtractionStage coordinates the aesthetics and embedding frame-sampling
+    # requirements. It is placed before the motion filter, which consumes separately exported motion
+    # vectors; when motion filtering is off it still precedes the aesthetics/embedding stages.
     if has_aesthetics or has_embeddings or motion_filter_enabled:
         motion_vectors = (
             CameraSensorMotionVectorConfig(
@@ -623,6 +678,7 @@ def _assemble_stages(  # noqa: C901, PLR0912, PLR0915
                     score_threshold=args.aesthetic_threshold,
                     reduction=args.aesthetic_reduction,
                     gpus_per_worker=args.aesthetic_gpus_per_worker,
+                    preserve_extracted_frames=preserve_aesthetic_frames,
                     verbose=args.verbose,
                     perf_profile=args.perf_profile,
                 )
@@ -735,28 +791,7 @@ def _assemble_stages(  # noqa: C901, PLR0912, PLR0915
 
     # --- Embedding (optional) ---
     embedding_model_version: str = "unspecified"
-    if has_embeddings:
-        embedding_backend: EmbeddingBackendConfig
-        if args.embedding_algorithm == "openai":
-            embedding_backend = OpenAIEmbeddingConfig(
-                model_name=args.openai_embedding_model_name,
-                max_retries=args.openai_embedding_retries,
-                retry_delay_seconds=args.openai_embedding_retry_delay_seconds,
-                max_concurrent_requests=args.openai_embedding_max_concurrent_requests,
-            )
-        elif args.embedding_algorithm.startswith("cosmos-embed1-"):
-            embedding_backend = CosmosEmbed1Config(
-                variant=args.embedding_algorithm.removeprefix("cosmos-embed1-"),
-            )
-        else:
-            embedding_backend = InternVideo2Config()
-        embedding_cfg = EmbeddingConfig(
-            backend=embedding_backend,
-            gpus_per_worker=args.embedding_gpus_per_worker,
-            batch_size=args.embedding_batch_size,
-            verbose=args.verbose,
-            perf_profile=args.perf_profile,
-        )
+    if embedding_cfg is not None:
         embedding_model_version = get_embedding_model_version(embedding_cfg)
         logger.debug(f"Embedding algorithm={args.embedding_algorithm} version={embedding_model_version}")
         stages.extend(build_embedding_stages(embedding_cfg))
@@ -1285,6 +1320,16 @@ def _setup_parser(parser: argparse.ArgumentParser) -> None:  # noqa: PLR0915
             "768-dim vectors. Outputs for each variant are written to separate directories "
             "(e.g. `ce1_embd_336p/`), so switching variants against the same output path will not "
             "overwrite existing embeddings."
+        ),
+    )
+    parser.add_argument(
+        "--embedding-sampling-fps",
+        type=_parse_embedding_sampling_fps,
+        default=2.0,
+        help=(
+            "Initial frame sampling rate for embedding stages (default: 2.0). Does not change encoded clip FPS, "
+            "captioning FPS, or built-in model frame counts. For OpenAI-compatible embeddings, every selected "
+            "frame is sent in the request."
         ),
     )
     parser.add_argument(

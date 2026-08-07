@@ -9,6 +9,7 @@
         "output_s3_profile_name": "default",
         "generate_embeddings": true,
         "embedding_algorithm": "internvideo2",
+        "embedding_sampling_fps": 2.0,
         "generate_previews": false,
         "generate_captions": true,
         "upload_clips": false,

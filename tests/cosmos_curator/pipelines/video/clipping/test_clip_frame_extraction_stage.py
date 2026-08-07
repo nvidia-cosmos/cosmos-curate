@@ -33,6 +33,8 @@ from cosmos_curator.pipelines.video.clipping.clip_frame_extraction_stages import
     ClipFrameExtractionStage,
     motion_sampling_stop_ns,
 )
+from cosmos_curator.pipelines.video.embedding.openai_embedding_stage import OpenAIEmbeddingStage
+from cosmos_curator.pipelines.video.filtering.aesthetics.aesthetic_filter_stages import AestheticFilterStage
 from cosmos_curator.pipelines.video.filtering.motion.motion_filter_stages import (
     MotionFilterStage,
 )
@@ -424,11 +426,7 @@ def test_split_assemble_motion_filter_extracts_before_filtering() -> None:
 
 
 def test_split_assemble_single_extraction_serves_motion_and_aesthetics() -> None:
-    """When motion filtering and aesthetics are both on, one extraction stage serves both, before the filter.
-
-    This guards the CVC-1078 dedup: the early CameraSensor extraction that feeds the motion filter must
-    also serve the downstream aesthetics/embedding consumers, so a clip is never decoded twice.
-    """
+    """One extraction stage should coordinate motion export and aesthetic frame sampling."""
     parser = _parser()
     input_path = Path.cwd() / "tmp-input"
     output_path = Path.cwd() / "tmp-output"
@@ -476,6 +474,103 @@ def test_split_assemble_no_motion_filter_when_motion_disabled() -> None:
     assert not any(isinstance(stage, MotionFilterStage) for stage in stages)
 
 
+@pytest.mark.parametrize(
+    ("sampling_args", "expected_target_fps", "signatures_are_shared"),
+    [
+        ([], [1.0, 2.0], False),
+        (["--embedding-sampling-fps", "1"], [1.0, 1.0], True),
+        (["--embedding-sampling-fps", "1.5"], [1.0, 1.5], False),
+    ],
+    ids=["default-rate", "shared-one-fps-rate", "fractional-rate"],
+)
+def test_split_assemble_aesthetics_configures_frame_ownership_for_embedding(
+    sampling_args: list[str],
+    expected_target_fps: list[float | int],
+    *,
+    signatures_are_shared: bool,
+) -> None:
+    """Aesthetics should precede embedding and preserve only an intentionally shared frame entry."""
+    input_path = Path.cwd() / "tmp-input"
+    output_path = Path.cwd() / "tmp-output"
+    args = _parser().parse_args(
+        [
+            "--input-video-path",
+            input_path.as_posix(),
+            "--output-clip-path",
+            output_path.as_posix(),
+            "--no-generate-captions",
+            "--embedding-algorithm",
+            "openai",
+            "--aesthetic-threshold",
+            "3.5",
+            *sampling_args,
+        ]
+    )
+
+    stages = [_stage_object(stage) for stage in _assemble_stages(args)]
+
+    extraction_stage = next(stage for stage in stages if isinstance(stage, ClipFrameExtractionStage))
+    aesthetic_stage = next(stage for stage in stages if isinstance(stage, AestheticFilterStage))
+    embedding_stage = next(stage for stage in stages if isinstance(stage, OpenAIEmbeddingStage))
+    assert extraction_stage._target_fps == expected_target_fps
+    assert aesthetic_stage._preserve_extracted_frames is signatures_are_shared
+    assert (
+        aesthetic_stage._frame_extraction_signature == embedding_stage._frame_extraction_signature
+    ) is signatures_are_shared
+    assert stages.index(extraction_stage) < stages.index(aesthetic_stage) < stages.index(embedding_stage)
+
+
+def test_split_assemble_rejects_distinct_rates_that_alias_aesthetics_signature() -> None:
+    """A shared dictionary key cannot represent distinct aesthetics and embedding sampling rates."""
+    input_path = Path.cwd() / "tmp-input"
+    output_path = Path.cwd() / "tmp-output"
+    args = _parser().parse_args(
+        [
+            "--input-video-path",
+            input_path.as_posix(),
+            "--output-clip-path",
+            output_path.as_posix(),
+            "--no-generate-captions",
+            "--embedding-algorithm",
+            "openai",
+            "--aesthetic-threshold",
+            "3.5",
+            "--embedding-sampling-fps",
+            "1.0005",
+        ]
+    )
+
+    with pytest.raises(ValueError, match="both map to the same frame extraction signature"):
+        _assemble_stages(args)
+
+
+def test_split_assemble_accepts_signature_alias_rate_without_aesthetics() -> None:
+    """Signature collision validation should apply only when another consumer requests the same key."""
+    input_path = Path.cwd() / "tmp-input"
+    output_path = Path.cwd() / "tmp-output"
+    args = _parser().parse_args(
+        [
+            "--input-video-path",
+            input_path.as_posix(),
+            "--output-clip-path",
+            output_path.as_posix(),
+            "--no-generate-captions",
+            "--embedding-algorithm",
+            "openai",
+            "--embedding-sampling-fps",
+            "1.0005",
+        ]
+    )
+
+    stages = [_stage_object(stage) for stage in _assemble_stages(args)]
+
+    extraction_stage = next(stage for stage in stages if isinstance(stage, ClipFrameExtractionStage))
+    embedding_stage = next(stage for stage in stages if isinstance(stage, OpenAIEmbeddingStage))
+    assert extraction_stage._target_fps == [1.0005]
+    assert embedding_stage._frame_extraction_signature == _frame_signature(1.0005)
+    assert not any(isinstance(stage, AestheticFilterStage) for stage in stages)
+
+
 def test_split_assemble_extraction_without_motion_when_aesthetics_only() -> None:
     """With motion filtering off but aesthetics on, a single extraction stage (no motion export) runs."""
     parser = _parser()
@@ -496,9 +591,12 @@ def test_split_assemble_extraction_without_motion_when_aesthetics_only() -> None
     stages = [_stage_object(stage) for stage in _assemble_stages(args)]
 
     extraction_stages = [stage for stage in stages if isinstance(stage, ClipFrameExtractionStage)]
+    aesthetic_stage = next(stage for stage in stages if isinstance(stage, AestheticFilterStage))
     assert len(extraction_stages) == 1
+    assert extraction_stages[0]._target_fps == [1.0]
     # Motion filtering is off, so the shared extraction must not export motion vectors.
     assert extraction_stages[0]._motion_vector_config is None
+    assert aesthetic_stage._preserve_extracted_frames is False
     assert not any(isinstance(stage, MotionFilterStage) for stage in stages)
 
 
