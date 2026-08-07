@@ -60,6 +60,12 @@ def make_ts_grid(
 
     Exactly one of ``end_ns`` and ``exclusive_end_ns`` must be supplied.
 
+    This function constructs a numeric timestamp grid only. It does not inspect
+    sensor data or determine whether the requested bounds are covered by any
+    source observations. Callers are responsible for choosing bounds that are
+    valid for their use case; sensor sampling and alignment code is responsible
+    for determining whether observations can satisfy the returned timestamps.
+
     Inclusive end (``end_ns``):
         ``end_ns`` is the last timestamp to *include*. The grid continues
         until the final sample is strictly greater than ``end_ns``; that
