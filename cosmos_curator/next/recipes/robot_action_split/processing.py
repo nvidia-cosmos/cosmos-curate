@@ -26,7 +26,12 @@ import numpy as np
 import pyarrow.compute as pc
 import pyarrow.parquet as pq
 
-from cosmos_curator.core.utils.storage.storage_utils import get_storage_client, read_bytes
+from cosmos_curator.core.utils.storage.storage_utils import (
+    get_storage_client,
+    is_remote_path,
+    path_to_prefix,
+    read_bytes,
+)
 from cosmos_curator.next.media.action_binary import encode_action_bin, get_action_binary_spec
 from cosmos_curator.next.media.smart_cut import cut_plan
 from cosmos_curator.next.recipes.robot_action_split.config import ResolvedRobotActionSplitConfig
@@ -211,6 +216,7 @@ def process_batch(  # noqa: C901, PLR0912, PLR0915
     batch: ChunkSpanBatch,
     *,
     config: ResolvedRobotActionSplitConfig,
+    staged_chunk_path: str | None = None,
 ) -> list[dict[str, Any]]:
     """Process all spans in one ChunkSpanBatch using smart cut.
 
@@ -218,6 +224,11 @@ def process_batch(  # noqa: C901, PLR0912, PLR0915
     once via ``cut_plan``, then cuts all spans with GOP-aware stream copy +
     head re-encode.  Action data and JSON sidecars are written to their final
     local or S3 locations via ``write_media``.
+
+    ``staged_chunk_path`` may be supplied by the caller when the chunk has
+    already been downloaded (e.g. by the sequential pipeline loop that groups
+    consecutive batches sharing the same source chunk).  When provided the
+    download step is skipped entirely.
 
     Returns a list of outcome dicts (one per item) with all fields required
     by ``lance_sink.OUTCOME_SCHEMA``.
@@ -241,11 +252,9 @@ def process_batch(  # noqa: C901, PLR0912, PLR0915
             for item in batch.items
         ]
 
-    # Load chunk MP4 bytes and data parquet bytes together so any I/O failure
-    # fails the whole batch in one place before any per-item work begins.
+    # Load the data parquet into memory (small) and stream the chunk MP4 to disk
+    # (potentially very large — streaming avoids a full-file in-memory copy).
     try:
-        chunk_client = get_storage_client(batch.chunk_mp4_uri, profile_name=storage_profile)
-        chunk_bytes = read_bytes(batch.chunk_mp4_uri, client=chunk_client)
         parquet_client = get_storage_client(batch.data_parquet_uri, profile_name=storage_profile)
         parquet_bytes = read_bytes(batch.data_parquet_uri, client=parquet_client)
     except Exception as exc:  # noqa: BLE001
@@ -261,12 +270,24 @@ def process_batch(  # noqa: C901, PLR0912, PLR0915
     action_ext = ".bin" if action_format == "bin" else ".pickle"
 
     with tempfile.TemporaryDirectory() as tmp:
-        # Write chunk bytes to a temp file — cut_plan requires a local path.
-        chunk_local = str(Path(tmp) / "chunk.mp4")
-        try:
-            Path(chunk_local).write_bytes(chunk_bytes)
-        except Exception as exc:  # noqa: BLE001
-            return _batch_failure("chunk-stage", exc)
+        if not is_remote_path(batch.chunk_mp4_uri):
+            # Local path (e.g. in tests) — read directly without staging a copy.
+            chunk_local = batch.chunk_mp4_uri
+        else:
+            # Remote: stage to a local file so cut_plan can seek it.
+            # If the caller supplies a staged_chunk_path it owns the file's lifetime
+            # and we reuse it across batches that share the same source chunk.
+            # When None we download into the batch-scoped temp dir and discard after.
+            chunk_local = staged_chunk_path or str(Path(tmp) / "chunk.mp4")
+            if not Path(chunk_local).exists():
+                try:
+                    chunk_client = get_storage_client(batch.chunk_mp4_uri, profile_name=storage_profile)
+                    if chunk_client is None:
+                        msg = f"No storage client available for {batch.chunk_mp4_uri}"
+                        raise ValueError(msg)  # noqa: TRY301
+                    chunk_client.download_to_path(path_to_prefix(batch.chunk_mp4_uri), chunk_local)
+                except Exception as exc:  # noqa: BLE001
+                    return _batch_failure("chunk-stage", exc)
 
         # Build the cut plan for all items in this batch.  cut_plan probes the
         # PTS index once from chunk_local, then runs one ffmpeg per cut.

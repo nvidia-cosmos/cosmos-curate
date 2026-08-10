@@ -364,7 +364,7 @@ def render_head_script(
             allocation=head,
         ),
         f"#SBATCH --cpus-per-task={head.cpus}",
-        f"#SBATCH --mem={head.memory}",
+        *(["#SBATCH --exclusive", "#SBATCH --mem=0"] if head.exclusive else [f"#SBATCH --mem={head.memory}"]),
         "#SBATCH --no-requeue",
         _slurm_output_directive(runtime_paths),
         "",

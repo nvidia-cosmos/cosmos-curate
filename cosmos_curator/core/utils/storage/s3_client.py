@@ -234,6 +234,34 @@ class S3Client(StorageClient):
         """
         self.upload_bytes(S3Prefix(uri), data)
 
+    def download_to_path(
+        self, uri: StoragePrefix, dest: str | Path, chunk_size_bytes: int = DOWNLOAD_CHUNK_SIZE_BYTES
+    ) -> None:
+        """Stream an S3 object to a local file using boto3 multipart download.
+
+        Uses ``download_fileobj`` with a ``TransferConfig`` so large files are
+        streamed in parallel chunks rather than buffered entirely in memory.
+        The download is atomic: data is written to ``dest + ".partial"`` and
+        renamed to ``dest`` only on success, so a failed or interrupted download
+        never leaves a truncated file that a subsequent caller could mistake for
+        a complete one.
+        """
+        assert isinstance(uri, S3Prefix)
+        dest = Path(dest)
+        partial = dest.with_suffix(dest.suffix + ".partial")
+        try:
+            with partial.open("wb") as fout:
+                self.s3.download_fileobj(
+                    uri.bucket,
+                    uri.prefix,
+                    fout,
+                    Config=TransferConfig(multipart_threshold=chunk_size_bytes, max_concurrency=10),
+                )
+            partial.replace(dest)
+        except Exception:
+            partial.unlink(missing_ok=True)
+            raise
+
     def download_object_as_bytes(self, uri: StoragePrefix, chunk_size_bytes: int = DOWNLOAD_CHUNK_SIZE_BYTES) -> bytes:
         """Download an object as bytes from the specified S3 prefix.
 

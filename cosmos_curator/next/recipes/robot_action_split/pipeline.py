@@ -40,7 +40,9 @@ Example config (local paths, handful of videos)::
 """
 
 import argparse
+import itertools
 import json
+import tempfile
 import uuid
 from pathlib import Path
 
@@ -78,15 +80,32 @@ def run(
 
     # Phase 2: cut + action bin (Ray Data in production; sequential loop for iteration).
     # TODO: replace with Ray Data flat_map once the sequential path is validated.
+    #
+    # Group consecutive batches by chunk URI so the source video is downloaded once
+    # per chunk rather than once per batch.  max_segments_per_batch can split a single
+    # large chunk into many batches; without grouping each batch re-downloads the file.
     logger.info("Cutting clips...")
     all_outcomes = []
-    for i, batch in enumerate(batches, 1):
-        logger.info(f"  Batch {i}/{len(batches)}: {batch.chunk_mp4_uri} ({len(batch.items)} span(s))")
-        outcomes = process_batch(batch, config=resolved)
-        all_outcomes.extend(outcomes)
-        n_ok = sum(1 for o in outcomes if o["status"] == "success")
-        n_fail = len(outcomes) - n_ok
-        logger.info(f"    -> {n_ok} succeeded, {n_fail} failed")
+    total = len(batches)
+    batch_num = 0
+    # Group consecutive batches by source chunk so the video file is downloaded
+    # once per chunk rather than once per batch.  max_segments_per_batch splits
+    # one chunk's spans across many batches; without grouping each call to
+    # process_batch would re-download the same (potentially large) source file.
+    for _chunk_uri, chunk_batches_iter in itertools.groupby(batches, key=lambda b: b.chunk_mp4_uri):
+        with tempfile.TemporaryDirectory() as chunk_tmp:
+            staged_path = str(Path(chunk_tmp) / "chunk.mp4")
+            for batch in chunk_batches_iter:
+                batch_num += 1
+                logger.info(f"  Batch {batch_num}/{total}: {batch.chunk_mp4_uri} ({len(batch.items)} span(s))")
+                outcomes = process_batch(batch, config=resolved, staged_chunk_path=staged_path)
+                all_outcomes.extend(outcomes)
+                n_ok = sum(1 for o in outcomes if o["status"] == "success")
+                n_fail = len(outcomes) - n_ok
+                logger.info(f"    -> {n_ok} succeeded, {n_fail} failed")
+                for o in outcomes:
+                    if o["status"] != "success":
+                        logger.warning(f"      FAIL [{o.get('error_stage')}] {o.get('error_message', '')[:300]}")
 
     # Summary.
     succeeded = [o for o in all_outcomes if o["status"] == "success"]

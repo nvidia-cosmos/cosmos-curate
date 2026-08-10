@@ -127,6 +127,7 @@ ACTION_BINARY_SPEC_BY_DATASET: dict[str, str] = {
     "libero_10": "libero",
     "libero_90": "libero",
     "feb_08_500hr_lerobot_no_bframes": "mecka",
+    "mar_6_ego_dexterous_lerobot_no_bframes": "mecka",
     "feb_08_500hr_lerobot_updated": "mecka",
     "feb_15_1500hr_lerobot_no_bframes": "mecka",
     "feb_23_1000hr_lerobot_no_bframes": "mecka",

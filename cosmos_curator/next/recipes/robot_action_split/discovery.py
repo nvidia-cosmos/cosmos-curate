@@ -226,8 +226,13 @@ def _read_shard_meta(
         subtask_uri = shard_path.rstrip("/") + "/meta/subtasks.parquet"
         if client.object_exists(S3Prefix(subtask_uri)):
             data = read_bytes(subtask_uri, client=client)
-            for _, row in pq.read_table(io.BytesIO(data)).to_pandas().iterrows():
-                subtask_map[int(row["subtask_index"])] = str(row["subtask"])
+            subtask_df = pq.read_table(io.BytesIO(data)).to_pandas()
+            _SUBTASK_LABEL_COLS = ("subtask", "subtask_name")
+            subtask_col = next((c for c in _SUBTASK_LABEL_COLS if c in subtask_df.columns), None)
+            for _, row in subtask_df.iterrows():
+                subtask_map[int(row["subtask_index"])] = (
+                    str(row[subtask_col]) if subtask_col else f"subtask_{int(row['subtask_index'])}"
+                )
 
         tasks_uri = shard_path.rstrip("/") + "/meta/tasks.parquet"
         task_data = read_bytes(tasks_uri, client=client)
@@ -250,8 +255,13 @@ def _read_shard_meta(
     subtask_map = {}
     subtask_file = meta_dir / "subtasks.parquet"
     if subtask_file.is_file():
-        for _, row in pq.read_table(str(subtask_file)).to_pandas().iterrows():
-            subtask_map[int(row["subtask_index"])] = str(row["subtask"])
+        subtask_df = pq.read_table(str(subtask_file)).to_pandas()
+        _SUBTASK_LABEL_COLS = ("subtask", "subtask_name")
+        subtask_col = next((c for c in _SUBTASK_LABEL_COLS if c in subtask_df.columns), None)
+        for _, row in subtask_df.iterrows():
+            subtask_map[int(row["subtask_index"])] = (
+                str(row[subtask_col]) if subtask_col else f"subtask_{int(row['subtask_index'])}"
+            )
 
     task_df = pq.read_table(str(meta_dir / "tasks.parquet")).to_pandas()
     text_col = "task" if "task" in task_df.columns else next((c for c in task_df.columns if c != "task_index"), None)

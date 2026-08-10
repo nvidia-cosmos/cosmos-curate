@@ -171,6 +171,30 @@ class StorageClient(abc.ABC):
 
         """
 
+    def download_to_path(
+        self, uri: StoragePrefix, dest: str | pathlib.Path, chunk_size_bytes: int = DOWNLOAD_CHUNK_SIZE_BYTES
+    ) -> None:
+        """Stream an object to a local file without loading it fully into memory.
+
+        The default implementation falls back to ``download_object_as_bytes``; subclasses
+        should override to use backend-native streaming downloads (e.g. boto3
+        ``download_fileobj``) so that the full file is never held in memory.
+
+        Args:
+            uri: The storage prefix of the object to download.
+            dest: Local file path to write to.
+            chunk_size_bytes: Hint for internal streaming chunk size.
+
+        """
+        dest = pathlib.Path(dest)
+        partial = dest.with_suffix(dest.suffix + ".partial")
+        try:
+            partial.write_bytes(self.download_object_as_bytes(uri, chunk_size_bytes=chunk_size_bytes))
+            partial.replace(dest)
+        except Exception:
+            partial.unlink(missing_ok=True)
+            raise
+
     @abc.abstractmethod
     def download_object_as_bytes(self, uri: StoragePrefix, chunk_size_bytes: int = DOWNLOAD_CHUNK_SIZE_BYTES) -> bytes:
         """Download an object as bytes from the specified storage path.

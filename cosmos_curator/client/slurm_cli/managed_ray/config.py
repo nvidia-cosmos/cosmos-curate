@@ -214,12 +214,18 @@ class SlurmRayHeadConfig(SlurmRayAllocationConfig):
 
     The head shares its node rather than taking one exclusively, so what it needs has to be stated. It advertises
     no Ray resources of its own, so it is sized for the control plane and driver rather than for the work.
+    Set ``exclusive: true`` to take the whole node (equivalent to ``--exclusive --mem=0``), which avoids
+    per-user memory QOS limits and gives the pipeline driver access to the node's full RAM.
     """
 
     cpus: int = Field(default=16, ge=1, description="Cores for the Ray control plane and the pipeline driver.")
     memory: str = Field(
         default="64G",
-        description="Memory for the head allocation, in a format accepted by sbatch --mem (for example, 64G).",
+        description="Memory for the head allocation (sbatch --mem format, e.g. 64G). Ignored when exclusive=true.",
+    )
+    exclusive: bool = Field(
+        default=False,
+        description="Take the entire node exclusively (--exclusive --mem=0). Bypasses per-user memory QOS limits.",
     )
 
     @field_validator("memory")
