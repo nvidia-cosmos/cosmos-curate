@@ -107,10 +107,10 @@ class InternVideo2FrameCreationStage(CuratorStage):
         ::
 
             for each clip:
-              encoded_data missing? --> record error, skip
+              encoded_data missing? --> record error, drop frames, skip
               |
               extracted_frames.resolve()
-              frames missing for signature? --> record error, skip
+              frames missing for signature? --> record error, drop frames, skip
               |
               frames.shape[0] < target?
                 yes --> re-extract at 2x FPS (up to max_fps=20)
@@ -122,10 +122,13 @@ class InternVideo2FrameCreationStage(CuratorStage):
 
         Memory lifecycle:
             ``extracted_frames`` is a ``LazyData`` wrapping a dict keyed by
-            frame extraction signature.  This stage is the sole consumer of
-            its key.  After formulating input frames, ``drop()`` frees the
-            entire ``LazyData`` wrapper since no downstream stage needs the
-            raw frames.
+            frame extraction signature. This stage is the map's last consumer:
+            every handled exit releases it—missing encoded data,
+            missing extraction data or signature, and successful formulation—
+            because no downstream stage needs the decoded frame arrays.
+            Propagating exceptions retain it: configured Xenna retries re-invoke
+            ``process_data()`` with the same task objects, while exhausted
+            failures never continue downstream.
 
         Args:
             tasks: Tasks containing video clips to process.
@@ -143,6 +146,7 @@ class InternVideo2FrameCreationStage(CuratorStage):
             for clip, data in resolve_as_ready([(clip, clip.encoded_data) for clip in video.clips]):
                 if data is None:
                     clip.errors["encoded_data"] = "empty"
+                    clip.extracted_frames.drop()
                     continue
                 ef = clip.extracted_frames.resolve()
                 if ef is None or self._frame_extraction_signature not in ef:
@@ -150,6 +154,7 @@ class InternVideo2FrameCreationStage(CuratorStage):
                     logger.error(
                         f"Clip {clip.uuid} has buffer but no extracted frames for {self._frame_extraction_signature}"
                     )
+                    clip.extracted_frames.drop()
                     continue
                 with self._timer.time_process():
                     frames = ef[self._frame_extraction_signature]

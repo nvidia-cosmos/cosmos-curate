@@ -23,8 +23,11 @@ import uuid
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import numpy as np
+import numpy.typing as npt
 import pytest
 
+from cosmos_curator.pipelines.video.filtering.aesthetics import artificial_text_filter_stage
 from cosmos_curator.pipelines.video.filtering.aesthetics.artificial_text_filter_stage import (
     ArtificialTextFilterStage,
 )
@@ -48,6 +51,14 @@ def _make_task(
         filtered_clips=[],
     )
     return SplitPipeTask(session_id="test-session", video=video, stage_perf={})
+
+
+def _attach_extracted_frames(clip: Clip) -> dict[str, npt.NDArray[np.uint8]]:
+    frames = np.ones((2, 2, 2, 3), dtype=np.uint8)
+    frame_map = {"sequence-2000": frames}
+    clip.extracted_frames.value = frame_map
+    clip.extracted_frames.nbytes = frames.nbytes
+    return frame_map
 
 
 @pytest.fixture
@@ -99,6 +110,7 @@ def test_process_data_no_artificial_text(
 ) -> None:
     """When OCR returns no segments, clip is kept in video.clips."""
     task = _make_task()
+    frame_map = _attach_extracted_frames(task.video.clips[0])
     fake_meta = SimpleNamespace(
         width=640,
         height=480,
@@ -129,6 +141,7 @@ def test_process_data_no_artificial_text(
     assert video.clips[0].artificial_text_segments is None
     assert len(video.filtered_clips) == 0
     assert video.clip_stats.num_filtered_by_artificial_text == 0
+    assert video.clips[0].extracted_frames.resolve() is frame_map
 
 
 def test_process_data_has_artificial_text(
@@ -136,6 +149,7 @@ def test_process_data_has_artificial_text(
 ) -> None:
     """When detector returns segments, clip is moved to filtered_clips."""
     task = _make_task()
+    _attach_extracted_frames(task.video.clips[0])
     fake_meta = SimpleNamespace(
         width=640,
         height=480,
@@ -173,13 +187,19 @@ def test_process_data_has_artificial_text(
     assert filtered.has_artificial_text is True
     assert filtered.artificial_text_segments == [mock_segment]
     assert video.clip_stats.num_filtered_by_artificial_text == 1
+    assert filtered.extracted_frames.resolve() is None
+    assert filtered.extracted_frames.nbytes == 0
 
 
 def test_process_data_metadata_exception(
     artificial_text_stage: ArtificialTextFilterStage,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """When extract_metadata raises, clip gets has_artificial_text=False and error set."""
+    """Metadata failures keep the clip and its frames while recording the error."""
     task = _make_task()
+    frame_map = _attach_extracted_frames(task.video.clips[0])
+    messages: list[str] = []
+    monkeypatch.setattr(artificial_text_filter_stage, "logger", SimpleNamespace(warning=messages.append))
 
     with (
         patch(
@@ -199,3 +219,6 @@ def test_process_data_metadata_exception(
     assert clip.has_artificial_text is False
     assert "artificial_text" in clip.errors
     assert "decode failed" in clip.errors["artificial_text"]
+    assert clip.extracted_frames.resolve() is frame_map
+    assert len(messages) == 1
+    assert "failed to extract metadata: decode failed" in messages[0]

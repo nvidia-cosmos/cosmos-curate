@@ -165,6 +165,9 @@ class VllmFilteringStage(CuratorStage):
         if self._verbose:
             logger.info(f"Clip {clip.uuid} filtered out due to: {set(all_issues)}")
         clip.qwen_rejection_stage = "semantic"
+        # Keep this rejection-only: shared window cleanup also visits passing
+        # clips, whose extracted frames are still needed by embedding.
+        clip.extracted_frames.drop()
         video.filtered_clips.append(clip)
         video.clip_stats.num_filtered_by_qwen_semantic += 1
 
@@ -177,6 +180,7 @@ class VllmFilteringStage(CuratorStage):
             return
 
         clip.qwen_rejection_stage = "semantic"
+        clip.extracted_frames.drop()
         video.filtered_clips.append(clip)
         video.clip_stats.num_filtered_by_qwen_semantic += 1
         logger.warning(f"Clip {clip.uuid} had no successfully mapped windows; added to filtered_clips")
@@ -325,6 +329,9 @@ class VllmVideoClassifierStage(CuratorStage):
                         f"Clip {clip.uuid} filtered out due to: {set(all_issues)} "
                         f"(classified as: {clip.qwen_type_classification or []})"
                     )
+                # Keep this rejection-only: shared window cleanup also visits passing
+                # clips, whose extracted frames are still needed by embedding.
+                clip.extracted_frames.drop()
                 video.filtered_clips.append(clip)
                 video.clip_stats.num_filtered_by_qwen_classifier += 1
             else:
@@ -338,6 +345,7 @@ class VllmVideoClassifierStage(CuratorStage):
                 clip = original_clips[clip_idx]
                 clip.errors["qwen"] = "all_windows_failed_preparation"
                 clip.qwen_rejection_stage = "classifier"
+                clip.extracted_frames.drop()
                 video.filtered_clips.append(clip)
                 video.clip_stats.num_filtered_by_qwen_classifier += 1
                 logger.warning(f"Clip {clip.uuid} had no successfully mapped windows; added to filtered_clips")
