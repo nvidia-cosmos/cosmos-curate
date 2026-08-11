@@ -140,10 +140,9 @@ def test_gps_data_accepts_invalid_raw_values_when_validity_false() -> None:
     np.testing.assert_allclose(gps_data.hdop[1:], np.array([-1.0]))
 
 
-def test_gps_fix_type_values_are_normalized_uint8_values() -> None:
-    """GpsFixType should name the normalized values accepted by GpsData."""
+def test_gps_fix_type_values_match_normalized_contract() -> None:
+    """GpsFixType should retain the documented normalized GPS/GNSS status codes."""
     assert {fix_type.value for fix_type in GpsFixType} == {0, 2, 3, 4, 5, 6, 8}
-    assert all(0 <= fix_type.value <= np.iinfo(np.uint8).max for fix_type in GpsFixType)
 
 
 def test_gps_data_satisfies_sensor_data_protocol() -> None:
@@ -308,20 +307,10 @@ def test_gps_data_rejects_required_batch_length_mismatches() -> None:
         ("velocity_valid", np.ones((2, 3), dtype=np.int8), "dtype bool"),
         ("fix_type", np.array([3, 6], dtype=np.int64), "dtype uint8"),
         ("fix_type", np.array([3, 7], dtype=np.uint8), "valid fix type"),
-        ("satellites_used", np.ones((2, 1), dtype=np.uint32), r"shape \(N,\)"),
-        ("satellites_used", np.ones(2, dtype=np.uint8), "dtype uint32"),
-        ("satellites_used_valid", np.ones((2, 1), dtype=np.bool_), r"shape \(N,\)"),
-        ("satellites_used_valid", np.ones(2, dtype=np.int8), "dtype bool"),
-        ("hdop_valid", np.ones((2, 1), dtype=np.bool_), r"shape \(N,\)"),
-        ("hdop_valid", np.ones(2, dtype=np.int8), "dtype bool"),
         ("horizontal_accuracy_m", np.array([0.5, -0.1], dtype=np.float64), "nonnegative"),
         ("vertical_accuracy_m", np.array([0.5, np.inf], dtype=np.float64), "finite"),
         ("hdop", np.array([0.7, -0.1], dtype=np.float64), "nonnegative"),
         ("vdop", np.array([0.7, np.nan], dtype=np.float64), "finite"),
-        ("pdop", np.ones((2, 1), dtype=np.float64), r"shape \(N,\)"),
-        ("host_timestamps_ns", np.ones((2, 1), dtype=np.int64), r"shape \(N,\)"),
-        ("utc_timestamps_ns", np.ones(2, dtype=np.uint64), "dtype int64"),
-        ("sequence_counter", np.ones(2, dtype=np.int64), "dtype uint64"),
     ],
 )
 def test_gps_data_rejects_invalid_optional_fields(

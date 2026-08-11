@@ -75,8 +75,11 @@ def protobuf_descriptor_set_from_proto(proto_path: Path) -> descriptor_pb2.FileD
     message_descriptor = file_descriptor.message_type.add()
     message_descriptor.name = message_match.group(1)
 
-    field_pattern = re.compile(r"^\s*(\w+)\s+([A-Za-z_]\w*)\s*=\s*(\d+)\s*;$", flags=re.MULTILINE)
-    for field_type, field_name, field_number in field_pattern.findall(message_match.group(2)):
+    field_pattern = re.compile(
+        r"^\s*(?:(repeated)\s+)?(\w+)\s+([A-Za-z_]\w*)\s*=\s*(\d+)\s*;$",
+        flags=re.MULTILINE,
+    )
+    for repeated, field_type, field_name, field_number in field_pattern.findall(message_match.group(2)):
         try:
             descriptor_type = _PROTO_SCALAR_TYPES[field_type]
         except KeyError as e:
@@ -85,7 +88,11 @@ def protobuf_descriptor_set_from_proto(proto_path: Path) -> descriptor_pb2.FileD
         field = message_descriptor.field.add()
         field.name = field_name
         field.number = int(field_number)
-        field.label = descriptor_pb2.FieldDescriptorProto.LABEL_OPTIONAL
+        field.label = (
+            descriptor_pb2.FieldDescriptorProto.LABEL_REPEATED
+            if repeated
+            else descriptor_pb2.FieldDescriptorProto.LABEL_OPTIONAL
+        )
         field.type = descriptor_type
 
     return descriptor_set

@@ -24,14 +24,18 @@ import numpy.typing as npt
 from cosmos_curator.core.sensors.utils.helpers import as_optional_readonly_view, as_readonly_view
 from cosmos_curator.core.sensors.utils.validation import (
     bool_batch,
+    float64_array,
     float64_batch,
-    int64_array,
     nondecreasing_int64_array,
+    optional_bool_array,
+    optional_float64_array,
+    optional_int64_array,
+    optional_uint32_array,
+    optional_uint64_array,
+    require_finite_or_marked_invalid,
     strictly_increasing_int64_array,
     symmetric_psd_covariance_batch,
     uint8_array,
-    uint32_array,
-    uint64_array,
 )
 
 if TYPE_CHECKING:
@@ -103,73 +107,6 @@ class _HasGpsBatchFields(Protocol):
     sequence_counter: npt.NDArray[np.uint64] | None
 
 
-def _require_float64_vector(name: str, value: npt.NDArray[np.float64]) -> None:
-    """Raise if ``value`` is not a 1-D ``float64`` vector."""
-    if value.ndim != 1:
-        msg = f"{name} must have shape (N,), got shape={value.shape}"
-        raise ValueError(msg)
-    if value.dtype != np.float64:
-        msg = f"{name} must have dtype float64, got {value.dtype}"
-        raise ValueError(msg)
-
-
-def _latitude_vector(
-    _instance: object,
-    attribute: AttrsAttribute,
-    value: npt.NDArray[np.float64],
-) -> None:
-    """Validate the shape and dtype of WGS-84 latitude values in degrees."""
-    _require_float64_vector(attribute.name, value)
-
-
-def _longitude_vector(
-    _instance: object,
-    attribute: AttrsAttribute,
-    value: npt.NDArray[np.float64],
-) -> None:
-    """Validate the shape and dtype of WGS-84 longitude values in degrees."""
-    _require_float64_vector(attribute.name, value)
-
-
-def _float64_vector(
-    _instance: object,
-    attribute: AttrsAttribute,
-    value: npt.NDArray[np.float64],
-) -> None:
-    """Validate the shape and dtype of a 1-D ``float64`` array."""
-    _require_float64_vector(attribute.name, value)
-
-
-def _optional_scalar_validity_mask(
-    _instance: object,
-    attribute: AttrsAttribute,
-    value: npt.NDArray[np.bool_] | None,
-) -> None:
-    """Validate optional row-level validity masks with shape ``(N,)``."""
-    if value is None:
-        return
-    if value.ndim != 1:
-        msg = f"{attribute.name} must have shape (N,), got shape={value.shape}"
-        raise ValueError(msg)
-    if value.dtype != np.bool_:
-        msg = f"{attribute.name} must have dtype bool, got {value.dtype}"
-        raise ValueError(msg)
-
-
-def _optional_uint8_vector(
-    instance: object,
-    attribute: AttrsAttribute,
-    value: npt.NDArray[np.uint8] | None,
-) -> None:
-    """Validate optional 1-D ``uint8`` arrays."""
-    if value is None:
-        return
-    if value.ndim != 1:
-        msg = f"{attribute.name} must have shape (N,), got shape={value.shape}"
-        raise ValueError(msg)
-    uint8_array(instance, attribute, value)
-
-
 def _optional_fix_type(
     instance: object,
     attribute: AttrsAttribute,
@@ -178,63 +115,10 @@ def _optional_fix_type(
     """Validate optional normalized GPS/GNSS fix type arrays."""
     if value is None:
         return
-    _optional_uint8_vector(instance, attribute, value)
+    uint8_array(instance, attribute, value)
     if not np.all(np.isin(value, _VALID_FIX_TYPES_ARRAY)):
         msg = f"{attribute.name} must contain only valid fix type values: {sorted(_VALID_FIX_TYPES)}"
         raise ValueError(msg)
-
-
-def _optional_uint32_vector(
-    instance: object,
-    attribute: AttrsAttribute,
-    value: npt.NDArray[np.uint32] | None,
-) -> None:
-    """Validate optional 1-D ``uint32`` arrays."""
-    if value is None:
-        return
-    if value.ndim != 1:
-        msg = f"{attribute.name} must have shape (N,), got shape={value.shape}"
-        raise ValueError(msg)
-    uint32_array(instance, attribute, value)
-
-
-def _optional_int64_vector(
-    instance: object,
-    attribute: AttrsAttribute,
-    value: npt.NDArray[np.int64] | None,
-) -> None:
-    """Validate optional 1-D ``int64`` arrays."""
-    if value is None:
-        return
-    if value.ndim != 1:
-        msg = f"{attribute.name} must have shape (N,), got shape={value.shape}"
-        raise ValueError(msg)
-    int64_array(instance, attribute, value)
-
-
-def _optional_uint64_vector(
-    instance: object,
-    attribute: AttrsAttribute,
-    value: npt.NDArray[np.uint64] | None,
-) -> None:
-    """Validate optional 1-D ``uint64`` arrays."""
-    if value is None:
-        return
-    if value.ndim != 1:
-        msg = f"{attribute.name} must have shape (N,), got shape={value.shape}"
-        raise ValueError(msg)
-    uint64_array(instance, attribute, value)
-
-
-def _optional_float64_vector(
-    _instance: object,
-    attribute: AttrsAttribute,
-    value: npt.NDArray[np.float64] | None,
-) -> None:
-    """Validate optional 1-D ``float64`` arrays."""
-    if value is None:
-        return
-    _require_float64_vector(attribute.name, value)
 
 
 def _scalar_validity_pairs(
@@ -249,23 +133,6 @@ def _scalar_validity_pairs(
         if (value is None) != (validity is None):
             msg = f"{value_name} and {validity_name} must be provided together or both be None"
             raise ValueError(msg)
-
-
-def _require_finite_or_marked_invalid(
-    name: str,
-    values: npt.NDArray[np.float64],
-    validity: npt.NDArray[np.bool_] | None,
-) -> None:
-    """Allow non-finite values only when their matching validity entry is false."""
-    nonfinite = ~np.isfinite(values)
-    if not np.any(nonfinite):
-        return
-    if validity is None:
-        msg = f"{name} must contain only finite values when no validity mask is provided"
-        raise ValueError(msg)
-    if np.any(nonfinite & validity):
-        msg = f"{name} non-finite values require matching validity mask entries to be false"
-        raise ValueError(msg)
 
 
 def _require_range_or_marked_invalid(
@@ -300,9 +167,9 @@ def _raw_value_constraints(
     _value: object,
 ) -> None:
     """Validate raw GPS measurements against their matching validity masks."""
-    _require_finite_or_marked_invalid("latitude_deg", instance.latitude_deg, instance.position_valid[:, 0])
-    _require_finite_or_marked_invalid("longitude_deg", instance.longitude_deg, instance.position_valid[:, 1])
-    _require_finite_or_marked_invalid("altitude_m", instance.altitude_m, instance.position_valid[:, 2])
+    require_finite_or_marked_invalid("latitude_deg", instance.latitude_deg, instance.position_valid[:, 0])
+    require_finite_or_marked_invalid("longitude_deg", instance.longitude_deg, instance.position_valid[:, 1])
+    require_finite_or_marked_invalid("altitude_m", instance.altitude_m, instance.position_valid[:, 2])
     _require_range_or_marked_invalid(
         "latitude_deg",
         instance.latitude_deg,
@@ -322,7 +189,7 @@ def _raw_value_constraints(
         validity = getattr(instance, validity_name)
         if values is None or validity is None or value_name == "satellites_used":
             continue
-        _require_finite_or_marked_invalid(value_name, values, validity)
+        require_finite_or_marked_invalid(value_name, values, validity)
         _require_nonnegative_or_marked_invalid(value_name, values, validity)
 
 
@@ -331,7 +198,7 @@ def _batch_lengths(
     _attribute: object,
     _value: object,
 ) -> None:
-    """Validate shared row-count invariants across GPS/GNSS batch arrays."""
+    """Validate the shared row-count ``N`` invariant across GPS batch arrays."""
     expected_len = len(instance.align_timestamps_ns)
     lengths = {
         "align_timestamps_ns": len(instance.align_timestamps_ns),
@@ -363,9 +230,9 @@ def _batch_lengths(
         "sequence_counter",
     )
     for field_name in optional_fields:
-        field_value = getattr(instance, field_name)
-        if field_value is not None:
-            lengths[field_name] = len(field_value)
+        value = getattr(instance, field_name)
+        if value is not None:
+            lengths[field_name] = len(value)
     if any(length != expected_len for length in lengths.values()):
         length_summary = " ".join(f"{name}={length}" for name, length in lengths.items())
         msg = f"All arrays must be the same length: {length_summary}"
@@ -374,7 +241,7 @@ def _batch_lengths(
 
 @attrs.define(hash=False, frozen=True)
 class GpsData:
-    """GPS/GNSS fix samples stored as structure-of-arrays batches.
+    """GPS/GNSS point samples stored as structure-of-arrays batches.
 
     Satisfies ``SensorData`` (``cosmos_curator.core.sensors.data.sensor_data``).
     Required position fields use WGS-84 geodetic coordinates.
@@ -396,15 +263,15 @@ class GpsData:
     )
     latitude_deg: npt.NDArray[np.float64] = attrs.field(
         converter=as_readonly_view,
-        validator=_latitude_vector,
+        validator=float64_array,
     )
     longitude_deg: npt.NDArray[np.float64] = attrs.field(
         converter=as_readonly_view,
-        validator=_longitude_vector,
+        validator=float64_array,
     )
     altitude_m: npt.NDArray[np.float64] = attrs.field(
         converter=as_readonly_view,
-        validator=_float64_vector,
+        validator=float64_array,
     )
     position_valid: npt.NDArray[np.bool_] = attrs.field(
         converter=as_readonly_view,
@@ -434,72 +301,72 @@ class GpsData:
     satellites_used: npt.NDArray[np.uint32] | None = attrs.field(
         default=None,
         converter=as_optional_readonly_view,
-        validator=_optional_uint32_vector,
+        validator=optional_uint32_array,
     )
     satellites_used_valid: npt.NDArray[np.bool_] | None = attrs.field(
         default=None,
         converter=as_optional_readonly_view,
-        validator=_optional_scalar_validity_mask,
+        validator=optional_bool_array,
     )
     horizontal_accuracy_m: npt.NDArray[np.float64] | None = attrs.field(
         default=None,
         converter=as_optional_readonly_view,
-        validator=_optional_float64_vector,
+        validator=optional_float64_array,
     )
     horizontal_accuracy_m_valid: npt.NDArray[np.bool_] | None = attrs.field(
         default=None,
         converter=as_optional_readonly_view,
-        validator=_optional_scalar_validity_mask,
+        validator=optional_bool_array,
     )
     vertical_accuracy_m: npt.NDArray[np.float64] | None = attrs.field(
         default=None,
         converter=as_optional_readonly_view,
-        validator=_optional_float64_vector,
+        validator=optional_float64_array,
     )
     vertical_accuracy_m_valid: npt.NDArray[np.bool_] | None = attrs.field(
         default=None,
         converter=as_optional_readonly_view,
-        validator=_optional_scalar_validity_mask,
+        validator=optional_bool_array,
     )
     hdop: npt.NDArray[np.float64] | None = attrs.field(
         default=None,
         converter=as_optional_readonly_view,
-        validator=_optional_float64_vector,
+        validator=optional_float64_array,
     )
     hdop_valid: npt.NDArray[np.bool_] | None = attrs.field(
         default=None,
         converter=as_optional_readonly_view,
-        validator=_optional_scalar_validity_mask,
+        validator=optional_bool_array,
     )
     vdop: npt.NDArray[np.float64] | None = attrs.field(
         default=None,
         converter=as_optional_readonly_view,
-        validator=_optional_float64_vector,
+        validator=optional_float64_array,
     )
     vdop_valid: npt.NDArray[np.bool_] | None = attrs.field(
         default=None,
         converter=as_optional_readonly_view,
-        validator=_optional_scalar_validity_mask,
+        validator=optional_bool_array,
     )
     pdop: npt.NDArray[np.float64] | None = attrs.field(
         default=None,
         converter=as_optional_readonly_view,
-        validator=_optional_float64_vector,
+        validator=optional_float64_array,
     )
     pdop_valid: npt.NDArray[np.bool_] | None = attrs.field(
         default=None,
         converter=as_optional_readonly_view,
-        validator=_optional_scalar_validity_mask,
+        validator=optional_bool_array,
     )
     host_timestamps_ns: npt.NDArray[np.int64] | None = attrs.field(
         default=None,
         converter=as_optional_readonly_view,
-        validator=_optional_int64_vector,
+        validator=optional_int64_array,
     )
     utc_timestamps_ns: npt.NDArray[np.int64] | None = attrs.field(
         default=None,
         converter=as_optional_readonly_view,
-        validator=_optional_int64_vector,
+        validator=optional_int64_array,
     )
     # sequence_counter is final so cross-field validators run after attrs has
     # set and structurally validated every required and optional GPS/GNSS array.
@@ -507,7 +374,7 @@ class GpsData:
         default=None,
         converter=as_optional_readonly_view,
         validator=attrs.validators.and_(
-            _optional_uint64_vector,
+            optional_uint64_array,
             _scalar_validity_pairs,
             _batch_lengths,
             _raw_value_constraints,

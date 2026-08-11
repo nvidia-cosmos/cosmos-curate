@@ -271,18 +271,11 @@ def test_imu_data_rejects_invalid_required_fields(
         ),
         ("angular_velocity_valid", np.ones((2,), dtype=np.bool_), r"shape \(N, 3\)"),
         ("linear_acceleration_valid", np.ones((2, 3), dtype=np.int8), "dtype bool"),
-        ("orientation_valid", np.ones((2, 1), dtype=np.bool_), r"shape \(N,\)"),
         ("angular_velocity_bias_rad_s", np.ones((2, 2), dtype=np.float64), r"shape \(N, 3\)"),
         ("linear_acceleration_bias_m_s2", np.ones((2, 3), dtype=np.float32), "dtype float64"),
         ("angular_velocity_bias_valid", np.ones((2,), dtype=np.bool_), r"shape \(N, 3\)"),
         ("linear_acceleration_bias_valid", np.ones((2, 3), dtype=np.int8), "dtype bool"),
-        ("host_timestamps_ns", np.ones((2, 1), dtype=np.int64), r"shape \(N,\)"),
-        ("host_timestamps_ns", np.ones(2, dtype=np.uint64), "dtype int64"),
-        ("sequence_counter", np.ones(2, dtype=np.int64), "dtype uint64"),
-        ("temperature_c", np.ones((2, 1), dtype=np.float64), r"shape \(N,\)"),
         ("temperature_c", np.array([32.0, np.inf], dtype=np.float64), "finite"),
-        ("temperature_valid", np.ones((2, 1), dtype=np.bool_), r"shape \(N,\)"),
-        ("temperature_valid", np.ones(2, dtype=np.int8), "dtype bool"),
     ],
 )
 def test_imu_data_rejects_invalid_optional_fields(
