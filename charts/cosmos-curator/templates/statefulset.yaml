@@ -1,3 +1,17 @@
+{{- include "curator-ray.validateOtlp" . }}
+{{- $otlpCertPath := include "curator-ray.otlp.certPath" . }}
+{{- $otlpKeyPath := include "curator-ray.otlp.keyPath" . }}
+{{- $otlpCaPath := include "curator-ray.otlp.caPath" . }}
+{{- $otlpCertDir := dir $otlpCertPath }}
+{{- $otlpEnabled := include "curator-ray.otlp.enabled" . | eq "true" }}
+{{- $otlpCertsEnabled := or .Values.otlp.tls.secret.enabled .Values.otlp.extractNVCFSecrets }}
+{{- $otlpCertsMounted := and $otlpEnabled $otlpCertsEnabled }}
+{{/*
+Only the in-process exporters read the client key from the curator container.
+With logging alone the sidecar is the only consumer, so the key is not mounted
+into a container that has no OTEL_EXPORTER_OTLP_* configuration to use it.
+*/}}
+{{- $otlpAppCertsMounted := and $otlpCertsMounted (or .Values.metrics.otlpPush.enabled .Values.tracing.otlp.enabled) }}
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
@@ -29,6 +43,46 @@ spec:
         {{- include "curator-ray.selectorLabels" . | nindent 8 }}
     spec:
       automountServiceAccountToken: false
+      {{- if .Values.logging.otlp.enabled }}
+      terminationGracePeriodSeconds: {{ .Values.logging.otlp.terminationGracePeriodSeconds }}
+      {{- end }}
+      {{- if and $otlpCertsMounted .Values.otlp.extractNVCFSecrets }}
+      initContainers:
+        - name: otlp-secret-extractor
+          image: nvcr.io/nvidia/distroless/python:3.13-v3.1.3
+          command: ["python"]
+          args: ["/scripts/extractor.py"]
+          env:
+            - name: SECRET_EXTRACTOR_OUTPUT_DIR
+              value: {{ $otlpCertDir | quote }}
+            - name: SECRET_EXTRACTOR_CERT_FILE
+              value: {{ base $otlpCertPath | quote }}
+            - name: SECRET_EXTRACTOR_KEY_FILE
+              value: {{ base $otlpKeyPath | quote }}
+            {{- if $otlpCaPath }}
+            - name: SECRET_EXTRACTOR_CA_FILE
+              value: {{ base $otlpCaPath | quote }}
+            {{- end }}
+            - name: SECRET_EXTRACTOR_CERT_KEY
+              value: {{ .Values.otlp.nvcfSecrets.certKey | quote }}
+            - name: SECRET_EXTRACTOR_KEY_KEY
+              value: {{ .Values.otlp.nvcfSecrets.keyKey | quote }}
+            {{- /* Only require a CA from the NVCF secret when something reads it.
+                   The extractor hard-fails on a configured-but-absent CA key, so
+                   asking for one without an otlp.tls.caPath would block startup
+                   for backends that use a publicly trusted certificate. */}}
+            {{- if and $otlpCaPath .Values.otlp.nvcfSecrets.caKey }}
+            - name: SECRET_EXTRACTOR_CA_KEY
+              value: {{ .Values.otlp.nvcfSecrets.caKey | quote }}
+            {{- end }}
+          volumeMounts:
+            - name: otlp-secret-extractor-script
+              mountPath: /scripts
+            - name: otlp-cert-store
+              mountPath: {{ $otlpCertDir | quote }}
+            - name: otlp-input-secrets
+              mountPath: /var/secrets
+      {{- end }}
       volumes:
         - name: dshm
           emptyDir:
@@ -59,11 +113,46 @@ spec:
           configMap:
             name: curator-config
             defaultMode: 0440
+      {{- if .Values.logging.otlp.enabled }}
+        - name: otlp-log-collector-config
+          configMap:
+            name: {{ default (printf "%s-otlp-log-collector-config" (include "curator-ray.name" .)) .Values.logging.otlp.configMap.existingName }}
+            defaultMode: 0440
+            items:
+              - key: {{ .Values.logging.otlp.configMap.key | quote }}
+                path: relay.yaml
+        - name: otlp-log-collector-storage
+          emptyDir:
+            sizeLimit: {{ .Values.logging.otlp.storageSizeLimit | quote }}
+      {{- end }}
+      {{- if $otlpCertsMounted }}
+      {{- if .Values.otlp.extractNVCFSecrets }}
+        - name: otlp-secret-extractor-script
+          configMap:
+            name: secret-extractor
+            defaultMode: 0755
+        - name: otlp-cert-store
+          emptyDir:
+            medium: Memory
+            sizeLimit: 5Mi
+        - name: otlp-input-secrets
+          secret:
+            secretName: {{ .Values.otlp.nvcfSecrets.secretName }}
+      {{- else if .Values.otlp.tls.secret.enabled }}
+        - name: otlp-cert-store
+          secret:
+            secretName: {{ .Values.otlp.tls.secret.name }}
+            defaultMode: 0440
+      {{- end }}
+      {{- end }}
       {{- if .Values.rayAuth.enabled }}
         - name: ray-auth-token
           secret:
             secretName: ray-auth-token
             defaultMode: 0440
+      {{- end }}
+      {{- with .Values.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
       {{- end }}
       {{- if .Values.ngcImagePullSecretName }}
       imagePullSecrets:
@@ -92,6 +181,14 @@ spec:
             - mountPath: /ray-auth
               name: ray-auth-token
               readOnly: true
+           {{- end }}
+           {{- if $otlpAppCertsMounted }}
+            - mountPath: {{ $otlpCertDir | quote }}
+              name: otlp-cert-store
+              readOnly: true
+           {{- end }}
+           {{- with .Values.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
            {{- end }}
           {{- if .Values.command}}
           command:
@@ -132,6 +229,10 @@ spec:
             {{- if .Values.rayAuth.enabled }}
             - name: RAY_AUTH_TOKEN_PATH
               value: "/ray-auth/token"
+            {{- end }}
+            {{- if and .Values.logging.otlp.enabled (not .Values.command) (not .Values.args) }}
+            - name: COSMOS_CURATOR_TEE_STDOUT_STDERR
+              value: "true"
             {{- end }}
             {{- if .Values.huggingFaceHubToken }}
             - name: HUGGING_FACE_HUB_TOKEN
@@ -192,6 +293,81 @@ spec:
             successThreshold: 1
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
+        {{- if .Values.logging.otlp.enabled }}
+        - name: otlp-log-collector
+          image: "{{ .Values.logging.otlp.image.repository }}:{{ .Values.logging.otlp.image.tag }}"
+          imagePullPolicy: {{ .Values.logging.otlp.image.pullPolicy }}
+          args:
+            - "--config=/conf/relay.yaml"
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 13133
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          {{- if gt (int .Values.logging.otlp.preStopSleepSeconds) 0 }}
+          lifecycle:
+            preStop:
+              sleep:
+                seconds: {{ .Values.logging.otlp.preStopSleepSeconds }}
+          {{- end }}
+          env:
+            - name: OTELCOL_TELEMETRY_LOG_LEVEL
+              value: {{ .Values.logging.otlp.telemetryLogLevel | quote }}
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: POD_UID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.uid
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: SERVICE_ACCOUNT
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.serviceAccountName
+            - name: POD_INDEX
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.labels['apps.kubernetes.io/pod-index']
+          {{- with .Values.logging.otlp.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          volumeMounts:
+            - mountPath: /tmp
+              name: temp
+              readOnly: true
+            - mountPath: /conf
+              name: otlp-log-collector-config
+              readOnly: true
+            - mountPath: /var/lib/otelcol/file_storage
+              name: otlp-log-collector-storage
+           {{- if $otlpCertsMounted }}
+            - mountPath: {{ $otlpCertDir | quote }}
+              name: otlp-cert-store
+              readOnly: true
+           {{- end }}
+          {{- with .Values.logging.otlp.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.logging.otlp.resources | nindent 12 }}
+        {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

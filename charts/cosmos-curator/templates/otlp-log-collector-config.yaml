@@ -1,0 +1,202 @@
+{{- if and .Values.logging.otlp.enabled (not .Values.logging.otlp.configMap.existingName) }}
+{{- $otlpCaPath := include "curator-ray.otlp.caPath" . }}
+{{- $explicitOtlpClientCerts := and .Values.otlp.tls.certPath .Values.otlp.tls.keyPath }}
+{{- $otlpCertsEnabled := or .Values.otlp.tls.secret.enabled .Values.otlp.extractNVCFSecrets $explicitOtlpClientCerts }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "curator-ray.name" . }}-otlp-log-collector-config
+data:
+  relay.yaml: |
+    receivers:
+      file_log/ray:
+        include:
+          - /tmp/ray/session_*/logs/*.log
+          - /tmp/ray/session_*/logs/*.out
+          - /tmp/ray/session_*/logs/*.err
+          - /tmp/curator/stdout-stderr.log
+        exclude:
+          - /tmp/ray/session_latest/logs/*
+          - /tmp/ray/session_*/logs/gcs_server*
+          - /tmp/ray/session_*/logs/python*
+          - /tmp/ray/session_*/logs/worker*
+          - /tmp/ray/session_*/logs/log_monitor.log
+          # Ray's autoscaler monitor.log is dominated by a verbose polling loop.
+          # Leave it out of the default stream; enable it temporarily when
+          # debugging Ray autoscaler or cluster status issues.
+          - /tmp/ray/session_*/logs/monitor.log
+        start_at: beginning
+        preserve_leading_whitespaces: true
+        include_file_name: true
+        include_file_path: true
+        storage: file_storage/ray
+        operators:
+          - type: json_parser
+            id: parse_json_probe
+            parse_from: body
+            parse_to: attributes.curator_json
+            on_error: send_quiet
+          - type: add
+            id: mark_json
+            field: attributes["curator.log.parser"]
+            value: json
+            if: 'attributes.curator_json != nil'
+          - type: recombine
+            combine_field: body
+            source_identifier: attributes["log.file.path"]
+            if: 'attributes.curator_json == nil'
+            is_first_entry: 'body matches "^[[:space:]]*(?:(?:info|stdout|stderr)[[:space:]]+)?(?:[IWEF][0-9]{4}[[:space:]].*|[0-9]{4}-[0-9]{2}-[0-9]{2}[ T].*|[[][0-9]{4}-[0-9]{2}-[0-9]{2}[ T].*|[(][^)]+[)][[:space:]].*)$"'
+            force_flush_period: 2s
+            max_batch_size: 1000
+            max_log_size: 245760
+          - type: regex_parser
+            id: parse_ray_python_text
+            parse_from: body
+            parse_to: attributes
+            regex: '^[[:space:]]*(?:(?:info|stdout|stderr)[[:space:]]+)?(?P<asctime>[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2},[0-9]{3})[[:space:]]+(?P<levelname>[A-Z]+)[[:space:]]+(?P<code_filepath>[^:[:space:]]+):(?P<lineno>[0-9]+)[[:space:]]+--[[:space:]]+(?P<message>(?s:.*))$'
+            if: 'body matches "^[[:space:]]*(?:(?:info|stdout|stderr)[[:space:]]+)?[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2},[0-9]{3}[[:space:]]+[A-Z]+[[:space:]]+[^:[:space:]]+:[0-9]+[[:space:]]+--[[:space:]]+(?s:.*)$"'
+          - type: time_parser
+            parse_from: attributes.asctime
+            layout_type: strptime
+            layout: "%Y-%m-%d %H:%M:%S,%L"
+            location: UTC
+            if: 'attributes.asctime != nil'
+
+    processors:
+      memory_limiter:
+        check_interval: 5s
+        limit_mib: 400
+        spike_limit_mib: 100
+      transform/parse-json:
+        error_mode: silent
+        log_statements:
+          - context: log
+            statements:
+              - merge_maps(log.attributes, log.attributes["curator_json"], "upsert") where log.attributes["curator_json"] != nil
+              - delete_key(log.attributes, "curator_json") where log.attributes["curator_json"] != nil
+      transform/parsed-text-body:
+        log_statements:
+          - context: log
+            statements:
+              - set(log.severity_text, log.attributes["levelname"]) where log.attributes["levelname"] != nil
+              - set(log.attributes["curator.log.parser"], "text") where log.attributes["curator.log.parser"] == nil and log.attributes["asctime"] != nil
+              - set(log.attributes["curator.log.parser"], "raw") where log.attributes["curator.log.parser"] == nil
+              # Add new Ray/loguru levels here.
+              - set(log.severity_number, 5) where log.attributes["levelname"] == "DEBUG"
+              - set(log.severity_number, 9) where log.attributes["levelname"] == "INFO"
+              - set(log.severity_number, 9) where log.attributes["levelname"] == "SUCC"
+              - set(log.severity_number, 9) where log.attributes["levelname"] == "SUCCESS"
+              - set(log.severity_number, 13) where log.attributes["levelname"] == "WARN"
+              - set(log.severity_number, 13) where log.attributes["levelname"] == "WARNING"
+              - set(log.severity_number, 17) where log.attributes["levelname"] == "ERR"
+              - set(log.severity_number, 17) where log.attributes["levelname"] == "ERROR"
+              - set(log.severity_number, 21) where log.attributes["levelname"] == "FATAL"
+              - set(log.severity_number, 21) where log.attributes["levelname"] == "CRITICAL"
+              - set(log.time_unix_nano, Int(log.attributes["timestamp_ns"])) where log.attributes["timestamp_ns"] != nil
+              - set(log.time, Time(log.attributes["asctime"], "%Y-%m-%d %H:%M:%S,%L", "UTC")) where log.attributes["timestamp_ns"] == nil and log.attributes["asctime"] != nil and IsMatch(log.attributes["asctime"], "^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2},[0-9]{3}$")
+              - set(log.trace_id.string, log.attributes["trace_id"]) where log.attributes["trace_id"] != nil and IsMatch(log.attributes["trace_id"], "^[0-9a-f]{32}$")
+              - set(log.span_id.string, log.attributes["span_id"]) where log.attributes["span_id"] != nil and IsMatch(log.attributes["span_id"], "^[0-9a-f]{16}$")
+              - set(log.attributes["exception"], log.attributes["exc_text"]) where log.attributes["exception"] == nil and log.attributes["exc_text"] != nil
+              - replace_pattern(log.attributes["message"], "\\\\n", "\n") where log.attributes["message"] != nil
+              - replace_pattern(log.attributes["exception"], "\\\\n", "\n") where log.attributes["exception"] != nil
+              - set(log.body, Concat([log.attributes["message"], log.attributes["exception"]], "\n")) where log.attributes["message"] != nil and log.attributes["exception"] != nil
+              - set(log.body, log.attributes["message"]) where log.attributes["message"] != nil and log.attributes["exception"] == nil
+              - set(log.attributes["code.filepath"], log.attributes["code_filepath"]) where log.attributes["code_filepath"] != nil
+              - set(log.attributes["code.filepath"], log.attributes["filename"]) where log.attributes["code_filepath"] == nil and log.attributes["filename"] != nil
+              - set(log.attributes["lineno"], Int(log.attributes["lineno"])) where log.attributes["lineno"] != nil
+              - delete_key(log.attributes, "code_filepath") where log.attributes["code_filepath"] != nil
+              - delete_key(log.attributes, "filename") where log.attributes["filename"] != nil
+              - delete_key(log.attributes, "timestamp_ns") where log.attributes["timestamp_ns"] != nil
+              - delete_key(log.attributes, "trace_id") where log.attributes["trace_id"] != nil and IsMatch(log.attributes["trace_id"], "^[0-9a-f]{32}$")
+              - delete_key(log.attributes, "span_id") where log.attributes["span_id"] != nil and IsMatch(log.attributes["span_id"], "^[0-9a-f]{16}$")
+              - delete_key(log.attributes, "asctime") where log.attributes["asctime"] != nil
+              - delete_key(log.attributes, "levelname") where log.attributes["levelname"] != nil
+              - delete_key(log.attributes, "message") where log.attributes["message"] != nil
+              - delete_key(log.attributes, "exception") where log.attributes["exception"] != nil
+              - delete_key(log.attributes, "exc_text") where log.attributes["exc_text"] != nil
+      resource:
+        attributes:
+          - key: service.name
+            value: {{ (index .Values.logging.otlp.resourceAttributes "service.name" | default "cosmos-curator") | quote }}
+            action: upsert
+          - key: k8s.statefulset.name
+            value: {{ include "curator-ray.name" . | quote }}
+            action: upsert
+          - key: k8s.namespace.name
+            value: ${env:POD_NAMESPACE}
+            action: upsert
+          - key: k8s.pod.name
+            value: ${env:POD_NAME}
+            action: upsert
+          - key: k8s.pod.uid
+            value: ${env:POD_UID}
+            action: upsert
+          - key: k8s.pod.ip
+            value: ${env:POD_IP}
+            action: upsert
+          - key: k8s.node.name
+            value: ${env:NODE_NAME}
+            action: upsert
+          - key: k8s.serviceaccount.name
+            value: ${env:SERVICE_ACCOUNT}
+            action: upsert
+          - key: k8s.statefulset.pod_index
+            value: ${env:POD_INDEX}
+            action: upsert
+          {{- $attrs := deepCopy (default (dict) .Values.logging.otlp.extraResourceAttributes) }}
+          {{- $attrs = merge $attrs (omit .Values.logging.otlp.resourceAttributes "service.name") }}
+          {{- $attrs = merge $attrs (default (dict) .Values.logging.otlp.extraLabels) }}
+          {{- if .Values.logging.otlp.includeMetricsExternalLabels }}
+          {{- $metricAttrs := deepCopy (default (dict) .Values.metrics.extraExternalLabels) }}
+          {{- $metricAttrs = merge $metricAttrs (default (dict) .Values.metrics.externalLabels) }}
+          {{- $attrs = merge $attrs $metricAttrs }}
+          {{- end }}
+          {{- range $k, $v := $attrs }}
+          - key: {{ $k | quote }}
+            value: {{ $v | quote }}
+            action: upsert
+          {{- end }}
+      batch: {}
+
+    exporters:
+      otlp_http/logs:
+        endpoint: {{ include "curator-ray.otlp.endpoint" . | quote }}
+        {{- if or $otlpCertsEnabled $otlpCaPath (include "curator-ray.otlp.insecureSkipVerify" . | eq "true") }}
+        tls:
+          {{- if $otlpCertsEnabled }}
+          cert_file: {{ include "curator-ray.otlp.certPath" . | quote }}
+          key_file: {{ include "curator-ray.otlp.keyPath" . | quote }}
+          {{- end }}
+          {{- if $otlpCaPath }}
+          ca_file: {{ include "curator-ray.otlp.caPath" . | quote }}
+          {{- end }}
+          insecure_skip_verify: {{ include "curator-ray.otlp.insecureSkipVerify" . }}
+        {{- end }}
+        timeout: 30s
+        sending_queue:
+          queue_size: 10000
+        retry_on_failure:
+          enabled: true
+          initial_interval: 5s
+          max_interval: 30s
+          max_elapsed_time: 300s
+
+    extensions:
+      health_check:
+        endpoint: ${env:POD_IP}:13133
+      file_storage/ray:
+        directory: /var/lib/otelcol/file_storage
+
+    service:
+      extensions:
+        - health_check
+        - file_storage/ray
+      pipelines:
+        logs:
+          receivers: [file_log/ray]
+          processors: [memory_limiter, transform/parse-json, transform/parsed-text-body, resource, batch]
+          exporters: [otlp_http/logs]
+      telemetry:
+        logs:
+          level: ${env:OTELCOL_TELEMETRY_LOG_LEVEL}
+{{- end }}

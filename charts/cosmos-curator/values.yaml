@@ -74,6 +74,38 @@ persistence:
     whenDeleted: Delete
     whenScaled: Retain
 
+# Shared OTLP transport configuration for logs, in-pipeline metrics push, and tracing.
+otlp:
+  endpoint: ""
+  protocol: "http/protobuf"
+  timeout: "30000"
+  tls:
+    # Effective cert/key defaults are /etc/curator-otlp/certs/tls.crt and tls.key.
+    # Leave caPath empty to use the system trust store.
+    certPath: ""
+    keyPath: ""
+    caPath: ""
+    # Disables certificate verification for every OTLP consumer: the log
+    # sidecar, in-process traces/metrics push, and the metrics collector.
+    # Leave null to verify certificates.
+    insecureSkipVerify: null
+    secret:
+      # Mounts this Kubernetes Secret for pod-local OTLP consumers: the log
+      # sidecar, in-process traces, and in-process metrics push. The standalone
+      # metrics collector is the opentelemetry-collector subchart; mount direct
+      # secrets for that pod separately with opentelemetry-collector.extraVolumes
+      # and opentelemetry-collector.extraVolumeMounts, or use
+      # metrics.extractNVCFSecrets for NVCF-style collector secrets.
+      enabled: false
+      name: "curator-otlp-certs"
+  # Reuses charts/cosmos-curator/files/extractor.py for NVCF-style secrets.
+  extractNVCFSecrets: false
+  nvcfSecrets:
+    secretName: nvcf-secrets
+    certKey: "otlp-client-crt"
+    keyKey: "otlp-client-key"
+    caKey: "otlp-ca-crt"
+
 # Structured logging configuration.
 logging:
   # Log output format for curator, cosmos-xenna, and Ray.
@@ -82,15 +114,74 @@ logging:
   #                       logging. See charts/cosmos-curator/README.md ("Structured
   #                       Logging") for the field schema and the log_to_driver=False
   #                       trade-off (worker logs move to per-node Ray log files).
+  # logging.otlp.forceJsonFormat defaults pushed logs to JSON unless disabled.
   format: text
   # Opt-in JSON formatting for Ray's own C++ backend/system logs (raylet, GCS, object
   # store, dashboard agent) by exporting RAY_BACKEND_LOG_JSON=1. Independent of
   # `format` (which controls Python application logs). Default false leaves Ray's
   # backend logs in their native glog text format.
+  # logging.otlp.forceJsonFormat also renders RAY_BACKEND_LOG_JSON=1.
   rayBackendJson: false
+  otlp:
+    enabled: false
+    # Keep pushed logs structured by default while allowing readable local streams.
+    forceJsonFormat: true
+    telemetryLogLevel: info
+    # Additional static resource attributes added to each log record.
+    resourceAttributes:
+      service.name: "cosmos-curator"
+    extraResourceAttributes: {}
+    # Copy metrics.externalLabels and metrics.extraExternalLabels into OTLP log
+    # resource attributes. NVCF deploys populate metrics.extraExternalLabels
+    # with function_id, version_id, gpu, org, and deployment placement metadata.
+    includeMetricsExternalLabels: true
+    # Extra low-cardinality resource attributes for the OTLP log backend. The
+    # receiving backend decides which resource attributes become index labels.
+    extraLabels: {}
+    image:
+      repository: ghcr.io/open-telemetry/opentelemetry-collector-releases/opentelemetry-collector-contrib
+      # Bump with the opentelemetry-collector subchart version in Chart.yaml.
+      tag: &otelCollectorVersion "0.157.0"
+      pullPolicy: IfNotPresent
+    configMap:
+      # Use a pre-created ConfigMap instead of the chart-rendered default config.
+      existingName: ""
+      key: relay.yaml
+    # Keep the pod alive long enough for the log collector sidecar to flush on
+    # termination. The sidecar uses Kubernetes' native preStop sleep action so
+    # it does not depend on shell utilities in the collector image.
+    terminationGracePeriodSeconds: 60
+    preStopSleepSeconds: 15
+    storageSizeLimit: 1Gi
+    resources:
+      requests:
+        cpu: "100m"
+        memory: "128Mi"
+      limits:
+        cpu: "500m"
+        memory: "512Mi"
+    securityContext:
+      allowPrivilegeEscalation: false
+      runAsNonRoot: true
+      runAsUser: 1000
+      runAsGroup: 1000
+      readOnlyRootFilesystem: true
+      capabilities:
+        drop:
+          - ALL
+      seccompProfile:
+        type: RuntimeDefault
+    # Extra env vars for the sidecar. Use fieldRef entries here when pod labels
+    # carry deployment-specific metadata such as GPU SKU.
+    extraEnv: []
 
 # Optional custom environment variables
 customEnvVars: {}
+
+# Optional extra volumes and mounts for the main curator StatefulSet pod/container.
+# Useful for mounting certs or config files consumed by customEnvVars.
+extraVolumes: []
+extraVolumeMounts: []
 
 # Default resource requirements
 resources:
@@ -223,10 +314,25 @@ metrics:
   
   otlp:
     enabled: false
+    # Metrics-specific transport override for the chart-managed collector's
+    # OTLP metrics exporter. The env-substituted default preserves 2.3 values
+    # compatibility for NVCF BYOO metrics collector deployments. Use top-level
+    # `otlp.*` when logs, metrics, and traces should share the same OTLP
+    # endpoint/TLS settings.
     endpoint: "${env:OTEL_EXPORTER_OTLP_METRICS_ENDPOINT}"
     certPath: ""
     keyPath: ""
+    # Scoped to the chart-managed metrics collector only. It never relaxes
+    # verification for the log sidecar or in-process exporters; use
+    # `otlp.tls.insecureSkipVerify` for those.
     insecureSkipVerify: false
+  # Driver-side OTLP metrics push. This does not deploy the chart collector.
+  # It sets default NVCF pipeline args; explicit invoke payload args still win.
+  otlpPush:
+    enabled: false
+    # Optional override for COSMOS_CURATOR_OTLP_METRICS_PUSH_INTERVAL.
+    # Leave unset to use the pipeline's --otlp-metrics-push-interval default.
+    # interval: 30
 
   # ServiceMonitor for Prometheus Operator (independent of metrics.enabled)
   # Requires prometheus-operator CRDs installed
@@ -245,10 +351,24 @@ metrics:
     # Additional metric relabel configs (merged with common metricRelabelConfigs above)
     additionalMetricRelabelings: []
 
+tracing:
+  otlp:
+    enabled: false
+    # Optional override for COSMOS_CURATOR_PROFILE_TRACING_SAMPLING.
+    # Leave unset to use the pipeline's --profile-tracing-sampling default.
+    # sampling: 1.0
+
 opentelemetry-collector:
   mode: deployment
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    runAsGroup: 1000
+    fsGroup: 1000
+    seccompProfile:
+      type: RuntimeDefault
   image:
-    tag: "0.144.0"
+    tag: *otelCollectorVersion
     repository: ghcr.io/open-telemetry/opentelemetry-collector-releases/opentelemetry-collector-contrib
     #nvcr.io/FILL_IN
   extraEnvs:
@@ -268,8 +388,19 @@ opentelemetry-collector:
           mountPath: /scripts
         - name: cert-store
           mountPath: /etc/curator-remote-write/certs
+        - name: otlp-cert-store
+          mountPath: /etc/curator-otlp/certs
         - name: input-secrets
           mountPath: /var/secrets
+      env:
+        - name: SECRET_EXTRACTOR_SECONDARY_OUTPUT_DIR
+          value: /etc/curator-otlp/certs
+        - name: SECRET_EXTRACTOR_SECONDARY_CERT_KEY
+          value: otlp-client-crt
+        - name: SECRET_EXTRACTOR_SECONDARY_KEY_KEY
+          value: otlp-client-key
+        - name: SECRET_EXTRACTOR_SECONDARY_CA_KEY
+          value: otlp-ca-crt
   extraVolumes:
     - name: secret-extractor-script
       configMap:
@@ -279,12 +410,18 @@ opentelemetry-collector:
       emptyDir:
         medium: Memory
         sizeLimit: 5Mi
+    - name: otlp-cert-store
+      emptyDir:
+        medium: Memory
+        sizeLimit: 5Mi
     - name: input-secrets
       secret:
         secretName: nvcf-secrets
   extraVolumeMounts:
     - name: cert-store
       mountPath: /etc/curator-remote-write/certs
+    - name: otlp-cert-store
+      mountPath: /etc/curator-otlp/certs
   service:
     enabled: false
   ports:

@@ -1,0 +1,1 @@
+{"body":"Top level failure\nTraceback (most recent call last):\n  File \"worker.py\", line 1, in <module>\nRuntimeError: boom","attributes":{"code.filepath":"worker.py","curator.log.parser":"text","lineno":99},"time_unix_nano":"1785420120000000000","severity_number":17,"severity_text":"ERROR"}

@@ -1,0 +1,4 @@
+{"body":"ray json asctime","attributes":{"curator.log.parser":"json","lineno":43,"name":"ray.worker"},"time_unix_nano":"1785420101456000000","severity_number":9,"severity_text":"INFO"}
+{"body":"json failed\nTraceback\nValueError: boom","attributes":{"curator.log.parser":"json","lineno":44,"name":"cosmos_curator.example"},"time_unix_nano":"1785420102789000000","severity_number":17,"severity_text":"ERROR"}
+{"body":"ray json failed\nTraceback\nRuntimeError: ray boom","attributes":{"code.filepath":"worker.py","curator.log.parser":"json","job_id":"01000000","lineno":45},"time_unix_nano":"1785420103111000000","severity_number":17,"severity_text":"ERROR"}
+{"body":"{}","attributes":{"curator.log.parser":"json"}}

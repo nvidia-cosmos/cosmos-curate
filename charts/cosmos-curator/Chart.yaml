@@ -2,10 +2,10 @@ apiVersion: v2
 appVersion: 1.16.0
 dependencies:
   - name: opentelemetry-collector
-    version: 0.144.*
+    version: 0.156.*
     repository: https://open-telemetry.github.io/opentelemetry-helm-charts
     condition: metrics.enabled,traces.enabled
 description: A Helm chart for Kubernetes to deploy cosmos-curator
 name: cosmos-curator
 type: application
-version: 2.3.0
+version: 2.4.0

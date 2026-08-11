@@ -1,0 +1,20 @@
+2026-07-30 14:01:11,753	INFO cli.py:351 -- Tailing logs until the job exits (disable with --no-wait):
+2026-07-30 14:01:35,813	INFO cli.py:351 -- Tailing logs until the job exits (disable with --no-wait):
+2026-07-30 13:59:13,625	WARNING node.py:1902 -- The object spilling config is specified from an unstable API.
+2026-07-30 13:59:19,915	SUCC scripts.py:1082 -- Ray runtime started.
+2026-07-30 14:01:39,806	ERR cli.py:75 -- Job 'raysubmit_test' failed
+{"levelname":"WARNING","message":"json warning","name":"cosmos_curator.example","lineno":42,"asctime":"2026-07-30 14:01:40,123","timestamp_ns":1785420100123000000,"trace_id":"1234567890abcdef1234567890abcdef","span_id":"1234567890abcdef"}
+{"levelname":"INFO","message":"malformed trace context","name":"cosmos_curator.example","lineno":46,"asctime":"2026-07-30 14:01:40,456","trace_id":"not-a-trace-id","span_id":"not-a-span"}
+{"levelname":"INFO","message":"ray json asctime","name":"ray.worker","lineno":43,"asctime":"2026-07-30 14:01:41,456"}
+{"levelname":"ERROR","message":"json failed","name":"cosmos_curator.example","lineno":44,"asctime":"2026-07-30 14:01:42,789","exception":"Traceback\nValueError: boom"}
+{"asctime":"2026-07-30 14:01:43,111","levelname":"ERROR","message":"ray json failed","filename":"worker.py","lineno":45,"exc_text":"Traceback\nRuntimeError: ray boom","job_id":"01000000"}
+{}
+2026-07-30 14:02:00,000	ERROR worker.py:99 -- Top level failure
+Traceback (most recent call last):
+  File "worker.py", line 1, in <module>
+RuntimeError: boom
+2026-07-30 14:03:00,000	DEBUG debug.py:10 -- debug detail
+2026-07-30 14:03:01,000	WARN warn.py:11 -- short warning
+2026-07-30 14:03:02,000	SUCCESS success.py:12 -- success alias
+2026-07-30 14:03:03,000	FATAL fatal.py:13 -- fatal detail
+2026-07-30 14:03:04,000	CRITICAL critical.py:14 -- critical detail
