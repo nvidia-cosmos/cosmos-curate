@@ -25,8 +25,6 @@ from cosmos_curator.core.sensors.data.aligned_frame import AlignedFrame
 from cosmos_curator.core.sensors.data.sensor_data import SensorData
 from cosmos_curator.core.sensors.sampling.spec import SamplingSpec
 
-_MIN_SENSOR_OVERLAP_PARTICIPANTS = 2
-
 # Canonical error for sensors that expose no full-fidelity timeline read. Shared
 # so the message stays single-sourced across every non-camera sensor.
 STREAM_TIMESTAMPS_CAMERA_ONLY_MSG = "stream_timestamps is only implemented for CameraSensor"
@@ -51,7 +49,11 @@ class Sensor(Protocol):  # pragma: no cover
         """Latest sensor timestamp in nanoseconds."""
         ...
 
-    def sample(self, spec: SamplingSpec) -> Generator[SensorData]:
+    def supports_sampling_policy(self, policy: object) -> bool:
+        """Return whether this sensor can sample with *policy*."""
+        ...
+
+    def sample(self, spec: SamplingSpec, *, policy: object) -> Generator[SensorData]:
         """Yield one ``SensorData`` per window in ``spec.grid``."""
         ...
 
@@ -79,37 +81,12 @@ class Sensor(Protocol):  # pragma: no cover
         ...
 
 
-def _sensor_overlap(
-    sensor_ranges: Mapping[str, tuple[int, int]],
-    frame_start_ns: int,
-    frame_end_ns: int,
-) -> float:
-    """Return the minimum per-sensor coverage fraction over the frame interval."""
-    if not sensor_ranges:
-        msg = "sensor_ranges must be non-empty"
-        raise ValueError(msg)
-
-    duration_ns = frame_end_ns - frame_start_ns
-    if duration_ns <= 0:
-        msg = f"frame interval duration must be positive, got {frame_start_ns=} {frame_end_ns=}"
-        raise ValueError(msg)
-
-    coverages: list[float] = []
-    for start_ns, end_ns in sensor_ranges.values():
-        overlap_start_ns = max(start_ns, frame_start_ns)
-        overlap_end_ns = min(end_ns, frame_end_ns)
-        covered_ns = max(0, overlap_end_ns - overlap_start_ns)
-        coverages.append(covered_ns / duration_ns)
-
-    return min(coverages)
-
-
 class SensorGroup:
     """Top-level coordinator for aligned multi-sensor sampling.
 
     ``SensorGroup`` owns a named collection of sensors, exposes aggregate
     ``start_ns`` / ``end_ns`` bounds, and drives all sensor generators in
-    lockstep through a single ``.sample(spec)`` entry point.
+    lockstep through a single ``.sample(spec, policies=...)`` entry point.
 
     Partial coverage:
         When a sensor has no data for a window it yields empty
@@ -119,14 +96,10 @@ class SensorGroup:
         empty ``sensor_data`` mapping.
 
     Policy enforcement:
-        The same ``spec`` — including ``spec.policy`` — is passed to every
-        sensor generator.  Each sensor enforces the tolerance independently
-        via :func:`~cosmos_curator.core.sensors.sampling.sampler.sample_window_indices`.
-        When ``spec.policy.sensor_overlap`` is greater than zero, each
-        multi-sensor ``AlignedFrame`` must satisfy that minimum temporal
-        overlap fraction across participating sensor payloads. A ``ValueError``
-        raised by any sensor or policy check propagates to the caller
-        unchanged.
+        ``sample()`` requires one concrete policy per sensor id. The mapping is
+        validated completely before any sensor sampling iterator is created or
+        advanced. A ``ValueError`` raised by any sensor or policy check
+        propagates to the caller unchanged.
     """
 
     def __init__(self, sensors: dict[str, Sensor]) -> None:
@@ -154,27 +127,63 @@ class SensorGroup:
         """Maximum ``end_ns`` across all sensors."""
         return max(s.end_ns for s in self._sensors.values())
 
-    def sample(self, spec: SamplingSpec) -> Generator[AlignedFrame]:
+    def _validate_policies(self, policies: Mapping[str, object]) -> dict[str, object]:
+        """Validate and return a concrete policy mapping for every sensor."""
+        expected = set(self._sensors)
+        provided = set(policies)
+        errors: list[str] = []
+
+        missing = sorted(expected - provided)
+        if missing:
+            errors.append(f"missing policy ids: {missing}")
+
+        unknown = sorted(provided - expected)
+        if unknown:
+            errors.append(f"unknown policy ids: {unknown}")
+
+        for sensor_id in sorted(expected & provided):
+            policy = policies[sensor_id]
+            if policy is None:
+                errors.append(f"policy for {sensor_id!r} must be a concrete policy, got None")
+                continue
+            supports_policy = getattr(self._sensors[sensor_id], "supports_sampling_policy", None)
+            if not callable(supports_policy) or not supports_policy(policy):
+                errors.append(
+                    f"unsupported policy type for {sensor_id!r}: {type(policy).__name__}",
+                )
+
+        if errors:
+            msg = "; ".join(errors)
+            raise ValueError(msg)
+
+        return {sensor_id: policies[sensor_id] for sensor_id in self._sensors}
+
+    def sample(self, spec: SamplingSpec, *, policies: Mapping[str, object]) -> Generator[AlignedFrame]:
         """Yield one ``AlignedFrame`` per window in ``spec.grid``.
 
-        All sensor generators are started with the same ``spec`` and advanced
-        in lockstep — one step per window.  Each yielded frame carries
+        All sensor generators are started with the same ``spec`` and the
+        matching concrete policy, then advanced in lockstep — one step per
+        window. Each yielded frame carries
         ``align_timestamps_ns == window.timestamps_ns`` and a ``sensor_data``
         mapping that includes only sensors with data for that window.
 
         Args:
-            spec: sampling specification; the same instance is passed to every
-                sensor generator.
+            spec: sampling specification; the same grid request is passed to
+                every sensor generator.
+            policies: mapping from sensor id to one concrete policy object for
+                that sensor.
 
         Yields:
             ``AlignedFrame`` for each window in ``spec.grid``.
 
         Raises:
-            ValueError: if any sensor's policy tolerance is exceeded, or if
-                the aligned frame overlap is below ``policy.sensor_overlap``.
+            ValueError: if the policy mapping is incomplete, contains unknown
+                ids, contains ``None``, contains an unsupported policy type, or
+                if any sensor's policy check fails.
 
         """
-        generators = {name: sensor.sample(spec) for name, sensor in self._sensors.items()}
+        policies_by_id = self._validate_policies(policies)
+        generators = {name: sensor.sample(spec, policy=policies_by_id[name]) for name, sensor in self._sensors.items()}
         for window in spec.grid:
             sensor_data: dict[str, SensorData] = {}
             for name, gen in generators.items():
@@ -185,23 +194,4 @@ class SensorGroup:
                 align_timestamps_ns=window.timestamps_ns,
                 sensor_data=sensor_data,
             )
-            policy = spec.policy
-            if (
-                policy is not None
-                and policy.sensor_overlap > 0.0
-                and len(frame.sensor_data) >= _MIN_SENSOR_OVERLAP_PARTICIPANTS
-            ):
-                sensor_ranges = {
-                    sensor_id: (int(data.sensor_timestamps_ns[0]), int(data.sensor_timestamps_ns[-1]))
-                    for sensor_id, data in frame.sensor_data.items()
-                }
-                frame_start_ns = min(start_ns for start_ns, _end_ns in sensor_ranges.values())
-                frame_end_ns = max(end_ns for _start_ns, end_ns in sensor_ranges.values())
-                if frame_end_ns <= frame_start_ns:
-                    msg = f"frame interval duration must be positive, got {frame_start_ns=} {frame_end_ns=}"
-                    raise ValueError(msg)
-                overlap_score = _sensor_overlap(sensor_ranges, frame_start_ns, frame_end_ns)
-                if overlap_score < policy.sensor_overlap:
-                    msg = f"sensor_overlap {overlap_score:.6f} is below required threshold {policy.sensor_overlap:.6f}"
-                    raise ValueError(msg)
             yield frame

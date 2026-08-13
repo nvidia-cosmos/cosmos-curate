@@ -61,6 +61,7 @@ import numpy.typing as npt
 
 from cosmos_curator.core.sensors.data.video import VideoIndex
 from cosmos_curator.core.sensors.sampling.grid import SamplingGrid
+from cosmos_curator.core.sensors.sampling.policy import NearestTimestampPolicy
 from cosmos_curator.core.sensors.sampling.spec import SamplingSpec
 from cosmos_curator.core.sensors.scripts._cli_cloud import (
     CloudCliError,
@@ -365,7 +366,7 @@ def _collect_sample(
     """Drive ``sensor.sample`` and return concatenated frames + sensor timestamps."""
     frames_chunks: list[npt.NDArray[np.uint8]] = []
     ts_chunks: list[npt.NDArray[np.int64]] = []
-    for batch in sensor.sample(spec):
+    for batch in sensor.sample(spec, policy=NearestTimestampPolicy()):
         if len(batch.frames) == 0:
             continue
         frames_chunks.append(batch.frames)

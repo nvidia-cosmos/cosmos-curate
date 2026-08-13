@@ -54,6 +54,7 @@ from tqdm import tqdm
 
 from cosmos_curator.core.sensors.data.camera_data import CameraData
 from cosmos_curator.core.sensors.sampling.grid import SamplingGrid
+from cosmos_curator.core.sensors.sampling.policy import NearestTimestampPolicy
 from cosmos_curator.core.sensors.sampling.spec import SamplingSpec
 from cosmos_curator.core.sensors.scripts._cli_cloud import (
     CloudCliError,
@@ -516,7 +517,7 @@ def cmd_sensor(args: argparse.Namespace) -> None:  # noqa: PLR0915
         t_wall = time.perf_counter()
 
         with tqdm(total=len(index), unit="frame", desc="sensor") as pbar:
-            for camera_data in sensor.sample(spec, stats=stats):
+            for camera_data in sensor.sample(spec, policy=NearestTimestampPolicy(), stats=stats):
                 n = len(camera_data.frames)
                 decoded += n
                 pbar.update(n)

@@ -23,6 +23,7 @@ from cosmos_curator.core.sensors.data.imu_data import ImuData
 from cosmos_curator.core.sensors.data.preintegrated_imu_data import PreintegratedImuData
 from cosmos_curator.core.sensors.preintegration.imu_preintegrator import preintegrate_imu
 from cosmos_curator.core.sensors.sampling.grid import SamplingWindow
+from cosmos_curator.core.sensors.sampling.policy import NoSamplingPolicy, require_no_sampling_policy
 from cosmos_curator.core.sensors.sampling.spec import SamplingSpec
 from cosmos_curator.core.sensors.sensors.imu_sensor import ImuSensor
 
@@ -109,6 +110,10 @@ class PreintegratedImuSensor:
         """Return source MCAP log timestamps."""
         return self._imu_sensor.timestamps_ns
 
+    def supports_sampling_policy(self, policy: object) -> bool:
+        """Return whether this sensor can sample with *policy*."""
+        return isinstance(policy, NoSamplingPolicy)
+
     def _get_raw_imu_data(self) -> ImuData:
         """Decode and cache the complete source recording."""
         if self._raw_imu_data is None:
@@ -132,8 +137,9 @@ class PreintegratedImuSensor:
         assert self._cached_preintegrated_data is not None
         return self._cached_preintegrated_data
 
-    def sample(self, spec: SamplingSpec) -> Generator[PreintegratedImuData]:
+    def sample(self, spec: SamplingSpec, *, policy: NoSamplingPolicy) -> Generator[PreintegratedImuData]:
         """Yield one exact full-grid preintegration slice per sampling window."""
+        require_no_sampling_policy(policy, sensor_name=type(self).__name__)
         full_data = self._get_preintegrated_data(spec.grid.timestamps_ns)
         for window in spec.grid:
             yield _slice_preintegrated_imu_data(

@@ -23,6 +23,7 @@ import pytest
 
 from cosmos_curator.core.sensors.data.imu_data import ImuData
 from cosmos_curator.core.sensors.sampling.grid import SamplingGrid
+from cosmos_curator.core.sensors.sampling.policy import NearestTimestampPolicy, NoSamplingPolicy
 from cosmos_curator.core.sensors.sampling.spec import SamplingSpec
 from cosmos_curator.core.sensors.sensors import preintegrated_imu_sensor as preintegrated_imu_sensor_module
 from cosmos_curator.core.sensors.sensors.group import SensorGroup
@@ -134,8 +135,8 @@ def test_preintegrated_imu_sensor_caches_recording_and_slices_exact_windows(
 
     monkeypatch.setattr(preintegrated_imu_sensor_module, "preintegrate_imu", counting_preintegrate)
 
-    first_pass = list(sensor.sample(spec))
-    second_pass = list(sensor.sample(spec))
+    first_pass = list(sensor.sample(spec, policy=NoSamplingPolicy()))
+    second_pass = list(sensor.sample(spec, policy=NoSamplingPolicy()))
 
     assert fake.read_count == 1
     assert integration_count == 1
@@ -147,17 +148,34 @@ def test_preintegrated_imu_sensor_caches_recording_and_slices_exact_windows(
     np.testing.assert_array_equal(second_pass[1].align_timestamps_ns, first_pass[1].align_timestamps_ns)
 
 
+def test_preintegrated_imu_sensor_rejects_nearest_timestamp_policy_before_reading() -> None:
+    """Preintegrated IMU sampling only accepts the explicit no-op sampling policy."""
+    fake = _FakeImuSensor(_raw_imu_data())
+    sensor = PreintegratedImuSensor(cast("ImuSensor", fake))
+    spec = _multi_window_spec(np.array([0, _ONE_SECOND_NS], dtype=np.int64))
+
+    with pytest.raises(TypeError, match="PreintegratedImuSensor requires NoSamplingPolicy"):
+        next(sensor.sample(spec, policy=NearestTimestampPolicy()))
+
+    assert fake.read_count == 0
+
+
 def test_preintegrated_imu_sensor_reintegrates_new_grid_without_redecoding() -> None:
     """Changing the alignment grid reuses the cached complete raw recording."""
     fake = _FakeImuSensor(_raw_imu_data())
     sensor = PreintegratedImuSensor(cast("ImuSensor", fake))
 
-    list(sensor.sample(_multi_window_spec(np.array([0, _ONE_SECOND_NS, 2 * _ONE_SECOND_NS], dtype=np.int64))))
+    list(
+        sensor.sample(
+            _multi_window_spec(np.array([0, _ONE_SECOND_NS, 2 * _ONE_SECOND_NS], dtype=np.int64)),
+            policy=NoSamplingPolicy(),
+        )
+    )
     finer_timestamps = np.array(
         [0, _HALF_SECOND_NS, _ONE_SECOND_NS, 3 * _HALF_SECOND_NS, 2 * _ONE_SECOND_NS],
         dtype=np.int64,
     )
-    finer_batches = list(sensor.sample(_multi_window_spec(finer_timestamps)))
+    finer_batches = list(sensor.sample(_multi_window_spec(finer_timestamps), policy=NoSamplingPolicy()))
 
     assert fake.read_count == 1
     np.testing.assert_array_equal(finer_batches[0].align_timestamps_ns, finer_timestamps[:4])
@@ -170,7 +188,9 @@ def test_preintegrated_imu_sensor_works_with_sensor_group() -> None:
     sensor = PreintegratedImuSensor(cast("ImuSensor", fake))
     spec = _multi_window_spec(np.array([0, _ONE_SECOND_NS, 2 * _ONE_SECOND_NS], dtype=np.int64))
 
-    frames = list(SensorGroup({"imu_preintegrated": sensor}).sample(spec))
+    frames = list(
+        SensorGroup({"imu_preintegrated": sensor}).sample(spec, policies={"imu_preintegrated": NoSamplingPolicy()})
+    )
 
     assert len(frames) == 2
     np.testing.assert_array_equal(frames[0].sensor_data["imu_preintegrated"].align_timestamps_ns, [0, _ONE_SECOND_NS])
@@ -206,7 +226,7 @@ def test_preintegrated_imu_sensor_decodes_reference_mcap(tmp_path: Path) -> None
         ),
     )
 
-    (result,) = list(sensor.sample(spec))
+    (result,) = list(sensor.sample(spec, policy=NoSamplingPolicy()))
 
     assert result.integration_valid.tolist() == [False, True]
     np.testing.assert_allclose(result.delta_velocity_m_s[1], [2.0, 0.0, 0.0], atol=1e-12)

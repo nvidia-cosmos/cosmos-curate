@@ -26,6 +26,7 @@ import pytest
 
 from cosmos_curator.core.sensors.data.video import VideoMetadata
 from cosmos_curator.core.sensors.sampling.grid import SamplingWindow
+from cosmos_curator.core.sensors.sampling.policy import NearestTimestampPolicy, NoSamplingPolicy
 from cosmos_curator.core.sensors.sampling.spec import SamplingSpec
 from cosmos_curator.core.sensors.sensors.mcap_camera_sensor import (
     McapCameraSensor,
@@ -221,7 +222,7 @@ def test_mcap_camera_sensor_samples_window_and_reports_nanosecond_pts_stream(
         duration_ns=1_000,
     )
 
-    batch = next(sensor.sample(SamplingSpec(grid=grid)))
+    batch = next(sensor.sample(SamplingSpec(grid=grid), policy=NearestTimestampPolicy()))
 
     assert len(sampling_calls) == 1
     np.testing.assert_array_equal(sampling_calls[0][0], np.array([100, 300], dtype=np.int64))
@@ -280,7 +281,7 @@ def test_mcap_camera_sensor_returns_empty_batch_when_window_has_no_messages(
         duration_ns=1_000,
     )
 
-    batch = next(sensor.sample(SamplingSpec(grid=grid)))
+    batch = next(sensor.sample(SamplingSpec(grid=grid), policy=NearestTimestampPolicy()))
 
     assert batch.align_timestamps_ns.shape == (0,)
     assert batch.sensor_timestamps_ns.shape == (0,)
@@ -333,7 +334,7 @@ def test_mcap_camera_sensor_rejects_bad_rgb8_payload_size(
     )
 
     with pytest.raises(ValueError, match=r"rgb8 payload size"):
-        next(sensor.sample(SamplingSpec(grid=grid)))
+        next(sensor.sample(SamplingSpec(grid=grid), policy=NearestTimestampPolicy()))
 
 
 def test_mcap_camera_sensor_rejects_summary_dimensions_that_disagree_with_metadata(
@@ -374,7 +375,12 @@ def test_mcap_camera_sensor_rejects_summary_dimensions_that_disagree_with_metada
     sensor = McapCameraSensor(b"not-used")
 
     with pytest.raises(ValueError, match=r"MCAP channel dimensions do not match stored video metadata"):
-        next(sensor.sample(SamplingSpec(grid=make_sampling_grid(np.array([100, 200], dtype=np.int64), 1_000, 1_000))))
+        next(
+            sensor.sample(
+                SamplingSpec(grid=make_sampling_grid(np.array([100, 200], dtype=np.int64), 1_000, 1_000)),
+                policy=NearestTimestampPolicy(),
+            )
+        )
 
 
 @pytest.mark.parametrize(
@@ -624,7 +630,7 @@ def test_mcap_camera_sensor_sample_window_returns_empty_when_sampler_selects_no_
         [bytes(range(12))],
         width=2,
         height=2,
-        spec=SamplingSpec(grid=make_sampling_grid(np.array([100, 200], dtype=np.int64), 1_000, 1_000)),
+        policy=NearestTimestampPolicy(),
     )
 
     assert batch.align_timestamps_ns.shape == (0,)
@@ -659,12 +665,21 @@ def test_mcap_camera_sensor_sample_yields_empty_batch_for_empty_window(
     sensor = McapCameraSensor(b"not-used")
     spec = SimpleNamespace(grid=[np.array([], dtype=np.int64)])
 
-    batch = next(sensor.sample(spec))  # type: ignore[arg-type]
+    batch = next(sensor.sample(spec, policy=NearestTimestampPolicy()))  # type: ignore[arg-type]
 
     assert batch.align_timestamps_ns.shape == (0,)
     assert batch.sensor_timestamps_ns.shape == (0,)
     assert batch.pts_stream.shape == (0,)
     assert batch.frames.shape == (0, 2, 2, 3)
+
+
+def test_mcap_camera_sensor_rejects_no_sampling_policy() -> None:
+    """McapCameraSensor accepts only NearestTimestampPolicy."""
+    sensor = McapCameraSensor(b"not-used")
+    spec = SamplingSpec(grid=make_sampling_grid(np.array([100, 200], dtype=np.int64), 1_000, 1_000))
+
+    with pytest.raises(TypeError, match="McapCameraSensor requires NearestTimestampPolicy"):
+        next(sensor.sample(spec, policy=NoSamplingPolicy()))
 
 
 def test_mcap_camera_sensor_sample_returns_no_batches_when_grid_yields_nothing(
@@ -695,7 +710,7 @@ def test_mcap_camera_sensor_sample_returns_no_batches_when_grid_yields_nothing(
     sensor = McapCameraSensor(b"not-used")
     spec = SimpleNamespace(grid=[])
 
-    assert list(sensor.sample(spec)) == []  # type: ignore[arg-type]
+    assert list(sensor.sample(spec, policy=NearestTimestampPolicy())) == []  # type: ignore[arg-type]
 
 
 def test_mcap_camera_sensor_stream_timestamps_not_implemented() -> None:

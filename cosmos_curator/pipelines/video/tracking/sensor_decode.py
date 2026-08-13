@@ -27,7 +27,7 @@ import numpy as np
 import numpy.typing as npt
 
 from cosmos_curator.core.sensors.sampling.grid import SamplingGrid, make_ts_grid
-from cosmos_curator.core.sensors.sampling.policy import SamplingPolicy
+from cosmos_curator.core.sensors.sampling.policy import NearestTimestampPolicy
 from cosmos_curator.core.sensors.sampling.spec import SamplingSpec
 from cosmos_curator.core.sensors.sensors.camera_sensor import CameraSensor
 
@@ -59,7 +59,7 @@ def decode_clip_at_fps(
     mp4_bytes: bytes,
     target_fps: float,
     *,
-    tolerance_ns: int | None = None,
+    max_delta_ns: int | None = None,
 ) -> DecodedClip:
     """Decode ``mp4_bytes`` and sample frames at ``target_fps`` with real PTS.
 
@@ -72,7 +72,7 @@ def decode_clip_at_fps(
         mp4_bytes: Encoded clip (mp4 container) bytes.
         target_fps: Desired sampling rate in frames per second; maps directly
             onto the sensor sampling-grid rate.
-        tolerance_ns: Optional maximum delta (ns) between a grid time and the
+        max_delta_ns: Optional maximum delta (ns) between a grid time and the
             chosen real frame. ``None`` (default) applies no tolerance policy,
             i.e. nearest-frame snapping with no drops.
 
@@ -102,12 +102,12 @@ def decode_clip_at_fps(
         stride_ns=span_ns,
         duration_ns=span_ns,
     )
-    policy = SamplingPolicy(tolerance_ns=tolerance_ns) if tolerance_ns is not None else None
-    spec = SamplingSpec(grid=grid, policy=policy)
+    policy = NearestTimestampPolicy(max_delta_ns=max_delta_ns)
+    spec = SamplingSpec(grid=grid)
 
     frames_rgb: list[npt.NDArray[np.uint8]] = []
     sensor_ts_ns: list[int] = []
-    for batch in sensor.sample(spec):
+    for batch in sensor.sample(spec, policy=policy):
         if len(batch.frames) == 0:
             continue
         frames_rgb.extend(np.asarray(frame, dtype=np.uint8) for frame in batch.frames)

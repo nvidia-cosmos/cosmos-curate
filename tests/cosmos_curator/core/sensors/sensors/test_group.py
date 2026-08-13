@@ -24,7 +24,7 @@ import pytest
 
 from cosmos_curator.core.sensors.data.aligned_frame import AlignedFrame
 from cosmos_curator.core.sensors.sampling.grid import SamplingGrid
-from cosmos_curator.core.sensors.sampling.policy import SamplingPolicy
+from cosmos_curator.core.sensors.sampling.policy import NearestTimestampPolicy, NoSamplingPolicy
 from cosmos_curator.core.sensors.sampling.sampler import sample_window_indices
 from cosmos_curator.core.sensors.sampling.spec import SamplingSpec
 from cosmos_curator.core.sensors.sensors.group import STREAM_TIMESTAMPS_CAMERA_ONLY_MSG, SensorGroup
@@ -41,6 +41,8 @@ class _FakeSensor:
 
     def __init__(self, sensor_timestamps_ns: npt.NDArray[np.int64]) -> None:
         self._ts = np.array(sensor_timestamps_ns, dtype=np.int64, copy=True)
+        self.sample_started = False
+        self.policy_seen: object | None = None
 
     @property
     def start_ns(self) -> int:
@@ -50,13 +52,18 @@ class _FakeSensor:
     def end_ns(self) -> int:
         return int(self._ts[-1])
 
-    def sample(self, spec: SamplingSpec) -> Generator[_FakeSensorData]:
+    def supports_sampling_policy(self, policy: object) -> bool:
+        return isinstance(policy, NearestTimestampPolicy)
+
+    def sample(self, spec: SamplingSpec, *, policy: object) -> Generator[_FakeSensorData]:
+        self.sample_started = True
+        self.policy_seen = policy
         empty = np.empty(0, dtype=np.int64)
         for window in spec.grid:
             if len(window) == 0:
                 yield _FakeSensorData(align_timestamps_ns=empty, sensor_timestamps_ns=empty)
                 continue
-            indices, _counts = sample_window_indices(self._ts, window, policy=spec.policy, dedup=False)
+            indices, _counts = sample_window_indices(self._ts, window, policy=policy, dedup=False)
             if len(indices) == 0:
                 yield _FakeSensorData(align_timestamps_ns=empty, sensor_timestamps_ns=empty)
                 continue
@@ -71,40 +78,28 @@ class _FakeSensor:
         raise NotImplementedError(STREAM_TIMESTAMPS_CAMERA_ONLY_MSG)
 
 
-class _FixedWindowSensor:
-    """Sensor that yields precomputed sensor timestamps for each grid window."""
+class _SensorWithoutPolicySupport:
+    """Sensor-shaped test double for legacy objects without policy support checks."""
 
-    def __init__(self, samples: list[npt.NDArray[np.int64]]) -> None:
-        self._samples = [np.array(sample, dtype=np.int64, copy=True) for sample in samples]
-        non_empty_samples = [sample for sample in self._samples if len(sample) > 0]
-        if non_empty_samples:
-            self._start_ns = min(int(sample[0]) for sample in non_empty_samples)
-            self._end_ns = max(int(sample[-1]) for sample in non_empty_samples)
-        else:
-            self._start_ns = 0
-            self._end_ns = 0
+    sample_started = False
 
     @property
     def start_ns(self) -> int:
-        return self._start_ns
+        return 0
 
     @property
     def end_ns(self) -> int:
-        return self._end_ns
+        return 1_000
 
-    def sample(self, spec: SamplingSpec) -> Generator[_FakeSensorData]:
-        empty = np.empty(0, dtype=np.int64)
-        for window, sensor_timestamps_ns in zip(spec.grid, self._samples, strict=True):
-            if len(sensor_timestamps_ns) == 0:
-                yield _FakeSensorData(align_timestamps_ns=empty, sensor_timestamps_ns=empty)
-                continue
-            yield _FakeSensorData(
-                align_timestamps_ns=np.array(window.timestamps_ns, dtype=np.int64),
-                sensor_timestamps_ns=sensor_timestamps_ns,
-            )
+    def sample(self, spec: SamplingSpec, *, policy: object) -> Generator[_FakeSensorData]:
+        del spec, policy
+        self.sample_started = True
+        yield _FakeSensorData(
+            align_timestamps_ns=np.array([0], dtype=np.int64),
+            sensor_timestamps_ns=np.array([0], dtype=np.int64),
+        )
 
     def stream_timestamps(self, batch_size: int = 0) -> Iterator[npt.NDArray[np.int64]]:
-        """Not implemented: the timestamp stream is camera-only for now."""
         del batch_size
         raise NotImplementedError(STREAM_TIMESTAMPS_CAMERA_ONLY_MSG)
 
@@ -119,36 +114,8 @@ def _make_grid(timestamps_ns: npt.NDArray[np.int64], stride_ns: int, duration_ns
     )
 
 
-def _make_single_window_grid() -> SamplingGrid:
-    return SamplingGrid(
-        start_ns=0,
-        exclusive_end_ns=200,
-        timestamps_ns=np.array([0, 100], dtype=np.int64),
-        stride_ns=200,
-        duration_ns=200,
-    )
-
-
-def _make_single_sample_grid() -> SamplingGrid:
-    return SamplingGrid(
-        start_ns=0,
-        exclusive_end_ns=100,
-        timestamps_ns=np.array([0], dtype=np.int64),
-        stride_ns=100,
-        duration_ns=100,
-    )
-
-
-def _make_fixed_group(
-    a_sensor_timestamps_ns: npt.NDArray[np.int64],
-    b_sensor_timestamps_ns: npt.NDArray[np.int64],
-) -> SensorGroup:
-    return SensorGroup(
-        {
-            "a": _FixedWindowSensor([a_sensor_timestamps_ns]),
-            "b": _FixedWindowSensor([b_sensor_timestamps_ns]),
-        }
-    )
+def _nearest_policies(*sensor_ids: str) -> dict[str, NearestTimestampPolicy]:
+    return {sensor_id: NearestTimestampPolicy() for sensor_id in sensor_ids}
 
 
 _TS = np.array([0, 1_000, 2_000, 3_000, 4_000], dtype=np.int64)
@@ -161,7 +128,7 @@ def test_single_sensor_yields_one_frame_per_window() -> None:
     spec = SamplingSpec(grid=grid)
     group = SensorGroup({"a": _FakeSensor(_TS)})
 
-    frames = list(group.sample(spec))
+    frames = list(group.sample(spec, policies=_nearest_policies("a")))
     windows = list(grid)
 
     assert len(frames) == len(windows)
@@ -177,7 +144,7 @@ def test_multi_sensor_all_present_when_coverage_complete() -> None:
     spec = SamplingSpec(grid=grid)
     group = SensorGroup({"a": _FakeSensor(_TS), "b": _FakeSensor(_TS)})
 
-    for frame in group.sample(spec):
+    for frame in group.sample(spec, policies=_nearest_policies("a", "b")):
         assert "a" in frame.sensor_data
         assert "b" in frame.sensor_data
 
@@ -198,115 +165,99 @@ def test_end_ns_is_max_across_sensors() -> None:
     assert group.end_ns == 5_000
 
 
-def test_policy_none_does_not_raise() -> None:
-    """policy=None passes through without enforcement."""
-    grid = _make_grid(_TS, _STRIDE, _STRIDE)
-    spec = SamplingSpec(grid=grid, policy=None)
-    group = SensorGroup({"a": _FakeSensor(_TS)})
-    frames = list(group.sample(spec))
-    assert len(frames) == len(_TS)
-
-
-def test_policy_tolerance_exceeded_raises() -> None:
-    """A sensor whose nearest match exceeds policy.tolerance_ns raises ValueError."""
+def test_policy_max_delta_exceeded_raises() -> None:
+    """A sensor whose nearest match exceeds policy.max_delta_ns raises ValueError."""
     # Window [1000, 2000): eligible sensor ts=[1500], grid ts=[1000], delta=500 > tolerance=100
     sensor_ts = np.array([0, 1_500, 2_000, 3_000, 4_000], dtype=np.int64)
     grid = _make_grid(_TS, _STRIDE, _STRIDE)
-    spec = SamplingSpec(grid=grid, policy=SamplingPolicy(tolerance_ns=100))
+    spec = SamplingSpec(grid=grid)
     group = SensorGroup({"a": _FakeSensor(sensor_ts)})
 
-    with pytest.raises(ValueError, match="tolerance_ns"):
-        list(group.sample(spec))
+    with pytest.raises(ValueError, match="max_delta_ns"):
+        list(group.sample(spec, policies={"a": NearestTimestampPolicy(max_delta_ns=100)}))
 
 
-def test_sensor_overlap_fully_covered_yields_frame() -> None:
-    """Fully overlapping participating sensors satisfy a 1.0 overlap policy."""
-    spec = SamplingSpec(grid=_make_single_window_grid(), policy=SamplingPolicy(sensor_overlap=1.0))
-    group = _make_fixed_group(
-        np.array([0, 100], dtype=np.int64),
-        np.array([0, 100], dtype=np.int64),
-    )
+def test_sensor_group_routes_each_policy_to_matching_sensor() -> None:
+    """SensorGroup passes each sensor only its matching concrete policy."""
+    grid = _make_grid(_TS, _STRIDE, _STRIDE)
+    spec = SamplingSpec(grid=grid)
+    sensor_a = _FakeSensor(_TS)
+    sensor_b = _FakeSensor(_TS)
+    policy_a = NearestTimestampPolicy(max_delta_ns=10)
+    policy_b = NearestTimestampPolicy()
+    group = SensorGroup({"a": sensor_a, "b": sensor_b})
 
-    frames = list(group.sample(spec))
+    next(group.sample(spec, policies={"a": policy_a, "b": policy_b}))
 
-    assert len(frames) == 1
-    assert "a" in frames[0].sensor_data
-    assert "b" in frames[0].sensor_data
-
-
-def test_sensor_overlap_half_coverage_below_threshold_raises() -> None:
-    """A sensor covering half the frame interval fails a higher overlap threshold."""
-    spec = SamplingSpec(grid=_make_single_window_grid(), policy=SamplingPolicy(sensor_overlap=0.8))
-    group = _make_fixed_group(
-        np.array([0, 100], dtype=np.int64),
-        np.array([50, 100], dtype=np.int64),
-    )
-
-    with pytest.raises(ValueError, match="sensor_overlap"):
-        list(group.sample(spec))
+    assert sensor_a.policy_seen is policy_a
+    assert sensor_b.policy_seen is policy_b
 
 
-def test_sensor_overlap_half_coverage_above_threshold_yields_frame() -> None:
-    """A sensor covering half the frame interval satisfies a lower overlap threshold."""
-    spec = SamplingSpec(grid=_make_single_window_grid(), policy=SamplingPolicy(sensor_overlap=0.4))
-    group = _make_fixed_group(
-        np.array([0, 100], dtype=np.int64),
-        np.array([50, 100], dtype=np.int64),
-    )
+def test_sensor_group_rejects_missing_policy_before_sampling() -> None:
+    """Missing sensor ids are rejected before any sensor iterator starts."""
+    grid = _make_grid(_TS, _STRIDE, _STRIDE)
+    spec = SamplingSpec(grid=grid)
+    sensor_a = _FakeSensor(_TS)
+    sensor_b = _FakeSensor(_TS)
+    group = SensorGroup({"a": sensor_a, "b": sensor_b})
 
-    frames = list(group.sample(spec))
+    with pytest.raises(ValueError, match="missing policy ids: \\['b'\\]"):
+        list(group.sample(spec, policies={"a": NearestTimestampPolicy()}))
 
-    assert len(frames) == 1
-
-
-def test_sensor_overlap_zero_coverage_below_threshold_raises() -> None:
-    """A participating sensor with zero duration in the union interval fails overlap policy."""
-    spec = SamplingSpec(grid=_make_single_window_grid(), policy=SamplingPolicy(sensor_overlap=0.1))
-    group = _make_fixed_group(
-        np.array([0, 100], dtype=np.int64),
-        np.array([200, 200], dtype=np.int64),
-    )
-
-    with pytest.raises(ValueError, match="sensor_overlap"):
-        list(group.sample(spec))
+    assert not sensor_a.sample_started
+    assert not sensor_b.sample_started
 
 
-def test_sensor_overlap_zero_policy_disables_check() -> None:
-    """sensor_overlap=0.0 does not enforce overlap."""
-    spec = SamplingSpec(grid=_make_single_window_grid(), policy=SamplingPolicy(sensor_overlap=0.0))
-    group = _make_fixed_group(
-        np.array([0, 100], dtype=np.int64),
-        np.array([50, 100], dtype=np.int64),
-    )
+def test_sensor_group_rejects_unknown_policy_id_before_sampling() -> None:
+    """Unknown sensor ids are rejected before any sensor iterator starts."""
+    grid = _make_grid(_TS, _STRIDE, _STRIDE)
+    spec = SamplingSpec(grid=grid)
+    sensor = _FakeSensor(_TS)
+    group = SensorGroup({"a": sensor})
 
-    frames = list(group.sample(spec))
+    with pytest.raises(ValueError, match="unknown policy ids: \\['unknown'\\]"):
+        list(group.sample(spec, policies={"a": NearestTimestampPolicy(), "unknown": NearestTimestampPolicy()}))
 
-    assert len(frames) == 1
-
-
-def test_sensor_overlap_policy_none_disables_check() -> None:
-    """policy=None does not enforce overlap."""
-    spec = SamplingSpec(grid=_make_single_window_grid(), policy=None)
-    group = _make_fixed_group(
-        np.array([0, 100], dtype=np.int64),
-        np.array([50, 100], dtype=np.int64),
-    )
-
-    frames = list(group.sample(spec))
-
-    assert len(frames) == 1
+    assert not sensor.sample_started
 
 
-def test_sensor_overlap_invalid_frame_interval_raises() -> None:
-    """SensorGroup rejects overlap checks whose sampled spans have no duration."""
-    spec = SamplingSpec(grid=_make_single_sample_grid(), policy=SamplingPolicy(sensor_overlap=0.1))
-    group = _make_fixed_group(
-        np.array([0], dtype=np.int64),
-        np.array([0], dtype=np.int64),
-    )
+def test_sensor_group_rejects_none_policy_before_sampling() -> None:
+    """Bare None policies are rejected before any sensor iterator starts."""
+    grid = _make_grid(_TS, _STRIDE, _STRIDE)
+    spec = SamplingSpec(grid=grid)
+    sensor = _FakeSensor(_TS)
+    group = SensorGroup({"a": sensor})
 
-    with pytest.raises(ValueError, match="duration must be positive"):
-        list(group.sample(spec))
+    with pytest.raises(ValueError, match="policy for 'a' must be a concrete policy, got None"):
+        list(group.sample(spec, policies={"a": None}))
+
+    assert not sensor.sample_started
+
+
+def test_sensor_group_rejects_unsupported_policy_before_sampling() -> None:
+    """Unsupported concrete policy types are rejected before any sensor iterator starts."""
+    grid = _make_grid(_TS, _STRIDE, _STRIDE)
+    spec = SamplingSpec(grid=grid)
+    sensor = _FakeSensor(_TS)
+    group = SensorGroup({"a": sensor})
+
+    with pytest.raises(ValueError, match="unsupported policy type for 'a': NoSamplingPolicy"):
+        list(group.sample(spec, policies={"a": NoSamplingPolicy()}))
+
+    assert not sensor.sample_started
+
+
+def test_sensor_group_rejects_sensor_without_policy_support_before_sampling() -> None:
+    """Sensors without policy support declarations are rejected before sampling."""
+    grid = _make_grid(_TS, _STRIDE, _STRIDE)
+    spec = SamplingSpec(grid=grid)
+    sensor = _SensorWithoutPolicySupport()
+    group = SensorGroup({"a": sensor})
+
+    with pytest.raises(ValueError, match="unsupported policy type for 'a': NearestTimestampPolicy"):
+        list(group.sample(spec, policies={"a": NearestTimestampPolicy()}))
+
+    assert not sensor.sample_started
 
 
 def test_sensor_with_no_coverage_omitted_from_frame() -> None:
@@ -316,7 +267,7 @@ def test_sensor_with_no_coverage_omitted_from_frame() -> None:
     spec = SamplingSpec(grid=grid)
     group = SensorGroup({"full": _FakeSensor(_TS), "short": _FakeSensor(ts_short)})
 
-    frames = list(group.sample(spec))
+    frames = list(group.sample(spec, policies=_nearest_policies("full", "short")))
 
     # ts_short covers windows [0,1000) and [1000,2000) — both sensors present
     assert "short" in frames[0].sensor_data

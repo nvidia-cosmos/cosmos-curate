@@ -26,6 +26,7 @@ import pytest
 from cosmos_curator.core.interfaces.stage_interface import CuratorStage, CuratorStageSpec
 from cosmos_curator.core.sensors.data.camera_data import CameraData, MotionVectorData, MotionVectorFrameData
 from cosmos_curator.core.sensors.data.video import VideoMetadata
+from cosmos_curator.core.sensors.sampling.policy import NearestTimestampPolicy
 from cosmos_curator.core.sensors.sampling.spec import SamplingSpec
 from cosmos_curator.core.sensors.utils.video import CpuVideoDecodeConfig
 from cosmos_curator.pipelines.video.clipping.clip_frame_extraction_stages import (
@@ -291,8 +292,9 @@ def test_clip_frame_extraction_stage_exports_camera_sensor_motion_vectors(
             captured["source"] = source
             captured["decode_config"] = decode_config
 
-        def sample(self, spec: object) -> list[CameraData]:
+        def sample(self, spec: object, *, policy: NearestTimestampPolicy) -> list[CameraData]:
             captured["spec"] = spec
+            captured["policy"] = policy
             return [_make_camera_data(motion_vectors)]
 
     monkeypatch.setattr(
@@ -317,6 +319,7 @@ def test_clip_frame_extraction_stage_exports_camera_sensor_motion_vectors(
     assert decode_config.thread_count == 2
     spec = captured["spec"]
     assert isinstance(spec, SamplingSpec)
+    assert isinstance(captured["policy"], NearestTimestampPolicy)
     assert spec.grid.start_ns == 0
     # This 1s clip is shorter than the min_motion_frames floor window (10 frames / 3fps = 3.3s),
     # so the whole clip is sampled (4 frames at 3fps) rather than just the first duration*ratio = 250ms.
@@ -344,7 +347,8 @@ def test_clip_frame_extraction_stage_marks_empty_camera_sensor_motion_vectors(
             assert decode_config is not None
             assert decode_config.export_mvs is True
 
-        def sample(self, _spec: object) -> list[CameraData]:
+        def sample(self, _spec: object, *, policy: NearestTimestampPolicy) -> list[CameraData]:
+            assert isinstance(policy, NearestTimestampPolicy)
             return [_make_camera_data(motion_vectors)]
 
     monkeypatch.setattr(

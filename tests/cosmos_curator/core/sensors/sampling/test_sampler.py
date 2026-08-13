@@ -19,7 +19,7 @@ import numpy.typing as npt
 import pytest
 
 from cosmos_curator.core.sensors.sampling.grid import SamplingWindow
-from cosmos_curator.core.sensors.sampling.policy import SamplingPolicy
+from cosmos_curator.core.sensors.sampling.policy import NearestTimestampPolicy, NoSamplingPolicy
 from cosmos_curator.core.sensors.sampling.sampler import (
     find_closest_indices,
     sample_window_indices,
@@ -221,7 +221,12 @@ def test_sample_window_indices_core_contract(  # noqa: PLR0913
 ) -> None:
     """Test the core contract of sample_window_indices."""
     window = _window_from_grid(grid)
-    indices, counts = sample_window_indices(canonical=canonical, window=window, dedup=dedup)
+    indices, counts = sample_window_indices(
+        canonical=canonical,
+        window=window,
+        policy=NearestTimestampPolicy(),
+        dedup=dedup,
+    )
     np.testing.assert_array_equal(indices, expected_indices)
     np.testing.assert_array_equal(counts, expected_counts)
     np.testing.assert_array_equal(canonical[indices], expected_canonical)
@@ -290,7 +295,12 @@ def test_sample_window_indices_half_open_window_semantics(  # noqa: PLR0913
 ) -> None:
     """sample_window_indices should obey the half-open window contract."""
     window = _window_from_grid(grid)
-    indices, counts = sample_window_indices(canonical=canonical, window=window, dedup=dedup)
+    indices, counts = sample_window_indices(
+        canonical=canonical,
+        window=window,
+        policy=NearestTimestampPolicy(),
+        dedup=dedup,
+    )
 
     np.testing.assert_array_equal(indices, expected_indices)
     np.testing.assert_array_equal(canonical[indices], expected_canonical)
@@ -340,7 +350,7 @@ def test_sample_window_indices_window_local_eligibility(
 ) -> None:
     """sample_window_indices should use only canonical timestamps from the current window."""
     window = _window_from_grid(grid)
-    indices, counts = sample_window_indices(canonical=canonical, window=window)
+    indices, counts = sample_window_indices(canonical=canonical, window=window, policy=NearestTimestampPolicy())
 
     np.testing.assert_array_equal(indices, expected_indices)
     np.testing.assert_array_equal(canonical[indices], expected_canonical)
@@ -411,7 +421,12 @@ def test_sample_window_indices_nearest_neighbor_within_window(  # noqa: PLR0913
 ) -> None:
     """sample_window_indices should perform nearest-neighbour matching within the eligible window-local subset."""
     window = _window_from_grid(grid)
-    indices, counts = sample_window_indices(canonical=canonical, window=window, dedup=dedup)
+    indices, counts = sample_window_indices(
+        canonical=canonical,
+        window=window,
+        policy=NearestTimestampPolicy(),
+        dedup=dedup,
+    )
 
     np.testing.assert_array_equal(indices, expected_indices)
     np.testing.assert_array_equal(canonical[indices], expected_canonical)
@@ -427,7 +442,12 @@ def test_sample_window_indices_returns_original_indices_for_sidecar_arrays() -> 
     pts_stream = np.array([500, 1500, 2500, 3500, 4500], dtype=np.int64)
     grid = np.array([140, 260, 340], dtype=np.int64)
     window = _window_from_grid(grid)
-    indices, counts = sample_window_indices(canonical=canonical, window=window, dedup=False)
+    indices, counts = sample_window_indices(
+        canonical=canonical,
+        window=window,
+        policy=NearestTimestampPolicy(),
+        dedup=False,
+    )
 
     # The eligible canonical subset is [150, 250], but the returned indices
     # must still refer to positions in the original canonical / pts_stream arrays.
@@ -437,12 +457,12 @@ def test_sample_window_indices_returns_original_indices_for_sidecar_arrays() -> 
     np.testing.assert_array_equal(counts, np.array([1, 1], dtype=np.int64))
 
 
-def test_sample_window_indices_policy_tolerance_passes() -> None:
-    """Matches within tolerance_ns should pass."""
+def test_sample_window_indices_max_delta_passes() -> None:
+    """Matches within max_delta_ns should pass."""
     canonical = np.array([100, 200, 300], dtype=np.int64)
     grid = np.array([150, 205, 350], dtype=np.int64)
     window = _window_from_grid(grid)
-    policy = SamplingPolicy(tolerance_ns=50)
+    policy = NearestTimestampPolicy(max_delta_ns=50)
 
     indices, counts = sample_window_indices(canonical=canonical, window=window, policy=policy, dedup=False)
 
@@ -451,23 +471,60 @@ def test_sample_window_indices_policy_tolerance_passes() -> None:
     np.testing.assert_array_equal(counts, np.array([1, 1], dtype=np.int64))
 
 
-def test_sample_window_indices_policy_tolerance_raises_with_offending_pair() -> None:
-    """A tolerance failure should report the offending grid and canonical timestamps."""
+def test_sample_window_indices_max_delta_none_disables_delta_check() -> None:
+    """max_delta_ns=None requests nearest selection without a maximum-delta constraint."""
     canonical = np.array([100, 200, 300], dtype=np.int64)
     grid = np.array([150, 260, 350], dtype=np.int64)
     window = _window_from_grid(grid)
-    policy = SamplingPolicy(tolerance_ns=30)
 
-    with pytest.raises(ValueError, match=r"tolerance_ns=30 exceeded: max delta was 50 ns for grid=150, canonical=200"):
+    indices, counts = sample_window_indices(
+        canonical=canonical,
+        window=window,
+        policy=NearestTimestampPolicy(max_delta_ns=None),
+        dedup=False,
+    )
+
+    np.testing.assert_array_equal(indices, np.array([1, 2], dtype=np.int64))
+    np.testing.assert_array_equal(canonical[indices], np.array([200, 300], dtype=np.int64))
+    np.testing.assert_array_equal(counts, np.array([1, 1], dtype=np.int64))
+
+
+def test_sample_window_indices_zero_max_delta_requires_exact_match() -> None:
+    """max_delta_ns=0 should require exact timestamp matches."""
+    canonical = np.array([100, 200, 300], dtype=np.int64)
+    grid = np.array([100, 201, 300], dtype=np.int64)
+    window = _window_from_grid(grid)
+
+    with pytest.raises(ValueError, match=r"max_delta_ns=0 exceeded: max delta was 1 ns for grid=201, canonical=200"):
+        sample_window_indices(canonical=canonical, window=window, policy=NearestTimestampPolicy(max_delta_ns=0))
+
+
+def test_sample_window_indices_rejects_no_sampling_policy() -> None:
+    """Nearest selection requires a nearest-timestamp policy."""
+    canonical = np.array([100, 200, 300], dtype=np.int64)
+    window = _window_from_grid(np.array([100, 200], dtype=np.int64))
+
+    with pytest.raises(TypeError, match="policy must be NearestTimestampPolicy, got NoSamplingPolicy"):
+        sample_window_indices(canonical=canonical, window=window, policy=NoSamplingPolicy())  # type: ignore[arg-type]
+
+
+def test_sample_window_indices_max_delta_raises_with_offending_pair() -> None:
+    """A max-delta failure should report the offending grid and canonical timestamps."""
+    canonical = np.array([100, 200, 300], dtype=np.int64)
+    grid = np.array([150, 260, 350], dtype=np.int64)
+    window = _window_from_grid(grid)
+    policy = NearestTimestampPolicy(max_delta_ns=30)
+
+    with pytest.raises(ValueError, match=r"max_delta_ns=30 exceeded: max delta was 50 ns for grid=150, canonical=200"):
         sample_window_indices(canonical=canonical, window=window, policy=policy)
 
 
-def test_sample_window_indices_policy_returns_empty_when_no_canonical_timestamps_are_in_window() -> None:
+def test_sample_window_indices_max_delta_returns_empty_when_no_canonical_timestamps_are_in_window() -> None:
     """An empty in-window result with policy should return empty arrays rather than raising."""
     canonical = np.array([100, 200, 300], dtype=np.int64)
     grid = np.array([400, 500], dtype=np.int64)
     window = _window_from_grid(grid)
-    policy = SamplingPolicy(tolerance_ns=0)
+    policy = NearestTimestampPolicy(max_delta_ns=0)
 
     indices, counts = sample_window_indices(canonical=canonical, window=window, policy=policy)
 
@@ -503,7 +560,7 @@ def test_sample_window_indices_input_validation(
     """sample_window_indices should reject invalid canonical and grid inputs."""
     window = _window_from_grid(grid)
     with pytest.raises(ValueError, match=match):
-        sample_window_indices(canonical=canonical, window=window)
+        sample_window_indices(canonical=canonical, window=window, policy=NearestTimestampPolicy())
 
 
 @pytest.mark.parametrize(
@@ -567,7 +624,12 @@ def test_sample_window_indices_shape_and_density_cases(  # noqa: PLR0913
 ) -> None:
     """sample_window_indices should behave predictably across realistic grid/canonical density patterns."""
     window = _window_from_grid(grid)
-    indices, counts = sample_window_indices(canonical=canonical, window=window, dedup=dedup)
+    indices, counts = sample_window_indices(
+        canonical=canonical,
+        window=window,
+        policy=NearestTimestampPolicy(),
+        dedup=dedup,
+    )
 
     np.testing.assert_array_equal(indices, expected_indices)
     np.testing.assert_array_equal(canonical[indices], expected_canonical)
@@ -583,7 +645,12 @@ def test_sample_window_indices_differs_from_global_nearest_neighbour() -> None:
     grid = np.array([150, 260, 350], dtype=np.int64)
     window = _window_from_grid(grid)
     global_indices = find_closest_indices(canonical, window.timestamps_ns)
-    window_indices, window_counts = sample_window_indices(canonical=canonical, window=window, dedup=False)
+    window_indices, window_counts = sample_window_indices(
+        canonical=canonical,
+        window=window,
+        policy=NearestTimestampPolicy(),
+        dedup=False,
+    )
 
     # A global nearest-neighbour search would use 100 for the first reference
     # timestamp, because 100 is closer to 150 than 200 is.

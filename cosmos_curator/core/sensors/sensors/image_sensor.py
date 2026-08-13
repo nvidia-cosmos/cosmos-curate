@@ -22,6 +22,7 @@ import numpy.typing as npt
 from PIL import Image as PILImage
 
 from cosmos_curator.core.sensors.data.image_data import ImageData, ImageMetadata
+from cosmos_curator.core.sensors.sampling.policy import NearestTimestampPolicy, require_nearest_timestamp_policy
 from cosmos_curator.core.sensors.sampling.sampler import sample_window_indices
 from cosmos_curator.core.sensors.sampling.spec import SamplingSpec
 from cosmos_curator.core.sensors.sensors.group import STREAM_TIMESTAMPS_CAMERA_ONLY_MSG
@@ -94,8 +95,13 @@ class ImageSensor:
         del batch_size
         raise NotImplementedError(STREAM_TIMESTAMPS_CAMERA_ONLY_MSG)
 
-    def sample(self, spec: SamplingSpec) -> Generator[ImageData]:
+    def supports_sampling_policy(self, policy: object) -> bool:
+        """Return whether this sensor can sample with *policy*."""
+        return isinstance(policy, NearestTimestampPolicy)
+
+    def sample(self, spec: SamplingSpec, *, policy: NearestTimestampPolicy) -> Generator[ImageData]:
         """Yield sampled ``ImageData`` batches for each window in ``spec.grid``."""
+        policy = require_nearest_timestamp_policy(policy, sensor_name=type(self).__name__)
         for window in spec.grid:
             if len(window) == 0:
                 yield self._get_empty_image_data()
@@ -104,7 +110,7 @@ class ImageSensor:
             indices, counts = sample_window_indices(
                 self.sensor_timestamps_ns,
                 window,
-                policy=spec.policy,
+                policy=policy,
                 dedup=False,
             )
 

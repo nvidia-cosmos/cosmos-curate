@@ -18,7 +18,7 @@ import numpy as np
 import numpy.typing as npt
 
 from cosmos_curator.core.sensors.sampling.grid import SamplingWindow
-from cosmos_curator.core.sensors.sampling.policy import SamplingPolicy
+from cosmos_curator.core.sensors.sampling.policy import NearestTimestampPolicy
 from cosmos_curator.core.sensors.utils.validation import require_strictly_increasing
 
 
@@ -76,7 +76,7 @@ def sample_window_indices(
     canonical: npt.NDArray[np.int64],
     window: SamplingWindow,
     *,
-    policy: SamplingPolicy | None = None,
+    policy: NearestTimestampPolicy,
     dedup: bool = True,
 ) -> tuple[npt.NDArray[np.int64], npt.NDArray[np.int64]]:
     """Sample ``canonical`` using one window from ``grid`` and return indices into ``canonical``.
@@ -110,9 +110,9 @@ def sample_window_indices(
             strictly increasing.
         window: One strictly increasing sampling window. window.exclusive_end_ns
             is an exclusive right boundary marker and is not sampled.
-        policy: Optional sampling policy. When provided, each matched canonical
-            timestamp must be within ``policy.tolerance_ns`` of its reference
-            grid timestamp.
+        policy: Nearest-timestamp policy. When ``policy.max_delta_ns`` is not
+            ``None``, each matched canonical timestamp must be within that
+            maximum delta of its reference grid timestamp.
         dedup: Whether to deduplicate repeated canonical picks. When True,
             repeated matches are collapsed and ``counts[i]`` records how many
             reference timestamps mapped to ``canonical[indices[i]]``.
@@ -130,11 +130,15 @@ def sample_window_indices(
         ValueError: If ``canonical`` is empty.
         ValueError: If ``canonical`` is not strictly increasing.
         ValueError: If ``window.timestamps_ns`` is not strictly increasing.
-        ValueError: If ``policy`` is provided and any matched canonical
-            timestamp exceeds ``policy.tolerance_ns`` from its reference
-            timestamp.
+        TypeError: If ``policy`` is not a ``NearestTimestampPolicy``.
+        ValueError: If ``policy.max_delta_ns`` is not ``None`` and any matched
+            canonical timestamp exceeds it from its reference timestamp.
 
     """
+    if not isinstance(policy, NearestTimestampPolicy):
+        msg = f"policy must be NearestTimestampPolicy, got {type(policy).__name__}"  # type: ignore[unreachable]
+        raise TypeError(msg)
+
     if len(canonical) < 1:
         msg = "canonical must be non-empty"
         raise ValueError(msg)
@@ -188,15 +192,15 @@ def sample_window_indices(
     # same layout as `canonical`.
     indices = eligible_indices[local_indices]
 
-    if policy is not None:
+    if policy.max_delta_ns is not None:
         deltas = np.abs(canonical[indices] - active_grid)
-        if np.any(deltas > policy.tolerance_ns):
+        if np.any(deltas > policy.max_delta_ns):
             worst_idx = int(deltas.argmax())
             max_delta = int(deltas[worst_idx])
             grid_ts = int(active_grid[worst_idx])
             canonical_ts = int(canonical[indices[worst_idx]])
             msg = (
-                f"tolerance_ns={policy.tolerance_ns} exceeded: "
+                f"max_delta_ns={policy.max_delta_ns} exceeded: "
                 f"max delta was {max_delta} ns for grid={grid_ts}, canonical={canonical_ts}"
             )
             raise ValueError(msg)

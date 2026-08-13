@@ -25,6 +25,7 @@ from mcap.records import Channel
 from cosmos_curator.core.sensors.data.camera_data import CameraData
 from cosmos_curator.core.sensors.data.video import VideoMetadata
 from cosmos_curator.core.sensors.sampling.grid import SamplingWindow
+from cosmos_curator.core.sensors.sampling.policy import NearestTimestampPolicy, require_nearest_timestamp_policy
 from cosmos_curator.core.sensors.sampling.sampler import sample_window_indices
 from cosmos_curator.core.sensors.sampling.spec import SamplingSpec
 from cosmos_curator.core.sensors.sensors.group import STREAM_TIMESTAMPS_CAMERA_ONLY_MSG
@@ -181,6 +182,10 @@ class McapCameraSensor:
         del batch_size
         raise NotImplementedError(STREAM_TIMESTAMPS_CAMERA_ONLY_MSG)
 
+    def supports_sampling_policy(self, policy: object) -> bool:
+        """Return whether this sensor can sample with *policy*."""
+        return isinstance(policy, NearestTimestampPolicy)
+
     def _resolve_topic_dimensions(self, reader: McapReader) -> tuple[int, int]:
         """Resolve and validate frame dimensions for the configured topic."""
         metadata = self.video_metadata
@@ -262,13 +267,13 @@ class McapCameraSensor:
         *,
         width: int,
         height: int,
-        spec: SamplingSpec,
+        policy: NearestTimestampPolicy,
     ) -> CameraData:
         """Build a ``CameraData`` batch for one window."""
         if len(window) == 0 or len(log_times_ns) == 0:
             return self._get_empty_camera_data()
 
-        indices, _counts = sample_window_indices(log_times_ns, window, policy=spec.policy, dedup=False)
+        indices, _counts = sample_window_indices(log_times_ns, window, policy=policy, dedup=False)
         if len(indices) == 0:
             return self._get_empty_camera_data()
 
@@ -284,7 +289,7 @@ class McapCameraSensor:
             metadata=self.video_metadata,
         )
 
-    def sample(self, spec: SamplingSpec) -> Generator[CameraData]:
+    def sample(self, spec: SamplingSpec, *, policy: NearestTimestampPolicy) -> Generator[CameraData]:
         """Sample camera frames according to the provided ``SamplingSpec``.
 
         Each yielded batch follows the sampling-grid half-open interval
@@ -305,6 +310,8 @@ class McapCameraSensor:
         Args:
             spec: the sampling spec to use when sampling data from this
                 sensor.
+            policy: nearest-timestamp sampling policy to apply to the requested
+                grid.
 
         Yields:
             CameraData batches
@@ -315,9 +322,10 @@ class McapCameraSensor:
             resource promptly.
 
         """
+        policy = require_nearest_timestamp_policy(policy, sensor_name=type(self).__name__)
         with open_data_source(self._source, mode="rb") as stream:
             reader = mcap_make_reader(stream)  # type: ignore[no-untyped-call]
             width, height = self._resolve_topic_dimensions(reader)
             for window in spec.grid:
                 log_times_ns, payloads = self._read_window_messages(reader, window, width, height)
-                yield self._sample_window(window, log_times_ns, payloads, width=width, height=height, spec=spec)
+                yield self._sample_window(window, log_times_ns, payloads, width=width, height=height, policy=policy)

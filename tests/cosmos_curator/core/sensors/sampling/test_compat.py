@@ -20,6 +20,7 @@ import pytest
 
 from cosmos_curator.core.sensors.sampling.compat import make_decoder_utils_compat_grid
 from cosmos_curator.core.sensors.sampling.grid import SamplingGrid, SamplingWindow
+from cosmos_curator.core.sensors.sampling.policy import NearestTimestampPolicy
 from cosmos_curator.core.sensors.sampling.sampler import sample_window_indices
 
 _NS_PER_SECOND = 1_000_000_000
@@ -145,7 +146,7 @@ def test_make_decoder_utils_compat_grid_preserves_supersampling_counts() -> None
     canonical = np.array([0, 500_000_000, 1_000_000_000], dtype=np.int64)
     window = SamplingWindow(start_ns=start_ns, exclusive_end_ns=exclusive_end_ns, timestamps_ns=timestamps_ns)
 
-    indices, counts = sample_window_indices(canonical, window)
+    indices, counts = sample_window_indices(canonical, window, policy=NearestTimestampPolicy())
 
     np.testing.assert_array_equal(indices, np.array([0, 1, 2], dtype=np.int64))
     np.testing.assert_array_equal(counts, np.array([2, 2, 1], dtype=np.int64))
@@ -159,7 +160,7 @@ def test_make_decoder_utils_compat_grid_samples_irregular_source_timestamps() ->
     canonical = np.array([0, 333_000_000, 666_000_000, 1_000_000_000], dtype=np.int64)
     window = SamplingWindow(start_ns=start_ns, exclusive_end_ns=exclusive_end_ns, timestamps_ns=timestamps_ns)
 
-    indices, counts = sample_window_indices(canonical, window)
+    indices, counts = sample_window_indices(canonical, window, policy=NearestTimestampPolicy())
 
     np.testing.assert_array_equal(indices, np.array([0, 2, 3], dtype=np.int64))
     np.testing.assert_array_equal(counts, np.array([1, 1, 1], dtype=np.int64))

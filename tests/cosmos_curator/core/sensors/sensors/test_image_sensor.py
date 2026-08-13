@@ -25,6 +25,7 @@ import pytest
 from PIL import Image as PILImage
 
 from cosmos_curator.core.sensors.sampling.grid import SamplingGrid, SamplingWindow
+from cosmos_curator.core.sensors.sampling.policy import NearestTimestampPolicy, NoSamplingPolicy
 from cosmos_curator.core.sensors.sampling.spec import SamplingSpec
 from cosmos_curator.core.sensors.sensors import image_sensor as image_sensor_module
 from cosmos_curator.core.sensors.sensors.image_sensor import ImageSensor, _resolve_sensor_timestamps
@@ -50,9 +51,8 @@ class _StaticGrid:
 
 
 class _StaticSpec:
-    def __init__(self, windows: list[np.ndarray], policy: object = None) -> None:
+    def __init__(self, windows: list[np.ndarray]) -> None:
         self.grid = _StaticGrid(windows)
-        self.policy = policy
 
 
 def _write_image(
@@ -123,7 +123,7 @@ def test_image_sensor_sample_uses_closest_timestamp(tmp_path: pathlib.Path) -> N
         duration_ns=100,
     )
 
-    sampled = next(sensor.sample(SamplingSpec(grid=grid)))
+    sampled = next(sensor.sample(SamplingSpec(grid=grid), policy=NearestTimestampPolicy()))
 
     np.testing.assert_array_equal(sampled.align_timestamps_ns, np.array([10, 29], dtype=np.int64))
     np.testing.assert_array_equal(sampled.sensor_timestamps_ns, np.array([10, 30], dtype=np.int64))
@@ -148,7 +148,7 @@ def test_image_sensor_sample_is_window_local(tmp_path: pathlib.Path) -> None:
         duration_ns=100,
     )
 
-    sampled = next(sensor.sample(SamplingSpec(grid=grid)))
+    sampled = next(sensor.sample(SamplingSpec(grid=grid), policy=NearestTimestampPolicy()))
 
     assert sampled.align_timestamps_ns.shape == (0,)
     assert sampled.sensor_timestamps_ns.shape == (0,)
@@ -161,7 +161,7 @@ def test_image_sensor_sample_returns_empty_for_empty_window(tmp_path: pathlib.Pa
     _write_image(image_a, (255, 0, 0))
 
     sensor = ImageSensor([image_a], sensor_timestamps_ns=np.array([10], dtype=np.int64))
-    sampled_batches = list(sensor.sample(_StaticSpec([np.empty(0, dtype=np.int64)])))
+    sampled_batches = list(sensor.sample(_StaticSpec([np.empty(0, dtype=np.int64)]), policy=NearestTimestampPolicy()))
     assert len(sampled_batches) == 1
     sampled = sampled_batches[0]
 
@@ -177,7 +177,9 @@ def test_image_sensor_sample_returns_empty_when_active_grid_is_empty(tmp_path: p
     _write_image(image_a, (255, 0, 0))
 
     sensor = ImageSensor([image_a], sensor_timestamps_ns=np.array([10], dtype=np.int64))
-    sampled_batches = list(sensor.sample(_StaticSpec([np.array([10], dtype=np.int64)])))
+    sampled_batches = list(
+        sensor.sample(_StaticSpec([np.array([10], dtype=np.int64)]), policy=NearestTimestampPolicy())
+    )
     assert len(sampled_batches) == 1
     sampled = sampled_batches[0]
 
@@ -215,7 +217,7 @@ def test_image_sensor_sample_returns_empty_when_sampler_returns_no_indices(
         duration_ns=100,
     )
 
-    sampled_batches = list(sensor.sample(SamplingSpec(grid=grid)))
+    sampled_batches = list(sensor.sample(SamplingSpec(grid=grid), policy=NearestTimestampPolicy()))
     assert len(sampled_batches) == 1
     sampled = sampled_batches[0]
 
@@ -261,7 +263,7 @@ def test_image_sensor_sample_preserves_one_output_row_per_align_timestamp(
         duration_ns=100,
     )
 
-    sampled = next(sensor.sample(SamplingSpec(grid=grid)))
+    sampled = next(sensor.sample(SamplingSpec(grid=grid), policy=NearestTimestampPolicy()))
 
     np.testing.assert_array_equal(sampled.align_timestamps_ns, np.array([10], dtype=np.int64))
     np.testing.assert_array_equal(sampled.sensor_timestamps_ns, np.array([10], dtype=np.int64))
@@ -276,7 +278,17 @@ def test_image_sensor_sample_with_no_windows_returns_nothing(tmp_path: pathlib.P
 
     sensor = ImageSensor([image_a], sensor_timestamps_ns=np.array([10], dtype=np.int64))
 
-    assert list(sensor.sample(_StaticSpec([]))) == []
+    assert list(sensor.sample(_StaticSpec([]), policy=NearestTimestampPolicy())) == []
+
+
+def test_image_sensor_rejects_no_sampling_policy_before_iteration(tmp_path: pathlib.Path) -> None:
+    """ImageSensor accepts only NearestTimestampPolicy."""
+    image_path = tmp_path / "a.png"
+    _write_image(image_path, (1, 2, 3))
+    sensor = ImageSensor([image_path], sensor_timestamps_ns=np.array([10], dtype=np.int64))
+
+    with pytest.raises(TypeError, match="ImageSensor requires NearestTimestampPolicy"):
+        next(sensor.sample(_StaticSpec([np.array([10], dtype=np.int64)]), policy=NoSamplingPolicy()))
 
 
 def test_image_sensor_empty_image_data_is_cached(tmp_path: pathlib.Path) -> None:
@@ -313,8 +325,8 @@ def test_image_sensor_path_and_stream_sources_produce_equivalent_output(
         duration_ns=1,
     )
 
-    path_sample = next(path_sensor.sample(SamplingSpec(grid=grid)))
-    stream_sample = next(stream_sensor.sample(SamplingSpec(grid=grid)))
+    path_sample = next(path_sensor.sample(SamplingSpec(grid=grid), policy=NearestTimestampPolicy()))
+    stream_sample = next(stream_sensor.sample(SamplingSpec(grid=grid), policy=NearestTimestampPolicy()))
 
     np.testing.assert_array_equal(path_sample.frames, stream_sample.frames)
     np.testing.assert_array_equal(path_sample.sensor_timestamps_ns, stream_sample.sensor_timestamps_ns)

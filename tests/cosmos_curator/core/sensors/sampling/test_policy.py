@@ -16,36 +16,25 @@
 
 import pytest
 
-from cosmos_curator.core.sensors.sampling.policy import SamplingPolicy
+from cosmos_curator.core.sensors.sampling.policy import NearestTimestampPolicy, NoSamplingPolicy
 
 
-def test_sampling_policy_instantiation() -> None:
-    """SamplingPolicy can be constructed with defaults or explicit tolerance."""
-    default = SamplingPolicy()
-    assert default.tolerance_ns == 0
-    assert default.sensor_overlap == 0.0
+def test_nearest_timestamp_policy_instantiation() -> None:
+    """NearestTimestampPolicy can be constructed with defaults or an explicit maximum delta."""
+    default = NearestTimestampPolicy()
+    assert default.max_delta_ns is None
 
-    explicit = SamplingPolicy(tolerance_ns=5_000_000, sensor_overlap=0.5)
-    assert explicit.tolerance_ns == 5_000_000
-    assert explicit.sensor_overlap == 0.5
+    explicit = NearestTimestampPolicy(max_delta_ns=5_000_000)
+    assert explicit.max_delta_ns == 5_000_000
 
 
-def test_sampling_policy_rejects_negative_tolerance() -> None:
-    """Negative tolerances are rejected at construction time."""
-    msg = r"'tolerance_ns' must be >= 0: -1"
+def test_nearest_timestamp_policy_rejects_negative_max_delta() -> None:
+    """Negative maximum deltas are rejected at construction time."""
+    msg = r"'max_delta_ns' must be >= 0: -1"
     with pytest.raises(ValueError, match=msg):
-        SamplingPolicy(tolerance_ns=-1)
+        NearestTimestampPolicy(max_delta_ns=-1)
 
 
-@pytest.mark.parametrize("sensor_overlap", [0.0, 0.5, 1.0])
-def test_sampling_policy_accepts_valid_sensor_overlap(sensor_overlap: float) -> None:
-    """Sensor overlap thresholds in [0.0, 1.0] are accepted."""
-    policy = SamplingPolicy(sensor_overlap=sensor_overlap)
-    assert policy.sensor_overlap == sensor_overlap
-
-
-@pytest.mark.parametrize("sensor_overlap", [-0.1, 1.1])
-def test_sampling_policy_rejects_invalid_sensor_overlap(sensor_overlap: float) -> None:
-    """Sensor overlap thresholds outside [0.0, 1.0] are rejected."""
-    with pytest.raises(ValueError, match="sensor_overlap"):
-        SamplingPolicy(sensor_overlap=sensor_overlap)
+def test_no_sampling_policy_instantiation() -> None:
+    """NoSamplingPolicy is an explicit concrete no-op policy."""
+    assert isinstance(NoSamplingPolicy(), NoSamplingPolicy)

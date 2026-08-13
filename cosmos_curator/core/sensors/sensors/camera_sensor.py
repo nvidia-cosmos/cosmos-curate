@@ -24,6 +24,7 @@ from cosmos_curator.core.sensors.data.camera_data import CameraData
 from cosmos_curator.core.sensors.data.extrinsics import SensorExtrinsics
 from cosmos_curator.core.sensors.data.intrinsics import CameraIntrinsics
 from cosmos_curator.core.sensors.data.video import VideoIndex, VideoMetadata
+from cosmos_curator.core.sensors.sampling.policy import NearestTimestampPolicy, require_nearest_timestamp_policy
 from cosmos_curator.core.sensors.sampling.sampler import sample_window_indices
 from cosmos_curator.core.sensors.sampling.spec import SamplingSpec
 from cosmos_curator.core.sensors.types.types import DataSource, VideoIndexCreationMethod
@@ -202,6 +203,10 @@ class CameraSensor:
         """
         return self._video_metadata.has_bframes
 
+    def supports_sampling_policy(self, policy: object) -> bool:
+        """Return whether this sensor can sample with *policy*."""
+        return isinstance(policy, NearestTimestampPolicy)
+
     def _get_empty_camera_data(self) -> CameraData:
         """Return a cached empty batch preserving the expected frame shape."""
         if self._empty_camera_data is None:
@@ -221,6 +226,8 @@ class CameraSensor:
     def sample(
         self,
         spec: SamplingSpec,
+        *,
+        policy: NearestTimestampPolicy,
         stats: dict[str, float] | None = None,
     ) -> Generator[CameraData]:
         """Sample camera frames according to the provided ``SamplingSpec``.
@@ -243,6 +250,8 @@ class CameraSensor:
         Args:
             spec: the sampling spec to use when sampling data from this
                 sensor.
+            policy: nearest-timestamp policy controlling per-window frame
+                selection.
             stats: optional dict for benchmarking instrumentation.  When
                 provided, seek and convert timings are accumulated into the
                 dict by the underlying decode function.  Pass ``None``
@@ -252,6 +261,7 @@ class CameraSensor:
             CameraData batches
 
         """
+        policy = require_nearest_timestamp_policy(policy, sensor_name=type(self).__name__)
         decoder_cm: AbstractContextManager[CpuVideoDecoder | GpuVideoDecoder]
         match self._decode_config:
             case CpuVideoDecodeConfig() as config:
@@ -268,7 +278,7 @@ class CameraSensor:
                     yield self._get_empty_camera_data()
                     continue
 
-                indices, counts = sample_window_indices(self.video_index.display_pts_ns, window, policy=spec.policy)
+                indices, counts = sample_window_indices(self.video_index.display_pts_ns, window, policy=policy)
                 if len(indices) == 0:
                     yield self._get_empty_camera_data()
                     continue

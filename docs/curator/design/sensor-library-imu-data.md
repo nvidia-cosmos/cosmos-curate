@@ -412,12 +412,15 @@ be mapped unambiguously. Its sensor timestamps remain nondecreasing; duplicate
 sensor times are handled per interval as described above.
 
 `PreintegratedImuSensor` produces derived rows exactly on the supplied grid.
-`SamplingPolicy.tolerance_ns` therefore does not constrain the distance to the
+`NearestTimestampPolicy` is not supported by preintegrated IMU sampling in the
+current policy-routing contract, so it does not constrain the distance to the
 raw rows used for interpolation. Consumers should use
 `max_inter_sample_gap_ns` to assess source support until an
 integration-specific gap policy is introduced.
 
 ```python
+from cosmos_curator.core.sensors.sampling.policy import NoSamplingPolicy
+
 raw_imu = ImuSensor(
     source,
     topic="/imu",
@@ -426,7 +429,7 @@ raw_imu = ImuSensor(
 )
 imu = PreintegratedImuSensor(raw_imu)
 
-for batch in imu.sample(spec):
+for batch in imu.sample(spec, policy=NoSamplingPolicy()):
     consume_preintegrated_intervals(batch)
 ```
 

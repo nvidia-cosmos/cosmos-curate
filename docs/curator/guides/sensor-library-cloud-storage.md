@@ -56,6 +56,7 @@ End-to-end example for S3:
 ```python
 import smart_open
 from cosmos_curator.core.utils.storage import s3_client, storage_utils
+from cosmos_curator.core.sensors.sampling.policy import NearestTimestampPolicy
 from cosmos_curator.core.sensors.sensors.camera_sensor import CameraSensor
 
 client = s3_client.create_s3_client("s3://my-bucket/", profile_name="default")
@@ -63,7 +64,7 @@ transport_params = storage_utils.get_smart_open_client_params(client)
 
 with smart_open.open("s3://my-bucket/path/to/clip.mp4", "rb", **transport_params) as stream:
     sensor = CameraSensor(stream)
-    for batch in sensor.sample(spec):
+    for batch in sensor.sample(spec, policy=NearestTimestampPolicy()):
         ...
 ```
 

@@ -25,6 +25,7 @@ from loguru import logger
 
 from cosmos_curator.core.interfaces.stage_interface import CuratorStage, CuratorStageResource
 from cosmos_curator.core.sensors.sampling.grid import SamplingGrid
+from cosmos_curator.core.sensors.sampling.policy import NearestTimestampPolicy
 from cosmos_curator.core.sensors.sampling.spec import SamplingSpec
 from cosmos_curator.core.sensors.sensors.image_sensor import ImageSensor
 from cosmos_curator.core.sensors.types.types import DataSource
@@ -208,7 +209,7 @@ class ImageLoadStage(CuratorStage):
                 stride_ns=1,
                 duration_ns=1,
             )
-            image.image_data = next(sensor.sample(SamplingSpec(grid=grid)))
+            image.image_data = next(sensor.sample(SamplingSpec(grid=grid), policy=NearestTimestampPolicy()))
         except Exception as e:  # noqa: BLE001
             logger.error(f"Failed to decode image {image.input_image}: {e}")
             image.errors["decode"] = str(e)
