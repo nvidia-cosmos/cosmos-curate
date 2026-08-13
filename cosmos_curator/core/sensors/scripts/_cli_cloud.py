@@ -517,30 +517,6 @@ def get_cloud_object_stat(  # noqa: PLR0913
     return CloudObjectStat()
 
 
-def get_cloud_object_size(  # noqa: PLR0913
-    source: str,
-    *,
-    s3_client: BaseClient | None = None,
-    azure_client: BlobServiceClient | None = None,
-    s3_profile_name: str | None = None,
-    azure_profile_name: str = "default",
-    endpoint_url: str | None = None,
-) -> int | None:
-    """Return the byte size of a single cloud object, or ``None`` if it can't be determined.
-
-    Thin wrapper over :func:`get_cloud_object_stat` for callers that only want the
-    size (the progress display); same one ``HEAD``, same never-raises contract.
-    """
-    return get_cloud_object_stat(
-        source,
-        s3_client=s3_client,
-        azure_client=azure_client,
-        s3_profile_name=s3_profile_name,
-        azure_profile_name=azure_profile_name,
-        endpoint_url=endpoint_url,
-    ).size_bytes
-
-
 def put_cloud_text(
     uri: str,
     text: str,
