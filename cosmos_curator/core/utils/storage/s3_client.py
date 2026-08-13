@@ -159,10 +159,14 @@ class S3Client(StorageClient):
         )
         # If creds are set, specify them
         if config.aws_access_key_id is not None:
+            # region_name must be passed explicitly: supplying credentials bypasses
+            # boto3's profile lookup, so the profile's `region` is otherwise ignored
+            # and botocore falls back to us-east-1. None keeps boto3's own resolution.
             self.session = boto3.Session(
                 aws_access_key_id=config.aws_access_key_id,
                 aws_secret_access_key=config.aws_secret_access_key,
                 aws_session_token=config.aws_session_token,
+                region_name=config.region,
             )
             self.s3 = self.session.client("s3", endpoint_url=config.endpoint_url, config=boto_config)
         # If omitted, rely on boto3 intrinsic parsing of AWS_CONFIG_FILE

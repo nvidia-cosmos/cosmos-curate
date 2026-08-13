@@ -16,7 +16,9 @@
 
 from typing import Any
 
-from cosmos_curator.core.utils.storage.s3_client import S3Client, S3Prefix
+import pytest
+
+from cosmos_curator.core.utils.storage.s3_client import S3Client, S3ClientConfig, S3Prefix
 
 
 class _FakePaginator:
@@ -92,3 +94,34 @@ def test_list_recursive_without_limit_returns_all_pages() -> None:
     results = client.list_recursive(S3Prefix("s3://bucket/root"), limit=0)
     assert len(results) == 2
     assert [item["Key"] for item in results] == ["root/a.mp4", "root/b.mp4"]
+
+
+def test_client_uses_configured_region(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A profile region must reach boto3 and win over the ambient environment."""
+    monkeypatch.setenv("AWS_REGION", "eu-central-1")
+
+    client = S3Client(
+        S3ClientConfig(
+            aws_access_key_id="test-key-id",
+            aws_secret_access_key="test-secret",  # noqa: S106
+            region="us-west-2",
+        )
+    )
+
+    assert client.session.region_name == "us-west-2"
+    assert client.s3.meta.region_name == "us-west-2"
+
+
+def test_client_without_configured_region_defers_to_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No configured region leaves boto3's own resolution chain untouched."""
+    monkeypatch.delenv("AWS_REGION", raising=False)
+    monkeypatch.setenv("AWS_DEFAULT_REGION", "eu-central-1")
+
+    client = S3Client(
+        S3ClientConfig(
+            aws_access_key_id="test-key-id",
+            aws_secret_access_key="test-secret",  # noqa: S106
+        )
+    )
+
+    assert client.s3.meta.region_name == "eu-central-1"
