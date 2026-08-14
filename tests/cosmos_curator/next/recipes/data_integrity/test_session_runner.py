@@ -28,8 +28,7 @@ import numpy as np
 import pytest
 from numpy.typing import NDArray
 
-from cosmos_curator.core.sensors.data_integrity import session_runner
-from cosmos_curator.core.sensors.data_integrity.cli_common import DEFAULT_THRESHOLDS
+from cosmos_curator.core.sensors.data_integrity.instruments import DEFAULT_THRESHOLDS
 from cosmos_curator.core.sensors.data_integrity.results import (
     CheckResult,
     CheckStatus,
@@ -37,7 +36,8 @@ from cosmos_curator.core.sensors.data_integrity.results import (
     OverallStatus,
     StreamResult,
 )
-from cosmos_curator.core.sensors.data_integrity.session_runner import run_session, run_stream
+from cosmos_curator.next.recipes.data_integrity import session_runner
+from cosmos_curator.next.recipes.data_integrity.session_runner import run_session, run_stream
 
 HZ_100_PERIOD_NS = 10_000_000  # one sample every 10 ms at 100 Hz
 

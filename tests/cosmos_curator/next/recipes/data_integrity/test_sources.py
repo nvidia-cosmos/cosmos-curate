@@ -13,11 +13,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Unit tests for helpers shared by both data-integrity CLIs."""
+"""Unit tests for turning a URI into an open sensor and running the metrics over it."""
 
 import contextlib
 import io
-import os
 import pathlib
 import threading
 from collections.abc import Callable
@@ -26,40 +25,8 @@ from typing import BinaryIO
 import av
 import pytest
 
-from cosmos_curator.core.sensors.data_integrity.cli_common import (
-    available_cpu_count,
-    cancellable_reader,
-    open_source,
-    run_checks,
-)
-from cosmos_curator.core.sensors.utils.io import open_data_source
-
-
-def test_prefers_the_affinity_mask_over_the_host_core_count(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Under a cpuset the mask is narrower than the machine, and the mask is what binds."""
-    monkeypatch.setattr(os, "sched_getaffinity", lambda _pid: {0, 1, 2}, raising=False)
-    monkeypatch.setattr(os, "cpu_count", lambda: 64)
-    assert available_cpu_count() == 3
-
-
-def test_falls_back_to_the_host_core_count_without_affinity(monkeypatch: pytest.MonkeyPatch) -> None:
-    """sched_getaffinity is Linux-only, so macOS and Windows take the cpu_count path."""
-    monkeypatch.delattr(os, "sched_getaffinity", raising=False)
-    monkeypatch.setattr(os, "cpu_count", lambda: 8)
-    assert available_cpu_count() == 8
-
-
-@pytest.mark.parametrize("cpu_count", [None, 0])
-def test_never_returns_less_than_one(monkeypatch: pytest.MonkeyPatch, cpu_count: int | None) -> None:
-    """An undetectable CPU count must still yield a usable worker count, not 0 or None."""
-    monkeypatch.delattr(os, "sched_getaffinity", raising=False)
-    monkeypatch.setattr(os, "cpu_count", lambda: cpu_count)
-    assert available_cpu_count() == 1
-
-
-def test_reports_a_plausible_count_on_the_real_host() -> None:
-    """Unmocked, the helper returns something a thread pool can actually be sized with."""
-    assert available_cpu_count() >= 1
+from cosmos_curator.next.recipes.data_integrity.cli_support import cancellable_reader
+from cosmos_curator.next.recipes.data_integrity.sources import open_source, run_checks
 
 
 def _open_local(path: pathlib.Path, wrapper: object = None) -> None:
@@ -147,40 +114,6 @@ def test_an_abort_stops_a_real_local_check(tmp_path: pathlib.Path, h264_video: C
         _check()
 
 
-class _NotSeekable(io.BufferedIOBase):
-    """A readable but unseekable stream, which the sensor library refuses to accept."""
-
-    def read(self, size: int | None = -1) -> bytes:
-        return b"x" * (16 if size in (None, -1) else int(size))
-
-    def readable(self) -> bool:
-        return True
-
-    def seekable(self) -> bool:
-        return False
-
-
-def test_the_wrapper_reports_its_streams_own_capabilities() -> None:
-    """Capabilities are delegated, not asserted, so the sensor's guard still sees the truth.
-
-    The sensor library rejects a stream that is not readable and seekable. A wrapper
-    claiming both would smuggle an unusable stream past that check and turn a clear
-    up-front error into an opaque failure inside libav.
-    """
-    assert not cancellable_reader(_NotSeekable(), threading.Event()).seekable()  # type: ignore[arg-type]
-
-    seekable = cancellable_reader(io.BytesIO(b"x"), threading.Event())
-    assert seekable.seekable()
-    assert seekable.readable()
-
-
-def test_an_unseekable_stream_is_still_rejected_up_front() -> None:
-    """The wrapper must not let a stream the sensor cannot use reach libav."""
-    wrapped = cancellable_reader(_NotSeekable(), threading.Event())  # type: ignore[arg-type]
-    with pytest.raises(ValueError, match="seekable"), open_data_source(wrapped):  # type: ignore[arg-type]
-        pass
-
-
 def test_a_missing_local_path_raises_at_open(tmp_path: pathlib.Path) -> None:
     """Opening eagerly moves the failure to open_source, where both CLIs report exit 2."""
     with pytest.raises(FileNotFoundError):
@@ -196,9 +129,7 @@ def test_a_cloud_source_still_takes_the_cloud_branch(monkeypatch: pytest.MonkeyP
         opened.append(source)
         yield io.BytesIO(b"cloud bytes")
 
-    monkeypatch.setattr(
-        "cosmos_curator.core.sensors.data_integrity.cli_common.open_cloud_source", _fake_open_cloud_source
-    )
+    monkeypatch.setattr("cosmos_curator.next.recipes.data_integrity.sources.open_cloud_source", _fake_open_cloud_source)
 
     with open_source("s3://bucket/key.mp4", s3_profile_name=None, azure_profile_name="default") as stream:
         assert stream.read() == b"cloud bytes"

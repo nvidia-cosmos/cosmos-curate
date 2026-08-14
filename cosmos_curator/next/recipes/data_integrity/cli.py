@@ -22,7 +22,7 @@
 #   uv venv --python 3.13 $VENV
 #   uv pip install --python $VENV/bin/python attrs numpy av 'smart_open[s3,azure]' azure-identity loguru
 #   uv pip install --python $VENV/bin/python --no-deps -e .
-#   alias di-check="$VENV/bin/python -m cosmos_curator.core.sensors.data_integrity.cli"
+#   alias di-check="$VENV/bin/python -m cosmos_curator.next.recipes.data_integrity.cli"
 #
 # Run against an S3 clip (add --json or --perf-profile; --help lists all flags):
 #
@@ -34,9 +34,11 @@
 
 Thin CLI wrapper: the per-stream engine (running the metrics, judging them, and
 serialising measurements) lives in
-:mod:`cosmos_curator.core.sensors.data_integrity.cli_common`, shared with the
-single-session tool. This module owns only the single-video report shapes, the
-argument surface, and the exit-code contract.
+:mod:`cosmos_curator.core.sensors.data_integrity.engine`, reached through
+:mod:`.sources`, which opens the URI it is pointed at. The argparse surface and
+exit codes shared with the single-session tool live in :mod:`.cli_support`. This
+module owns only the single-video report shapes, the argument surface, and the
+exit-code contract.
 """
 
 import argparse
@@ -45,7 +47,21 @@ import sys
 import threading
 import time
 
-from cosmos_curator.core.sensors.data_integrity.cli_common import (
+from cosmos_curator.core.sensors.data_integrity.results import (
+    CheckResult,
+    CheckStatus,
+    ResolvedConfig,
+    VideoInfo,
+    overall_status,
+    stream_result,
+)
+from cosmos_curator.core.sensors.scripts._cli_cloud import (
+    CloudCliError,
+    add_cloud_credential_args,
+    resolve_s3_endpoint_url,
+    validate_source,
+)
+from cosmos_curator.next.recipes.data_integrity.cli_support import (
     FAIL_EXIT_CODE,
     PASS_EXIT_CODE,
     add_threshold_args,
@@ -56,24 +72,10 @@ from cosmos_curator.core.sensors.data_integrity.cli_common import (
     raise_if_interrupted,
     report_error,
     report_interrupted,
-    run_checks,
     thresholds_from_args,
 )
-from cosmos_curator.core.sensors.data_integrity.results import (
-    CheckResult,
-    CheckStatus,
-    ResolvedConfig,
-    VideoInfo,
-    overall_status,
-    stream_result,
-)
-from cosmos_curator.core.sensors.data_integrity.store_cli import add_store_args, persist_run
-from cosmos_curator.core.sensors.scripts._cli_cloud import (
-    CloudCliError,
-    add_cloud_credential_args,
-    resolve_s3_endpoint_url,
-    validate_source,
-)
+from cosmos_curator.next.recipes.data_integrity.sources import run_checks
+from cosmos_curator.next.recipes.data_integrity.store_cli import add_store_args, persist_run
 
 
 def _format_expected_hz_line(resolved_cfg: ResolvedConfig) -> str:

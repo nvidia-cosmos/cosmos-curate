@@ -18,7 +18,6 @@
 import json
 from typing import cast
 
-from cosmos_curator.core.sensors.data_integrity.report import render_text, report_to_dict, to_json
 from cosmos_curator.core.sensors.data_integrity.results import (
     CheckResult,
     CheckStatus,
@@ -27,6 +26,7 @@ from cosmos_curator.core.sensors.data_integrity.results import (
     SessionReport,
     StreamResult,
 )
+from cosmos_curator.next.recipes.data_integrity.report import render_text, report_to_dict, to_json
 
 
 def _metric(name: str, status: CheckStatus) -> CheckResult:

@@ -31,7 +31,6 @@ than measured.
 import datetime
 from typing import cast
 
-from cosmos_curator.core.sensors.data_integrity import store, store_schema
 from cosmos_curator.core.sensors.data_integrity.instruments import (
     INSTRUMENTS,
     InstrumentSpec,
@@ -40,6 +39,7 @@ from cosmos_curator.core.sensors.data_integrity.instruments import (
 )
 from cosmos_curator.core.sensors.data_integrity.results import CheckResult, CheckStatus
 from cosmos_curator.core.sensors.scripts._cli_cloud import get_lance_storage_options
+from cosmos_curator.next.recipes.data_integrity import store, store_schema
 
 # Mirrors the reason the CLIs attach to a rate-dependent metric that never ran. Held
 # here as well because a stored "never ran" row has no measurement to describe, and

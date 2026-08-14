@@ -24,18 +24,20 @@ Exposed as fixtures because the test tree is not a package (pytest runs with
 ``--import-mode=importlib``), so one test module cannot import another's helpers.
 """
 
+import io
 import pathlib
 from collections.abc import Callable, Iterator
 from fractions import Fraction
 from types import SimpleNamespace
 
+import av
 import numpy as np
 import pytest
 from numpy.typing import NDArray
 
 from cosmos_curator.core.sensors.data_integrity import identity
-from cosmos_curator.core.sensors.data_integrity.cli_common import DEFAULT_THRESHOLDS, run_metrics
-from cosmos_curator.core.sensors.data_integrity.instruments import Thresholds
+from cosmos_curator.core.sensors.data_integrity.engine import run_metrics
+from cosmos_curator.core.sensors.data_integrity.instruments import DEFAULT_THRESHOLDS, Thresholds
 from cosmos_curator.core.sensors.data_integrity.results import (
     CheckResult,
     ResolvedConfig,
@@ -176,3 +178,35 @@ def make_errored_stream() -> Callable[..., StreamResult]:
 def store_root(tmp_path: pathlib.Path) -> str:
     """Point at a local store root that does not exist yet, so the first write has to create it."""
     return str(tmp_path / "di-store")
+
+
+@pytest.fixture
+def h264_video() -> Callable[..., bytes]:
+    """Return a factory for a tiny H.264 MP4 without B-frames.
+
+    A narrower copy of the sensor tests' fixture of the same name, which is no longer
+    an ancestor conftest now that these tests live under ``next``. Kept as a copy
+    rather than hoisted to a shared ancestor because that conftest would import ``av``
+    for every collection under ``tests/cosmos_curator``, and rather than moved into
+    ``tests/utils`` because only the B-frame-free branch is needed here: ``bframes > 0``
+    reads a checked-in libx264 clip that only the sensor tests assert against.
+    """
+
+    def _make(*, bframes: int = 0) -> bytes:
+        if bframes > 0:
+            msg = "only B-frame-free clips are built here; see tests/cosmos_curator/core/sensors/conftest.py"
+            raise NotImplementedError(msg)
+        buffer = io.BytesIO()
+        with av.open(buffer, mode="w", format="mp4") as container:
+            stream = container.add_stream("h264", rate=30)
+            stream.width, stream.height, stream.pix_fmt = 64, 64, "yuv420p"
+            stream.codec_context.options = {"bf": "0", "g": "30"}
+            for i in range(30):
+                frame = av.VideoFrame.from_ndarray(np.full((64, 64, 3), i, dtype=np.uint8), format="rgb24")
+                for packet in stream.encode(frame):
+                    container.mux(packet)
+            for packet in stream.encode():
+                container.mux(packet)
+        return buffer.getvalue()
+
+    return _make

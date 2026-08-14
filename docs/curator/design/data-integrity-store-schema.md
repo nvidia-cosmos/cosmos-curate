@@ -424,15 +424,25 @@ untouched — both verdicts coexist.
 
 ## 8. One note on where the code lives
 
-The store has to sit inside `core/sensors/data_integrity/`, because a CI test forbids anything under `core/sensors/`
-from importing the rest of `cosmos_curator`, and both CLIs live there. `pyarrow`/`lance` are third-party so they're
-allowed, and they're already in the default environment. Side effect: we can't reuse
-`storage_utils.get_lance_storage_options` and need a small equivalent. Local + S3 first; Azure is a follow-up.
+The store lives at `cosmos_curator/next/recipes/data_integrity/`, alongside the CLIs that write it. It began under
+`core/sensors/data_integrity/` because both CLIs did, and a CI test forbids anything under `core/sensors/` from
+importing the rest of `cosmos_curator` — so a store that had to be reachable from a CLI had to live inside that
+boundary too. Moving the CLIs out of the sensor library moved the store with them, and the constraint no longer
+applies to it: what stays behind is the reusable half (the metrics, their policy, the result vocabulary and the
+per-stream engine), which a second CI test keeps free of `lance` / `pyarrow` so a plain in-memory check never pays
+for a columnar format.
+
+One consequence of the original placement outlives it. Cloud access still goes through
+`core/sensors/scripts/_cli_cloud.py` rather than `storage_utils.get_lance_storage_options`, because three sensor
+scripts share that helper and cannot import outside `core/sensors/`. Consolidating onto `core.utils.storage` is now
+legal for the store but is a separate change, since the two resolve credentials and endpoints differently. Local +
+S3 today; Azure is still a follow-up.
 
 Sharing a directory with the CLIs doesn't mean depending on them. The types a result is expressed in (`CheckResult`,
-`StreamResult`, the verdict enums) live in a leaf module, `results.py`, which imports only the metric kernel. The
-CLIs, the reports and the store all build on that, so the store never imports a CLI module to find out what a
-verdict is — a test asserts this, since it's the kind of thing an import added in a hurry would undo.
+`StreamResult`, the verdict enums) live in a leaf module, `results.py`, which imports only the metric kernel and
+stayed with it. The CLIs, the reports and the store all build on that, so the store never imports a CLI module to
+find out what a verdict is — a test asserts this, since it's the kind of thing an import added in a hurry would
+undo.
 
 ---
 

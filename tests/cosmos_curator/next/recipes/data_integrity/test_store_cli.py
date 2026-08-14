@@ -26,12 +26,6 @@ from collections.abc import Callable
 
 import pytest
 
-from cosmos_curator.core.sensors.data_integrity import cli, session_cli, store, store_cli
-from cosmos_curator.core.sensors.data_integrity.cli_common import (
-    ERROR_EXIT_CODE,
-    FAIL_EXIT_CODE,
-    PASS_EXIT_CODE,
-)
 from cosmos_curator.core.sensors.data_integrity.instruments import DEFAULT_THRESHOLDS, Thresholds
 from cosmos_curator.core.sensors.data_integrity.results import (
     CheckResult,
@@ -39,6 +33,12 @@ from cosmos_curator.core.sensors.data_integrity.results import (
     SessionReport,
     StreamResult,
     VideoInfo,
+)
+from cosmos_curator.next.recipes.data_integrity import cli, session_cli, store, store_cli
+from cosmos_curator.next.recipes.data_integrity.cli_support import (
+    ERROR_EXIT_CODE,
+    FAIL_EXIT_CODE,
+    PASS_EXIT_CODE,
 )
 
 SOURCE = "/data/front.mp4"

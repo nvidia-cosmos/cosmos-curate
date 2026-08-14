@@ -29,7 +29,7 @@ runner, not part of discovery.
 
 import pathlib
 
-from cosmos_curator.core.sensors.data_integrity.cli_common import validate_non_negative_int
+from cosmos_curator.core.sensors.data_integrity.engine import validate_non_negative_int
 from cosmos_curator.core.sensors.scripts._cli_cloud import (
     is_cloud_uri,
     list_cloud_objects,

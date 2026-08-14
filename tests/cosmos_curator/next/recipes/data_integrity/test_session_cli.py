@@ -25,15 +25,6 @@ from collections.abc import Callable
 
 import pytest
 
-from cosmos_curator.core.sensors.data_integrity import session_cli
-from cosmos_curator.core.sensors.data_integrity.cli_common import (
-    DEFAULT_THRESHOLDS,
-    ERROR_EXIT_CODE,
-    FAIL_EXIT_CODE,
-    INTERRUPTED_EXIT_CODE,
-    PASS_EXIT_CODE,
-    Thresholds,
-)
 from cosmos_curator.core.sensors.data_integrity.results import (
     CheckResult,
     CheckStatus,
@@ -41,6 +32,15 @@ from cosmos_curator.core.sensors.data_integrity.results import (
     StreamResult,
 )
 from cosmos_curator.core.sensors.scripts._cli_cloud import CloudCliError, CloudObjectStat
+from cosmos_curator.next.recipes.data_integrity import session_cli
+from cosmos_curator.next.recipes.data_integrity.cli_support import (
+    DEFAULT_THRESHOLDS,
+    ERROR_EXIT_CODE,
+    FAIL_EXIT_CODE,
+    INTERRUPTED_EXIT_CODE,
+    PASS_EXIT_CODE,
+    Thresholds,
+)
 
 
 def _boom_stat(_source: str) -> CloudObjectStat:

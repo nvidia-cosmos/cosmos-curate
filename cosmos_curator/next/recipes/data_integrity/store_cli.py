@@ -15,7 +15,7 @@
 
 """The ``--store-path`` surface shared by both data-integrity CLIs.
 
-Kept apart from :mod:`.cli_common` for one reason: the store pulls in ``lance`` and
+Kept apart from :mod:`.cli_support` for one reason: the store pulls in ``lance`` and
 ``pyarrow``, and a plain check should not pay for them. Everything here imports the
 store lazily, inside the call, so the cost lands only on a run that actually asked
 to persist.
@@ -103,7 +103,7 @@ def persist_run(  # noqa: PLR0913 -- provenance plus credentials, all independen
     """
     # Imported here, not at module scope, so `lance` / `pyarrow` load only for a run
     # that passed --store-path.
-    from cosmos_curator.core.sensors.data_integrity import store  # noqa: PLC0415
+    from cosmos_curator.next.recipes.data_integrity import store  # noqa: PLC0415
 
     return store.write_run(
         store_path,

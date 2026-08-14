@@ -15,15 +15,16 @@
 
 """Run the data-integrity engine over the streams of a single session.
 
-The per-stream work -- opening a source, wiring the metric kernel, judging each
-measurement -- is the shared engine in
-:mod:`cosmos_curator.core.sensors.data_integrity.cli_common`. This module adds
-only the session layer on top of it: :func:`run_session` discovers a session's
-streams, runs the shared engine on each, classifies open/decode failures as a
-per-stream ``ERROR``, and aggregates the results into a :class:`SessionReport`.
+The per-stream work -- wiring the metric kernel and judging each measurement -- is
+the shared engine in :mod:`cosmos_curator.core.sensors.data_integrity.engine`,
+reached through :mod:`.sources`, which opens the source it is pointed at. This
+module adds only the session layer on top of them: :func:`run_session` discovers a
+session's streams, runs the shared engine on each, classifies open/decode failures
+as a per-stream ``ERROR``, and aggregates the results into a
+:class:`SessionReport`.
 
 :func:`run_stream` is a thin convenience over
-:func:`~cosmos_curator.core.sensors.data_integrity.cli_common.run_metrics` for an
+:func:`~cosmos_curator.core.sensors.data_integrity.engine.run_metrics` for an
 already-open sensor, packaging its output as a :class:`StreamResult`.
 """
 
@@ -34,16 +35,12 @@ from typing import BinaryIO
 
 from loguru import logger
 
-from cosmos_curator.core.sensors.data_integrity.cli_common import (
-    cancellable_reader,
-    raise_if_interrupted,
-    run_checks,
+from cosmos_curator.core.sensors.data_integrity.engine import (
     run_metrics,
     validate_expected_hz,
     validate_non_negative_int,
     validate_positive_int,
 )
-from cosmos_curator.core.sensors.data_integrity.discovery import discover_streams
 from cosmos_curator.core.sensors.data_integrity.instruments import DEFAULT_THRESHOLDS, Thresholds
 from cosmos_curator.core.sensors.data_integrity.results import (
     IntegritySensor,
@@ -51,6 +48,9 @@ from cosmos_curator.core.sensors.data_integrity.results import (
     StreamResult,
     stream_result,
 )
+from cosmos_curator.next.recipes.data_integrity.cli_support import cancellable_reader, raise_if_interrupted
+from cosmos_curator.next.recipes.data_integrity.discovery import discover_streams
+from cosmos_curator.next.recipes.data_integrity.sources import run_checks
 
 
 def run_stream(
@@ -64,7 +64,7 @@ def run_stream(
     """Run all metrics over one already-open sensor and package a :class:`StreamResult`.
 
     Convenience wrapper over
-    :func:`~cosmos_curator.core.sensors.data_integrity.cli_common.run_metrics`;
+    :func:`~cosmos_curator.core.sensors.data_integrity.engine.run_metrics`;
     performs no I/O (the sensor is already open), so it never returns an ``ERROR``
     result.
 
@@ -77,7 +77,7 @@ def run_stream(
 
     Raises:
         ValueError: if ``expected_hz`` or ``batch_size`` is invalid (validated by
-            :func:`~cosmos_curator.core.sensors.data_integrity.cli_common.run_metrics`).
+            :func:`~cosmos_curator.core.sensors.data_integrity.engine.run_metrics`).
 
     """
     metrics, video_info, resolved_cfg = run_metrics(
@@ -178,7 +178,7 @@ def run_session(  # noqa: PLR0913
             run then ends by raising ``KeyboardInterrupt``, since a session stopped
             part-way has no verdict to report. CLIs pass the event that their SIGINT
             handler sets (see
-            :func:`~cosmos_curator.core.sensors.data_integrity.cli_common.interrupt_guard`).
+            :func:`~cosmos_curator.next.recipes.data_integrity.cli_support.interrupt_guard`).
         on_stream_start: optional progress hook called *before* each stream is
             opened, with ``(index, total, source)`` (``index`` is 1-based). This is
             the point at which a slow open/decode begins; callers use it to show
@@ -188,7 +188,7 @@ def run_session(  # noqa: PLR0913
             ``(index, total, result)``.
         make_stream_wrapper: optional factory called with ``(index, total, source)``
             that returns a stream wrapper for that stream (e.g. a byte-counting
-            reader for download progress). Applies to cloud sources only.
+            reader for download progress), for local paths as well as cloud URIs.
 
     Returns:
         A :class:`SessionReport` with one :class:`StreamResult` per discovered stream.

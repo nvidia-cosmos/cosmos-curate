@@ -19,7 +19,7 @@
 # Same environment as the single-video di-check CLI (see cli.py). Once that venv
 # exists:
 #
-#   alias di-session="$VENV/bin/python -m cosmos_curator.core.sensors.data_integrity.session_cli"
+#   alias di-session="$VENV/bin/python -m cosmos_curator.next.recipes.data_integrity.session_cli"
 #
 # Run against one session (a clips/<uuid>/ directory or cloud prefix):
 #
@@ -33,7 +33,7 @@
 A *session* is one recording -- typically a ``clips/<uuid>/`` directory (or cloud
 prefix) holding one video per camera. This CLI discovers those streams, runs the
 shared per-stream engine
-(:mod:`cosmos_curator.core.sensors.data_integrity.cli_common`) on each, and prints
+(:mod:`cosmos_curator.core.sensors.data_integrity.engine`) on each, and prints
 a per-stream + session-level verdict. It is the session-level companion to the
 single-video ``di-check`` CLI (:mod:`.cli`) and reuses the same engine, cloud
 credential flags, and reason strings.
@@ -47,7 +47,16 @@ import time
 from collections.abc import Callable
 from typing import BinaryIO, cast
 
-from cosmos_curator.core.sensors.data_integrity.cli_common import (
+from cosmos_curator.core.sensors.data_integrity.results import OverallStatus, StreamResult
+from cosmos_curator.core.sensors.scripts._cli_cloud import (
+    CloudCliError,
+    CloudObjectStat,
+    add_cloud_credential_args,
+    get_cloud_object_stat,
+    is_cloud_uri,
+    resolve_s3_endpoint_url,
+)
+from cosmos_curator.next.recipes.data_integrity.cli_support import (
     ERROR_EXIT_CODE,
     FAIL_EXIT_CODE,
     PASS_EXIT_CODE,
@@ -62,18 +71,9 @@ from cosmos_curator.core.sensors.data_integrity.cli_common import (
     report_interrupted,
     thresholds_from_args,
 )
-from cosmos_curator.core.sensors.data_integrity.report import render_text, to_json
-from cosmos_curator.core.sensors.data_integrity.results import OverallStatus, StreamResult
-from cosmos_curator.core.sensors.data_integrity.session_runner import run_session
-from cosmos_curator.core.sensors.data_integrity.store_cli import add_store_args, persist_run
-from cosmos_curator.core.sensors.scripts._cli_cloud import (
-    CloudCliError,
-    CloudObjectStat,
-    add_cloud_credential_args,
-    get_cloud_object_stat,
-    is_cloud_uri,
-    resolve_s3_endpoint_url,
-)
+from cosmos_curator.next.recipes.data_integrity.report import render_text, to_json
+from cosmos_curator.next.recipes.data_integrity.session_runner import run_session
+from cosmos_curator.next.recipes.data_integrity.store_cli import add_store_args, persist_run
 
 # Session verdict -> process exit code. Uses the shared CLI exit-code contract:
 # PASS = 0, FAIL = 1, and anything that could not be checked (ERROR) = 2.

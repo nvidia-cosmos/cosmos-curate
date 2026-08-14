@@ -127,7 +127,7 @@ class ResolvedConfig:
     """Effective expected rate resolved from user args + sensor metadata.
 
     ``expected_hz`` is ``None`` iff ``expected_hz_source`` is ``UNAVAILABLE``; the
-    invariant is enforced by :func:`~.cli_common.resolve_expected_hz`.
+    invariant is enforced by :func:`~.engine.resolve_expected_hz`.
     """
 
     expected_hz: float | None
@@ -156,7 +156,7 @@ class VideoInfo:
 
 
 class IntegritySensor(Protocol):  # pragma: no cover
-    """Structural sensor surface :func:`~.cli_common.run_metrics` needs (``CameraSensor`` satisfies it)."""
+    """Structural sensor surface :func:`~.engine.run_metrics` needs (``CameraSensor`` satisfies it)."""
 
     @property
     def codec_name(self) -> str:

@@ -63,7 +63,7 @@ This gives reuse properties:
 
 ### Package Layout
 
-The package lives at:
+The reusable framework lives at:
 
 `cosmos_curator/core/sensors/data_integrity/`
 
@@ -74,7 +74,13 @@ The v1 kernel is two modules:
 - `evaluation.py`
   - evaluators (`below_threshold`, `above_threshold`, `within_range`) and evaluation results
 
-Modules for the future orchestration are out of scope for v1; their decomposition is one of the open problems, not a decided set of files — see [Future integration](#future-integration).
+Three modules have since joined them, all still backend-agnostic: `results.py` (the vocabulary a result is expressed in), `instruments.py` (which threshold applies to which measurement) and `engine.py` (running every metric over one already-open sensor and judging the lot). A CI test (`test_kernel_boundary.py`) keeps the package free of `argparse`, `lance` / `pyarrow` and cloud clients, so the sensor library can depend on it without paying for a workflow.
+
+The orchestration that was out of scope for v1 now exists, and lives outside the sensor library at:
+
+`cosmos_curator/next/recipes/data_integrity/`
+
+That package owns the `di-check` and `di-session` CLIs, stream discovery, the concurrent session runner, report rendering and the Lance result store ([store schema](data-integrity-store-schema.md)) — the half that takes URIs, credentials and command-line flags. What remains undecided is the orchestration *above* a single session: declaring checks as data, and driving many metrics from one read — see [Future integration](#future-integration).
 
 Repo convention note:
 

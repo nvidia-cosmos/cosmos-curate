@@ -24,9 +24,9 @@ from fractions import Fraction
 
 import pytest
 
-from cosmos_curator.core.sensors.data_integrity import reevaluate, store
 from cosmos_curator.core.sensors.data_integrity.instruments import DEFAULT_THRESHOLDS, Thresholds
 from cosmos_curator.core.sensors.data_integrity.results import StreamResult
+from cosmos_curator.next.recipes.data_integrity import reevaluate, store
 
 NO_HEADER_RATE = Fraction(0, 1)
 DRIFT = "/data/session/drift.mp4"
@@ -70,8 +70,8 @@ def test_re_evaluation_opens_no_source(measured: tuple[str, str], monkeypatch: p
     def _explode(*_args: object, **_kwargs: object) -> None:
         pytest.fail("re-evaluation must not open a source")
 
-    monkeypatch.setattr("cosmos_curator.core.sensors.data_integrity.cli_common.open_source", _explode)
-    monkeypatch.setattr("cosmos_curator.core.sensors.data_integrity.cli_common.run_checks", _explode)
+    monkeypatch.setattr("cosmos_curator.next.recipes.data_integrity.sources.open_source", _explode)
+    monkeypatch.setattr("cosmos_curator.next.recipes.data_integrity.sources.run_checks", _explode)
 
     root, _ = measured
     reevaluate.reevaluate(root, thresholds=STRICT)

@@ -25,7 +25,7 @@ from fractions import Fraction
 
 import pytest
 
-from cosmos_curator.core.sensors.data_integrity import identity, store, store_schema
+from cosmos_curator.core.sensors.data_integrity import identity
 from cosmos_curator.core.sensors.data_integrity.instruments import (
     DEFAULT_THRESHOLDS,
     INSTRUMENTS,
@@ -33,6 +33,7 @@ from cosmos_curator.core.sensors.data_integrity.instruments import (
 )
 from cosmos_curator.core.sensors.data_integrity.results import StreamResult
 from cosmos_curator.core.sensors.scripts._cli_cloud import CloudCliError, CloudObjectStat
+from cosmos_curator.next.recipes.data_integrity import store, store_schema
 
 #: The zero-numerator sentinel for "the container declares no rate", which is what
 #: makes rate / gap / jitter never run at all.
@@ -68,22 +69,36 @@ def _write(  # noqa: PLR0913 -- one optional argument per fact a test may want t
 #: depending on how a CLI happens to render or parse anything.
 _CLI_MODULES = frozenset(
     {
-        "cosmos_curator.core.sensors.data_integrity.cli",
-        "cosmos_curator.core.sensors.data_integrity.cli_common",
-        "cosmos_curator.core.sensors.data_integrity.session_cli",
-        "cosmos_curator.core.sensors.data_integrity.session_runner",
-        "cosmos_curator.core.sensors.data_integrity.report",
+        "cosmos_curator.next.recipes.data_integrity.cli",
+        "cosmos_curator.next.recipes.data_integrity.cli_support",
+        "cosmos_curator.next.recipes.data_integrity.session_cli",
+        "cosmos_curator.next.recipes.data_integrity.session_runner",
+        "cosmos_curator.next.recipes.data_integrity.report",
+        "cosmos_curator.next.recipes.data_integrity.sources",
     }
 )
+
+#: The two packages the modules under test are spread across: the store and its schema
+#: live with the recipe, the vocabulary they serialise with the sensor library.
+_MODULE_DIRS = (pathlib.Path(store.__file__).parent, pathlib.Path(identity.__file__).parent)
+
+
+def _module_source(module: str) -> str:
+    """Read a data-integrity module's source from whichever of the two packages holds it."""
+    for directory in _MODULE_DIRS:
+        path = directory / f"{module}.py"
+        if path.exists():
+            return path.read_text()
+    msg = f"no such data-integrity module: {module}"
+    raise AssertionError(msg)
 
 
 @pytest.mark.parametrize("module", ["store", "store_schema", "reevaluate", "results", "instruments", "identity"])
 def test_the_storage_layer_does_not_import_the_cli(module: str) -> None:
     """Layering, checked rather than remembered: results flow up to the CLIs, never down."""
-    path = pathlib.Path(store.__file__).parent / f"{module}.py"
     imported = {
         node.module
-        for node in ast.walk(ast.parse(path.read_text()))
+        for node in ast.walk(ast.parse(_module_source(module)))
         if isinstance(node, ast.ImportFrom) and node.module
     }
     assert imported & _CLI_MODULES == set()

@@ -13,17 +13,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Generic data-integrity framework for the sensor library.
+"""Curator Next ``data-integrity`` recipe: the CLIs, discovery and store around the metrics.
 
-The reusable half of data integrity: the metrics, the pass/fail policy that judges
-them, the vocabulary their results are expressed in, and the per-stream engine
-(:mod:`.engine`) that runs the lot over one already-open sensor. Backend-agnostic
-throughout -- nothing here accepts a URI, imports a cloud client, or parses an
-argument, which is what lets the sensor library use it directly.
-
-The workflow built on top -- the ``di-check`` / ``di-session`` CLIs, stream
-discovery, report rendering and the Lance result store -- lives in
-:mod:`cosmos_curator.next.recipes.data_integrity`.
+The reusable half -- the metrics themselves, their pass/fail policy and the
+per-stream engine that runs them -- lives in
+:mod:`cosmos_curator.core.sensors.data_integrity`. What lives here is everything
+that makes those metrics a Cosmos Curator workflow: the ``di-check`` and
+``di-session`` entry points, cloud/local stream discovery, the concurrent session
+runner, report rendering and the Lance-backed result store.
 
 See ``docs/curator/design/data-integrity-design.md`` for the architecture and the
 metric catalog. Callers import from concrete module paths; this package does not

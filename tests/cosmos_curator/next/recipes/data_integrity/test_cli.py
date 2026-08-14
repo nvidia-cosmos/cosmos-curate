@@ -20,8 +20,8 @@ from typing import Any
 
 import pytest
 
-from cosmos_curator.core.sensors.data_integrity import cli
-from cosmos_curator.core.sensors.data_integrity.cli_common import (
+from cosmos_curator.next.recipes.data_integrity import cli
+from cosmos_curator.next.recipes.data_integrity.cli_support import (
     DEFAULT_THRESHOLDS,
     ERROR_EXIT_CODE,
     INTERRUPTED_EXIT_CODE,

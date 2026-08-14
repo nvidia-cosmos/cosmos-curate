@@ -52,7 +52,7 @@ import attrs
 import lance  # type: ignore[import-untyped]
 import pyarrow as pa  # type: ignore[import-untyped]
 
-from cosmos_curator.core.sensors.data_integrity import identity, store_schema
+from cosmos_curator.core.sensors.data_integrity import identity
 from cosmos_curator.core.sensors.data_integrity.instruments import (
     INSTRUMENTS,
     InstrumentSpec,
@@ -75,6 +75,7 @@ from cosmos_curator.core.sensors.scripts._cli_cloud import (
     is_s3_uri,
     put_cloud_text,
 )
+from cosmos_curator.next.recipes.data_integrity import store_schema
 
 #: Newest-first ordering applied before de-duplication. ``run_id`` is a UUID so its
 #: descending order is arbitrary -- but it is deterministic, which is the point: two

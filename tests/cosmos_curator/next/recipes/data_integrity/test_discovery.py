@@ -19,8 +19,8 @@ import pathlib
 
 import pytest
 
-from cosmos_curator.core.sensors.data_integrity import discovery
-from cosmos_curator.core.sensors.data_integrity.discovery import discover_streams
+from cosmos_curator.next.recipes.data_integrity import discovery
+from cosmos_curator.next.recipes.data_integrity.discovery import discover_streams
 
 
 def _touch(path: pathlib.Path) -> None:
