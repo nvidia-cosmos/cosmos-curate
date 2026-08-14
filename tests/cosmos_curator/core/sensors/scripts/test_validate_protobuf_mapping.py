@@ -461,6 +461,12 @@ def test_validation_api_accepts_repeated_scalar_collection() -> None:
         ("gps", "cosmos_curator.sensors.gps.v1.GpsSample", "gps.proto", "gps_protobuf_mapping.yaml"),
         ("imu", "cosmos_curator.sensors.imu.v1.ImuSample", "imu.proto", "imu_minimal_protobuf_mapping.yaml"),
         ("imu", "cosmos_curator.sensors.imu.v1.ImuSample", "imu.proto", "imu_protobuf_mapping.yaml"),
+        (
+            "egotrajectory",
+            "cosmos_curator.sensors.egotrajectory.v1.EgotrajectorySample",
+            "egotrajectory.proto",
+            "egotrajectory_protobuf_mapping.yaml",
+        ),
     ],
 )
 def test_script_validates_checked_in_reference_contract(  # noqa: PLR0913

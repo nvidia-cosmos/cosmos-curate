@@ -21,10 +21,10 @@ import numpy.typing as npt
 import pytest
 
 from cosmos_curator.core.sensors.data.aligned_frame import AlignedFrame
+from cosmos_curator.core.sensors.data.egotrajectory_data import EgoTrajectory
 from cosmos_curator.core.sensors.data.extrinsics import SensorExtrinsics
 from cosmos_curator.core.sensors.data.lidar_data import LidarData, LidarMetadata
 from cosmos_curator.core.sensors.data.sensor_data import SensorData
-from cosmos_curator.core.sensors.data.trajectory_data import EgoTrajectory
 
 
 def _make_metadata(**overrides: object) -> LidarMetadata:
@@ -58,6 +58,7 @@ def _make_ego_trajectory(**overrides: object) -> EgoTrajectory:
         "align_timestamps_ns": np.array([100, 200], dtype=np.int64),
         "sensor_timestamps_ns": np.array([90, 210], dtype=np.int64),
         "poses": np.tile(np.eye(4, dtype=np.float64), (2, 1, 1)),
+        "pose_valid": np.array([True, True], dtype=np.bool_),
         "frame": "world",
     }
     values.update(overrides)

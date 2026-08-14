@@ -21,8 +21,8 @@ import numpy.typing as npt
 import pytest
 
 from cosmos_curator.core.sensors.data.aligned_frame import AlignedFrame
+from cosmos_curator.core.sensors.data.egotrajectory_data import EgoTrajectory
 from cosmos_curator.core.sensors.data.sensor_data import SensorData
-from cosmos_curator.core.sensors.data.trajectory_data import EgoTrajectory
 
 
 def _make_ego_trajectory(**overrides: object) -> EgoTrajectory:
@@ -31,6 +31,7 @@ def _make_ego_trajectory(**overrides: object) -> EgoTrajectory:
         "align_timestamps_ns": np.array([100, 200], dtype=np.int64),
         "sensor_timestamps_ns": np.array([90, 210], dtype=np.int64),
         "poses": np.tile(np.eye(4, dtype=np.float64), (2, 1, 1)),
+        "pose_valid": np.array([True, True], dtype=np.bool_),
         "frame": "world",
     }
     values.update(overrides)
@@ -58,9 +59,20 @@ def test_aligned_frame_rejects_mismatched_ego_trajectory_reference_timeline() ->
 
 def test_ego_trajectory_arrays_are_readonly() -> None:
     """EgoTrajectory should expose read-only NumPy arrays for every field."""
-    ego = _make_ego_trajectory()
+    ego = _make_ego_trajectory(
+        host_timestamps_ns=np.array([95, 215], dtype=np.int64),
+        sequence_counter=np.array([1, 2], dtype=np.uint64),
+    )
 
-    for array in (ego.align_timestamps_ns, ego.sensor_timestamps_ns, ego.poses):
+    for array in (
+        ego.align_timestamps_ns,
+        ego.sensor_timestamps_ns,
+        ego.poses,
+        ego.pose_valid,
+        ego.host_timestamps_ns,
+        ego.sequence_counter,
+    ):
+        assert array is not None
         with pytest.raises(ValueError, match="read-only"):
             array.flat[0] = array.flat[0]
 
@@ -68,10 +80,16 @@ def test_ego_trajectory_arrays_are_readonly() -> None:
 @pytest.mark.parametrize(
     ("field_name", "value", "match"),
     [
+        (
+            "align_timestamps_ns",
+            np.array([100, 100], dtype=np.int64),
+            "strictly sorted in ascending order with no duplicates",
+        ),
         ("poses", np.tile(np.eye(4, dtype=np.float32), (2, 1, 1)), "dtype float64"),
         ("poses", np.zeros((2, 3, 3), dtype=np.float64), r"shape \(N, 4, 4\)"),
         ("poses", np.zeros((2, 4, 4), dtype=np.float64), r"last row of each \(4, 4\)"),
         ("poses", np.full((2, 4, 4), np.nan, dtype=np.float64), "finite"),
+        ("pose_valid", np.array([True, False], dtype=np.int8), "dtype bool"),
         ("frame", "", "frame must be a non-empty string"),
     ],
 )
@@ -80,7 +98,7 @@ def test_ego_trajectory_rejects_invalid_required_fields(
     value: object,
     match: str,
 ) -> None:
-    """EgoTrajectory should validate poses and frame."""
+    """EgoTrajectory should validate poses, pose_valid, and frame."""
     with pytest.raises(ValueError, match=match):
         _make_ego_trajectory(**{field_name: value})
 
@@ -90,6 +108,9 @@ def test_ego_trajectory_rejects_invalid_required_fields(
     [
         ("sensor_timestamps_ns", np.array([90, 210, 300], dtype=np.int64)),
         ("poses", np.tile(np.eye(4, dtype=np.float64), (3, 1, 1))),
+        ("pose_valid", np.array([True, True, False], dtype=np.bool_)),
+        ("host_timestamps_ns", np.array([1, 2, 3], dtype=np.int64)),
+        ("sequence_counter", np.array([1, 2, 3], dtype=np.uint64)),
     ],
 )
 def test_ego_trajectory_rejects_length_mismatch(
@@ -99,3 +120,40 @@ def test_ego_trajectory_rejects_length_mismatch(
     """All EgoTrajectory arrays must share the row-count ``N``."""
     with pytest.raises(ValueError, match="same length"):
         _make_ego_trajectory(**{field_name: value})
+
+
+def test_ego_trajectory_accepts_keep_and_mask_identity_pose() -> None:
+    """Invalid rows may keep an identity transform with pose_valid=false."""
+    poses = np.tile(np.eye(4, dtype=np.float64), (2, 1, 1))
+    poses[0, :3, 3] = (1.0, 2.0, 3.0)
+    ego = _make_ego_trajectory(
+        poses=poses,
+        pose_valid=np.array([True, False], dtype=np.bool_),
+    )
+
+    assert ego.pose_valid.tolist() == [True, False]
+    np.testing.assert_array_equal(ego.poses[1], np.eye(4, dtype=np.float64))
+
+
+def test_ego_trajectory_rejects_non_identity_invalid_pose() -> None:
+    """pose_valid=false rows must store an identity transform, not another finite pose."""
+    poses = np.tile(np.eye(4, dtype=np.float64), (2, 1, 1))
+    poses[1, :3, 3] = (1.0, 2.0, 3.0)
+
+    with pytest.raises(ValueError, match="pose_valid=false must be identity"):
+        _make_ego_trajectory(
+            poses=poses,
+            pose_valid=np.array([True, False], dtype=np.bool_),
+        )
+
+
+def test_ego_trajectory_rejects_nonfinite_invalid_pose() -> None:
+    """Invalid rows still require finite identity placeholders, not NaN."""
+    poses = np.tile(np.eye(4, dtype=np.float64), (2, 1, 1))
+    poses[1] = np.nan
+
+    with pytest.raises(ValueError, match="finite"):
+        _make_ego_trajectory(
+            poses=poses,
+            pose_valid=np.array([True, False], dtype=np.bool_),
+        )

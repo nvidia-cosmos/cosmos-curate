@@ -160,7 +160,16 @@ def build_package() -> None:
     copy_required_files(
         src_sensors_dir / "data",
         dst_sensors_dir / "data",
-        ("__init__.py", "extrinsics.py", "gps_data.py", "imu_data.py", "preintegrated_imu_data.py"),
+        (
+            "__init__.py",
+            "extrinsics.py",
+            "gps_data.py",
+            "imu_data.py",
+            "preintegrated_imu_data.py",
+            "egotrajectory_data.py",
+            "aligned_frame.py",
+            "sensor_data.py",
+        ),
     )
     copy_required_files(
         src_sensors_dir / "preintegration",
@@ -175,7 +184,14 @@ def build_package() -> None:
     copy_required_files(
         src_sensors_dir / "sensors",
         dst_sensors_dir / "sensors",
-        ("__init__.py", "gps_sensor.py", "imu_sensor.py", "preintegrated_imu_sensor.py"),
+        (
+            "__init__.py",
+            "ego_trajectory_sensor.py",
+            "gps_sensor.py",
+            "group.py",
+            "imu_sensor.py",
+            "preintegrated_imu_sensor.py",
+        ),
     )
     copy_required_files(src_sensor_scripts_dir, dst_sensor_scripts_dir, ("__init__.py", "validate_protobuf_mapping.py"))
     copy_required_files(src_sensor_types_dir, dst_sensor_types_dir, ("__init__.py", "types.py"))
