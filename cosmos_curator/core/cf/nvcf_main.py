@@ -18,6 +18,7 @@ import argparse
 import ctypes
 import io
 import json
+import math
 import multiprocessing
 import os
 import pathlib
@@ -79,10 +80,15 @@ _CURATOR_DIRECT_MODE_HEADER = "CURATOR-DIRECT-MODE"
 _CURATOR_STATUS_INCLUDE_LOGS_HEADER = "CURATOR-STATUS-INCLUDE-LOGS"
 _RAY_DASHBOARD = f"http://127.0.0.1:{os.getenv('RAY_DASHBOARD_PORT', '8265')}"
 _METRICS_PORT = 9002
+_RAY_JOB_ENTRYPOINT_FAILURE_MESSAGE = "Ray job entrypoint failed"
 
 # This is evaluated at startup and used to decide if the logs/progress can be sent
 # using get-request-status
 using_nvcf_status: dict[str, bool] = {"get_req_sts": False}
+
+
+class RayJobLoggedError(RuntimeError):
+    """Raised when a failed Ray CLI command already emitted captured diagnostics."""
 
 
 def _cleanup_pipeline_lock_files() -> None:
@@ -118,6 +124,111 @@ def _header_bool(headers: Mapping[str, str], name: str, *, default: bool) -> boo
     if raw_value is None:
         return default
     return raw_value.strip().lower() not in {"0", "false", "no", "off"}
+
+
+def _env_bool(name: str) -> bool | None:
+    raw_value = os.environ.get(name)
+    if raw_value is None:
+        return None
+    normalized = raw_value.strip().lower()
+    if normalized == "":
+        return None
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    logger.warning(f"Ignoring invalid boolean env var {name}={raw_value!r}")
+    return None
+
+
+def _env_int(name: str, *, minimum: int | None = None) -> int | None:
+    raw_value = os.environ.get(name)
+    if raw_value is None:
+        return None
+    try:
+        value = int(raw_value)
+    except ValueError:
+        logger.warning(f"Ignoring invalid integer env var {name}={raw_value!r}")
+        return None
+    if minimum is not None and value < minimum:
+        logger.warning(f"Ignoring out-of-range integer env var {name}={raw_value!r}")
+        return None
+    return value
+
+
+def _env_float(name: str, *, minimum: float | None = None, maximum: float | None = None) -> float | None:
+    raw_value = os.environ.get(name)
+    if raw_value is None:
+        return None
+    try:
+        value = float(raw_value)
+    except ValueError:
+        logger.warning(f"Ignoring invalid float env var {name}={raw_value!r}")
+        return None
+    if (
+        not math.isfinite(value)
+        or (minimum is not None and value < minimum)
+        or (maximum is not None and value > maximum)
+    ):
+        logger.warning(f"Ignoring out-of-range float env var {name}={raw_value!r}")
+        return None
+    return value
+
+
+def _env_json_str_map(name: str) -> dict[str, str] | None:
+    raw_value = os.environ.get(name)
+    if raw_value is None:
+        return None
+    if not raw_value:
+        return {}
+    try:
+        parsed = json.loads(raw_value)
+    except json.JSONDecodeError:
+        logger.warning(f"Ignoring invalid JSON env var {name}")
+        return None
+    if not isinstance(parsed, dict):
+        logger.warning(f"Ignoring non-object JSON env var {name}")
+        return None
+    empty_value_keys = sorted(str(k) for k, v in parsed.items() if v in (None, ""))
+    if empty_value_keys:
+        logger.warning(f"Ignoring run attributes with invalid values from {name}: {', '.join(empty_value_keys)}")
+    return {str(k): str(v) for k, v in parsed.items() if isinstance(k, str) and k and v not in (None, "")}
+
+
+def _set_env_default(args: argparse.Namespace, attr_name: str, value_fn: Callable[[], object | None]) -> None:
+    if hasattr(args, attr_name):
+        return
+    value = value_fn()
+    if value is not None:
+        setattr(args, attr_name, value)
+
+
+def _apply_observability_env_defaults(args: argparse.Namespace) -> None:
+    """Apply chart defaults without overriding invoke args and mark the result normalized.
+
+    ``profiling._apply_profiling_config`` uses the marker to distinguish an
+    explicit NVCF ``profile_tracing=False`` from an ordinary CLI parser default.
+    """
+    env_otlp_metrics_push = "COSMOS_CURATOR_OTLP_METRICS_PUSH"
+    env_otlp_metrics_push_interval = "COSMOS_CURATOR_OTLP_METRICS_PUSH_INTERVAL"
+    env_profile_tracing = "COSMOS_CURATOR_PROFILE_TRACING"
+    env_profile_tracing_sampling = "COSMOS_CURATOR_PROFILE_TRACING_SAMPLING"
+    env_otlp_run_attributes_values = "COSMOS_CURATOR_OTLP_RUN_ATTRIBUTES_VALUES"
+
+    _set_env_default(args, "otlp_metrics_push", lambda: _env_bool(env_otlp_metrics_push))
+    _set_env_default(
+        args,
+        "otlp_metrics_push_interval",
+        lambda: _env_int(env_otlp_metrics_push_interval, minimum=1),
+    )
+    _set_env_default(args, "profile_tracing", lambda: _env_bool(env_profile_tracing))
+    _set_env_default(
+        args,
+        "profile_tracing_sampling",
+        lambda: _env_float(env_profile_tracing_sampling, minimum=0.0, maximum=1.0),
+    )
+    _set_env_default(args, "otlp_run_attributes_map", lambda: _env_json_str_map(env_otlp_run_attributes_values))
+    args.observability_env_defaults_applied = True
 
 
 def _setup_request(
@@ -764,17 +875,19 @@ async def curate_video(request: Request) -> JSONResponse:  # noqa: C901, PLR0912
     nvcf_output_dir = None
     pipeline_args = None
     should_cleanup = True
+    request_id: str | None = None
+    logs: list[str] | MutableSequence[Any] = []
+    # mypy is confused about the type
+    ipc_status: Any = None
 
     try:
         nvcf_output_dir = get_nvcf_output_path(request)
         manager = Manager()
 
-        # mypy is confused about the type
-        ipc_status: Any = manager.Value(ctypes.c_bool, value=False)
+        ipc_status = manager.Value(ctypes.c_bool, value=False)
 
         log_queue = cast("multiprocessing.Queue", manager.Queue())  # type: ignore[type-arg]
-        # mypy is confused about the type
-        logs: list[str] | MutableSequence[Any] = manager.list() if using_nvcf_status["get_req_sts"] else ["success"]
+        logs = manager.list() if using_nvcf_status["get_req_sts"] else ["success"]
 
         nvcf_ncaid = request.headers.get("NVCF-NCAID")
         nvcf_subid = request.headers.get("NVCF-SUBID")
@@ -816,6 +929,7 @@ async def curate_video(request: Request) -> JSONResponse:  # noqa: C901, PLR0912
         invoke_args = await request.json()
         pipeline_type = invoke_args.get("pipeline", "unknown")
         pipeline_args = argparse.Namespace(**(invoke_args.get("args", {})))
+        _apply_observability_env_defaults(pipeline_args)
 
         def prepare_and_run_pipeline() -> None:  # noqa: C901, PLR0912
             nonlocal did_init_s3_profile, pipeline_args
@@ -899,6 +1013,9 @@ async def curate_video(request: Request) -> JSONResponse:  # noqa: C901, PLR0912
                 try:
                     logger.info(f"Background direct pipeline starting for request {request_id}")
                     prepare_and_run_pipeline()
+                except RayJobLoggedError:
+                    logger.error(f"Pipeline failed for request {request_id}; details in Ray job log")
+                    ipc_status.value = False
                 except Exception as e:  # noqa: BLE001
                     logger.exception(f"Error in background pipeline for request {request_id}: {e}")
                     ipc_status.value = False
@@ -941,38 +1058,39 @@ async def curate_video(request: Request) -> JSONResponse:  # noqa: C901, PLR0912
         )
 
     except Exception as e:  # noqa: BLE001
-        # Wait for draining
-        logger.error(f"Received Exception, waiting for progress thread to finish: {e}")
+        ray_job_logged_error = isinstance(e, RayJobLoggedError)
+        if ray_job_logged_error:
+            logger.error(f"Pipeline failed for request {request_id}; details in Ray job log")
+        else:
+            logger.error(f"Received Exception, waiting for progress thread to finish: {e}")
+
         if progress_thread and stop_event:
             if not stop_event.is_set():
                 stop_event.set()
             progress_thread.join()
             progress_thread = None
 
-        _, log_lines = (
-            None,
-            (
-                "".join(logs)
-                if using_nvcf_status["get_req_sts"]
-                else _read_progress_and_log_files(request_id, read_progress=False)
-            ),
-        )
-        log_str: str | tuple[float, str] = ""
+        if using_nvcf_status["get_req_sts"]:
+            log_lines = "".join(logs)
+        else:
+            _, log_lines = _read_progress_and_log_files(request_id, read_progress=False)
         log_str = "failed" if log_lines is None or len(log_lines) == 0 else log_lines
         error_dict = {
             "exception": str(e),
             "exception_type": type(e).__name__,
-            "traceback": traceback.format_exc(),
-            "logs": log_str,
         }
-        # flatten it, json.dumps is bad, NVCF adds its own encoding, too many \\\\\
+        if not ray_job_logged_error:
+            error_dict["traceback"] = traceback.format_exc()
+        error_dict["logs"] = log_str
+        # flatten it, json.dumps is bad, NVCF adds its own encoding, too many \\
         error_details = "\n".join([f"{k}: {v}" for k, v in error_dict.items()])
-        logger.error(f"Error in pipeline: {error_details}")
+        if not ray_job_logged_error:
+            logger.error(f"Error in pipeline: {error_details}")
         return JSONResponse(status_code=500, content={"error": error_details})
     finally:
         if should_cleanup:
             logger.info("Cleaning up after finishing the invoke")
-            if ipc_status.value and pipeline_args is not None:
+            if ipc_status is not None and ipc_status.value and pipeline_args is not None:
                 try:
                     gather_and_upload_outputs(pipeline_type, pipeline_args)
                 except Exception as e:  # noqa: BLE001
@@ -1019,13 +1137,19 @@ os.environ.setdefault("CURATOR_RUN_ID", {validated_request_id!r})
 # Set up sys.path
 sys.path = pickle.loads({pickle.dumps(sys.path)!r})
 
+from cosmos_xenna.utils import python_log
+
 def run_func():
     mod = __import__('{func.__module__}', fromlist=['{func.__name__}'])
     func = getattr(mod, '{func.__name__}')
     pipeline_args = pickle.loads({pickle.dumps(pipeline_args)!r})
     func(pipeline_args)
 
-run_func()
+try:
+    run_func()
+except Exception:
+    python_log.exception({_RAY_JOB_ENTRYPOINT_FAILURE_MESSAGE!r})
+    sys.exit(1)
 """)
     # Create a subprocess that runs the function
     cmd = [
@@ -1069,8 +1193,8 @@ def _do_run_process(
     if process.returncode != 0:
         # Failed
         ipc_status.value = False
-        error_msg = f"Process failed with return code {process.returncode}"
-        raise RuntimeError(error_msg)
+        error_msg = f"Ray job failed with return code {process.returncode}"
+        raise RayJobLoggedError(error_msg)
 
 
 def execute_pipeline(  # noqa: PLR0913

@@ -28,6 +28,32 @@
             "enabled": false
           }
         },
+        "otlp": {
+          "endpoint": "https://FILL_IN",
+          "extractNVCFSecrets": true,
+          "tls": {
+            "certPath": "/etc/curator-otlp/certs/tls.crt",
+            "keyPath": "/etc/curator-otlp/certs/tls.key"
+          },
+          "nvcfSecrets": {
+            "secretName": "nvcf-secrets",
+            "certKey": "otlp-client-crt",
+            "keyKey": "otlp-client-key"
+          }
+        },
+        "tracing": {
+          "otlp": {
+            "enabled": true
+          }
+        },
+        "logging": {
+          "format": "json",
+          "rayBackendJson": true,
+          "otlp": {
+            "enabled": false,
+            "includeMetricsExternalLabels": true
+          }
+        },
         "#commentScratch": "path to additional node storage on host",
         "#scratchDir": "/scratch"
     },

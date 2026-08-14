@@ -23,6 +23,7 @@ def _repo_root() -> Path:
 
 REPO_ROOT = _repo_root()
 CHART_DIR = REPO_ROOT / "charts" / "cosmos-curator"
+JOB_DRIVER_LOG_GLOB = "/tmp/ray/session_*/logs/job-driver*"  # noqa: S108 - chart path under test
 
 pytestmark = pytest.mark.helm
 
@@ -184,12 +185,16 @@ def _collector_metrics_exporter(values_file: Path) -> dict[str, object]:
     return exporter
 
 
-def _mount_names(pod_spec: dict[str, object], container_name: str) -> set[str]:
+def _container(pod_spec: dict[str, object], container_name: str) -> dict[str, object]:
     for container in pod_spec["containers"]:
         if container["name"] == container_name:
-            return {mount["name"] for mount in container.get("volumeMounts", [])}
+            return container
     message = f"pod spec did not include container {container_name}"
     raise AssertionError(message)
+
+
+def _mount_names(pod_spec: dict[str, object], container_name: str) -> set[str]:
+    return {mount["name"] for mount in _container(pod_spec, container_name).get("volumeMounts", [])}
 
 
 def _otlp_secret_pod_spec(tmp_path: Path, *, extra_values: str = "") -> dict[str, object]:
@@ -211,6 +216,35 @@ logging:
     return _object(docs, "StatefulSet", "cosmos-curator")["spec"]["template"]["spec"]
 
 
+@pytest.mark.parametrize(
+    ("log_collector_values", "expected_job_driver_excludes"),
+    [
+        ("", set()),
+        ("    collectJobDriverLogs: false\n", {JOB_DRIVER_LOG_GLOB}),
+    ],
+)
+def test_helm_log_collector_job_driver_source_is_explicit(
+    tmp_path: Path, log_collector_values: str, expected_job_driver_excludes: set[str]
+) -> None:
+    """Driver files stay enabled by default and can be excluded explicitly."""
+    values_file = tmp_path / "values.yaml"
+    values_file.write_text(
+        f"""
+otlp:
+  endpoint: https://otlp.example
+logging:
+  otlp:
+    enabled: true
+{log_collector_values}""".lstrip()
+    )
+
+    docs = _render_chart(values_file, ["templates/otlp-log-collector-config.yaml"])
+    relay = _log_collector_relay(_object(docs, "ConfigMap", "cosmos-curator-otlp-log-collector-config"))
+    excludes = relay["receivers"]["file_log/ray"]["exclude"]
+
+    assert set(excludes) & {JOB_DRIVER_LOG_GLOB} == expected_job_driver_excludes
+
+
 def test_helm_otlp_client_certs_skip_curator_container_without_in_process_exporters(tmp_path: Path) -> None:
     """Logging-only deployments keep the OTLP client key out of the curator container."""
     pod_spec = _otlp_secret_pod_spec(tmp_path)
@@ -218,6 +252,32 @@ def test_helm_otlp_client_certs_skip_curator_container_without_in_process_export
     assert "otlp-cert-store" in {volume["name"] for volume in pod_spec["volumes"]}
     assert "otlp-cert-store" in _mount_names(pod_spec, "otlp-log-collector")
     assert "otlp-cert-store" not in _mount_names(pod_spec, "cosmos-curator")
+
+
+def test_helm_logging_with_args_override_still_enables_entrypoint_tee(tmp_path: Path) -> None:
+    """Overriding image CMD args leaves the image entrypoint wrapper active."""
+    values_file = tmp_path / "values.yaml"
+    values_file.write_text(
+        """
+otlp:
+  endpoint: https://otlp.example
+logging:
+  otlp:
+    enabled: true
+args:
+  - pixi
+  - run
+  - custom-task
+""".lstrip()
+    )
+
+    docs = _render_chart(values_file, ["templates/statefulset.yaml"])
+    pod_spec = _object(docs, "StatefulSet", "cosmos-curator")["spec"]["template"]["spec"]
+    curator = _container(pod_spec, "cosmos-curator")
+    env = {item["name"]: item.get("value") for item in curator["env"]}
+
+    assert curator["args"] == ["pixi", "run", "custom-task"]
+    assert env["COSMOS_CURATOR_TEE_STDOUT_STDERR"] == "true"
 
 
 def test_helm_otlp_client_certs_mount_into_curator_container_for_tracing(tmp_path: Path) -> None:
@@ -229,6 +289,52 @@ def test_helm_otlp_client_certs_mount_into_curator_container_for_tracing(tmp_pat
 
     assert "otlp-cert-store" in _mount_names(pod_spec, "cosmos-curator")
     assert "otlp-cert-store" in _mount_names(pod_spec, "otlp-log-collector")
+
+
+def test_helm_explicit_otlp_cert_paths_mount_extra_volume_into_log_sidecar(tmp_path: Path) -> None:
+    """Explicit OTLP cert paths can be backed by operator-managed pod volumes."""
+    values_file = tmp_path / "values.yaml"
+    values_file.write_text(
+        """
+otlp:
+  endpoint: https://otlp.example
+  tls:
+    certPath: /var/run/curator-otlp/tls.crt
+    keyPath: /var/run/curator-otlp/tls.key
+    caPath: /var/run/curator-otlp/ca.crt
+logging:
+  otlp:
+    enabled: true
+extraVolumes:
+  - name: cert-manager-otlp-certs
+    csi:
+      driver: csi.cert-manager.io
+      readOnly: true
+extraVolumeMounts:
+  - name: cert-manager-otlp-certs
+    mountPath: /var/run/curator-otlp
+    readOnly: true
+""".lstrip()
+    )
+
+    docs = _render_chart(
+        values_file,
+        [
+            "templates/statefulset.yaml",
+            "templates/otlp-log-collector-config.yaml",
+        ],
+    )
+    pod_spec = _object(docs, "StatefulSet", "cosmos-curator")["spec"]["template"]["spec"]
+    assert "cert-manager-otlp-certs" in _mount_names(pod_spec, "cosmos-curator")
+    assert "cert-manager-otlp-certs" in _mount_names(pod_spec, "otlp-log-collector")
+
+    relay = _log_collector_relay(_object(docs, "ConfigMap", "cosmos-curator-otlp-log-collector-config"))
+    assert relay["exporters"]["otlp_http/logs"]["tls"] == {
+        "cert_file": "/var/run/curator-otlp/tls.crt",
+        "key_file": "/var/run/curator-otlp/tls.key",
+        "ca_file": "/var/run/curator-otlp/ca.crt",
+        "insecure_skip_verify": False,
+    }
 
 
 def test_helm_shared_otlp_rejects_inherited_signal_path_endpoint(tmp_path: Path) -> None:
@@ -999,8 +1105,8 @@ logging:
     assert "otlp-cert-store" not in _mount_names(pod_spec, "cosmos-curator")
 
 
-def test_helm_ca_path_without_chart_managed_source_is_rejected(tmp_path: Path) -> None:
-    """A CA path the sidecar cannot mount would crash the collector, so fail at render."""
+def test_helm_ca_path_without_client_cert_source_is_rejected(tmp_path: Path) -> None:
+    """A CA path alone gives the sidecar no mounted client cert source."""
     values_file = tmp_path / "values.yaml"
     values_file.write_text(
         """
@@ -1014,7 +1120,7 @@ logging:
 """.lstrip()
     )
 
-    with pytest.raises(AssertionError, match="needs a chart-managed source for the log sidecar"):
+    with pytest.raises(AssertionError, match="must include certPath and keyPath"):
         _render_chart(values_file, ["templates/otlp-log-collector-config.yaml"])
 
 

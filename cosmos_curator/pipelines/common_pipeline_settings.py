@@ -496,7 +496,7 @@ class CommonPipelineSettings:
         metadata=cli(
             help=(
                 "Optional JSON object of literal run-attribute labels to attach to OTLP traces "
-                'and metrics push (e.g. \'{"customer":"nvidia","nspect_id":"..."}\').'
+                'and metrics push (e.g. \'{"customer":"example","environment":"ci"}\').'
             ),
             default={},
             arg_type=json.loads,
@@ -557,15 +557,19 @@ def composite_profiling_scope(
     *,
     stage_name: str = "_root",
     label: str = "main",
+    observability_env_defaults_applied: bool = False,
 ) -> Generator[argparse.Namespace]:
-    """Enter :func:`~cosmos_curator.core.utils.infra.profiling.profiling_scope` with a flat namespace from *settings*.
+    """Enter profiling with a flat namespace derived from *settings*.
 
     Builds the flat namespace via :func:`composite_to_namespace`, then syncs ``settings.common``
     after profiling applies CLI side effects (e.g. implied ``perf_profile``). Yields the same
     namespace to pass to ``run_pipeline(..., args=...)`` and :func:`sync_common_from_namespace`
-    after ``run_pipeline`` returns.
+    after ``run_pipeline`` returns. ``observability_env_defaults_applied`` explicitly
+    carries the NVCF normalization marker that the typed settings conversion cannot retain.
     """
     ns = composite_to_namespace(settings)
+    if observability_env_defaults_applied:
+        ns.observability_env_defaults_applied = True
     with profiling_scope(ns, stage_name=stage_name, label=label):
         sync_common_from_namespace(settings, ns)
         yield ns

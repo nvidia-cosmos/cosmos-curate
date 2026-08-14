@@ -203,7 +203,10 @@ def shard(args: argparse.Namespace) -> None:
 
     """
     settings = composite_from_namespace(ShardPipelineSettings, args)
-    with composite_profiling_scope(settings) as profiling_ns:
+    with composite_profiling_scope(
+        settings,
+        observability_env_defaults_applied=getattr(args, "observability_env_defaults_applied", False),
+    ) as profiling_ns:
         _shard(settings, profiling_ns)
 
 

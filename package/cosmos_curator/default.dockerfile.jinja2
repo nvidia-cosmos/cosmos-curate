@@ -607,6 +607,7 @@ COPY --chown=1000:1000 cosmos_curator {{code_dir_str}}/cosmos_curator
 COPY --chown=1000:1000 tests {{code_dir_str}}/tests
 COPY --chown=1000:1000 pytest.ini .coveragerc {{code_dir_str}}/
 COPY --chown=1000:1000 README.md ATTRIBUTIONS.md {{code_dir_str}}/
+COPY --chown=1000:1000 --chmod=755 package/cosmos_curator/entrypoint.sh /usr/local/bin/cosmos-curator-entrypoint
 
 {% for code_path in code_paths %}
 COPY --chown=1000:1000 {{code_path}} {{code_dir_str}}/{{code_path}}
@@ -617,4 +618,5 @@ EXPOSE 8000 6379
 WORKDIR {{code_dir_str}}
 ENV PYTHONPATH={{code_dir_str}}
 
+ENTRYPOINT ["/usr/local/bin/cosmos-curator-entrypoint"]
 CMD ["pixi", "run", "--as-is", "python", "cosmos_curator/scripts/onto_nvcf.py", "--helm", "True"]

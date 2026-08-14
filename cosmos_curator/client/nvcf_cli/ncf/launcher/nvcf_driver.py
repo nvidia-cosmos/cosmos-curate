@@ -16,6 +16,7 @@
 """Drive and control NVCF instance operations."""
 
 import base64
+import json
 import tempfile
 from pathlib import Path
 from typing import Annotated
@@ -904,6 +905,10 @@ def nvcf_get_deployment_detail(
             callback=validate_uuid,
         ),
     ] = None,
+    json_output: Annotated[  # noqa: FBT002 Typer boolean option default.
+        bool,
+        Option("--json", help="Print deployment details as JSON", rich_help_panel="Deployment-Detail"),
+    ] = False,
 ) -> None:
     """Get details about an NVCF function deployment.
 
@@ -911,6 +916,7 @@ def nvcf_get_deployment_detail(
         ctx: The Typer context object.
         funcid: Function ID to get details for.
         version: Function version ID.
+        json_output: Print machine-readable JSON instead of rich-formatted output.
 
     Returns:
         None.
@@ -927,7 +933,10 @@ def nvcf_get_deployment_detail(
             funcid=funcid,
             version=version,
         )
-        pprint(resp, expand_all=True)
+        if json_output:
+            typer.echo(json.dumps(resp))
+        else:
+            pprint(resp, expand_all=True)
 
     except Exception as e:
         error_msg = f"Could not get deployment detail: {e!s}"

@@ -99,6 +99,13 @@ This is for the Prometheus agent to remote-write the metrics.
   - you can remove `byo-metrics-receiver-client-crt` and `byo-metrics-receiver-client-key` from the `secrets` list;
   - then disable `metrics` when deploying the function, see details in next step.
 
+To export Ray logs to an OTLP logs endpoint, also move the entries from
+`#otlpSecrets` into the active `secrets` list and fill in:
+
+- `otlp-client-crt`
+- `otlp-client-key`
+- `otlp-ca-crt` if your OTLP logs endpoint requires a custom CA bundle
+
 The telemetries section can be uncommented and filled out if the appropriate endpoints are available in your account.
 See the [NVCF External Observability guide](https://docs.nvidia.com/cloud-functions/user-guide/latest/cloud-function/observability.html#external-observability)
 for additional information.
@@ -119,6 +126,18 @@ Modify `~/.config/cosmos_curator/templates/function/deploy_curator_helm.json` to
 - GPU count (per node) in `configuration.resources.requests` and `configuration.resources.limits`
 - Thanos remote-write receiver URL in `configuration.metrics.remoteWrite.endpoint`
   - As mentioned above, if you don't have an endpoint, set `configuration.metrics.enabled` to `false`
+- If using OTLP log export, set `configuration.logging.otlp.enabled` to `true`, fill
+  in `configuration.otlp.endpoint`, and keep
+  `configuration.otlp.extractNVCFSecrets` enabled so the sidecar can read
+  the OTLP logs mTLS certs from the NVCF secret map.
+
+With OTLP log export enabled, the chart keeps the existing stdout/stderr log stream for the
+platform log indexer and also forwards Ray files under `/tmp/ray/session_*/logs`.
+`logging.format: json` structures Python driver/worker logs, and
+`logging.rayBackendJson: true` enables JSON formatting for Ray backend logs such as
+raylet. The OTLP log sidecar also inherits the metrics external labels populated by the
+NVCF deploy command, including `function_id`, `version_id`, `gpu`, `org`, and
+deployment placement fields when present.
 
 ```bash
 # --instance-count controls number of nodes

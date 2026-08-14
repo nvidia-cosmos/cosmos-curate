@@ -124,6 +124,9 @@ logging:
   rayBackendJson: false
   otlp:
     enabled: false
+    # Collect Ray's durable job-driver-*.log files. Disable only when another
+    # source, such as the stdout tee, is known to export the same driver lines.
+    collectJobDriverLogs: true
     # Keep pushed logs structured by default while allowing readable local streams.
     forceJsonFormat: true
     telemetryLogLevel: info
@@ -178,8 +181,10 @@ logging:
 # Optional custom environment variables
 customEnvVars: {}
 
-# Optional extra volumes and mounts for the main curator StatefulSet pod/container.
-# Useful for mounting certs or config files consumed by customEnvVars.
+# Optional extra volumes and mounts for the main curator StatefulSet pod.
+# Mounts are added to the curator container and, when logging.otlp.enabled is
+# true, to the OTLP log collector sidecar. Use the opentelemetry-collector
+# subchart's extraVolumes/extraVolumeMounts for the standalone metrics collector.
 extraVolumes: []
 extraVolumeMounts: []
 

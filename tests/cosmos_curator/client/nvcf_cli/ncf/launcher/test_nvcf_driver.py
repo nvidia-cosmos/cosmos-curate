@@ -839,6 +839,11 @@ def test_nvcf_get_deployment_detail(mock_cc: MagicMock) -> None:
     result = runner.invoke(cosmos_curator, args)
     assert result.exit_code == 0
 
+    mock_instance.nvcf_helper_get_deployment_detail.return_value = {"Status": "ACTIVE"}
+    result = runner.invoke(cosmos_curator, [*args, "--json"])
+    assert result.exit_code == 0
+    assert '"Status": "ACTIVE"' in result.output
+
     # Test with exception in helper method
     mock_instance.nvcf_helper_get_deployment_detail.side_effect = RuntimeError("mock exception")
     result = runner.invoke(cosmos_curator, args)

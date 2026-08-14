@@ -149,12 +149,11 @@ class TestCollectRunAttributes:
         """Literal attribute map injects caller-provided labels directly."""
         monkeypatch.setenv(
             ENV_OTLP_RUN_ATTRIBUTES_VALUES,
-            '{"customer":"nvidia","mgmt_owner":"aidot","nspect_id":"NSPECT-KU24-CGN6"}',
+            '{"label_one":"value-one","label_two":"value-two"}',
         )
         attrs = collect_run_attributes()
-        assert attrs.get("customer") == "nvidia"
-        assert attrs.get("mgmt_owner") == "aidot"
-        assert attrs.get("nspect_id") == "NSPECT-KU24-CGN6"
+        assert attrs.get("label_one") == "value-one"
+        assert attrs.get("label_two") == "value-two"
 
 
 class TestShortHostLabel:

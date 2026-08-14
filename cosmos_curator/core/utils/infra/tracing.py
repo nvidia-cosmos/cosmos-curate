@@ -344,9 +344,10 @@ def profile_tracing_enabled_via_env() -> bool:
     explicit ``0`` / ``false`` / ``no`` / ``off`` spellings -- means disabled, so
     tracing stays opt-in.
 
-    Read alongside ``--profile-tracing`` when building the profiling config: either
-    source can enable tracing.  Set this to ``0`` for a single run to opt out of a
-    cluster-wide default.
+    Read alongside ``--profile-tracing`` when building the profiling config. For
+    NVCF requests, environment defaults are normalized into the invoke namespace
+    first, and an explicitly supplied invoke value remains authoritative. Set this
+    to ``0`` for a single run to opt out of a cluster-wide default.
 
     Returns:
         ``True`` when the variable requests tracing, ``False`` otherwise.

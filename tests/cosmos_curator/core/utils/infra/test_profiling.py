@@ -54,16 +54,21 @@ Test setup:
 """
 
 import argparse
+import json
 import os
 import pathlib
+import sys
 import time
 from collections.abc import Generator
+from types import SimpleNamespace
+from unittest.mock import patch
 
 import attrs
 import pytest
 from opentelemetry import trace as _otel_trace
 from opentelemetry.sdk.trace import TracerProvider
 
+from cosmos_curator.core.cf import nvcf_main
 from cosmos_curator.core.interfaces.stage_interface import CuratorStage, PipelineTask
 from cosmos_curator.core.utils.infra.profiling import (
     ProfilingConfig,
@@ -72,8 +77,10 @@ from cosmos_curator.core.utils.infra.profiling import (
     _MemoryProfilingBackend,
     _ProfilingState,
     _resolve_staging_path,
+    profiling_scope,
     profiling_wrapper,
 )
+from cosmos_curator.core.utils.infra.run_attributes import ENV_OTLP_RUN_ATTRIBUTES_VALUES
 from cosmos_curator.core.utils.infra.tracing import ENV_PROFILE_TRACING
 
 
@@ -352,6 +359,15 @@ class TestBuildProfilingConfig:
         assert config is not None
         assert config.tracing_enabled is True
 
+    def test_normalized_explicit_false_overrides_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """An explicit NVCF invoke value remains authoritative after normalization."""
+        monkeypatch.setenv(ENV_PROFILE_TRACING, "true")
+        args = self._tracing_args()
+
+        nvcf_main._apply_observability_env_defaults(args)
+
+        assert _apply_profiling_config(args) is None
+
     def test_cpu_flag_returns_config_and_enables_perf(self) -> None:
         """--profile-cpu enables cpu_enabled and forces perf_profile=True."""
         args = argparse.Namespace(
@@ -412,15 +428,91 @@ class TestBuildProfilingConfig:
             profile_tracing=False,
             perf_profile=False,
             output_clip_path="/output/clips",
-            otlp_run_attributes_map={"customer": "nvidia", "nspect_id": "NSPECT-KU24-CGN6"},
+            otlp_run_attributes_map={"label_one": "value-one", "label_two": "value-two"},
         )
         config = _apply_profiling_config(args)
 
         assert config is not None
         assert config.otlp_run_attributes_map == {
-            "customer": "nvidia",
-            "nspect_id": "NSPECT-KU24-CGN6",
+            "label_one": "value-one",
+            "label_two": "value-two",
         }
+
+    def test_otlp_run_attributes_map_warns_for_dropped_invoke_values(self) -> None:
+        """Invalid invoke labels are reported without logging their values."""
+        args = argparse.Namespace(
+            profile_cpu=True,
+            profile_memory=False,
+            profile_gpu=False,
+            profile_tracing=False,
+            perf_profile=False,
+            output_clip_path="/output/clips",
+            otlp_run_attributes_map={
+                "customer": "test-customer",
+                "empty": "",
+                "missing": None,
+                "numeric": 1,
+            },
+        )
+
+        with patch("cosmos_curator.core.utils.infra.profiling.logger.warning") as mock_warning:
+            config = _apply_profiling_config(args)
+
+        assert config is not None
+        assert config.otlp_run_attributes_map == {"customer": "test-customer"}
+        mock_warning.assert_called_once_with(
+            "Ignoring run attributes with invalid values from invoke args: empty, missing, numeric"
+        )
+
+    def test_chart_otlp_run_attributes_env_reaches_profiling_scope(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """NVCF env defaults survive profiling_scope and reach metrics push."""
+        monkeypatch.setenv("COSMOS_CURATOR_OTLP_METRICS_PUSH", "true")
+        monkeypatch.setenv(
+            ENV_OTLP_RUN_ATTRIBUTES_VALUES,
+            json.dumps({"function_id": "test-function", "version_id": "test-version"}),
+        )
+
+        captured: dict[str, object] = {}
+
+        class MetricsPushConfig:
+            def __init__(self, **kwargs: object) -> None:
+                self.kwargs = kwargs
+
+        def enable_metrics_push(config: MetricsPushConfig, *, cli_otlp_endpoint: str = "") -> None:
+            captured["config"] = config.kwargs
+            captured["cli_otlp_endpoint"] = cli_otlp_endpoint
+            captured["env_values"] = os.environ.get(ENV_OTLP_RUN_ATTRIBUTES_VALUES)
+
+        monkeypatch.setitem(
+            sys.modules,
+            "cosmos_curator.core.utils.infra.metrics_push",
+            SimpleNamespace(MetricsPushConfig=MetricsPushConfig, enable_metrics_push=enable_metrics_push),
+        )
+
+        args = argparse.Namespace(
+            perf_profile=False,
+            profile_cpu=False,
+            profile_memory=False,
+            profile_gpu=False,
+            profile_tracing=False,
+            output_clip_path="/output/clips",
+        )
+        nvcf_main._apply_observability_env_defaults(args)
+
+        with profiling_scope(args):
+            pass
+
+        assert args.otlp_run_attributes_map == {
+            "function_id": "test-function",
+            "version_id": "test-version",
+        }
+        assert json.loads(captured["env_values"]) == args.otlp_run_attributes_map
+        assert captured["config"]["enabled"] is True
+        assert captured["config"]["interval_seconds"] == 30
+        assert captured["config"]["include_run_attributes"] is True
 
 
 class TestProfilingWrapper:

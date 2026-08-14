@@ -112,6 +112,135 @@ class TestHelperFunctions:
         with pytest.raises(ValueError, match="request_id"):
             nvcf_main._get_progress_file("../escape")
 
+    def test_observability_env_defaults_fill_missing_args(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Chart-level observability overrides apply when invoke payload omits fields."""
+        monkeypatch.setenv("COSMOS_CURATOR_OTLP_METRICS_PUSH", "true")
+        monkeypatch.setenv("COSMOS_CURATOR_OTLP_METRICS_PUSH_INTERVAL", "17")
+        monkeypatch.setenv("COSMOS_CURATOR_PROFILE_TRACING", "true")
+        monkeypatch.setenv("COSMOS_CURATOR_PROFILE_TRACING_SAMPLING", "0.5")
+        monkeypatch.setenv("COSMOS_CURATOR_OTLP_RUN_ATTRIBUTES_VALUES", '{"function_id":"test-function"}')
+
+        args = argparse.Namespace(input_video_path="s3://in")
+
+        nvcf_main._apply_observability_env_defaults(args)
+
+        assert args.otlp_metrics_push is True
+        assert args.otlp_metrics_push_interval == 17
+        assert args.profile_tracing is True
+        assert args.profile_tracing_sampling == 0.5
+        assert args.otlp_run_attributes_map == {"function_id": "test-function"}
+
+    def test_observability_env_defaults_do_not_duplicate_pipeline_defaults(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Absent env overrides leave missing fields to existing pipeline defaults."""
+        monkeypatch.delenv("COSMOS_CURATOR_OTLP_METRICS_PUSH", raising=False)
+        monkeypatch.delenv("COSMOS_CURATOR_OTLP_METRICS_PUSH_INTERVAL", raising=False)
+        monkeypatch.delenv("COSMOS_CURATOR_PROFILE_TRACING", raising=False)
+        monkeypatch.delenv("COSMOS_CURATOR_PROFILE_TRACING_SAMPLING", raising=False)
+        monkeypatch.delenv("COSMOS_CURATOR_OTLP_RUN_ATTRIBUTES_VALUES", raising=False)
+
+        args = argparse.Namespace(input_video_path="s3://in")
+
+        nvcf_main._apply_observability_env_defaults(args)
+
+        assert not hasattr(args, "otlp_metrics_push")
+        assert not hasattr(args, "otlp_metrics_push_interval")
+        assert not hasattr(args, "profile_tracing")
+        assert not hasattr(args, "profile_tracing_sampling")
+        assert not hasattr(args, "otlp_run_attributes_map")
+
+    def test_observability_env_defaults_preserve_invoke_args(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Explicit invoke payload args remain authoritative over env defaults."""
+        monkeypatch.setenv("COSMOS_CURATOR_OTLP_METRICS_PUSH", "true")
+        monkeypatch.setenv("COSMOS_CURATOR_OTLP_METRICS_PUSH_INTERVAL", "17")
+        monkeypatch.setenv("COSMOS_CURATOR_PROFILE_TRACING", "true")
+        monkeypatch.setenv("COSMOS_CURATOR_PROFILE_TRACING_SAMPLING", "0.5")
+        monkeypatch.setenv("COSMOS_CURATOR_OTLP_RUN_ATTRIBUTES_VALUES", '{"function_id":"test-function"}')
+
+        args = argparse.Namespace(
+            otlp_metrics_push=False,
+            otlp_metrics_push_interval=9,
+            profile_tracing=False,
+            profile_tracing_sampling=0.25,
+            otlp_run_attributes_map={"function_id": "invoke-function"},
+        )
+
+        nvcf_main._apply_observability_env_defaults(args)
+
+        assert args.otlp_metrics_push is False
+        assert args.otlp_metrics_push_interval == 9
+        assert args.profile_tracing is False
+        assert args.profile_tracing_sampling == 0.25
+        assert args.otlp_run_attributes_map == {"function_id": "invoke-function"}
+
+    @pytest.mark.parametrize(
+        ("name", "value", "attr_name"),
+        [
+            ("COSMOS_CURATOR_OTLP_METRICS_PUSH_INTERVAL", "0", "otlp_metrics_push_interval"),
+            ("COSMOS_CURATOR_PROFILE_TRACING_SAMPLING", "-0.1", "profile_tracing_sampling"),
+            ("COSMOS_CURATOR_PROFILE_TRACING_SAMPLING", "1.1", "profile_tracing_sampling"),
+            ("COSMOS_CURATOR_PROFILE_TRACING_SAMPLING", "nan", "profile_tracing_sampling"),
+        ],
+    )
+    def test_observability_env_defaults_ignore_out_of_range_numbers(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        name: str,
+        value: str,
+        attr_name: str,
+    ) -> None:
+        """Chart overrides outside the CLI validators' bounds remain unset."""
+        monkeypatch.setenv(name, value)
+        args = argparse.Namespace()
+
+        nvcf_main._apply_observability_env_defaults(args)
+
+        assert not hasattr(args, attr_name)
+
+    @pytest.mark.parametrize("value", ["not-json", "[]"])
+    def test_observability_env_defaults_ignore_invalid_run_attributes(
+        self, monkeypatch: pytest.MonkeyPatch, value: str
+    ) -> None:
+        """Invalid chart-injected run attributes do not reach profiling args."""
+        monkeypatch.setenv("COSMOS_CURATOR_OTLP_RUN_ATTRIBUTES_VALUES", value)
+
+        args = argparse.Namespace()
+
+        nvcf_main._apply_observability_env_defaults(args)
+
+        assert not hasattr(args, "otlp_run_attributes_map")
+
+    def test_observability_env_defaults_preserve_explicit_empty_run_attributes(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An explicitly empty chart value clears run attributes."""
+        monkeypatch.setenv("COSMOS_CURATOR_OTLP_RUN_ATTRIBUTES_VALUES", "")
+
+        args = argparse.Namespace()
+
+        nvcf_main._apply_observability_env_defaults(args)
+
+        assert args.otlp_run_attributes_map == {}
+
+    def test_observability_env_defaults_warn_for_empty_run_attribute_values(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Dropped empty labels are reported without logging their values."""
+        monkeypatch.setenv(
+            "COSMOS_CURATOR_OTLP_RUN_ATTRIBUTES_VALUES",
+            '{"function_id":"test-function","empty":"","missing":null}',
+        )
+
+        with patch.object(nvcf_main.logger, "warning") as mock_warning:
+            args = argparse.Namespace()
+            nvcf_main._apply_observability_env_defaults(args)
+
+        assert args.otlp_run_attributes_map == {"function_id": "test-function"}
+        mock_warning.assert_called_once_with(
+            "Ignoring run attributes with invalid values from COSMOS_CURATOR_OTLP_RUN_ATTRIBUTES_VALUES: empty, missing"
+        )
+
 
 class TestRequestStatus:
     """Test request status functions."""
@@ -692,6 +821,46 @@ class TestFastAPIEndpoints:
             assert response.json()["message"] == "Pipeline executed successfully"
             mock_run.assert_called_once()
 
+    def test_run_pipeline_pexec_ray_job_failure_is_logged_once_without_traceback(
+        self, test_client: TestClient, mock_request_id: str
+    ) -> None:
+        """Synchronous Ray job failures return without duplicating captured diagnostics."""
+        fake_manager = MagicMock()
+        fake_manager.Value.return_value = SimpleNamespace(value=False)
+        fake_manager.Queue.return_value = queue.Queue()
+        fake_manager.list.return_value = []
+        fake_thread = MagicMock()
+        fake_stop_event = threading.Event()
+        message = "Ray job failed with return code 1"
+
+        with (
+            patch("cosmos_curator.core.cf.nvcf_main.Manager", return_value=fake_manager),
+            patch("cosmos_curator.core.cf.nvcf_main._setup_request", return_value=(fake_thread, fake_stop_event)),
+            patch(
+                "cosmos_curator.core.cf.nvcf_main.execute_pipeline",
+                side_effect=nvcf_main.RayJobLoggedError(message),
+            ),
+            patch(
+                "cosmos_curator.core.cf.nvcf_main._read_progress_and_log_files",
+                return_value=(None, "driver traceback was logged\n"),
+            ),
+            patch("cosmos_curator.core.cf.nvcf_main.logger.error") as mock_error,
+            patch.dict(nvcf_main.using_nvcf_status, {"get_req_sts": False}),
+        ):
+            response = test_client.post(
+                "/v1/run_pipeline",
+                headers={"NVCF-REQID": mock_request_id},
+                json={"pipeline": "split", "args": {"input_video_path": "/in", "output_clip_path": "/out"}},
+            )
+
+        assert response.status_code == HTTP_INTERNAL_SERVER_ERROR
+        error_details = response.json()["error"]
+        assert f"exception: {message}" in error_details
+        assert "exception_type: RayJobLoggedError" in error_details
+        assert "logs: driver traceback was logged\n" in error_details
+        assert "traceback:" not in error_details
+        mock_error.assert_called_once_with(f"Pipeline failed for request {mock_request_id}; details in Ray job log")
+
     def test_run_pipeline_direct_request_without_nvcf_request_id_uses_generated_fallback(
         self, test_client: TestClient
     ) -> None:
@@ -860,6 +1029,53 @@ class TestFastAPIEndpoints:
             assert response.status_code == HTTP_OK
             assert events == ["execute", "upload", "stop:False", "join:False"]
             assert ipc_status.value is False
+
+    def test_run_pipeline_direct_ray_job_failure_is_logged_once_without_traceback(
+        self, test_client: TestClient, mock_request_id: str
+    ) -> None:
+        """Direct Ray job failures do not duplicate diagnostics captured from the CLI."""
+        fake_manager = MagicMock()
+        ipc_status = SimpleNamespace(value=False)
+        fake_manager.Value.return_value = ipc_status
+        fake_manager.Queue.return_value = queue.Queue()
+        fake_manager.list.return_value = []
+        fake_stop_event = threading.Event()
+        executed = threading.Event()
+        joined = threading.Event()
+
+        class FakeProgressThread:
+            def join(self) -> None:
+                joined.set()
+
+        def fake_execute(*_args: object) -> None:
+            executed.set()
+            message = "Ray job failed with return code 1"
+            raise nvcf_main.RayJobLoggedError(message)
+
+        with (
+            patch("cosmos_curator.core.cf.nvcf_main.Manager", return_value=fake_manager),
+            patch(
+                "cosmos_curator.core.cf.nvcf_main._setup_request",
+                return_value=(FakeProgressThread(), fake_stop_event),
+            ),
+            patch("cosmos_curator.core.cf.nvcf_main.execute_pipeline", side_effect=fake_execute),
+            patch("cosmos_curator.core.cf.nvcf_main.gather_and_upload_outputs") as mock_upload,
+            patch("cosmos_curator.core.cf.nvcf_main.logger.error") as mock_error,
+            patch("cosmos_curator.core.cf.nvcf_main.logger.exception") as mock_exception,
+        ):
+            response = test_client.post(
+                "/v1/run_pipeline",
+                headers={"CURATOR-DIRECT-MODE": "true", "NVCF-REQID": mock_request_id},
+                json={"pipeline": "split", "args": {"input_video_path": "/in", "output_clip_path": "/out"}},
+            )
+            assert executed.wait(timeout=1)
+            assert joined.wait(timeout=1)
+
+        assert response.status_code == HTTP_OK
+        assert ipc_status.value is False
+        mock_upload.assert_not_called()
+        mock_error.assert_called_once_with(f"Pipeline failed for request {mock_request_id}; details in Ray job log")
+        mock_exception.assert_not_called()
 
     def test_run_pipeline_direct_non_presigned_request_returns_request_id(
         self, test_client: TestClient, mock_request_id: str
@@ -1030,10 +1246,10 @@ class TestProcessExecution:
             ]
         )
 
-    def test_do_run_process_failure(self) -> None:
-        """Test _do_run_process handles failure correctly."""
+    def test_do_run_process_raises_logged_ray_job_error(self) -> None:
+        """Ray CLI failures already have their diagnostics in the captured output."""
         mock_process = MagicMock()
-        mock_process.stdout = io.StringIO("")
+        mock_process.stdout = io.StringIO("Ray job failed\n")
         mock_process.poll.return_value = RETURN_CODE_1
         mock_process.returncode = RETURN_CODE_1
 
@@ -1043,8 +1259,11 @@ class TestProcessExecution:
         with patch("subprocess.Popen") as mock_popen:
             mock_popen.return_value = mock_process
 
-            with pytest.raises(RuntimeError, match="Process failed with return code 1"):
+            with pytest.raises(nvcf_main.RayJobLoggedError, match="Ray job failed with return code 1"):
                 nvcf_main._do_run_process(["false"], log_queue, ipc_status)  # type: ignore[arg-type]
+
+        assert log_queue.get_nowait() == "Ray job failed\n"
+        assert ipc_status.value is False
 
     def test_setup_request(self, mock_request_id: str, tmp_path: Path) -> None:
         """Test _setup_request initializes request tracking."""

@@ -47,6 +47,20 @@ else
 fi
 mv deploy_helm_file.json.new deploy_helm_file.json
 
+if [[ -n "${OBSERVABILITY_EXTRA_LABELS_JSON:-}" ]]; then
+  if jq -e 'type == "object" and all(.[]; type == "string")' <<< "${OBSERVABILITY_EXTRA_LABELS_JSON}" >/dev/null; then
+    jq --argjson labels "${OBSERVABILITY_EXTRA_LABELS_JSON}" \
+      '
+        .configuration.metrics.extraExternalLabels = ((.configuration.metrics.extraExternalLabels // {}) + $labels)
+        | .configuration.logging.otlp.extraLabels = ((.configuration.logging.otlp.extraLabels // {}) + $labels)
+      ' \
+      < deploy_helm_file.json > deploy_helm_file.json.new
+    mv deploy_helm_file.json.new deploy_helm_file.json
+  else
+    echo "WARNING: OBSERVABILITY_EXTRA_LABELS_JSON must be a JSON object with string values; skipping extra observability labels" >&2
+  fi
+fi
+
 # Echo deployment information
 echo "NVCF DEPLOYMENT"
 echo "*************************************"
@@ -70,15 +84,25 @@ cosmos-curator nvcf function deploy-function --data-file deploy_helm_file.json -
 
 # Wait for deployment to be active
 while true; do
-  status=$(cosmos-curator nvcf function get-deployment-detail | grep "Status")
-  if [[ $status =~ "DEPLOYING" ]]; then
+  deployment_detail="$(cosmos-curator nvcf function get-deployment-detail --json)"
+  if ! status="$(jq -er '.Status | select(type == "string" and length > 0)' <<< "${deployment_detail}")"; then
+    echo "Error: Deployment detail did not contain a valid Status."
+    echo "${deployment_detail}"
+    exit 1
+  fi
+  if [[ "${status}" == "DEPLOYING" ]]; then
     echo "Waiting for deployment to be active... (retrying in 10 seconds)"
     sleep 10
-  elif [[ $status =~ "ACTIVE" ]]; then
+  elif [[ "${status}" == "ACTIVE" ]]; then
     echo "Deployment is active"
     break
+  elif [[ "${status}" == "ERROR" ]]; then
+    echo "Error: Deployment entered ERROR state."
+    echo "${deployment_detail}"
+    exit 1
   else
-    echo "Error: Deployment status '$status' is not recognized."
+    echo "Error: Deployment status '${status:-<empty>}' is not recognized."
+    echo "${deployment_detail}"
     exit 1
   fi
 done

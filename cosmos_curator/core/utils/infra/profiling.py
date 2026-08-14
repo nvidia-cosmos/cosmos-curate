@@ -1231,7 +1231,8 @@ def _apply_profiling_config(args: argparse.Namespace) -> ProfilingConfig | None:
 
     Tracing is additionally enabled by ``COSMOS_CURATOR_PROFILE_TRACING``
     so it can be turned on for a whole deployment (Helm values, launcher
-    environment) rather than per invocation.  Either source enables it.
+    environment) rather than per invocation.  Once NVCF has normalized the
+    namespace, its value is authoritative so an invocation can opt out.
 
     Args:
         args: Parsed CLI namespace (must contain ``profile_cpu``,
@@ -1245,7 +1246,10 @@ def _apply_profiling_config(args: argparse.Namespace) -> ProfilingConfig | None:
     cpu = getattr(args, "profile_cpu", False)
     mem = getattr(args, "profile_memory", False)
     gpu = getattr(args, "profile_gpu", False)
-    tracing = getattr(args, "profile_tracing", False) or profile_tracing_enabled_via_env()
+    if getattr(args, "observability_env_defaults_applied", False):
+        tracing = getattr(args, "profile_tracing", False)
+    else:
+        tracing = getattr(args, "profile_tracing", False) or profile_tracing_enabled_via_env()
     # OTLP metrics push is not a sampled profiling backend; it lives on
     # ProfilingConfig purely as a transport carrier and must not flip
     # ``--perf-profile`` on its own.
@@ -1280,6 +1284,15 @@ def _apply_profiling_config(args: argparse.Namespace) -> ProfilingConfig | None:
     run_attributes_map = getattr(args, "otlp_run_attributes_map", {})
     if not isinstance(run_attributes_map, dict):
         run_attributes_map = {}
+    invalid_run_attribute_keys = sorted(
+        str(k)
+        for k, v in run_attributes_map.items()
+        if not isinstance(k, str) or not k or not isinstance(v, str) or not v
+    )
+    if invalid_run_attribute_keys:
+        logger.warning(
+            f"Ignoring run attributes with invalid values from invoke args: {', '.join(invalid_run_attribute_keys)}"
+        )
     normalized_run_attributes_map = {
         str(k): str(v) for k, v in run_attributes_map.items() if isinstance(k, str) and k and isinstance(v, str) and v
     }

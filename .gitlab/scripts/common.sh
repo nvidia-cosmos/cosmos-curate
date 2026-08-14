@@ -14,6 +14,66 @@ setup_s3_credentials() {
     echo "S3 credentials written to $output_path"
 }
 
+_export_empty_with_warning() {
+    local target_env="$1"
+    local warning="$2"
+
+    echo "WARNING: ${warning}; ${target_env} will be empty" >&2
+    printf -v "${target_env}" '%s' ""
+    export "${target_env}"
+}
+
+# Convert a base64-encoded PEM environment variable into a JSON-safe PEM string
+# with literal \n separators for envsubst-backed NVCF JSON templates.
+export_json_pem_from_base64_env() {
+    local source_env="$1"
+    local target_env="$2"
+    local source_value="${!source_env:-}"
+    local decoded_value
+
+    if [[ -z "${source_value}" ]]; then
+        _export_empty_with_warning "${target_env}" "${source_env} is unset or empty"
+        return 0
+    fi
+
+    if ! decoded_value="$(printf '%s' "${source_value}" | base64 -d 2>/dev/null)"; then
+        _export_empty_with_warning "${target_env}" "${source_env} is not valid base64"
+        return 0
+    fi
+    decoded_value="${decoded_value//$'\r'/}"
+
+    # Require a complete PEM block: -----BEGIN <LABEL>----- ... -----END <LABEL>-----
+    local pem_label=""
+    if [[ "${decoded_value}" =~ -----BEGIN\ ([A-Z0-9\ ]+)----- ]]; then
+        pem_label="${BASH_REMATCH[1]}"
+    fi
+    if [[ -z "${decoded_value}" || -z "${pem_label}" || "${decoded_value}" != *"-----END ${pem_label}-----"* ]]; then
+        _export_empty_with_warning "${target_env}" "${source_env} did not decode to PEM content"
+        return 0
+    fi
+
+    printf -v "${target_env}" '%s' "$(printf '%s\n' "${decoded_value}" | awk '{printf "%s\\n", $0}')"
+    export "${target_env}"
+}
+
+require_json_pem_from_base64_env() {
+    local source_env="$1"
+    local target_env="$2"
+
+    export_json_pem_from_base64_env "${source_env}" "${target_env}"
+    if [[ -z "${!target_env:-}" ]]; then
+        echo "ERROR: ${source_env} must contain base64-encoded PEM content for ${target_env}" >&2
+        return 1
+    fi
+}
+
+# Export JSON-safe OTLP client certificate values for NVCF function secrets.
+setup_otlp_nvcf_secret_env() {
+    require_json_pem_from_base64_env OTLP_LEAF_FULL_PEM_BASE64 HELM_OTLP_CLIENT_CERT_PEM || return 1
+    require_json_pem_from_base64_env OTLP_LEAF_KEY_PEM_BASE64 HELM_OTLP_CLIENT_KEY_PEM || return 1
+    require_json_pem_from_base64_env OTLP_LEAF_CA_PEM_BASE64 HELM_OTLP_CA_CERT_PEM || return 1
+}
+
 # Resolve branch prefix used in image and cache tags.
 # MR pipelines use target branch; push/web pipelines use commit branch.
 get_branch_prefix() {

@@ -9,6 +9,18 @@
         {
             "name": "byo-metrics-receiver-client-key",
             "value": "${HELM_BYO_METRICS_RECEIVER_CLIENT_KEY}"
+        },
+        {
+            "name": "otlp-client-crt",
+            "value": "${HELM_OTLP_CLIENT_CERT_PEM}"
+        },
+        {
+            "name": "otlp-client-key",
+            "value": "${HELM_OTLP_CLIENT_KEY_PEM}"
+        },
+        {
+            "name": "otlp-ca-crt",
+            "value": "${HELM_OTLP_CA_CERT_PEM}"
         }
     ]
 }

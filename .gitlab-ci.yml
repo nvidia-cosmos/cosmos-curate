@@ -85,6 +85,8 @@ variables:
   NVCF_MAX_CONCURRENCY: 2
   NVCF_INSTANCE_COUNT: 1
   HELM_THANOS_RECEIVER_URL: "$HELM_THANOS_RECEIVER_URL"
+  OTLP_ENDPOINT_URL: "$OTLP_ENDPOINT_URL"
+  OBSERVABILITY_EXTRA_LABELS_JSON: "$OBSERVABILITY_EXTRA_LABELS_JSON"
   HELM_BYO_METRICS_RECEIVER_CLIENT_CRT: $HELM_BYO_METRICS_RECEIVER_CLIENT_CRT
   HELM_BYO_METRICS_RECEIVER_CLIENT_KEY: $HELM_BYO_METRICS_RECEIVER_CLIENT_KEY
   # Request all GPUs on the 4x NVCF instance so the e2e pipeline can spread its
@@ -155,7 +157,7 @@ variables:
     value: "cosmos-curator"
   CICD_HELM_CHART_VERSION:
     description: "Helm chart version for the CICD pipeline"
-    value: "2.2.2"
+    value: "2.4.0"
   XENNA_REF:
     # No default value: when unset, build_xenna_wheel.sh builds the
     # cosmos-xenna submodule's currently-checked-out commit (i.e. the SHA
@@ -168,6 +170,9 @@ variables:
   VAULT_NAMESPACE: "$VAULT_NAMESPACE"
   VAULT_ROLE: "$VAULT_ROLE"
   VAULT_MOUNT_PATH: "$VAULT_MOUNT_PATH"
+  VAULT_OTLP_LEAF_PKI_PATH: "$VAULT_OTLP_LEAF_PKI_PATH"
+  VAULT_OTLP_LEAF_ROLE: "$VAULT_OTLP_LEAF_ROLE"
+  VAULT_OTLP_LEAF_COMMON_NAME: "$VAULT_OTLP_LEAF_COMMON_NAME"
 
   # Perf benchmark configuration
   PERF_NGC_NVCF_ORG_ID: "$PERF_NGC_NVCF_ORG_ID"
@@ -1146,8 +1151,10 @@ nvcf-helm:
     - source .gitlab/vault/vault-auth.sh
     - *setup_ci_builder_env
     - *setup_curator_cli
-    - export HELM_BYO_METRICS_RECEIVER_CLIENT_CRT=$(echo $HELM_BYO_METRICS_RECEIVER_CLIENT_CRT_BASE64 | base64 -d | awk '{printf "%s\\n", $0}')
-    - export HELM_BYO_METRICS_RECEIVER_CLIENT_KEY=$(echo $HELM_BYO_METRICS_RECEIVER_CLIENT_KEY_BASE64 | base64 -d | awk '{printf "%s\\n", $0}')
+    - source .gitlab/scripts/common.sh
+    - export_json_pem_from_base64_env HELM_BYO_METRICS_RECEIVER_CLIENT_CRT_BASE64 HELM_BYO_METRICS_RECEIVER_CLIENT_CRT
+    - export_json_pem_from_base64_env HELM_BYO_METRICS_RECEIVER_CLIENT_KEY_BASE64 HELM_BYO_METRICS_RECEIVER_CLIENT_KEY
+    - setup_otlp_nvcf_secret_env
   script:
     - *configure_nvcf_cli
     - .gitlab/scripts/nvcf_helm_deploy.sh

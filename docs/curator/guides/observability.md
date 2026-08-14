@@ -15,6 +15,7 @@
     - [Elasticsearch / log-shipper recommendations](#elasticsearch--log-shipper-recommendations)
     - [Worker log forwarding (`log_to_driver`)](#worker-log-forwarding-log_to_driver)
     - [Ray backend (C++) logs](#ray-backend-c-logs)
+    - [OTLP log sidecar](#otlp-log-sidecar)
   - [Performance Metrics](#performance-metrics)
   - [Grafana Dashboard](#grafana-dashboard)
   - [Deployment](#deployment)
@@ -414,6 +415,33 @@ chart (writes `RAY_BACKEND_LOG_JSON=1` to the curator ConfigMap) or export
 `RAY_BACKEND_LOG_JSON=1` yourself. Ray reads this env var natively; the curator/xenna
 code never sets or overrides it.
 
+### OTLP log sidecar
+
+On Helm/NVCF deployments, the chart can run an OpenTelemetry Collector sidecar on
+each StatefulSet pod to export Ray log files to a generic OTLP logs endpoint while
+leaving stdout/stderr logs unchanged for the platform log indexer:
+
+```yaml
+logging:
+  format: json
+  rayBackendJson: true
+  otlp:
+    enabled: true
+otlp:
+  endpoint: "https://otlp.example.com"
+  extractNVCFSecrets: true
+```
+
+The sidecar tails `/tmp/ray/session_*/logs/*.log`, `*.out`, and `*.err`, parses
+JSON-looking lines, and preserves non-JSON lines as text. By default it also copies
+the chart's metrics external labels into OTLP log resource attributes, so NVCF-provided
+metadata such as `function_id`, `version_id`, `gpu`, and `org` is available on log
+records.
+
+See the [Helm chart README](../../../charts/cosmos-curator/README.md#logging)
+and [NVCF guide](../../client/nvcf-guide.md#create-a-function) for the full mTLS
+secret configuration.
+
 ## Performance Metrics
 
 [Prometheus](https://prometheus.io/)-compatible metrics are exported at port `localhost:9002/metrics`.
@@ -501,6 +529,21 @@ the [Helm chart](../../../charts/cosmos-curator/README.md) provided includes a [
 which can scrape the metrics endpoint and [remote-write](https://prometheus.io/docs/specs/prw/remote_write_spec/)
 to a [Thanos-like](https://thanos.io/) endpoint.
 
+The Helm chart has three independent metrics export paths:
+
+- `metrics.remoteWrite.*`: the chart-managed collector scrapes curator/Ray
+  Prometheus metrics and exports them to Prometheus remote write.
+- `metrics.otlp.*`: the chart-managed collector scrapes the same Prometheus
+  metrics and exports them to OTLP metrics.
+- `metrics.otlpPush.*`: the curator container pushes in-pipeline metrics
+  directly to OTLP and does not use the chart-managed collector.
+
+`metrics.remoteWrite.enabled` and `metrics.otlp.enabled` can be enabled at the
+same time. In that mode, the chart-managed collector scrapes the Ray Prometheus
+endpoint and fans the same metric stream out to both exporters. Remote write uses
+`metrics.remoteWrite.certPath` / `keyPath`; collector OTLP uses the shared
+`otlp.tls.*` certificate paths.
+
 The relevant configurable entries in the chart can be found in [values.yaml](../../../charts/cosmos-curator/values.yaml):
 
 ```yaml
@@ -510,6 +553,16 @@ metrics:
     endpoint: ...
     certPath: ...
     keyPath: ...
+```
+
+Direct in-container OTLP metrics push uses the shared top-level OTLP transport:
+
+```yaml
+metrics:
+  otlpPush:
+    enabled: true
+otlp:
+  endpoint: "https://otlp.example.com"
 ```
 
 Do note that current version of the Helm chart will need some tweaks to work on vanilla Kubernetes clusters.

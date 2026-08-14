@@ -2,6 +2,10 @@
 {{- $otlpCaPath := include "curator-ray.otlp.caPath" . }}
 {{- $explicitOtlpClientCerts := and .Values.otlp.tls.certPath .Values.otlp.tls.keyPath }}
 {{- $otlpCertsEnabled := or .Values.otlp.tls.secret.enabled .Values.otlp.extractNVCFSecrets $explicitOtlpClientCerts }}
+{{- $collectJobDriverLogs := true }}
+{{- if hasKey .Values.logging.otlp "collectJobDriverLogs" }}
+{{- $collectJobDriverLogs = .Values.logging.otlp.collectJobDriverLogs }}
+{{- end }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -21,6 +25,9 @@ data:
           - /tmp/ray/session_*/logs/python*
           - /tmp/ray/session_*/logs/worker*
           - /tmp/ray/session_*/logs/log_monitor.log
+          {{- if not $collectJobDriverLogs }}
+          - /tmp/ray/session_*/logs/job-driver*
+          {{- end }}
           # Ray's autoscaler monitor.log is dominated by a verbose polling loop.
           # Leave it out of the default stream; enable it temporarily when
           # debugging Ray autoscaler or cluster status issues.

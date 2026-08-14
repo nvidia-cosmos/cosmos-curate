@@ -201,11 +201,8 @@ COSMOS_CURATOR_OTLP_RUN_ATTRIBUTES_VALUES: {{ include "curator-ray.otlp.runAttri
 {{- if and .Values.otlp.extractNVCFSecrets .Values.otlp.tls.caPath (not .Values.otlp.nvcfSecrets.caKey) -}}
 {{- fail "otlp.tls.caPath requires otlp.nvcfSecrets.caKey when otlp.extractNVCFSecrets is enabled" -}}
 {{- end -}}
-{{- /* The sidecar can only receive files through the chart-managed cert volume:
-       extraVolumes/extraVolumeMounts reach the curator container only. Rendering
-       ca_file for a path nothing mounts would fail the collector at startup. */ -}}
 {{- $chartRendersLogConfig := and .Values.logging.otlp.enabled (not .Values.logging.otlp.configMap.existingName) -}}
-{{- if and $chartRendersLogConfig $otlpCaPath (not (or .Values.otlp.tls.secret.enabled .Values.otlp.extractNVCFSecrets)) -}}
-{{- fail "otlp.tls.caPath needs a chart-managed source for the log sidecar; enable otlp.tls.secret.enabled or otlp.extractNVCFSecrets, or clear otlp.tls.caPath" -}}
+{{- if and $chartRendersLogConfig $otlpCaPath (not (and .Values.otlp.tls.certPath .Values.otlp.tls.keyPath)) (not (or .Values.otlp.tls.secret.enabled .Values.otlp.extractNVCFSecrets)) -}}
+{{- fail "otlp.tls.caPath without chart-managed certs must include certPath and keyPath so operator-managed extraVolumeMounts can provide the files" -}}
 {{- end -}}
 {{- end }}

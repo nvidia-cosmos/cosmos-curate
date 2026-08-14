@@ -28,5 +28,19 @@
             "value": "-----BEGIN RSA PRIVATE KEY-----\nFILL_IN_YOUR_THANOS_CLIENT_KEY\n-----END RSA PRIVATE KEY-----"
         }
     ],
+    "#otlpSecrets": [
+        {
+            "name": "otlp-client-crt",
+            "value": "-----BEGIN CERTIFICATE-----\nFILL_IN_YOUR_OTLP_LOGS_CLIENT_CERT\n-----END CERTIFICATE-----"
+        },
+        {
+            "name": "otlp-client-key",
+            "value": "-----BEGIN PRIVATE KEY-----\nFILL_IN_YOUR_OTLP_LOGS_CLIENT_KEY\n-----END PRIVATE KEY-----"
+        },
+        {
+            "name": "otlp-ca-crt",
+            "value": "-----BEGIN CERTIFICATE-----\nFILL_IN_YOUR_OTLP_LOGS_CA_CERT\n-----END CERTIFICATE-----"
+        }
+    ],
     "#telemetries": {"metricsTelemetryId":"VALUE" }
 }

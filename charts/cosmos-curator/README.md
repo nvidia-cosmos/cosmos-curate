@@ -144,9 +144,10 @@ helm uninstall --namespace cosmos-curator cosmos-curator
 
 Refer to the  `values.yaml` for a complete list and default values.
 
-`extraVolumes` and `extraVolumeMounts` add pod volumes and mounts for the main
-curator container only. They are not mounted into sidecars such as the OTLP log
-collector.
+`extraVolumes` and `extraVolumeMounts` add pod volumes and mounts to the main
+curator container. When `logging.otlp.enabled` is true, the same mounts are also
+added to the OTLP log collector sidecar so explicit `otlp.tls.*Path` settings can
+be backed by operator-managed volumes such as the cert-manager CSI driver.
 
 ### Persistent Storage
 
@@ -216,10 +217,12 @@ When `otlp.endpoint` is set, `${env:...}` values in `metrics.otlp.endpoint` are
 treated as collector-local defaults and the shared endpoint takes precedence.
 
 `otlp.tls.secret.*` mounts a direct Kubernetes Secret for pod-local OTLP
-consumers: the log sidecar, in-process traces, and in-process metrics push. The
-chart-managed metrics collector runs as the `opentelemetry-collector` subchart;
-to use a direct Kubernetes Secret there, configure
-`opentelemetry-collector.extraVolumes` and
+consumers: the log sidecar, in-process traces, and in-process metrics push. You
+can also set explicit `otlp.tls.certPath`, `keyPath`, and `caPath` values and
+mount those files with `extraVolumes`/`extraVolumeMounts`; those mounts are
+shared with the log sidecar when log export is enabled. The chart-managed metrics
+collector runs as the `opentelemetry-collector` subchart; to use a direct
+Kubernetes Secret there, configure `opentelemetry-collector.extraVolumes` and
 `opentelemetry-collector.extraVolumeMounts` to mount the files at the paths used
 by `otlp.tls.*`, or use `metrics.extractNVCFSecrets` for NVCF-style collector
 secrets.
@@ -284,13 +287,17 @@ For the full field schema, Elasticsearch / log-shipper guidance, the
 `log_to_driver` trade-off, and non-Helm (local Docker / Slurm) usage, see the
 **[Observability Guide](../../docs/curator/guides/observability.md#structured-logging)**.
 
-The chart can also duplicate Ray log files to a generic OTLP logs endpoint using
+The chart can also export Ray log files to a generic OTLP logs endpoint using
 an OpenTelemetry Collector sidecar on each StatefulSet pod. This does not change
 stdout/stderr logging, so platform log indexing continues to work.
 
 The sidecar tails `/tmp/ray/session_*/logs/*.log`, `*.out`, `*.err`, and
 `/tmp/curator/stdout-stderr.log` from the same emptyDir mounted by the curator
-container. `monitor.log` is excluded by default because Ray's autoscaler monitor
+container. Ray `job-driver-*` files are collected by default because they are the
+durable source for submitted-driver output. Set
+`logging.otlp.collectJobDriverLogs: false` only when another source, such as the
+stdout tee, is known to export the same lines. `monitor.log` is excluded by
+default because Ray's autoscaler monitor
 emits a verbose polling loop; include it temporarily only while debugging Ray
 autoscaler or cluster status issues. JSON-looking lines are parsed as JSON, Ray
 Python text logs have their timestamp and level mapped to OTLP log fields, and
