@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Cosmos Curator Client Setup.
+"""Cosmos Curator package setup.
 
 This script handles the setup and installation process for the Cosmos Curator package.
 It reads metadata from pyproject.toml, prepares the build directory structure,
@@ -22,11 +22,10 @@ and configures the package for distribution.
 
 import shutil
 import sys
-from collections.abc import Iterable
 from pathlib import Path
 
 import tomli
-from setuptools import find_packages, setup
+from setuptools import find_namespace_packages, setup
 
 
 def load_project_name() -> str:
@@ -47,168 +46,25 @@ def load_project_name() -> str:
 name = load_project_name()
 
 build_dir = "build"
-dist_dir = "dist"
 pkg_path = Path(build_dir) / name
-src_env_file = Path(name) / "core" / "utils" / "environment.py"
-src_sensors_dir = Path(name) / "core" / "sensors"
-src_sensor_examples_dir = src_sensors_dir / "examples"
-src_sensor_schemas_dir = src_sensors_dir / "schemas"
-src_sensor_scripts_dir = src_sensors_dir / "scripts"
-src_sensor_types_dir = src_sensors_dir / "types"
-src_sensor_utils_dir = src_sensors_dir / "utils"
-src_storage_dir = Path(name) / "core" / "utils" / "storage"
-src_pipelines_dir = Path(name) / "pipelines"
-src_ray_data_dir = src_pipelines_dir / "ray_data"
-src_init_file = Path(name) / "__init__.py"
-dst_core_dir = pkg_path / "core"
-dst_sensors_dir = dst_core_dir / "sensors"
-dst_sensor_examples_dir = dst_sensors_dir / "examples"
-dst_sensor_schemas_dir = dst_sensors_dir / "schemas"
-dst_sensor_scripts_dir = dst_sensors_dir / "scripts"
-dst_sensor_types_dir = dst_sensors_dir / "types"
-dst_sensor_utils_dir = dst_sensors_dir / "utils"
-dst_utils_dir = dst_core_dir / "utils"
-dst_storage_dir = dst_utils_dir / "storage"
-dst_client_dir = pkg_path / "client"
-dst_pipelines_dir = pkg_path / "pipelines"
-dst_ray_data_dir = dst_pipelines_dir / "ray_data"
-
-# Ensure build directory exists
-Path(build_dir).mkdir(exist_ok=True)
-
-# License header to be used in generated files
-copyright_header = [
-    "# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.",
-    "# SPDX-License-Identifier: Apache-2.0",
-    "#",
-    '# Licensed under the Apache License, Version 2.0 (the "License");',
-    "# you may not use this file except in compliance with the License.",
-    "# You may obtain a copy of the License at",
-    "#",
-    "# http://www.apache.org/licenses/LICENSE-2.0",
-    "#",
-    "# Unless required by applicable law or agreed to in writing, software",
-    '# distributed under the License is distributed on an "AS IS" BASIS,',
-    "# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.",
-    "# See the License for the specific language governing permissions and",
-    "# limitations under the License.",
-]
-
-
-def copy_required_files(src_dir: Path, dst_dir: Path, filenames: Iterable[str]) -> None:
-    """Copy selected files from a source directory, failing when any are missing."""
-    if not src_dir.is_dir():
-        error_msg = f"Missing source directory: {src_dir}"
-        raise FileNotFoundError(error_msg)
-
-    dst_dir.mkdir(parents=True, exist_ok=True)
-    for filename in filenames:
-        src_file = src_dir / filename
-        if not src_file.is_file():
-            error_msg = f"Missing required file: {src_file}"
-            raise FileNotFoundError(error_msg)
-        shutil.copy2(src_file, dst_dir)
+src_package_dir = Path(name)
 
 
 def build_package() -> None:
-    """Build the package before setup() is called."""
-    # Clean build and dist directories
-    shutil.rmtree(Path(build_dir), ignore_errors=True)
-    shutil.rmtree(Path(dist_dir), ignore_errors=True)
+    """Copy the source package into the non-editable build tree."""
+    # Recreate only the package staging tree. Distribution output belongs to
+    # the build frontend and must survive metadata-only setup invocations.
+    shutil.rmtree(pkg_path, ignore_errors=True)
 
     Path(build_dir).mkdir(exist_ok=True)
-
-    dst_utils_dir.mkdir(parents=True, exist_ok=True)
-
-    client_src = Path(name) / "client"
-    if client_src.exists():
-        shutil.copytree(client_src, dst_client_dir)
-
-    if src_init_file.exists():
-        shutil.copy2(src_init_file, pkg_path / "__init__.py")
-    else:
-        # Create a default __init__.py with license header if original doesn't exist
-        with (pkg_path / "__init__.py").open("w") as f:
-            for line in copyright_header:
-                f.write(f"{line}\n")
-
-    with (dst_core_dir / "__init__.py").open("w") as f:
-        for line in copyright_header:
-            f.write(f"{line}\n")
-
-    with (dst_utils_dir / "__init__.py").open("w") as f:
-        for line in copyright_header:
-            f.write(f"{line}\n")
-        f.write('"""Environment."""\n')
-
-    if src_env_file.exists():
-        shutil.copy2(src_env_file, dst_utils_dir)
-
+    if not src_package_dir.is_dir():
+        msg = f"Missing source package: {src_package_dir}"
+        raise FileNotFoundError(msg)
     shutil.copytree(
-        src_sensor_examples_dir,
-        dst_sensor_examples_dir,
-        ignore=shutil.ignore_patterns("__pycache__"),
+        src_package_dir,
+        pkg_path,
+        ignore=shutil.ignore_patterns("__pycache__", "*.py[cod]"),
     )
-
-    shutil.copytree(
-        src_sensor_schemas_dir,
-        dst_sensor_schemas_dir,
-        ignore=shutil.ignore_patterns("__pycache__"),
-    )
-
-    copy_required_files(src_sensors_dir, dst_sensors_dir, ("__init__.py",))
-    copy_required_files(
-        src_sensors_dir / "data",
-        dst_sensors_dir / "data",
-        (
-            "__init__.py",
-            "extrinsics.py",
-            "gps_data.py",
-            "imu_data.py",
-            "preintegrated_imu_data.py",
-            "egotrajectory_data.py",
-            "aligned_frame.py",
-            "sensor_data.py",
-        ),
-    )
-    copy_required_files(
-        src_sensors_dir / "preintegration",
-        dst_sensors_dir / "preintegration",
-        ("__init__.py", "imu_preintegrator.py"),
-    )
-    copy_required_files(
-        src_sensors_dir / "sampling",
-        dst_sensors_dir / "sampling",
-        ("__init__.py", "grid.py", "policy.py", "spec.py"),
-    )
-    copy_required_files(
-        src_sensors_dir / "sensors",
-        dst_sensors_dir / "sensors",
-        (
-            "__init__.py",
-            "ego_trajectory_sensor.py",
-            "gps_sensor.py",
-            "group.py",
-            "imu_sensor.py",
-            "preintegrated_imu_sensor.py",
-        ),
-    )
-    copy_required_files(src_sensor_scripts_dir, dst_sensor_scripts_dir, ("__init__.py", "validate_protobuf_mapping.py"))
-    copy_required_files(src_sensor_types_dir, dst_sensor_types_dir, ("__init__.py", "types.py"))
-    copy_required_files(
-        src_sensor_utils_dir,
-        dst_sensor_utils_dir,
-        ("__init__.py", "helpers.py", "io.py", "mcap.py", "protobuf_mapper.py", "validation.py"),
-    )
-
-    copy_required_files(src_storage_dir, dst_storage_dir, ("__init__.py", "zip_utils.py"))
-    copy_required_files(src_pipelines_dir, dst_pipelines_dir, ("__init__.py",))
-    copy_required_files(src_ray_data_dir, dst_ray_data_dir, ("__init__.py", "video_split_config.py"))
-
-    examples_src = Path("examples")
-    examples_dst = pkg_path / "examples"
-    if examples_src.exists():
-        shutil.copytree(examples_src, examples_dst)
 
 
 is_editable_install = any(command in sys.argv for command in ("develop", "editable_wheel"))
@@ -222,15 +78,7 @@ else:
 
 setup(
     name=name,
-    packages=find_packages(where=package_search_dir, include=[name, f"{name}.*"]),
+    packages=find_namespace_packages(where=package_search_dir, include=[name, f"{name}.*"]),
     include_package_data=True,
     package_dir=package_dir,
-    package_data={
-        name: [
-            "examples/**/*",
-            "core/sensors/examples/*.yaml",
-            "core/sensors/schemas/*.proto",
-        ],
-        f"{name}.client.nvcf_cli.ncf.launcher": ["helm_values/*"],
-    },
 )

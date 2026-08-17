@@ -16,12 +16,17 @@
 """Tests for the config-driven ``cosmos-curator pipeline`` CLI."""
 
 import json
+from dataclasses import replace
 from pathlib import Path
+from typing import cast
 
+import pytest
 import yaml
 from typer.testing import CliRunner
 
+import cosmos_curator.client.pipeline_cli.pipeline_app as pipeline_app_module
 from cosmos_curator.client.cli import cosmos_curator
+from cosmos_curator.next.core.pipeline_kind import PipelineKindRegistry, PipelinePreset
 
 runner = CliRunner()
 
@@ -188,8 +193,50 @@ def test_pipeline_template_help_lists_caption_judge() -> None:
     result = runner.invoke(cosmos_curator, ["pipeline", "template", "--help"])
 
     assert result.exit_code == 0
-    assert "caption_judge" in result.stdout
+    for kind in ("caption_judge", "robot-action-split", "video_split"):
+        assert kind in result.stdout
+    assert "robot_action_split" not in result.stdout
     assert "--profile" not in result.stdout
+
+
+def test_pipeline_template_rejects_unknown_kind_as_json() -> None:
+    """Registry validation preserves the machine-readable CLI error contract."""
+    result = runner.invoke(cosmos_curator, ["pipeline", "template", "unknown", "--json"])
+
+    assert result.exit_code == 2
+    assert json.loads(result.stderr) == {
+        "ok": False,
+        "error": "unknown_kind",
+        "message": (
+            "Unknown pipeline kind 'unknown'. Valid pipeline kinds: caption_judge, robot-action-split, video_split"
+        ),
+    }
+
+
+def test_pipeline_template_rejects_robot_action_split_underscore_spelling() -> None:
+    """The host CLI does not retain the abandoned underscore alias."""
+    result = runner.invoke(cosmos_curator, ["pipeline", "template", "robot_action_split", "--json"])
+
+    assert result.exit_code == 2
+    assert json.loads(result.stderr)["error"] == "unknown_kind"
+
+
+def test_pipeline_template_outputs_robot_action_split_payload() -> None:
+    """Robot-action templates share the structured discovery contract used by other kinds."""
+    result = runner.invoke(cosmos_curator, ["pipeline", "template", "robot-action-split", "--json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["kind"] == "robot-action-split"
+    assert payload["config"]["kind"] == "robot-action-split"
+    assert [field["path"] for field in payload["required_fields"]] == [
+        "schema_version",
+        "kind",
+        "input.uris",
+        "input.source_dataset",
+        "output.media_root",
+        "output.lance_uri",
+    ]
 
 
 def test_pipeline_template_outputs_base_yaml_by_default() -> None:
@@ -286,8 +333,39 @@ def test_pipeline_presets_list_and_show() -> None:
 
     assert list_result.exit_code == 0
     assert show_result.exit_code == 0
-    assert "caption.balanced" in {preset["qualified_name"] for preset in json.loads(list_result.stdout)["presets"]}
-    assert json.loads(show_result.stdout)["fragment"]["batch_size"] == 32
+    presets = json.loads(list_result.stdout)["presets"]
+    assert "caption.balanced" in {preset["qualified_name"] for preset in presets}
+    assert {preset["kind"] for preset in presets} == {"video_split"}
+    shown = json.loads(show_result.stdout)
+    assert shown["kind"] == "video_split"
+    assert shown["fragment"]["batch_size"] == 32
+
+
+@pytest.mark.parametrize("arguments", [["list"], ["show", "broken"]])
+def test_pipeline_presets_report_malformed_registration_as_json(
+    arguments: list[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Preset commands report a kind's malformed metadata through the JSON error contract."""
+    malformed_presets = cast("list[PipelinePreset]", [{"name": "broken"}])
+    malformed_kind = replace(
+        pipeline_app_module.BUILTIN_PIPELINE_KINDS.get("video_split"),
+        name="broken",
+        list_presets=lambda: malformed_presets,
+    )
+    monkeypatch.setattr(
+        pipeline_app_module,
+        "BUILTIN_PIPELINE_KINDS",
+        PipelineKindRegistry((malformed_kind,)),
+    )
+
+    result = runner.invoke(cosmos_curator, ["pipeline", "presets", *arguments, "--json"])
+
+    assert result.exit_code == 2
+    assert json.loads(result.stderr) == {
+        "ok": False,
+        "error": "invalid_preset",
+        "message": "Pipeline kind 'broken' preset at index 0 has invalid 'qualified_name'; expected a non-empty string",
+    }
 
 
 def test_pipeline_run_is_not_host_cli_command(tmp_path: Path) -> None:

@@ -74,22 +74,9 @@ requires = ["setuptools==80.7.1", "setuptools-scm[simple]>=8", "jinja2>=3.1.6", 
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.package-data]
-# Ship non-Python data files inside the wheel. Needed so that runtime
-# ``importlib.resources`` lookups (e.g. prompt templates used by
-# ``PerEventCaptionStage``) keep working when the package is installed from a
-# built wheel rather than from the source tree.
-"cosmos_curator" = [
-    "client/slurm_cli/sbatch.sh.j2",
-    "pipelines/video/captioning/prompts/*.md",
-    "core/sensors/examples/*.yaml",
-    "core/sensors/schemas/*.proto",
-    "configs/*.json",
-    "models/configs/*.json",
-]
-"cosmos_curator.client.view_cli" = [
-    "clip_viewer_webdocs/*",
-    "clip_viewer_webdocs/images/*",
-]
+# Non-editable builds stage the complete package tree, so retain every
+# non-Python asset without maintaining a second file manifest here.
+"cosmos_curator" = ["**/*"]
 
 [tool.setuptools_scm]
 local_scheme = "no-local-version"

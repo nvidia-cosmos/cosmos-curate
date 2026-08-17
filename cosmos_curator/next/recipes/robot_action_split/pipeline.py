@@ -43,7 +43,6 @@ import argparse
 import itertools
 import json
 import tempfile
-import uuid
 from pathlib import Path
 
 from loguru import logger
@@ -59,14 +58,10 @@ def run(
     config_path: str,
     *,
     config: ResolvedRobotActionSplitConfig | None = None,
-    attempt_id: str | None = None,
 ) -> dict[str, object]:
     """Discover spans, cut clips, write outputs, and publish to Lance."""
     resolved = config if config is not None else load_config(config_path)
     logger.info(f"Loaded config: kind={resolved.kind} source_dataset={resolved.input.source_dataset}")
-
-    attempt_id = attempt_id or str(uuid.uuid4())
-    logger.info(f"Attempt ID: {attempt_id}")
 
     # Phase 1: span discovery (pre-Ray, CPU-bound parquet reads).
     logger.info("Discovering spans...")
@@ -76,7 +71,7 @@ def run(
 
     if not batches:
         logger.warning("No spans found; nothing to do.")
-        return {"attempt_id": attempt_id, "total": 0, "succeeded": 0, "failed": 0, "outcomes": []}
+        return {"total": 0, "succeeded": 0, "failed": 0, "outcomes": []}
 
     # Phase 2: cut + action bin (Ray Data in production; sequential loop for iteration).
     # TODO: replace with Ray Data flat_map once the sequential path is validated.
@@ -125,7 +120,6 @@ def run(
         lance_version = write_outcomes_to_lance(
             all_outcomes,
             lance_uri=resolved.output.lance_uri,
-            attempt_id=attempt_id,
             storage_options=storage_options,
         )
         logger.info(f"Lance dataset version after write: {lance_version}")
@@ -141,7 +135,6 @@ def run(
         summary_path.write_text(
             json.dumps(
                 {
-                    "attempt_id": attempt_id,
                     "total": len(all_outcomes),
                     "succeeded": len(succeeded),
                     "failed": len(failed),
@@ -154,7 +147,6 @@ def run(
         logger.info(f"Summary written to {summary_path}")
 
     return {
-        "attempt_id": attempt_id,
         "total": len(all_outcomes),
         "succeeded": len(succeeded),
         "failed": len(failed),

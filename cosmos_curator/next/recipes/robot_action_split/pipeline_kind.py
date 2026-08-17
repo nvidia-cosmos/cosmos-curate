@@ -15,14 +15,11 @@
 
 """Config-backed pipeline-kind surface for the ``robot-action-split`` recipe."""
 
-import sys
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
-from uuid import UUID, uuid4
 
-from cosmos_curator.next.core.pipeline_kind import PipelineKind, PipelineRunOutput, PreparedPipelineRun
-from cosmos_curator.next.recipes.robot_action_split.config import resolve_config
+from cosmos_curator.next.core.pipeline_kind import PipelineKind, PipelinePreset, PipelineRunOutput, PreparedPipelineRun
 
 
 def _template_yaml() -> str:
@@ -41,20 +38,40 @@ output:
 
 
 def _template_payload() -> dict[str, Any]:
+    import yaml  # noqa: PLC0415
+
     return {
         "kind": "robot-action-split",
         "description": "Extract subtask clips from a LeRobot/Mecka dataset and publish to Lance.",
-        "config": _template_yaml(),
+        "required_fields": [
+            {"path": "schema_version", "example": 1},
+            {"path": "kind", "example": "robot-action-split"},
+            {
+                "path": "input.uris",
+                "example": ["s3://example-bucket/robot_data/lerobot_v30/my_dataset/"],
+            },
+            {"path": "input.source_dataset", "example": "my_dataset"},
+            {"path": "output.media_root", "example": "s3://example-bucket/robot_clips/"},
+            {
+                "path": "output.lance_uri",
+                "example": "s3://example-bucket/robot_clips/lance/clips.lance",
+            },
+        ],
+        "config": yaml.safe_load(_template_yaml()),
     }
 
 
 def _validate(config: Path, overrides: Sequence[str]) -> dict[str, object]:
+    from cosmos_curator.next.recipes.robot_action_split.config import resolve_config  # noqa: PLC0415
+
     resolve_config(config, overrides=list(overrides))
     return {"ok": True}
 
 
 def _render(config: Path, overrides: Sequence[str]) -> str:
     import json  # noqa: PLC0415
+
+    from cosmos_curator.next.recipes.robot_action_split.config import resolve_config  # noqa: PLC0415
 
     cfg = resolve_config(config, overrides=list(overrides))
     return json.dumps(cfg.model_dump(mode="json"), indent=2) + "\n"
@@ -70,7 +87,7 @@ def _schema_json() -> str:
     return json.dumps(ResolvedRobotActionSplitConfig.model_json_schema(), indent=2) + "\n"
 
 
-def _list_presets() -> list[dict[str, Any]]:
+def _list_presets() -> list[PipelinePreset]:
     return []
 
 
@@ -78,16 +95,15 @@ def _prepare_run(
     config: Path,
     *,
     set_overrides: list[str],
-    attempt_id: UUID | None,
 ) -> PreparedPipelineRun:
+    from cosmos_curator.next.recipes.robot_action_split.config import resolve_config  # noqa: PLC0415
+
     resolved_config = resolve_config(config, overrides=set_overrides)
-    resolved_attempt_id = attempt_id or uuid4()
 
     def run() -> PipelineRunOutput:
         from cosmos_curator.next.recipes.robot_action_split.pipeline import run as _run  # noqa: PLC0415
 
-        sys.stderr.write(f"Attempt ID: {resolved_attempt_id}\n")
-        summary = _run(str(config), config=resolved_config, attempt_id=str(resolved_attempt_id))
+        summary = _run(str(config), config=resolved_config)
         return PipelineRunOutput(
             json_payload=summary,
             message=(

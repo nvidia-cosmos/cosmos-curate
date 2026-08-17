@@ -24,7 +24,7 @@ import yaml
 from pydantic import BaseModel, Field
 
 from cosmos_curator.core.utils.config.pydantic_config import STRICT_CONFIG_MODEL_CONFIG
-from cosmos_curator.pipelines.ray_data._runtime import DEFAULT_IO_SLOTS_PER_NODE
+from cosmos_curator.pipelines.ray_data.constants import DEFAULT_IO_SLOTS_PER_NODE
 
 _YAML_SUFFIXES = frozenset({".yaml", ".yml"})
 

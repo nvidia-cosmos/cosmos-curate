@@ -19,8 +19,7 @@ from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, Protocol
-from uuid import UUID
+from typing import Any, NotRequired, Protocol, TypedDict
 
 
 @dataclass(frozen=True)
@@ -34,6 +33,15 @@ class PipelineRunOutput:
 PreparedPipelineRun = Callable[[], PipelineRunOutput]
 
 
+class PipelinePreset(TypedDict):
+    """Metadata required for a discoverable pipeline preset."""
+
+    name: str
+    qualified_name: str
+    fragment: dict[str, Any]
+    section: NotRequired[str]
+
+
 class PipelineRunPreparer(Protocol):
     """Resolve one user config and return its deferred runtime invocation."""
 
@@ -42,7 +50,6 @@ class PipelineRunPreparer(Protocol):
         config: Path,
         *,
         set_overrides: list[str],
-        attempt_id: UUID | None,
     ) -> PreparedPipelineRun:
         """Prepare one deferred pipeline execution."""
         ...
@@ -58,7 +65,7 @@ class PipelineKind:
     validate: Callable[[Path, Sequence[str]], dict[str, object]]
     render: Callable[[Path, Sequence[str]], str]
     schema_json: Callable[[], str]
-    list_presets: Callable[[], list[dict[str, Any]]]
+    list_presets: Callable[[], list[PipelinePreset]]
     prepare_run: PipelineRunPreparer
 
 

@@ -18,12 +18,26 @@
 import json
 import sys
 from pathlib import Path
-from typing import Annotated, NoReturn
+from typing import Annotated, NoReturn, cast
 
 import typer
 from typer import Argument, Option
 
-from cosmos_curator.client.pipeline_cli.pipeline_config import PipelineName, load_pipeline_kind, pipeline_cli_spec
+from cosmos_curator.client.pipeline_cli.builtin_pipeline_kinds import BUILTIN_PIPELINE_KINDS
+from cosmos_curator.client.pipeline_cli.pipeline_config import load_pipeline_kind_name
+from cosmos_curator.next.core.pipeline_kind import PipelinePreset
+
+
+def _complete_pipeline_kind(incomplete: str) -> list[str]:
+    return [name for name in BUILTIN_PIPELINE_KINDS.names() if name.startswith(incomplete)]
+
+
+_PIPELINE_KIND_HELP = f"Pipeline kind ({', '.join(BUILTIN_PIPELINE_KINDS.names())})."
+_KIND_ARGUMENT = Argument(
+    help=_PIPELINE_KIND_HELP,
+    metavar="KIND",
+    autocompletion=_complete_pipeline_kind,
+)
 
 pipeline_app = typer.Typer(
     help="Pipeline config tooling.",
@@ -39,15 +53,18 @@ pipeline_app.add_typer(presets_app, name="presets")
 @pipeline_app.command(no_args_is_help=True)
 def template(
     *,
-    kind: Annotated[PipelineName, Argument(help="Pipeline kind template to print.")],
+    kind: Annotated[str, _KIND_ARGUMENT],
     json_output: Annotated[bool, Option("--json", help="Emit machine-readable JSON output.")] = False,
 ) -> None:
     """Print an editable config template for a supported pipeline kind."""
-    spec = pipeline_cli_spec(kind)
+    try:
+        pipeline_kind = BUILTIN_PIPELINE_KINDS.get(kind)
+    except ValueError as exc:
+        _fail("unknown_kind", exc, json_output=json_output)
     if json_output:
-        typer.echo(json.dumps(spec.template_payload(), indent=2))
+        typer.echo(json.dumps(pipeline_kind.template_payload(), indent=2))
     else:
-        sys.stdout.write(spec.template_yaml())
+        sys.stdout.write(pipeline_kind.template_yaml())
 
 
 @pipeline_app.command(no_args_is_help=True)
@@ -64,8 +81,8 @@ def validate(
     from pydantic import ValidationError  # noqa: PLC0415
 
     try:
-        kind = load_pipeline_kind(config)
-        payload = pipeline_cli_spec(kind).validate(config, set_overrides or [])
+        pipeline_kind = BUILTIN_PIPELINE_KINDS.get(load_pipeline_kind_name(config))
+        payload = pipeline_kind.validate(config, set_overrides or [])
     except (OSError, TypeError, ValueError, ValidationError) as exc:
         _fail("invalid", exc, json_output=json_output)
 
@@ -89,8 +106,8 @@ def render(
     from pydantic import ValidationError  # noqa: PLC0415
 
     try:
-        kind = load_pipeline_kind(config)
-        rendered = pipeline_cli_spec(kind).render(config, set_overrides or [])
+        pipeline_kind = BUILTIN_PIPELINE_KINDS.get(load_pipeline_kind_name(config))
+        rendered = pipeline_kind.render(config, set_overrides or [])
     except (OSError, TypeError, ValueError, ValidationError) as exc:
         _fail("render_failed", exc, json_output=json_output)
     sys.stdout.write(rendered)
@@ -99,12 +116,72 @@ def render(
 @pipeline_app.command(no_args_is_help=True)
 def schema(
     *,
-    kind: Annotated[PipelineName, Argument(help="Pipeline kind schema to print.")],
+    kind: Annotated[str, _KIND_ARGUMENT],
     json_output: Annotated[bool, Option("--json", help="Emit machine-readable JSON output.")] = False,
 ) -> None:
     """Print JSON Schema for a supported pipeline config."""
-    del json_output
-    sys.stdout.write(pipeline_cli_spec(kind).schema_json())
+    try:
+        pipeline_kind = BUILTIN_PIPELINE_KINDS.get(kind)
+    except ValueError as exc:
+        _fail("unknown_kind", exc, json_output=json_output)
+    sys.stdout.write(pipeline_kind.schema_json())
+
+
+class _RegisteredPipelinePreset(PipelinePreset):
+    kind: str
+
+
+class _InvalidPresetRegistrationError(ValueError):
+    """A pipeline kind returned malformed preset metadata."""
+
+
+def _validate_registered_preset(kind: str, index: int, raw_preset: object) -> _RegisteredPipelinePreset:
+    location = f"Pipeline kind {kind!r} preset at index {index}"
+    if not isinstance(raw_preset, dict):
+        msg = f"{location} must be a dictionary"
+        raise _InvalidPresetRegistrationError(msg)
+
+    for field in ("name", "qualified_name"):
+        value = raw_preset.get(field)
+        if not isinstance(value, str) or not value:
+            msg = f"{location} has invalid {field!r}; expected a non-empty string"
+            raise _InvalidPresetRegistrationError(msg)
+
+    if not isinstance(raw_preset.get("fragment"), dict):
+        msg = f"{location} has invalid 'fragment'; expected a dictionary"
+        raise _InvalidPresetRegistrationError(msg)
+
+    if "section" in raw_preset and not isinstance(raw_preset["section"], str):
+        msg = f"{location} has invalid 'section'; expected a string"
+        raise _InvalidPresetRegistrationError(msg)
+
+    preset = cast("_RegisteredPipelinePreset", dict(raw_preset))
+    preset["kind"] = kind
+    return preset
+
+
+def _registered_presets() -> list[_RegisteredPipelinePreset]:
+    presets: list[_RegisteredPipelinePreset] = []
+    for pipeline_kind in BUILTIN_PIPELINE_KINDS:
+        for index, preset in enumerate(pipeline_kind.list_presets()):
+            presets.append(_validate_registered_preset(pipeline_kind.name, index, preset))
+    return presets
+
+
+def _find_preset(name: str) -> _RegisteredPipelinePreset:
+    matches = [
+        preset
+        for preset in _registered_presets()
+        if preset["qualified_name"] == name or ("." not in name and preset["name"] == name)
+    ]
+    if not matches:
+        msg = f"Unknown pipeline preset: {name}"
+        raise ValueError(msg)
+    if len(matches) > 1:
+        choices = ", ".join(f"{preset['kind']}:{preset['qualified_name']}" for preset in matches)
+        msg = f"Ambiguous preset {name!r}; matches: {choices}"
+        raise ValueError(msg)
+    return matches[0]
 
 
 @presets_app.command("list")
@@ -112,10 +189,11 @@ def list_presets(
     *,
     json_output: Annotated[bool, Option("--json", help="Emit machine-readable JSON output.")] = False,
 ) -> None:
-    """List packaged video_split presets."""
-    from cosmos_curator.pipelines.ray_data.video_split.config import list_video_split_presets  # noqa: PLC0415
-
-    presets = list_video_split_presets()
+    """List presets exposed by registered pipeline kinds."""
+    try:
+        presets = _registered_presets()
+    except _InvalidPresetRegistrationError as exc:
+        _fail("invalid_preset", exc, json_output=json_output)
     if json_output:
         typer.echo(json.dumps({"presets": presets}, indent=2))
         return
@@ -130,15 +208,12 @@ def show_preset(
     name: Annotated[str, Argument(help="Preset name, e.g. caption.balanced or balanced.")],
     json_output: Annotated[bool, Option("--json", help="Emit machine-readable JSON output.")] = False,
 ) -> None:
-    """Show one packaged video_split preset."""
-    from cosmos_curator.pipelines.ray_data.video_split.config import (  # noqa: PLC0415
-        ConfigResolutionError,
-        show_video_split_preset,
-    )
-
+    """Show one registered preset by qualified or unique short name."""
     try:
-        preset = show_video_split_preset(name)
-    except ConfigResolutionError as exc:
+        preset = _find_preset(name)
+    except _InvalidPresetRegistrationError as exc:
+        _fail("invalid_preset", exc, json_output=json_output)
+    except ValueError as exc:
         _fail("unknown_preset", exc, json_output=json_output)
 
     if json_output:

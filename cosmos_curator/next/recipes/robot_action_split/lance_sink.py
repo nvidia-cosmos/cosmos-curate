@@ -68,7 +68,6 @@ def write_outcomes_to_lance(
     outcomes: list[dict[str, Any]],
     *,
     lance_uri: str,
-    attempt_id: str,
     storage_options: dict[str, str] | None = None,
 ) -> int:
     """Write successful outcomes as Lance fragments and commit.
@@ -80,8 +79,6 @@ def write_outcomes_to_lance(
     Args:
         outcomes: List of outcome dicts as returned by ``process_batch``.
         lance_uri: Target Lance dataset URI (local path or ``s3://...``).
-        attempt_id: Identifier stored in the transaction properties for
-            idempotency and observability.
         storage_options: Lance storage options (AWS credentials, endpoint, …).
             Obtain via ``get_lance_storage_options(lance_uri, profile_name=...)``.
 
@@ -120,7 +117,7 @@ def write_outcomes_to_lance(
     )
 
     # Commit all fragments in one atomic transaction.
-    properties = {"attempt_id": attempt_id}
+    properties = {"kind": "robot-action-split", "snapshot": "clips"}
     if read_version is None:
         operation: lance.LanceOperation.BaseOperation = lance.LanceOperation.Overwrite(OUTCOME_SCHEMA, fragments)
         transaction = lance.Transaction(
@@ -139,10 +136,10 @@ def write_outcomes_to_lance(
     # TODO(Ray migration): handle the concurrent-create race.
     # When Ray flat_map is wired in, multiple workers may simultaneously see
     # dataset=None and each attempt an Overwrite.  Only one will win; the rest
-    # will raise a conflict error that propagates uncaught here.  The fix is to
+    # will raise a conflict error that propagates uncaught here.  One fix is to
     # wrap this commit in try/except, detect the conflict, reopen the dataset,
-    # and retry as Append — mirroring the recovery path in
-    # cosmos_curator/next/recipes/video_split/lance_sink.py.
+    # and retry as Append.  The other is video_split's shape, where workers only
+    # write fragments and a single driver-side commit owns the transaction.
     # Intentionally deferred: the current sequential pipeline makes this race
     # impossible in practice.
     committed = lance.LanceDataset.commit(

@@ -49,7 +49,6 @@ import json
 import pickle
 import shutil
 import subprocess
-import uuid
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -373,9 +372,8 @@ def test_lance_write_produces_correct_rows(dataset: Path, output_path: Path) -> 
     batches = discover_spans(config)
     outcomes = process_batch(batches[0], config=config)
 
-    attempt_id = str(uuid.uuid4())
     lance_uri = str(output_path / "clips.lance")
-    version = write_outcomes_to_lance(outcomes, lance_uri=lance_uri, attempt_id=attempt_id)
+    version = write_outcomes_to_lance(outcomes, lance_uri=lance_uri)
 
     assert version >= 1
 
@@ -391,10 +389,10 @@ def test_lance_write_produces_correct_rows(dataset: Path, output_path: Path) -> 
     subtask_names = set(table.column("subtask_name").to_pylist())
     assert subtask_names == {"pick up coffee pod", "open machine lid"}
 
-    # attempt_id is recorded in the transaction properties.
+    # The transaction identifies the producing recipe and snapshot.
     txn = ds.read_transaction(version)
     assert txn is not None
-    assert txn.transaction_properties.get("attempt_id") == attempt_id
+    assert txn.transaction_properties == {"kind": "robot-action-split", "snapshot": "clips"}
 
 
 def test_full_pipeline_run(dataset: Path, output_path: Path) -> None:
@@ -427,6 +425,7 @@ def test_full_pipeline_run(dataset: Path, output_path: Path) -> None:
     assert summary["succeeded"] == 2
     assert summary["failed"] == 0
     assert summary["total"] == 2
+    assert "attempt_id" not in summary
 
     # Lance table committed with 2 rows.
     ds = lance.dataset(str(output_path / "clips.lance"))
