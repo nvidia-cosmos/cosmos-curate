@@ -25,36 +25,6 @@ _HALF_SECOND_NS = 500_000_000
 _ONE_SECOND_NS = 1_000_000_000
 
 
-def _quaternion_to_rotation_xyzw(quaternion: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:
-    """Convert a unit XYZW quaternion into a rotation matrix."""
-    x, y, z, w = quaternion
-    return np.array(
-        [
-            [1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)],
-            [2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)],
-            [2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)],
-        ],
-        dtype=np.float64,
-    )
-
-
-def _so3_log(rotation: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:
-    """Return the rotation vector of a near-identity rotation matrix."""
-    cosine = float(np.clip((np.trace(rotation) - 1.0) * 0.5, -1.0, 1.0))
-    angle = float(np.arccos(cosine))
-    vee = np.array(
-        [
-            rotation[2, 1] - rotation[1, 2],
-            rotation[0, 2] - rotation[2, 0],
-            rotation[1, 0] - rotation[0, 1],
-        ],
-        dtype=np.float64,
-    )
-    if angle < 1e-8:
-        return 0.5 * vee
-    return angle * vee / (2.0 * np.sin(angle))
-
-
 def _imu_data(  # noqa: PLR0913
     *,
     align_timestamps_ns: npt.NDArray[np.int64] | None = None,
@@ -67,9 +37,6 @@ def _imu_data(  # noqa: PLR0913
     linear_acceleration_bias_m_s2: npt.NDArray[np.float64] | None = None,
     angular_velocity_bias_valid: npt.NDArray[np.bool_] | None = None,
     linear_acceleration_bias_valid: npt.NDArray[np.bool_] | None = None,
-    angular_velocity_covariance: npt.NDArray[np.float64] | None = None,
-    linear_acceleration_covariance: npt.NDArray[np.float64] | None = None,
-    with_covariance: bool = False,
 ) -> ImuData:
     timestamps = (
         np.array([0, _HALF_SECOND_NS, _ONE_SECOND_NS], dtype=np.int64)
@@ -78,7 +45,6 @@ def _imu_data(  # noqa: PLR0913
     )
     sensor_timestamps = timestamps + 100 if sensor_timestamps_ns is None else sensor_timestamps_ns
     zeros = np.zeros((len(timestamps), 3), dtype=np.float64)
-    covariance = np.repeat(np.eye(3, dtype=np.float64)[None, :, :] * 0.04, len(timestamps), axis=0)
     return ImuData(
         align_timestamps_ns=timestamps,
         sensor_timestamps_ns=sensor_timestamps,
@@ -90,12 +56,6 @@ def _imu_data(  # noqa: PLR0913
         linear_acceleration_bias_m_s2=linear_acceleration_bias_m_s2,
         angular_velocity_bias_valid=angular_velocity_bias_valid,
         linear_acceleration_bias_valid=linear_acceleration_bias_valid,
-        angular_velocity_covariance=(
-            covariance if with_covariance and angular_velocity_covariance is None else angular_velocity_covariance
-        ),
-        linear_acceleration_covariance=(
-            covariance if with_covariance and linear_acceleration_covariance is None else linear_acceleration_covariance
-        ),
     )
 
 
@@ -140,14 +100,11 @@ def test_preintegrate_imu_uses_sensor_clock_for_physical_time() -> None:
 
 
 def test_preintegrate_imu_uses_rounded_sensor_fraction_for_boundary_payloads() -> None:
-    """Boundary values and covariance weights match the rounded sensor endpoint."""
+    """Boundary values match the rounded sensor endpoint."""
     align_timestamps = np.array([0, 3], dtype=np.int64)
     sensor_timestamps = np.array([0, 5], dtype=np.int64)
     acceleration = np.array([[0.0, 0.0, 0.0], [6.0, 0.0, 0.0]], dtype=np.float64)
     bias = np.array([[0.0, 0.0, 0.0], [3.0, 0.0, 0.0]], dtype=np.float64)
-    gyro_covariance = np.array([np.eye(3) * 0.04, np.eye(3) * 0.16], dtype=np.float64)
-    accel_covariance = np.zeros((2, 3, 3), dtype=np.float64)
-
     result = preintegrate_imu(
         _imu_data(
             align_timestamps_ns=align_timestamps,
@@ -155,8 +112,6 @@ def test_preintegrate_imu_uses_rounded_sensor_fraction_for_boundary_payloads() -
             linear_acceleration_m_s2=acceleration,
             linear_acceleration_bias_m_s2=bias,
             linear_acceleration_bias_valid=np.ones((2, 3), dtype=np.bool_),
-            angular_velocity_covariance=gyro_covariance,
-            linear_acceleration_covariance=accel_covariance,
         ),
         np.array([0, 1], dtype=np.int64),
     )
@@ -165,8 +120,6 @@ def test_preintegrate_imu_uses_rounded_sensor_fraction_for_boundary_payloads() -
     assert result.integration_duration_ns.tolist() == [0, 2]
     np.testing.assert_allclose(result.delta_velocity_m_s[1, 0], 1.2e-9, rtol=0.0, atol=1e-20)
     np.testing.assert_allclose(result.linear_acceleration_bias_used_m_s2[1, 0], 0.6, atol=1e-12)
-    assert result.integration_covariance is not None
-    np.testing.assert_allclose(result.integration_covariance[1, 0, 0], 1.28e-19, rtol=0.0, atol=1e-30)
 
 
 def test_preintegrate_imu_ignores_zero_weight_boundary_sources() -> None:
@@ -358,118 +311,6 @@ def test_preintegrate_imu_requires_boundary_support() -> None:
         ImuIntegrationInvalidReason.FIRST_ALIGNMENT.value,
         ImuIntegrationInvalidReason.MISSING_BOUNDARY_SUPPORT.value,
     ]
-
-
-def test_preintegrate_imu_propagates_measurement_covariance() -> None:
-    """Shared midpoint samples contribute once with their combined weight."""
-    result = preintegrate_imu(
-        _imu_data(with_covariance=True),
-        np.array([0, _ONE_SECOND_NS], dtype=np.int64),
-    )
-
-    assert result.integration_covariance is not None
-    covariance = result.integration_covariance[1]
-    np.testing.assert_allclose(covariance, covariance.T, atol=1e-12)
-    assert np.all(np.linalg.eigvalsh(covariance) >= -1e-12)
-    assert np.trace(covariance) > 0.0
-    np.testing.assert_allclose(covariance[0, 0], 0.015, atol=1e-12)
-
-
-def test_preintegrate_imu_covariance_preserves_interpolated_source_weights() -> None:
-    """Boundary interpolation combines raw-source Jacobians before covariance."""
-    timestamps = np.array([0, _ONE_SECOND_NS], dtype=np.int64)
-    gyro_covariance = np.zeros((2, 3, 3), dtype=np.float64)
-    gyro_covariance[0] = np.eye(3) * 0.04
-    gyro_covariance[1] = np.eye(3) * 0.16
-    accel_covariance = np.zeros((2, 3, 3), dtype=np.float64)
-
-    result = preintegrate_imu(
-        _imu_data(
-            align_timestamps_ns=timestamps,
-            sensor_timestamps_ns=timestamps,
-            angular_velocity_covariance=gyro_covariance,
-            linear_acceleration_covariance=accel_covariance,
-        ),
-        np.array([100_000_000, 600_000_000], dtype=np.int64),
-    )
-
-    assert result.integration_covariance is not None
-    expected = 0.325**2 * 0.04 + 0.175**2 * 0.16
-    np.testing.assert_allclose(result.integration_covariance[1, 0, 0], expected, atol=1e-12)
-
-
-def test_preintegrate_imu_covariance_matches_full_raw_finite_difference() -> None:
-    """Analytic covariance matches raw-sample Jacobians for a 3-D interpolated interval."""
-    timestamps = np.array([0, 400_000_000, _ONE_SECOND_NS], dtype=np.int64)
-    grid = np.array([100_000_000, 900_000_000], dtype=np.int64)
-    gyro = np.array([[0.1, -0.2, 0.3], [0.2, 0.1, -0.1], [-0.1, 0.3, 0.2]], dtype=np.float64)
-    acceleration = np.array([[1.0, 0.2, -0.1], [0.4, -0.3, 0.8], [0.2, 0.5, 0.6]], dtype=np.float64)
-    gyro_covariance = np.repeat(np.diag([1e-4, 2e-4, 3e-4])[None], 3, axis=0)
-    accel_covariance = np.repeat(np.diag([4e-4, 5e-4, 6e-4])[None], 3, axis=0)
-    covariance_result = preintegrate_imu(
-        _imu_data(
-            align_timestamps_ns=timestamps,
-            sensor_timestamps_ns=timestamps,
-            angular_velocity_rad_s=gyro,
-            linear_acceleration_m_s2=acceleration,
-            angular_velocity_covariance=gyro_covariance,
-            linear_acceleration_covariance=accel_covariance,
-        ),
-        grid,
-    )
-    assert covariance_result.integration_covariance is not None
-    nominal_rotation = _quaternion_to_rotation_xyzw(covariance_result.delta_rotation_quat_xyzw[1])
-    epsilon = 1e-6
-    jacobian = np.zeros((9, 18), dtype=np.float64)
-
-    for raw_index in range(3):
-        for measurement_axis in range(6):
-            gyro_plus = np.array(gyro, copy=True)
-            gyro_minus = np.array(gyro, copy=True)
-            accel_plus = np.array(acceleration, copy=True)
-            accel_minus = np.array(acceleration, copy=True)
-            if measurement_axis < 3:
-                gyro_plus[raw_index, measurement_axis] += epsilon
-                gyro_minus[raw_index, measurement_axis] -= epsilon
-            else:
-                axis = measurement_axis - 3
-                accel_plus[raw_index, axis] += epsilon
-                accel_minus[raw_index, axis] -= epsilon
-            plus = preintegrate_imu(
-                _imu_data(
-                    align_timestamps_ns=timestamps,
-                    sensor_timestamps_ns=timestamps,
-                    angular_velocity_rad_s=gyro_plus,
-                    linear_acceleration_m_s2=accel_plus,
-                ),
-                grid,
-            )
-            minus = preintegrate_imu(
-                _imu_data(
-                    align_timestamps_ns=timestamps,
-                    sensor_timestamps_ns=timestamps,
-                    angular_velocity_rad_s=gyro_minus,
-                    linear_acceleration_m_s2=accel_minus,
-                ),
-                grid,
-            )
-            plus_rotation = _quaternion_to_rotation_xyzw(plus.delta_rotation_quat_xyzw[1])
-            minus_rotation = _quaternion_to_rotation_xyzw(minus.delta_rotation_quat_xyzw[1])
-            column = 6 * raw_index + measurement_axis
-            jacobian[:3, column] = (
-                _so3_log(nominal_rotation.T @ plus_rotation) - _so3_log(nominal_rotation.T @ minus_rotation)
-            ) / (2.0 * epsilon)
-            jacobian[3:6, column] = (plus.delta_velocity_m_s[1] - minus.delta_velocity_m_s[1]) / (2.0 * epsilon)
-            jacobian[6:9, column] = (plus.delta_position_m[1] - minus.delta_position_m[1]) / (2.0 * epsilon)
-
-    raw_covariance = np.zeros((18, 18), dtype=np.float64)
-    for raw_index in range(3):
-        start = 6 * raw_index
-        raw_covariance[start : start + 3, start : start + 3] = gyro_covariance[raw_index]
-        raw_covariance[start + 3 : start + 6, start + 3 : start + 6] = accel_covariance[raw_index]
-    expected = jacobian @ raw_covariance @ jacobian.T
-
-    np.testing.assert_allclose(covariance_result.integration_covariance[1], expected, rtol=2e-5, atol=1e-9)
 
 
 def test_preintegrate_imu_interpolates_alignment_boundaries() -> None:

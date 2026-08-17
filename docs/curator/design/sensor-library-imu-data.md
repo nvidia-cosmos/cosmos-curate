@@ -335,7 +335,6 @@ The public output includes:
 - converted sensor-clock endpoints and physical `integration_duration_ns`
 - `delta_rotation_quat_xyzw`, `delta_velocity_m_s`, and `delta_position_m`
 - the gyroscope and accelerometer bias values used, with per-axis availability
-- optional `9 x 9` covariance ordered as `[rotation, velocity, position]`
 - total, used, and rejected source-sample counts
 - maximum observed source-sample gap
 - interval validity and an `ImuIntegrationInvalidReason` bit mask
@@ -345,7 +344,7 @@ integration for the complete requested grid. The requested grid and raw
 `ImuData.align_timestamps_ns` share the external reference-clock domain. Their
 paired raw sensor timestamps convert each requested boundary into the IMU
 clock. Measurement interpolation, segment `dt`, duration, bias averaging,
-covariance propagation, and maximum-gap reporting then use only that physical
+and maximum-gap reporting then use only that physical
 sensor timeline. Adjacent intervals reuse a boundary measurement for
 interpolation but do not duplicate elapsed time.
 
@@ -353,14 +352,14 @@ For each sensor-time segment, the engine averages endpoint angular velocity to
 form the SO(3) rotation increment. It rotates the left acceleration with the
 segment's starting orientation and the right acceleration with the ending
 orientation, then averages those two vectors in the common interval-start
-frame. Velocity, position, and their covariance Jacobians use that conventional
-endpoint-frame midpoint force.
+frame. Velocity and position use that conventional endpoint-frame midpoint
+force.
 
 Sensor endpoints are represented as integer nanoseconds. After align-to-sensor
-conversion rounds an endpoint, measurement values, biases, validity, and
-covariance source weights recompute their interpolation fraction from that same
-rounded sensor coordinate. This keeps every boundary payload consistent with
-the timestamp used for physical integration.
+conversion rounds an endpoint, measurement values, biases, and validity
+recompute their interpolation fraction from that same rounded sensor
+coordinate. This keeps every boundary payload consistent with the timestamp
+used for physical integration.
 
 Recording-wide preparation normalizes measurement validity, replaces invalid
 bias axes with zero, and computes bias-corrected gyroscope and accelerometer
@@ -382,17 +381,7 @@ No external alignment row is dropped.
 Deltas are expressed in the interval's starting IMU frame. Accelerometer values
 remain specific force: preintegration does not apply a world gravity vector,
 initial pose, initial velocity, or rig extrinsics. Those belong to a future
-egomotion estimator. When both raw angular-velocity and linear-acceleration
-covariances are present, the engine performs first-order propagation into the
-optional per-interval motion covariance. It retains raw-source interpolation
-weights, combines repeated uses of the same midpoint endpoint before applying
-that row's covariance, and includes same-step gyroscope uncertainty in
-velocity and position. The rotation block uses a right-local SO(3) tangent
-error. Propagation assumes independent raw rows, no gyroscope/accelerometer
-cross-covariance, and deterministic biases. It does not add external
-noise-density or bias-random-walk models. Neighboring output intervals can
-still be mutually correlated when they share a raw row; the per-row `(N, 9, 9)`
-contract does not represent cross-row covariance.
+egomotion estimator.
 
 `PreintegratedImuSensor` wraps an `ImuSensor`. On demand it:
 
@@ -446,7 +435,7 @@ The implementation includes:
 1. `cosmos_curator/core/sensors/data/imu_data.py`, with an attrs-based
    `ImuData` class matching this design note.
 2. `cosmos_curator/core/sensors/data/preintegrated_imu_data.py`, with the
-   interval-delta, quality, bias, and covariance contract.
+   interval-delta, quality, and bias contract.
 3. `cosmos_curator/core/sensors/preintegration/imu_preintegrator.py`, with
    recording-wide preparation, boundary interpolation, contiguous slicing, and
    midpoint SO(3) integration.

@@ -149,16 +149,6 @@ def test_preintegrated_imu_data_rejects_first_alignment_reason_on_sliced_row() -
         PreintegratedImuData(**sliced_values)
 
 
-def test_preintegrated_imu_data_accepts_optional_motion_covariance() -> None:
-    """Motion covariance should be optional when ImuData lacks measurement covariance."""
-    without_covariance = _make_preintegrated_data()
-    covariance = np.zeros((2, 9, 9), dtype=np.float64)
-    with_covariance = _make_preintegrated_data(integration_covariance=covariance)
-
-    assert without_covariance.integration_covariance is None
-    np.testing.assert_array_equal(with_covariance.integration_covariance, covariance)
-
-
 def test_preintegrated_imu_data_arrays_are_readonly_without_mutating_callers() -> None:
     """Every output array should be a read-only view over caller-owned storage."""
     delta_velocity = np.zeros((2, 3), dtype=np.float64)
@@ -181,12 +171,6 @@ def test_preintegrated_imu_data_arrays_are_readonly_without_mutating_callers() -
         ("delta_position_m", np.zeros((2, 3), dtype=np.float32), "dtype float64"),
         ("delta_rotation_quat_xyzw", np.zeros((2, 4), dtype=np.float64), "unit norm"),
         ("angular_velocity_bias_available", np.ones((2, 3), dtype=np.uint8), "dtype bool"),
-        ("integration_covariance", np.zeros((2, 15, 15), dtype=np.float64), r"shape \(N, 9, 9\)"),
-        (
-            "integration_covariance",
-            np.tile(np.diag([1.0] * 8 + [-1.0]), (2, 1, 1)),
-            "positive semidefinite",
-        ),
     ],
 )
 def test_preintegrated_imu_data_rejects_invalid_array_contracts(

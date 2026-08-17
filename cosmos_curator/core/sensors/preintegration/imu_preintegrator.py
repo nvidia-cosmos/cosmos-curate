@@ -22,7 +22,6 @@ import numpy.typing as npt
 from cosmos_curator.core.sensors.data.imu_data import ImuData
 from cosmos_curator.core.sensors.data.preintegrated_imu_data import (
     MIN_INTEGRATION_SAMPLES,
-    MOTION_ERROR_SIZE,
     ImuIntegrationInvalidReason,
     PreintegratedImuData,
 )
@@ -30,13 +29,7 @@ from cosmos_curator.core.sensors.utils.validation import require_strictly_increa
 
 _NS_PER_SECOND = 1_000_000_000
 _VECTOR_SIZE = 3
-_ROTATION_ERROR_SLICE = slice(0, 3)
-_VELOCITY_ERROR_SLICE = slice(3, 6)
-_POSITION_ERROR_SLICE = slice(6, 9)
-_GYRO_MEASUREMENT_ERROR_SLICE = slice(0, 3)
-_ACCEL_MEASUREMENT_ERROR_SLICE = slice(3, 6)
 _SMALL_ANGLE = 1e-10
-_MEASUREMENT_ERROR_SIZE = 2 * _VECTOR_SIZE
 
 
 @dataclass(frozen=True)
@@ -74,7 +67,6 @@ class _IntervalSamples:
     angular_velocity_bias_available: npt.NDArray[np.bool_]
     linear_acceleration_bias_available: npt.NDArray[np.bool_]
     measurement_valid: npt.NDArray[np.bool_]
-    source_weights: tuple[tuple[tuple[int, float], ...], ...]
     support_slice: slice
 
 
@@ -90,12 +82,11 @@ class _IntervalBounds:
 
 @dataclass(frozen=True)
 class _IntegratedMotion:
-    """One interval's integrated motion and optional covariance."""
+    """One interval's integrated motion."""
 
     rotation: npt.NDArray[np.float64]
     velocity_m_s: npt.NDArray[np.float64]
     position_m: npt.NDArray[np.float64]
-    covariance: npt.NDArray[np.float64] | None
 
 
 def _skew(vector: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:
@@ -121,22 +112,6 @@ def _so3_exp(rotation_vector: npt.NDArray[np.float64]) -> npt.NDArray[np.float64
     angle_squared = angle * angle
     return np.asarray(
         identity + (np.sin(angle) / angle) * skew + ((1.0 - np.cos(angle)) / angle_squared) * (skew @ skew),
-        dtype=np.float64,
-    )
-
-
-def _so3_right_jacobian(rotation_vector: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:
-    """Return the SO(3) right Jacobian for one rotation vector."""
-    angle = float(np.linalg.norm(rotation_vector))
-    skew = _skew(rotation_vector)
-    identity = np.eye(_VECTOR_SIZE, dtype=np.float64)
-    if angle < _SMALL_ANGLE:
-        return identity - 0.5 * skew + (skew @ skew) / 6.0
-    angle_squared = angle * angle
-    return np.asarray(
-        identity
-        - ((1.0 - np.cos(angle)) / angle_squared) * skew
-        + ((angle - np.sin(angle)) / (angle_squared * angle)) * (skew @ skew),
         dtype=np.float64,
     )
 
@@ -241,18 +216,6 @@ def _sensor_domain_point(
         align_point.left_index,
         align_point.right_index,
         sensor_alpha,
-    )
-
-
-def _source_weights(point: _InterpolationPoint) -> tuple[tuple[int, float], ...]:
-    """Return raw-row interpolation weights for one assembled point."""
-    if point.left_index == point.right_index or point.alpha <= 0.0:
-        return ((point.left_index, 1.0),)
-    if point.alpha >= 1.0:
-        return ((point.right_index, 1.0),)
-    return (
-        (point.left_index, 1.0 - point.alpha),
-        (point.right_index, point.alpha),
     )
 
 
@@ -408,8 +371,6 @@ def _build_interval_samples(
         interior_slice=slice(first_interior, past_interior),
         support_slice=sensor_bounds.support_slice,
     )
-    interior_indices = range(first_interior, past_interior)
-
     return _IntervalSamples(
         timestamps_ns=np.concatenate(
             (
@@ -443,17 +404,12 @@ def _build_interval_samples(
             sensor_bounds,
         ),
         measurement_valid=_assemble_bool_interval(prepared.measurement_valid, sensor_bounds),
-        source_weights=(
-            _source_weights(sensor_bounds.start),
-            *(((index, 1.0),) for index in interior_indices),
-            _source_weights(sensor_bounds.end),
-        ),
         support_slice=bounds.support_slice,
     )
 
 
-def _integrate_interval_without_covariance(samples: _IntervalSamples) -> _IntegratedMotion:
-    """Integrate one interval without allocating covariance state."""
+def _integrate_interval(samples: _IntervalSamples) -> _IntegratedMotion:
+    """Integrate one interval with midpoint updates."""
     rotation = np.eye(_VECTOR_SIZE, dtype=np.float64)
     velocity = np.zeros(_VECTOR_SIZE, dtype=np.float64)
     position = np.zeros(_VECTOR_SIZE, dtype=np.float64)
@@ -478,166 +434,7 @@ def _integrate_interval_without_covariance(samples: _IntervalSamples) -> _Integr
         rotation=rotation,
         velocity_m_s=velocity,
         position_m=position,
-        covariance=None,
     )
-
-
-def _step_error_jacobians(  # noqa: PLR0913
-    rotation: npt.NDArray[np.float64],
-    left_angular_velocity: npt.NDArray[np.float64],
-    right_angular_velocity: npt.NDArray[np.float64],
-    left_acceleration: npt.NDArray[np.float64],
-    right_acceleration: npt.NDArray[np.float64],
-    dt: float,
-) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64], npt.NDArray[np.float64]]:
-    """Linearize one discrete midpoint step in a right-local rotation frame."""
-    phi = 0.5 * (left_angular_velocity + right_angular_velocity) * dt
-    rotation_increment = _so3_exp(phi)
-    right_jacobian = _so3_right_jacobian(phi)
-    rotated_right_acceleration = rotation_increment @ right_acceleration
-    state_rotation_jacobian = -0.5 * rotation @ (_skew(left_acceleration) + _skew(rotated_right_acceleration))
-    right_acceleration_rotation_jacobian = -rotation @ rotation_increment @ _skew(right_acceleration)
-
-    transition = np.eye(MOTION_ERROR_SIZE, dtype=np.float64)
-    transition[_ROTATION_ERROR_SLICE, _ROTATION_ERROR_SLICE] = rotation_increment.T
-    transition[_VELOCITY_ERROR_SLICE, _ROTATION_ERROR_SLICE] = dt * state_rotation_jacobian
-    transition[_POSITION_ERROR_SLICE, _ROTATION_ERROR_SLICE] = 0.5 * dt * dt * state_rotation_jacobian
-    transition[_POSITION_ERROR_SLICE, _VELOCITY_ERROR_SLICE] = np.eye(_VECTOR_SIZE) * dt
-
-    gyro_rotation_jacobian = 0.5 * dt * right_jacobian
-    gyro_velocity_jacobian = 0.25 * dt * dt * right_acceleration_rotation_jacobian @ right_jacobian
-    gyro_position_jacobian = 0.125 * dt**3 * right_acceleration_rotation_jacobian @ right_jacobian
-    left_measurement_jacobian = np.zeros((MOTION_ERROR_SIZE, _MEASUREMENT_ERROR_SIZE), dtype=np.float64)
-    right_measurement_jacobian = np.zeros((MOTION_ERROR_SIZE, _MEASUREMENT_ERROR_SIZE), dtype=np.float64)
-    for measurement_jacobian in (left_measurement_jacobian, right_measurement_jacobian):
-        measurement_jacobian[_ROTATION_ERROR_SLICE, _GYRO_MEASUREMENT_ERROR_SLICE] = gyro_rotation_jacobian
-        measurement_jacobian[_VELOCITY_ERROR_SLICE, _GYRO_MEASUREMENT_ERROR_SLICE] = gyro_velocity_jacobian
-        measurement_jacobian[_POSITION_ERROR_SLICE, _GYRO_MEASUREMENT_ERROR_SLICE] = gyro_position_jacobian
-    left_measurement_jacobian[_VELOCITY_ERROR_SLICE, _ACCEL_MEASUREMENT_ERROR_SLICE] = 0.5 * dt * rotation
-    left_measurement_jacobian[_POSITION_ERROR_SLICE, _ACCEL_MEASUREMENT_ERROR_SLICE] = 0.25 * dt * dt * rotation
-    right_measurement_jacobian[_VELOCITY_ERROR_SLICE, _ACCEL_MEASUREMENT_ERROR_SLICE] = (
-        0.5 * dt * rotation @ rotation_increment
-    )
-    right_measurement_jacobian[_POSITION_ERROR_SLICE, _ACCEL_MEASUREMENT_ERROR_SLICE] = (
-        0.25 * dt * dt * rotation @ rotation_increment
-    )
-    return transition, left_measurement_jacobian, right_measurement_jacobian
-
-
-def _raw_measurement_covariance(imu_data: ImuData, index: int) -> npt.NDArray[np.float64]:
-    """Return one raw row's block-diagonal gyro/acceleration covariance."""
-    assert imu_data.angular_velocity_covariance is not None
-    assert imu_data.linear_acceleration_covariance is not None
-    covariance = np.zeros((_MEASUREMENT_ERROR_SIZE, _MEASUREMENT_ERROR_SIZE), dtype=np.float64)
-    covariance[_GYRO_MEASUREMENT_ERROR_SLICE, _GYRO_MEASUREMENT_ERROR_SLICE] = imu_data.angular_velocity_covariance[
-        index
-    ]
-    covariance[_ACCEL_MEASUREMENT_ERROR_SLICE, _ACCEL_MEASUREMENT_ERROR_SLICE] = (
-        imu_data.linear_acceleration_covariance[index]
-    )
-    return covariance
-
-
-def _direct_source_jacobians(
-    left_measurement_jacobian: npt.NDArray[np.float64],
-    right_measurement_jacobian: npt.NDArray[np.float64],
-    left_weights: tuple[tuple[int, float], ...],
-    right_weights: tuple[tuple[int, float], ...],
-) -> dict[int, npt.NDArray[np.float64]]:
-    """Combine both midpoint endpoint contributions by original raw row."""
-    direct: dict[int, npt.NDArray[np.float64]] = {}
-    for measurement_jacobian, weights in (
-        (left_measurement_jacobian, left_weights),
-        (right_measurement_jacobian, right_weights),
-    ):
-        for raw_index, weight in weights:
-            contribution = weight * measurement_jacobian
-            if raw_index in direct:
-                direct[raw_index] += contribution
-            else:
-                direct[raw_index] = np.array(contribution, copy=True)
-    return direct
-
-
-def _integrate_interval_with_covariance(samples: _IntervalSamples, imu_data: ImuData) -> _IntegratedMotion:
-    """Integrate one interval and preserve shared raw-sample correlations."""
-    rotation = np.eye(_VECTOR_SIZE, dtype=np.float64)
-    velocity = np.zeros(_VECTOR_SIZE, dtype=np.float64)
-    position = np.zeros(_VECTOR_SIZE, dtype=np.float64)
-    covariance: npt.NDArray[np.float64] = np.zeros(
-        (MOTION_ERROR_SIZE, MOTION_ERROR_SIZE),
-        dtype=np.float64,
-    )
-    active_sensitivities: dict[int, npt.NDArray[np.float64]] = {}
-
-    for index in range(len(samples.timestamps_ns) - 1):
-        dt = (int(samples.timestamps_ns[index + 1]) - int(samples.timestamps_ns[index])) / _NS_PER_SECOND
-        left_angular_velocity = samples.corrected_angular_velocity_rad_s[index]
-        right_angular_velocity = samples.corrected_angular_velocity_rad_s[index + 1]
-        left_acceleration = samples.corrected_linear_acceleration_m_s2[index]
-        right_acceleration = samples.corrected_linear_acceleration_m_s2[index + 1]
-        rotation_increment = _so3_exp(0.5 * (left_angular_velocity + right_angular_velocity) * dt)
-        acceleration_start_frame = 0.5 * (
-            rotation @ left_acceleration + rotation @ rotation_increment @ right_acceleration
-        )
-        transition, left_measurement_jacobian, right_measurement_jacobian = _step_error_jacobians(
-            rotation,
-            left_angular_velocity,
-            right_angular_velocity,
-            left_acceleration,
-            right_acceleration,
-            dt,
-        )
-        direct = _direct_source_jacobians(
-            left_measurement_jacobian,
-            right_measurement_jacobian,
-            samples.source_weights[index],
-            samples.source_weights[index + 1],
-        )
-        transformed = {raw_index: transition @ sensitivity for raw_index, sensitivity in active_sensitivities.items()}
-
-        covariance = transition @ covariance @ transition.T
-        for raw_index, direct_jacobian in direct.items():
-            transformed_jacobian = transformed.get(
-                raw_index,
-                np.zeros((MOTION_ERROR_SIZE, _MEASUREMENT_ERROR_SIZE), dtype=np.float64),
-            )
-            raw_covariance = _raw_measurement_covariance(imu_data, raw_index)
-            covariance += (
-                transformed_jacobian @ raw_covariance @ direct_jacobian.T
-                + direct_jacobian @ raw_covariance @ transformed_jacobian.T
-                + direct_jacobian @ raw_covariance @ direct_jacobian.T
-            )
-        covariance = 0.5 * (covariance + covariance.T)
-
-        updated_sensitivities: dict[int, npt.NDArray[np.float64]] = {}
-        for raw_index, _weight in samples.source_weights[index + 1]:
-            updated_sensitivities[raw_index] = (
-                transformed.get(
-                    raw_index,
-                    np.zeros((MOTION_ERROR_SIZE, _MEASUREMENT_ERROR_SIZE), dtype=np.float64),
-                )
-                + direct[raw_index]
-            )
-        active_sensitivities = updated_sensitivities
-
-        position = position + velocity * dt + 0.5 * acceleration_start_frame * dt * dt
-        velocity = velocity + acceleration_start_frame * dt
-        rotation = rotation @ rotation_increment
-
-    return _IntegratedMotion(
-        rotation=rotation,
-        velocity_m_s=velocity,
-        position_m=position,
-        covariance=covariance,
-    )
-
-
-def _integrate_interval(samples: _IntervalSamples, imu_data: ImuData) -> _IntegratedMotion:
-    """Dispatch to the covariance path only when both raw covariance arrays exist."""
-    if imu_data.angular_velocity_covariance is None or imu_data.linear_acceleration_covariance is None:
-        return _integrate_interval_without_covariance(samples)
-    return _integrate_interval_with_covariance(samples, imu_data)
 
 
 def _time_average(
@@ -712,12 +509,6 @@ def preintegrate_imu(  # noqa: C901, PLR0915
     if row_count:
         invalid_reason[0] = ImuIntegrationInvalidReason.FIRST_ALIGNMENT.value
 
-    propagate_covariance = (
-        imu_data.angular_velocity_covariance is not None and imu_data.linear_acceleration_covariance is not None
-    )
-    covariance = (
-        np.zeros((row_count, MOTION_ERROR_SIZE, MOTION_ERROR_SIZE), dtype=np.float64) if propagate_covariance else None
-    )
     prepared = _prepare_imu_samples(imu_data)
 
     for row in range(1, row_count):
@@ -756,12 +547,10 @@ def preintegrate_imu(  # noqa: C901, PLR0915
             invalid_reason[row] = reason.value
             continue
 
-        integrated = _integrate_interval(samples, imu_data)
+        integrated = _integrate_interval(samples)
         delta_rotation[row] = _rotation_to_quaternion_xyzw(integrated.rotation)
         delta_velocity[row] = integrated.velocity_m_s
         delta_position[row] = integrated.position_m
-        if covariance is not None and integrated.covariance is not None:
-            covariance[row] = integrated.covariance
         integration_valid[row] = True
 
     return PreintegratedImuData(
@@ -783,5 +572,4 @@ def preintegrate_imu(  # noqa: C901, PLR0915
         max_inter_sample_gap_ns=max_gap_ns,
         integration_valid=integration_valid,
         integration_invalid_reason=invalid_reason,
-        integration_covariance=covariance,
     )

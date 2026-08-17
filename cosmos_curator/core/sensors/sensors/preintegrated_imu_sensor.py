@@ -33,7 +33,6 @@ def _slice_preintegrated_imu_data(
     row_slice: slice,
 ) -> PreintegratedImuData:
     """Return a row slice while preserving every structure-of-arrays field."""
-    covariance = data.integration_covariance
     return PreintegratedImuData(
         align_timestamps_ns=data.align_timestamps_ns[row_slice],
         sensor_timestamps_ns=data.sensor_timestamps_ns[row_slice],
@@ -53,7 +52,6 @@ def _slice_preintegrated_imu_data(
         max_inter_sample_gap_ns=data.max_inter_sample_gap_ns[row_slice],
         integration_valid=data.integration_valid[row_slice],
         integration_invalid_reason=data.integration_invalid_reason[row_slice],
-        integration_covariance=None if covariance is None else covariance[row_slice],
     )
 
 

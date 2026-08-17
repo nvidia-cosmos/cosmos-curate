@@ -21,7 +21,7 @@ import attrs
 import numpy as np
 import numpy.typing as npt
 
-from cosmos_curator.core.sensors.utils.helpers import as_optional_readonly_view, as_readonly_view
+from cosmos_curator.core.sensors.utils.helpers import as_readonly_view
 from cosmos_curator.core.sensors.utils.validation import (
     bool_array,
     bool_batch,
@@ -29,7 +29,6 @@ from cosmos_curator.core.sensors.utils.validation import (
     int64_array,
     nondecreasing_int64_array,
     strictly_increasing_int64_array,
-    symmetric_psd_covariance_batch,
     uint32_array,
     unit_quaternion_batch,
 )
@@ -39,12 +38,10 @@ if TYPE_CHECKING:
 else:
     AttrsAttribute = attrs.Attribute
 
-MOTION_ERROR_SIZE = 9
 MIN_INTEGRATION_SAMPLES = 2
 
 _VECTOR_BATCH_VALIDATOR = float64_batch((3,))
 _BOOL_AXIS_BATCH_VALIDATOR = bool_batch((3,))
-_OPTIONAL_MOTION_COVARIANCE_VALIDATOR = attrs.validators.optional(symmetric_psd_covariance_batch(MOTION_ERROR_SIZE))
 
 
 class ImuIntegrationInvalidReason(IntFlag):
@@ -166,17 +163,15 @@ def _validate_initial_row(instance: "PreintegratedImuData") -> None:
 class PreintegratedImuData:
     """Causal IMU preintegration results aligned to a reference timestamp grid.
 
-    Input measurements, alignment timestamps, biases, validity, and optional
-    measurement covariance come entirely from ``ImuData``. Valid bias axes are
-    subtracted before integration; unavailable axes use zero bias while their
-    availability remains false in this output.
+    Input measurements, alignment timestamps, biases, and validity come from
+    ``ImuData``. Valid bias axes are subtracted before integration; unavailable
+    axes use zero bias while their availability remains false in this output.
 
     Alignment timestamps and alignment interval bounds remain in the external
     reference-clock domain. Sensor timestamps are the corresponding IMU-clock
     endpoints; durations and deltas use that physical sensor timeline. Deltas
     use midpoint integration and are expressed in the starting IMU frame
-    without applying gravity. The optional covariance ordering is
-    ``[rotation, velocity, position]`` in a right-local rotation error frame.
+    without applying gravity.
 
     A complete grid starts with an invalid zero-duration identity row. A
     window slice may instead begin with a valid interval whose start timestamp
@@ -256,12 +251,6 @@ class PreintegratedImuData:
     integration_invalid_reason: npt.NDArray[np.uint32] = attrs.field(
         converter=as_readonly_view,
         validator=_invalid_reason_array,
-    )
-    # Optional covariance is last so the post-init validator sees every required array.
-    integration_covariance: npt.NDArray[np.float64] | None = attrs.field(
-        default=None,
-        converter=as_optional_readonly_view,
-        validator=_OPTIONAL_MOTION_COVARIANCE_VALIDATOR,
     )
 
     def __attrs_post_init__(self) -> None:
