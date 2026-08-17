@@ -55,6 +55,7 @@ websockets = "<16"
 
 [feature.core.pypi-dependencies]
 cosmos-xenna = "==0.5.7"
+foxglove-schemas-protobuf = "*"
 google-genai = ">=1.59.0"
 ngcsdk = "*"
 pillow = ">=12.2.0"

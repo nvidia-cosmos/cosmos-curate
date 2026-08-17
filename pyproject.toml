@@ -30,6 +30,7 @@ dependencies = [
     "attrs",
     "click>=8.4.1",
     "fabric>=3.2.2,<4.0.0",
+    "foxglove-schemas-protobuf",
     "huggingface_hub",
     "jinja2",
     "loguru",
@@ -196,8 +197,12 @@ module = [
     "vllm.*",
     "vllm_omni",
     "vllm_omni.*",
+    "av",
+    "av.*",
     "google.protobuf",
     "google.protobuf.*",
+    "foxglove_schemas_protobuf",
+    "foxglove_schemas_protobuf.*",
 ]
 ignore_missing_imports = true
 

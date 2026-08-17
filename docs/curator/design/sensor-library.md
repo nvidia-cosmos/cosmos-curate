@@ -365,9 +365,12 @@ Under the half-open contract:
   timestamp in the source stream).
 - **Payloads** — For cameras, ``frames`` has shape ``(N, H, W, 3)`` for RGB
   (see ``CameraData`` in ``camera_data.py``). **``H``** and **``W``** come from
-  the decoded stream or container metadata; for MCAP ``rgb8`` topics aligned
-  with ``make_mcap_from_mp4``, **``H``** and **``W``** are read from the
-  channel metadata on that topic.
+  the decoded stream or container metadata. For MCAP camera topics,
+  ``McapCameraSensor`` reads Foxglove ``CompressedVideo`` messages containing
+  Annex B H.264/H.265 access units and derives dimensions from the first decoded
+  frame and cadence from observed MCAP ``message.log_time`` values during the
+  forward pass. The MCAP camera path is a forward-only streaming decoder;
+  sampling windows must be monotonically increasing and non-overlapping.
 
 So **`len(window)`**, **`len(align_timestamps_ns)`**,
 **`len(sensor_timestamps_ns)`**, and **`frames.shape[0]`** are the same
