@@ -193,7 +193,7 @@ def test_pipeline_template_help_lists_caption_judge() -> None:
     result = runner.invoke(cosmos_curator, ["pipeline", "template", "--help"])
 
     assert result.exit_code == 0
-    for kind in ("caption_judge", "robot-action-split", "video_split"):
+    for kind in ("caption_judge", "robot-action-split", "video-split", "video_split"):
         assert kind in result.stdout
     assert "robot_action_split" not in result.stdout
     assert "--profile" not in result.stdout
@@ -208,7 +208,8 @@ def test_pipeline_template_rejects_unknown_kind_as_json() -> None:
         "ok": False,
         "error": "unknown_kind",
         "message": (
-            "Unknown pipeline kind 'unknown'. Valid pipeline kinds: caption_judge, robot-action-split, video_split"
+            "Unknown pipeline kind 'unknown'. Valid pipeline kinds: "
+            "caption_judge, robot-action-split, video-split, video_split"
         ),
     }
 

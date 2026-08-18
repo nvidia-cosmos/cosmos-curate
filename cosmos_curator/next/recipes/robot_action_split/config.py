@@ -17,10 +17,12 @@
 
 import json
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from cosmos_curator.next.core.config import apply_dotted_overrides
 
 _YAML_SUFFIXES = frozenset({".yaml", ".yml"})
 _MODEL_CONFIG = ConfigDict(frozen=True, strict=True, extra="forbid")
@@ -208,26 +210,6 @@ def resolve_config(
     if not isinstance(loaded, dict):
         msg = f"Config file must contain a mapping at the top level, got {type(loaded).__name__}: {path}"
         raise TypeError(msg)
-    raw: dict[str, object] = loaded
-    for override in overrides:
-        if "=" not in override:
-            msg = f"Override must have the form 'path.to.key=value', got {override!r}"
-            raise ValueError(msg)
-        key_path, _, value_str = override.partition("=")
-        if not key_path:
-            msg = f"Override has an empty key path: {override!r}"
-            raise ValueError(msg)
-        keys = key_path.split(".")
-        if any(not k for k in keys):
-            msg = f"Override path {key_path!r} contains an empty segment"
-            raise ValueError(msg)
-        value = yaml.safe_load(value_str)
-        node: dict[str, object] = raw
-        for k in keys[:-1]:
-            child = node.setdefault(k, {})
-            if not isinstance(child, dict):
-                msg = f"Override path {key_path!r} passes through a non-dict at {k!r}"
-                raise TypeError(msg)
-            node = child
-        node[keys[-1]] = value
+    raw: dict[str, Any] = loaded
+    apply_dotted_overrides(raw, overrides)
     return ResolvedRobotActionSplitConfig.model_validate(raw)
