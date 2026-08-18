@@ -44,9 +44,9 @@ Comprehensive documentation is available under [docs/](docs/README.md) directory
 - [Observability Guide](docs/curator/guides/observability.md) - instructions to setup and understand monitoring dashboard
 
 ### AI Agent Context Files
-- [AGENTS.md](AGENTS.md) - Context file for Codex
-- [CLAUDE.md](CLAUDE.md) - Context file for Claude Code
-- [GEMINI.md](GEMINI.md) - Context file for Gemini
+- [AGENTS.md](AGENTS.md) - Canonical AI agent context
+- [CLAUDE.md](CLAUDE.md) - Claude Code loader for `AGENTS.md`
+- [GEMINI.md](GEMINI.md) - Gemini loader for `AGENTS.md`
 
 ## Directory Structure
 

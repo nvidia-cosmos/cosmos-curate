@@ -32,14 +32,11 @@ This directory collects documentation for Cosmos Curator. It is organized by the
 - [Cosmos Curator Next](design/curator-next.md) - agent-friendly toolkit direction centered on reusable components and
   maintained reference recipes.
 - [Captioning Approaches](design/captioning-approaches.md) - comparison of captioning architectures.
-- [Deprecation and Default Changes](design/deprecation.md) - proposed cleanup of legacy features and large-run defaults.
 - [Multi-Camera Design](design/multicam.md) - multi-camera data model and implementation plan.
 - [Pixi Environment Refactor Design](design/pixi-environments.md) - developer and runtime environment boundaries.
 - [Release Versioning Design](design/release-versioning.md) - tag-derived release and package versioning.
 - [Ray Data Design](design/ray-data.md) - Ray Data direction and implementation notes.
 - [Ray Data Captioning Design](design/ray-data-captioning.md) - Qwen captioning through Ray Data LLM.
-- [Ray Data Migration Plan](design/ray-data-migration.md) - migration scope, target contract, and validation plan
-  for the Ray Data video workflow.
 - [Split Comparison — Module Architecture](design/split-comparison.md) - module DAG and architecture for the Lance-based split-output comparison.
 - [Sensor Library Design](design/sensor-library.md) - sensor data model and API direction.
 - [Efficient Sparse Video Decode](design/sensor-library-efficient-video-decode.md) - efficient decode strategy for sampled video.
