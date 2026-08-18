@@ -43,7 +43,7 @@ class _InterpolationPoint:
 
 
 @dataclass(frozen=True)
-class _PreparedImuSamples:
+class PreparedImuSamples:
     """Recording-wide validity and bias arrays prepared once for all intervals."""
 
     corrected_angular_velocity_rad_s: npt.NDArray[np.float64]
@@ -259,7 +259,7 @@ def _bias_values_and_availability(
     return np.where(available, values, 0.0), available
 
 
-def _prepare_imu_samples(imu_data: ImuData) -> _PreparedImuSamples:
+def prepare_imu_samples(imu_data: ImuData) -> PreparedImuSamples:
     """Prepare recording-wide validity and bias arrays once."""
     row_count = len(imu_data.align_timestamps_ns)
     gyro_valid = _measurement_validity(imu_data.angular_velocity_rad_s, imu_data.angular_velocity_valid)
@@ -274,7 +274,7 @@ def _prepare_imu_samples(imu_data: ImuData) -> _PreparedImuSamples:
         imu_data.linear_acceleration_bias_valid,
         row_count,
     )
-    return _PreparedImuSamples(
+    return PreparedImuSamples(
         corrected_angular_velocity_rad_s=imu_data.angular_velocity_rad_s - gyro_bias,
         corrected_linear_acceleration_m_s2=imu_data.linear_acceleration_m_s2 - accel_bias,
         angular_velocity_bias_rad_s=gyro_bias,
@@ -337,7 +337,7 @@ def _assemble_bool_interval(
 
 def _build_interval_samples(
     imu_data: ImuData,
-    prepared: _PreparedImuSamples,
+    prepared: PreparedImuSamples,
     start_ns: int,
     end_ns: int,
 ) -> _IntervalSamples | None:
@@ -468,6 +468,8 @@ def _sensor_timestamp_at(
 def preintegrate_imu(  # noqa: C901, PLR0915
     imu_data: ImuData,
     align_timestamps_ns: npt.NDArray[np.int64],
+    *,
+    prepared_samples: PreparedImuSamples | None = None,
 ) -> PreintegratedImuData:
     """Preintegrate a complete ``ImuData`` recording onto an alignment grid.
 
@@ -475,7 +477,9 @@ def preintegrate_imu(  # noqa: C901, PLR0915
     external reference clock. Paired raw alignment timestamps convert those
     boundaries to the IMU sensor clock, which defines interpolation and physical
     integration time. Missing bias axes use zero correction and remain marked
-    unavailable in the output.
+    unavailable in the output. Callers that repeatedly integrate one recording
+    may provide ``prepared_samples`` from :func:`prepare_imu_samples` for that
+    same ``imu_data`` to reuse its recording-wide preparation.
     """
     if align_timestamps_ns.dtype != np.int64 or align_timestamps_ns.ndim != 1:
         msg = "align_timestamps_ns must be a 1-D int64 array"
@@ -509,7 +513,7 @@ def preintegrate_imu(  # noqa: C901, PLR0915
     if row_count:
         invalid_reason[0] = ImuIntegrationInvalidReason.FIRST_ALIGNMENT.value
 
-    prepared = _prepare_imu_samples(imu_data)
+    prepared = prepared_samples if prepared_samples is not None else prepare_imu_samples(imu_data)
 
     for row in range(1, row_count):
         samples = _build_interval_samples(

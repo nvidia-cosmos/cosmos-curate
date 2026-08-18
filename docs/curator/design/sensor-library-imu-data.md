@@ -319,7 +319,7 @@ been parsed into SI-unit IMU measurements. Decoded source-sample streams can
 use `ImuData` with identity alignment timestamps, while aligned streams can use
 the same type with reference-grid timestamps.
 
-## Implemented Eager Preintegration
+## Implemented Stateful Preintegration
 
 `PreintegratedImuData` is a separate immutable structure-of-arrays contract
 because interval deltas do not have point-sample semantics. For a complete
@@ -383,17 +383,37 @@ remain specific force: preintegration does not apply a world gravity vector,
 initial pose, initial velocity, or rig extrinsics. Those belong to a future
 egomotion estimator.
 
-`PreintegratedImuSensor` wraps an `ImuSensor`. On demand it:
+`PreintegratedImuSensor` wraps an `ImuSensor`. On demand it decodes the MCAP
+topic and prepares recording-wide validity, bias-availability, and
+bias-corrected arrays once. It then preintegrates each nonempty output window
+only when that window is emitted. `SamplingWindow` remains an output-batching
+mechanism, not an IMU episode boundary.
+
+The external pipeline may call `reset_pose()` to request a new episode. The
+request is forward-only and survives empty output windows. The first row of the
+next nonempty batch is the canonical invalid zero-duration identity row with
+`FIRST_ALIGNMENT`; no valid interval crosses that caller-defined boundary. In
+the absence of a reset, each later nonempty batch prepends the final emitted
+alignment timestamp from the preceding batch for integration, then emits only
+the current window's rows. Emitted nonempty alignment timestamps must therefore
+be strictly increasing; overlapping or decreasing preintegrated output is
+rejected even after `reset_pose()`, though other sensor types may use
+overlapping windows.
+
+Boundary interpolation may use decoded observations outside the output window
+or caller-defined episode, while the integrated interval itself never crosses a
+reset boundary.
+
+The lifecycle is:
 
 1. decodes the complete MCAP IMU topic once with `ImuSensor.read_all()`
-2. preintegrates the complete `SamplingSpec.grid.timestamps_ns`
-3. caches the raw recording and most recent full-grid result
-4. yields exact `SamplingWindow` row slices whose `align_timestamps_ns` equal
-   `window.timestamps_ns`
+2. prepares and caches recording-wide arrays once
+3. preintegrates each emitted nonempty window from current episode state
+4. yields rows whose `align_timestamps_ns` equal `window.timestamps_ns`
 
-This eager-compute/lazy-slice lifecycle makes the derived sensor compatible
-with `SensorGroup` and avoids repeating high-rate decoding or integration for
-every pipeline window.
+This stateful lifecycle makes the derived sensor compatible with `SensorGroup`,
+avoids repeating high-rate decoding and preparation, and lets a pipeline choose
+episode boundaries while it consumes output.
 
 `read_all()` requires mapped `ImuData.align_timestamps_ns` to be globally
 strictly increasing across the complete recording so external boundaries can
@@ -420,6 +440,8 @@ imu = PreintegratedImuSensor(raw_imu)
 
 for batch in imu.sample(spec, policy=NoSamplingPolicy()):
     consume_preintegrated_intervals(batch)
+    if begins_new_pose_episode(batch):
+        imu.reset_pose()
 ```
 
 ## Future Windowed IMU Data

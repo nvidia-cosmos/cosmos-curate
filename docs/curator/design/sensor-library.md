@@ -174,7 +174,9 @@ sampling rule is sensor-specific:
   band around the reference timestamp. The first generic IMU data structure,
   `ImuData`, represents point samples rather than preintegrated windows; see
   `cosmos_curator/core/sensors/data/imu_data.py` and the design rationale in
-  `sensor-library-imu-data.md`.
+  `sensor-library-imu-data.md`. `PreintegratedImuSensor` treats windows as
+  output batches: callers explicitly start a new preintegration episode with
+  `reset_pose()`, rather than deriving one from clip or window boundaries.
 - GPS/GNSS may select the nearest decoded fix, meaning the receiver's computed
   position solution at one point in time, or interpolate between decoded fixes.
   GNSS is the broader satellite-positioning category that includes GPS; WGS-84

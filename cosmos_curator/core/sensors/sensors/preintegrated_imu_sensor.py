@@ -12,7 +12,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Grid-aligned sensor for eagerly preintegrated IMU data."""
+"""Stateful grid-aligned sensor for preintegrated IMU data."""
 
 from collections.abc import Generator
 
@@ -21,17 +21,17 @@ import numpy.typing as npt
 
 from cosmos_curator.core.sensors.data.imu_data import ImuData
 from cosmos_curator.core.sensors.data.preintegrated_imu_data import PreintegratedImuData
-from cosmos_curator.core.sensors.preintegration.imu_preintegrator import preintegrate_imu
-from cosmos_curator.core.sensors.sampling.grid import SamplingWindow
+from cosmos_curator.core.sensors.preintegration.imu_preintegrator import (
+    PreparedImuSamples,
+    preintegrate_imu,
+    prepare_imu_samples,
+)
 from cosmos_curator.core.sensors.sampling.policy import NoSamplingPolicy, require_no_sampling_policy
 from cosmos_curator.core.sensors.sampling.spec import SamplingSpec
 from cosmos_curator.core.sensors.sensors.imu_sensor import ImuSensor
 
 
-def _slice_preintegrated_imu_data(
-    data: PreintegratedImuData,
-    row_slice: slice,
-) -> PreintegratedImuData:
+def _slice_preintegrated_imu_data(data: PreintegratedImuData, row_slice: slice) -> PreintegratedImuData:
     """Return a row slice while preserving every structure-of-arrays field."""
     return PreintegratedImuData(
         align_timestamps_ns=data.align_timestamps_ns[row_slice],
@@ -55,38 +55,22 @@ def _slice_preintegrated_imu_data(
     )
 
 
-def _window_row_slice(
-    align_timestamps_ns: npt.NDArray[np.int64],
-    window: SamplingWindow,
-) -> slice:
-    """Locate one sampling window as a contiguous full-grid row slice."""
-    if not len(window.timestamps_ns):
-        return slice(0, 0)
-    start = int(np.searchsorted(align_timestamps_ns, window.timestamps_ns[0], side="left"))
-    stop = start + len(window.timestamps_ns)
-    if stop > len(align_timestamps_ns) or not np.array_equal(
-        align_timestamps_ns[start:stop],
-        window.timestamps_ns,
-    ):
-        msg = "SamplingWindow timestamps must be a contiguous subset of the preintegrated alignment grid"
-        raise ValueError(msg)
-    return slice(start, stop)
-
-
 class PreintegratedImuSensor:
-    """Wrap an ``ImuSensor`` with eager full-grid preintegration.
+    """Wrap an ``ImuSensor`` with caller-resettable causal preintegration.
 
-    Raw MCAP data is decoded once and retained in memory. Preintegration is
-    cached for the most recently requested alignment timeline, then returned as
-    exact per-window slices compatible with ``SensorGroup``.
+    Raw MCAP data and recording-wide validity and bias preparation are cached
+    once. Sampling windows only batch output: a valid first row in a later
+    window integrates from the final emitted timestamp of its predecessor.
     """
 
     def __init__(self, imu_sensor: ImuSensor) -> None:
         """Initialize from an MCAP-backed raw IMU sensor."""
         self._imu_sensor = imu_sensor
         self._raw_imu_data: ImuData | None = None
-        self._cached_grid_timestamps_ns: npt.NDArray[np.int64] | None = None
-        self._cached_preintegrated_data: PreintegratedImuData | None = None
+        self._prepared_imu_samples: PreparedImuSamples | None = None
+        # Sampling is driven by one active SensorGroup run per sensor. Keeping
+        # reset state on the sensor makes reset_pose() apply to that run.
+        self._reset_pending = False
 
     @property
     def start_ns(self) -> int:
@@ -118,29 +102,49 @@ class PreintegratedImuSensor:
             self._raw_imu_data = self._imu_sensor.read_all()
         return self._raw_imu_data
 
-    def _get_preintegrated_data(
-        self,
-        align_timestamps_ns: npt.NDArray[np.int64],
-    ) -> PreintegratedImuData:
-        """Return cached full-grid preintegration or compute it once."""
-        if self._cached_grid_timestamps_ns is None or not np.array_equal(
-            self._cached_grid_timestamps_ns, align_timestamps_ns
-        ):
-            self._cached_preintegrated_data = preintegrate_imu(
-                self._get_raw_imu_data(),
-                align_timestamps_ns,
-            )
-            self._cached_grid_timestamps_ns = np.array(align_timestamps_ns, copy=True)
-            self._cached_grid_timestamps_ns.flags.writeable = False
-        assert self._cached_preintegrated_data is not None
-        return self._cached_preintegrated_data
+    def _get_prepared_imu_samples(self) -> PreparedImuSamples:
+        """Prepare and cache recording-wide arrays used by every output batch."""
+        if self._prepared_imu_samples is None:
+            self._prepared_imu_samples = prepare_imu_samples(self._get_raw_imu_data())
+        return self._prepared_imu_samples
+
+    def reset_pose(self) -> None:
+        """Start a new IMU preintegration episode at the next nonempty output row."""
+        self._reset_pending = True
 
     def sample(self, spec: SamplingSpec, *, policy: NoSamplingPolicy) -> Generator[PreintegratedImuData]:
-        """Yield one exact full-grid preintegration slice per sampling window."""
+        """Yield preintegrated output batches, preserving episode state across windows."""
         require_no_sampling_policy(policy, sensor_name=type(self).__name__)
-        full_data = self._get_preintegrated_data(spec.grid.timestamps_ns)
+        previous_timestamp_ns: int | None = None
         for window in spec.grid:
-            yield _slice_preintegrated_imu_data(
-                full_data,
-                _window_row_slice(full_data.align_timestamps_ns, window),
+            timestamps_ns = window.timestamps_ns
+            if not len(timestamps_ns):
+                yield preintegrate_imu(
+                    self._get_raw_imu_data(),
+                    timestamps_ns,
+                    prepared_samples=self._get_prepared_imu_samples(),
+                )
+                continue
+
+            if previous_timestamp_ns is not None and int(timestamps_ns[0]) <= previous_timestamp_ns:
+                msg = "Preintegrated IMU alignment timestamps must be strictly increasing across output windows"
+                raise ValueError(msg)
+
+            starts_new_episode = previous_timestamp_ns is None or self._reset_pending
+            timeline = (
+                timestamps_ns
+                if starts_new_episode
+                else np.concatenate((np.array([previous_timestamp_ns], dtype=np.int64), timestamps_ns))
             )
+            integrated = preintegrate_imu(
+                self._get_raw_imu_data(),
+                timeline,
+                prepared_samples=self._get_prepared_imu_samples(),
+            )
+            if starts_new_episode:
+                self._reset_pending = False
+                batch = integrated
+            else:
+                batch = _slice_preintegrated_imu_data(integrated, slice(1, None))
+            previous_timestamp_ns = int(timestamps_ns[-1])
+            yield batch

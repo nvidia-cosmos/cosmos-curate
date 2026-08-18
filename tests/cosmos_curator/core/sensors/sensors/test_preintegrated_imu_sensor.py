@@ -22,6 +22,8 @@ import numpy.typing as npt
 import pytest
 
 from cosmos_curator.core.sensors.data.imu_data import ImuData
+from cosmos_curator.core.sensors.data.preintegrated_imu_data import ImuIntegrationInvalidReason
+from cosmos_curator.core.sensors.preintegration.imu_preintegrator import PreparedImuSamples
 from cosmos_curator.core.sensors.sampling.grid import SamplingGrid
 from cosmos_curator.core.sensors.sampling.policy import NearestTimestampPolicy, NoSamplingPolicy
 from cosmos_curator.core.sensors.sampling.spec import SamplingSpec
@@ -117,7 +119,7 @@ def _reference_imu_payload(timestamp_ns: int) -> bytes:
     return sample.SerializeToString()
 
 
-def test_preintegrated_imu_sensor_caches_recording_and_slices_exact_windows(
+def test_preintegrated_imu_sensor_caches_recording_and_preparation_across_windows(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A full recording is decoded once and returned as valid grid slices."""
@@ -126,12 +128,19 @@ def test_preintegrated_imu_sensor_caches_recording_and_slices_exact_windows(
     grid_timestamps = np.array([0, _ONE_SECOND_NS, 2 * _ONE_SECOND_NS], dtype=np.int64)
     spec = _multi_window_spec(grid_timestamps)
     integration_count = 0
+    prepared_samples_seen: list[PreparedImuSamples | None] = []
     original_preintegrate = preintegrated_imu_sensor_module.preintegrate_imu
 
-    def counting_preintegrate(imu_data: ImuData, align_timestamps_ns: npt.NDArray[np.int64]) -> object:
+    def counting_preintegrate(
+        imu_data: ImuData,
+        align_timestamps_ns: npt.NDArray[np.int64],
+        *,
+        prepared_samples: PreparedImuSamples | None = None,
+    ) -> object:
         nonlocal integration_count
         integration_count += 1
-        return original_preintegrate(imu_data, align_timestamps_ns)
+        prepared_samples_seen.append(prepared_samples)
+        return original_preintegrate(imu_data, align_timestamps_ns, prepared_samples=prepared_samples)
 
     monkeypatch.setattr(preintegrated_imu_sensor_module, "preintegrate_imu", counting_preintegrate)
 
@@ -139,7 +148,9 @@ def test_preintegrated_imu_sensor_caches_recording_and_slices_exact_windows(
     second_pass = list(sensor.sample(spec, policy=NoSamplingPolicy()))
 
     assert fake.read_count == 1
-    assert integration_count == 1
+    assert integration_count == 4
+    assert all(prepared is not None for prepared in prepared_samples_seen)
+    assert all(prepared is prepared_samples_seen[0] for prepared in prepared_samples_seen)
     np.testing.assert_array_equal(first_pass[0].align_timestamps_ns, grid_timestamps[:2])
     np.testing.assert_array_equal(first_pass[1].align_timestamps_ns, grid_timestamps[2:])
     assert first_pass[0].integration_valid.tolist() == [False, True]
@@ -180,6 +191,88 @@ def test_preintegrated_imu_sensor_reintegrates_new_grid_without_redecoding() -> 
     assert fake.read_count == 1
     np.testing.assert_array_equal(finer_batches[0].align_timestamps_ns, finer_timestamps[:4])
     np.testing.assert_array_equal(finer_batches[1].align_timestamps_ns, finer_timestamps[4:])
+
+
+def test_preintegrated_imu_sensor_reset_starts_next_nonempty_batch_with_identity() -> None:
+    """A caller-selected reset starts a new episode without changing earlier output."""
+    sensor = PreintegratedImuSensor(cast("ImuSensor", _FakeImuSensor(_raw_imu_data())))
+    batches = sensor.sample(
+        _multi_window_spec(np.array([0, _ONE_SECOND_NS, 2 * _ONE_SECOND_NS], dtype=np.int64)),
+        policy=NoSamplingPolicy(),
+    )
+
+    first_batch = next(batches)
+    sensor.reset_pose()
+    second_batch = next(batches)
+
+    assert first_batch.integration_valid.tolist() == [False, True]
+    assert second_batch.integration_valid.tolist() == [False]
+    assert second_batch.integration_invalid_reason.tolist() == [ImuIntegrationInvalidReason.FIRST_ALIGNMENT.value]
+    np.testing.assert_array_equal(second_batch.delta_rotation_quat_xyzw[0], [0.0, 0.0, 0.0, 1.0])
+    np.testing.assert_array_equal(second_batch.delta_velocity_m_s[0], [0.0, 0.0, 0.0])
+
+
+def test_preintegrated_imu_sensor_reset_persists_across_empty_windows() -> None:
+    """A reset is consumed exactly once by the next nonempty output window."""
+    sensor = PreintegratedImuSensor(cast("ImuSensor", _FakeImuSensor(_raw_imu_data())))
+    spec = SamplingSpec(
+        grid=SamplingGrid(
+            start_ns=0,
+            exclusive_end_ns=3 * _ONE_SECOND_NS,
+            timestamps_ns=np.array([0, 2 * _ONE_SECOND_NS], dtype=np.int64),
+            stride_ns=_ONE_SECOND_NS,
+            duration_ns=_ONE_SECOND_NS,
+        )
+    )
+    batches = sensor.sample(spec, policy=NoSamplingPolicy())
+
+    first_batch = next(batches)
+    sensor.reset_pose()
+    empty_batch = next(batches)
+    reset_batch = next(batches)
+
+    assert first_batch.integration_invalid_reason.tolist() == [ImuIntegrationInvalidReason.FIRST_ALIGNMENT.value]
+    assert len(empty_batch.align_timestamps_ns) == 0
+    assert reset_batch.integration_invalid_reason.tolist() == [ImuIntegrationInvalidReason.FIRST_ALIGNMENT.value]
+
+
+def test_preintegrated_imu_sensor_rejects_overlapping_output_timestamps() -> None:
+    """Preintegrated output cannot form causal intervals from duplicate rows."""
+    sensor = PreintegratedImuSensor(cast("ImuSensor", _FakeImuSensor(_raw_imu_data())))
+    spec = SamplingSpec(
+        grid=SamplingGrid(
+            start_ns=0,
+            exclusive_end_ns=3 * _ONE_SECOND_NS,
+            timestamps_ns=np.array([0, _ONE_SECOND_NS, 2 * _ONE_SECOND_NS], dtype=np.int64),
+            stride_ns=_ONE_SECOND_NS,
+            duration_ns=2 * _ONE_SECOND_NS,
+        )
+    )
+
+    batches = sensor.sample(spec, policy=NoSamplingPolicy())
+    next(batches)
+    with pytest.raises(ValueError, match="strictly increasing across output windows"):
+        next(batches)
+
+
+def test_preintegrated_imu_sensor_reset_does_not_allow_overlapping_output_timestamps() -> None:
+    """A reset changes motion state but not the causal output timestamp ordering."""
+    sensor = PreintegratedImuSensor(cast("ImuSensor", _FakeImuSensor(_raw_imu_data())))
+    spec = SamplingSpec(
+        grid=SamplingGrid(
+            start_ns=0,
+            exclusive_end_ns=3 * _ONE_SECOND_NS,
+            timestamps_ns=np.array([0, _ONE_SECOND_NS, 2 * _ONE_SECOND_NS], dtype=np.int64),
+            stride_ns=_ONE_SECOND_NS,
+            duration_ns=2 * _ONE_SECOND_NS,
+        )
+    )
+
+    batches = sensor.sample(spec, policy=NoSamplingPolicy())
+    next(batches)
+    sensor.reset_pose()
+    with pytest.raises(ValueError, match="strictly increasing across output windows"):
+        next(batches)
 
 
 def test_preintegrated_imu_sensor_works_with_sensor_group() -> None:
