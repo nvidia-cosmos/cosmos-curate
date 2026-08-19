@@ -25,6 +25,7 @@ substitutes for running the commands themselves. They verify that:
   lint tooling is not installed in production containers.
 """
 
+import inspect
 import json
 import re
 import subprocess
@@ -35,6 +36,7 @@ from pathlib import Path
 import yaml
 
 from cosmos_curator.client.image_cli.image_app import _parse_envs
+from cosmos_curator.client.image_cli.image_app import build as build_image
 
 _REPO_ROOT = Path(__file__).parents[1]
 
@@ -222,6 +224,26 @@ def test_runtime_features_are_separated_from_core() -> None:
     ]
 
 
+def test_vllm_omni_is_isolated_to_style_transfer_environment() -> None:
+    """Verify transfer-only dependencies do not leak into shared runtime environments."""
+    pixi_config = tomllib.loads(_read_repo_file("pixi.toml"))
+    features = pixi_config["feature"]
+
+    assert "vllm-omni" not in features["runtime"]["pypi-dependencies"]
+    assert features["vllm-omni"]["pypi-dependencies"] == {"vllm-omni": "==0.24.0"}
+    assert pixi_config["environments"]["style-transfer"] == [
+        "core",
+        "runtime",
+        "media",
+        "transformers",
+        "vllm-omni",
+        "tracing",
+        "profiling",
+    ]
+    for environment_name in ("default", "seedvr", "sam3"):
+        assert "vllm-omni" not in pixi_config["environments"][environment_name]
+
+
 def test_legacy_transformers_environment_is_model_specific_runtime() -> None:
     """Verify legacy models avoid the main runtime's newer transformers stack."""
     pixi_config = tomllib.loads(_read_repo_file("pixi.toml"))
@@ -272,6 +294,7 @@ def test_distributable_pixi_manifest_is_generated_runtime_subset() -> None:
         "paddle-ocr",
         "seedvr",
         "sam3",
+        "style-transfer",
     }
     for feature_names in pixi_config["environments"].values():
         assert not {"tools", "cluster", "dev"} & set(feature_names)
@@ -444,6 +467,7 @@ def test_slurm_end_to_end_uses_pixi_cluster_for_submit_cli() -> None:
     before_script = _script_lines(slurm_job["before_script"])
     script = _script_lines(slurm_job["script"])
     after_script = _script_lines(slurm_job["after_script"])
+    submit_script = _read_repo_file(".gitlab/scripts/slurm_end_to_end.sh")
     commands = "\n".join([*before_script, *script])
     pixi_cache_index = next(
         index
@@ -467,6 +491,7 @@ def test_slurm_end_to_end_uses_pixi_cluster_for_submit_cli() -> None:
     assert "pip install -e ." not in commands
     assert "source venv/bin/activate" not in commands
     assert "uv venv" not in commands
+    assert '--pixi-envs "default,cuml,legacy-transformers,model-download"' in submit_script
 
     smoke_job = _read_ci_job("slurm_distributable_media_smoke")
     smoke_commands = "\n".join(_script_lines(smoke_job["before_script"]))
@@ -503,8 +528,11 @@ def test_nvcf_helm_deploy_invokes_without_status_logs() -> None:
 def test_image_cli_default_envs_do_not_include_dev() -> None:
     """Verify image env parsing does not add the developer tooling environment by default."""
     default_envs = set(_parse_envs(""))
-    configured_runtime_envs = set(_parse_envs("cuml,legacy-transformers,sam3,seedvr"))
+    configured_envs = inspect.signature(build_image).parameters["envs"].default
+    assert isinstance(configured_envs, str)
+    configured_runtime_envs = set(_parse_envs(configured_envs))
 
     for env_name in ("tools", "cluster", "dev"):
         assert env_name not in default_envs
         assert env_name not in configured_runtime_envs
+    assert "style-transfer" in configured_runtime_envs

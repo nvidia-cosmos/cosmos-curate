@@ -41,6 +41,7 @@ IMAGE_ENVIRONMENTS = (
     "paddle-ocr",
     "seedvr",
     "sam3",
+    "style-transfer",
 )
 EXCLUDED_FEATURES = {"tools", "cluster", "dev"}
 MEDIA_CONDA_PACKAGES = {"av", "ffmpeg", "libopencv", "opencv", "py-opencv"}

@@ -116,7 +116,8 @@ pixi info --extended | grep "Cache dir"
 If `.pixi/envs` is missing, install the required environments from inside the container:
 
 ```bash
-pixi install --frozen -e default -e cuml -e legacy-transformers -e model-download -e paddle-ocr -e seedvr
+pixi install --frozen -e default -e cuml -e legacy-transformers -e model-download -e paddle-ocr -e seedvr \
+  -e style-transfer
 ```
 
 For active dependency development, omit `--frozen` only when you expect Pixi to update the lockfile. Use `--frozen` when

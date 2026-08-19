@@ -168,11 +168,6 @@ timm = "*" # conda-forge package pulls in torchvision, which is behind
 torch = "==2.11.0"
 torchvision = "==0.26.0"
 vllm = "==0.24.0" # not available on conda-forge
-# Cosmos3 Generator Transfer (StyleTransferStage) runs IN-PROCESS via vLLM-Omni's
-# offline `Omni` API; the 0.24 line carries the transfer-control video-to-video path
-# and hard-requires the matching vllm==0.24 above. Lives in runtime (not a dedicated
-# env) so the style-transfer stage runs in default alongside the other GPU stages.
-vllm-omni = "==0.24.0" # not available on conda-forge
 paddlepaddle = { version = "==3.2.*", index = "https://www.paddlepaddle.org.cn/packages/stable/cpu/"} # CPU-only; no CUDA runtime conflict with torch (unlike paddlepaddle-gpu)
 paddleocr = "==2.10.*"
 
@@ -207,6 +202,12 @@ nvidia-nccl-cu13 = "*"
 nvidia-nvjitlink = "*"
 nvidia-nvshmem-cu13 = "*"
 nvidia-nvtx = "*"
+
+# Cosmos3 Generator Transfer runs in-process through vLLM-Omni's offline `Omni`
+# API. Keep it out of the shared runtime feature: its large, transfer-specific
+# dependency tree (including openai-whisper) is needed only by StyleTransferStage.
+[feature.vllm-omni.pypi-dependencies]
+vllm-omni = "==0.24.0" # not available on conda-forge; requires vllm==0.24 from runtime
 
 [feature.cuml]
 channels = ["nvidia"]
@@ -338,3 +339,4 @@ model-download = ["linux", "core", "tracing"]
 paddle-ocr = ["linux", "core", "media", "paddle-ocr", "tracing", "profiling"]
 seedvr = ["core", "runtime", "media", "transformers", "seedvr", "tracing", "profiling"]
 sam3 = ["core", "runtime", "media", "sam3", "tracing", "profiling"]
+style-transfer = ["core", "runtime", "media", "transformers", "vllm-omni", "tracing", "profiling"]

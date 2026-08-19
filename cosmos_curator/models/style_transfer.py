@@ -143,10 +143,10 @@ class StyleTransferModel(ModelInterface, abc.ABC):
 class Cosmos3OmniTransferModel(StyleTransferModel):
     """Cosmos3 Generator Transfer backend running in-process via vLLM-Omni.
 
-    The constructor runs in the default env and only stores config. ``setup()``
-    runs on the worker actor (in the default env, which carries vLLM-Omni via the
-    ``runtime`` feature) and builds the in-process ``Omni`` engine. ``generate()``
-    issues one transfer request per clip and returns the restyled mp4 bytes.
+    The constructor only stores config. ``setup()`` runs on a worker actor in the
+    dedicated ``style-transfer`` environment and builds the in-process ``Omni``
+    engine. ``generate()`` issues one transfer request per clip and returns the
+    restyled mp4 bytes.
     """
 
     def __init__(self, variant: str = "cosmos3_nano", num_gpus: int = 1, *, guardrails: bool = False) -> None:
@@ -186,8 +186,8 @@ class Cosmos3OmniTransferModel(StyleTransferModel):
 
     @property
     def conda_env_name(self) -> str:
-        """Run in the default env (vLLM-Omni ships in the ``runtime`` feature)."""
-        return "default"
+        """Run in the dedicated environment that carries vLLM-Omni."""
+        return "style-transfer"
 
     @property
     def model_id_names(self) -> list[str]:

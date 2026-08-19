@@ -25,6 +25,7 @@ from pathlib import Path
 import pytest
 
 from cosmos_curator.models.style_transfer import (
+    Cosmos3OmniTransferModel,
     StyleTransferParams,
     build_transfer_extra_args,
     clamp_num_gpus_for_variant,
@@ -53,6 +54,11 @@ def _params(control: str = "edge") -> StyleTransferParams:
 def test_variants_are_nano_and_super() -> None:
     """The first implementation ships the nano + super Cosmos3 transfer variants."""
     assert set(style_transfer_variants()) == {"cosmos3_nano", "cosmos3_super"}
+
+
+def test_vllm_omni_model_uses_style_transfer_environment() -> None:
+    """The transfer backend runs where its isolated vLLM-Omni dependency is installed."""
+    assert Cosmos3OmniTransferModel().conda_env_name == "style-transfer"
 
 
 def test_edge_on_the_fly_request() -> None:

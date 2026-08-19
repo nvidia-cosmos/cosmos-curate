@@ -78,6 +78,8 @@ submit_cmd=(
   --container-image "${BUILD_IMAGE_NAME_SBATCH}"
   --container-mounts "${MOUNTS_STR}"
   --environment "${CONTAINER_ENV_STR}"
+  # Driver/stages, cuML dedup, InternVideo2 embeddings, and the model-download Ray actor.
+  --pixi-envs "default,cuml,legacy-transformers,model-download"
   --job-name "${JOB_NAME}"
   --log-dir "${LOG_DIR}"
   --time "02:00:00"

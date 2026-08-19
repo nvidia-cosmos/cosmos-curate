@@ -37,7 +37,6 @@ This directory collects documentation for Cosmos Curator. It is organized by the
 - [Multi-Camera Design](design/multicam.md) - multi-camera data model and implementation plan.
 - [Multimodal AV Pipeline Design](design/multimodal-av-pipeline.md) - Lance-backed aligned multiview AV clip
   contract with camera, IMU, GPS/GNSS features, and curation outputs.
-- [Pixi Environment Refactor Design](design/pixi-environments.md) - developer and runtime environment boundaries.
 - [Release Versioning Design](design/release-versioning.md) - tag-derived release and package versioning.
 - [Ray Data Design](design/ray-data.md) - Ray Data direction and implementation notes.
 - [Ray Data Captioning Design](design/ray-data-captioning.md) - Qwen captioning through Ray Data LLM.
