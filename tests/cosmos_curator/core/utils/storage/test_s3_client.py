@@ -14,6 +14,8 @@
 # limitations under the License.
 """Tests for S3 client listing semantics."""
 
+import subprocess
+import sys
 from typing import Any
 
 import pytest
@@ -125,3 +127,46 @@ def test_client_without_configured_region_defers_to_environment(monkeypatch: pyt
     )
 
     assert client.s3.meta.region_name == "eu-central-1"
+
+
+# Blocks ``ray`` at the import system level, then does what the client CLI does: import the
+# module and validate an S3 location with ``S3Prefix``. Run as a subprocess so the guard is
+# meaningful in environments that *do* have ray (``dev``, ``default``) and so a partially
+# imported module cannot leak into the rest of the test session.
+_IMPORT_WITHOUT_RAY = """
+import sys
+
+
+class _RayBlocker:
+    def find_spec(self, name, path=None, target=None):
+        if name == "ray" or name.startswith("ray."):
+            msg = "ray is unavailable in the client-only 'tools' environment"
+            raise ImportError(msg)
+        return None
+
+
+sys.meta_path.insert(0, _RayBlocker())
+
+from cosmos_curator.core.utils.storage.s3_client import S3Prefix
+
+assert S3Prefix("s3://some-bucket/some/key").bucket == "some-bucket"
+assert "ray" not in sys.modules, "importing s3_client pulled in ray"
+"""
+
+
+def test_module_imports_without_ray() -> None:
+    """Importing this module must not require ray.
+
+    ``S3Prefix`` is pure string validation, and the client CLI uses it to validate ``s3://``
+    locations in ``cosmos-curator pipeline validate``. The client-only ``tools`` pixi
+    environment has no ray, so a module-scope ``nvcf_utils`` import (which imports ray) makes
+    validating any S3 config fail with ``ModuleNotFoundError: No module named 'ray'``.
+    """
+    result = subprocess.run(  # noqa: S603
+        [sys.executable, "-c", _IMPORT_WITHOUT_RAY],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, f"s3_client is not importable without ray:\n{result.stderr}"
