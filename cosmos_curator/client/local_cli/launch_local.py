@@ -482,7 +482,7 @@ def _launch_in_docker_container(opts: LaunchDocker) -> None:
 
     # When pixi environments are bind-mounted from the host (--pixi-path), scripts
     # in .pixi/envs/*/bin/ carry shebangs with the host's absolute path (e.g.
-    # #!/home/user/project/.pixi/envs/default/bin/python3.12) which don't exist
+    # #!/home/user/project/.pixi/envs/default/bin/python3.13) which don't exist
     # inside the container.  Create a symlink so the kernel can resolve them.
     preamble_parts: list[str] = []
     if opts.pixi_path is not None:

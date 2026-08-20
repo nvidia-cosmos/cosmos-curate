@@ -51,7 +51,7 @@ Cosmos Curator is a powerful tool for video curation and processing. This guide 
 
 #### Software Requirement
 - Ubuntu >= 22.04
-- Python >=3.12 on your host
+- Python 3.13 on your host
   - We will require a specific version in your virtual environment below.
 - [Docker](https://docs.docker.com/engine/install/) with [BuildKit (buildx)](https://docs.docker.com/go/buildx/)
 - [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)

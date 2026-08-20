@@ -23,9 +23,8 @@ authors = [
 ]
 license = "Apache-2.0"
 license-files = ["LICENSE"]
-# Pixi environments pin Python 3.13; package metadata still allows existing
-# Python 3.12 host-side CLI environments until compatibility actually breaks.
-requires-python = ">=3.12,<3.14"
+# Pixi environments and standalone client installs share the Python 3.13 baseline.
+requires-python = ">=3.13,<3.14"
 dependencies = [
     "attrs",
     "click>=8.4.1",
@@ -52,7 +51,6 @@ dependencies = [
     "urllib3>=1.26.18,<3"
 ]
 classifiers = [
-    "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Operating System :: OS Independent",
     "Intended Audience :: Developers",

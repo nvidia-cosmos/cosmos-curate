@@ -348,7 +348,7 @@ module on the login node, and both head cleanup and a starting lane's head check
 node outside the container — the first so that teardown survives a killed supervisor, the second so that the
 scheduler logic a lane needs before it starts anything exists once, in Python, rather than a second time in
 batch-script shell. All of them use whatever `python3` resolves to there, so those two modules are held to 3.8
-rather than the 3.12 the rest of Curator assumes: surveyed clusters run login nodes from 3.8 through 3.12, and below
+rather than the 3.13 the rest of Curator assumes: surveyed clusters run login nodes from 3.8 through 3.12, and below
 3.8 the state model would need a third-party typing backport, defeating the point of running with no installation at
 all. Submission checks the login node it is given against that floor before it creates anything, so a site that
 cannot meet it fails immediately and by name. Later lifecycle commands assume the login nodes of one cluster are

@@ -23,7 +23,7 @@ _SCAN_ROOTS = (
     _REPO_ROOT / "cosmos_curator",
     _REPO_ROOT / "tests",
 )
-# The rule assumes Python 3.12, where native annotations always evaluate. These modules run on a node's own
+# The rule assumes Python 3.13, where native annotations always evaluate. These modules run on a node's own
 # python3, so deferred annotations are what keeps PEP 585 and PEP 604 out of their runtime, and their own
 # contract tests require the import this one forbids. See the onnode package docstring.
 _EXEMPT_DIR = _REPO_ROOT / "cosmos_curator" / "client" / "slurm_cli" / "managed_ray" / "onnode"

@@ -88,6 +88,15 @@ def test_workspace_default_feature_is_cross_platform_minimal() -> None:
     }
 
 
+def test_package_metadata_uses_python_313_baseline() -> None:
+    """Keep standalone wheel support aligned with the canonical Pixi environment."""
+    project_config = tomllib.loads(_read_repo_file("pyproject.toml"))["project"]
+
+    assert project_config["requires-python"] == ">=3.13,<3.14"
+    assert "Programming Language :: Python :: 3.13" in project_config["classifiers"]
+    assert "Programming Language :: Python :: 3.12" not in project_config["classifiers"]
+
+
 def test_tools_environment_declares_cross_platform_repo_tooling() -> None:
     """Verify tools is the cross-platform source of truth for basic repo tooling."""
     pixi_config = tomllib.loads(_read_repo_file("pixi.toml"))
