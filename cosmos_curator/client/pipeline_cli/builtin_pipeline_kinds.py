@@ -22,11 +22,13 @@ the registry can own concrete objects without eagerly loading every recipe.
 
 from cosmos_curator.client.pipeline_cli.legacy_kinds import CAPTION_JUDGE_KIND, VIDEO_SPLIT_LEGACY_KIND
 from cosmos_curator.next.core.pipeline_kind import PipelineKindRegistry
+from cosmos_curator.next.recipes.multimodal_split.pipeline_kind import MULTIMODAL_SPLIT_KIND
 from cosmos_curator.next.recipes.robot_action_split.pipeline_kind import ROBOT_ACTION_SPLIT_KIND
 from cosmos_curator.next.recipes.video_split.pipeline_kind import VIDEO_SPLIT_KIND
 
 BUILTIN_PIPELINE_KINDS = PipelineKindRegistry(
     (
+        MULTIMODAL_SPLIT_KIND,
         VIDEO_SPLIT_KIND,
         ROBOT_ACTION_SPLIT_KIND,
         # Deprecated alongside cosmos_curator.pipelines.ray_data; delete these
