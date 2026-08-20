@@ -39,6 +39,7 @@ from typing import Any
 import attrs
 import numpy as np
 import pyarrow.parquet as pq
+from loguru import logger
 
 from cosmos_curator.core.utils.storage.s3_client import S3Prefix
 from cosmos_curator.core.utils.storage.storage_client import StorageClient
@@ -174,7 +175,8 @@ def _list_shard_dirs(
         bucket = s3p.bucket
         try:
             all_objects = client.list_recursive(s3p)
-        except Exception:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
+            logger.error(f"Failed to list objects under {root!r} (profile={storage_profile!r}): {exc}")
             return []
 
         subdir_names: dict[str, set[str]] = {}
@@ -679,7 +681,9 @@ def discover_spans(config: ResolvedRobotActionSplitConfig) -> list[ChunkSpanBatc
 
     for dataset_root in config.input.uris:
         source_id = make_source_id(dataset_root)
+        logger.info(f"Listing shard dirs under {dataset_root!r} (profile={storage_profile!r})")
         shard_dirs = _list_shard_dirs(dataset_root, storage_profile=storage_profile)
+        logger.info(f"Found {len(shard_dirs)} shard dir(s)")
         if not shard_dirs:
             continue
 

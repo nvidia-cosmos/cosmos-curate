@@ -430,3 +430,47 @@ def test_full_pipeline_run(dataset: Path, output_path: Path) -> None:
     # Lance table committed with 2 rows.
     ds = lance.dataset(str(output_path / "clips.lance"))
     assert len(ds.to_table()) == 2
+
+
+def test_sequential_pipeline_run(dataset: Path, output_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Explicit sequential path (ray_data=false) produces same counts as the Ray Data path."""
+    import cosmos_curator.next.recipes.robot_action_split.pipeline as _pipeline_mod  # noqa: PLC0415
+
+    _msg = "_run_ray_data must not be called when ray_data=False"
+
+    def _should_not_be_called(*_a: object, **_kw: object) -> object:
+        raise AssertionError(_msg)
+
+    monkeypatch.setattr(_pipeline_mod, "_run_ray_data", _should_not_be_called)
+    config_path = output_path / "config.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "schema_version": 1,
+                "kind": "robot-action-split",
+                "input": {
+                    "uris": [str(dataset.parent)],
+                    "source_dataset": "test_dataset",
+                },
+                "split": {"min_duration_s": 4.0, "max_duration_s": 20.0},
+                "output": {
+                    "media_root": str(output_path / "media"),
+                    "lance_uri": str(output_path / "clips.lance"),
+                    "action_format": "pickle",
+                    "views": [],
+                },
+                "execution": {
+                    "storage_profile": "default",
+                    "discovery_workers": 1,
+                    "ray_data": False,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    summary = run(str(config_path))
+
+    assert summary["succeeded"] == 2
+    assert summary["failed"] == 0
+    assert summary["total"] == 2

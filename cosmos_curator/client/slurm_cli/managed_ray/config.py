@@ -243,7 +243,23 @@ class SlurmRayWorkerConfig(SlurmRayAllocationConfig):
     A worker takes its accelerator node exclusively, so it states no CPU or memory request: it gets the node.
     """
 
-    gpus: int | None = Field(default=None, ge=1, description="Number of GPUs requested per worker node.")
+    gpus: int | None = Field(
+        default=None, ge=1, description="Number of GPUs requested per worker node (--gpus, job-scoped)."
+    )
+    gpus_per_node: int | None = Field(
+        default=None,
+        ge=1,
+        description=(
+            "GPUs per node (--gpus-per-node). Use on clusters that prohibit job-scoped GPU requests (e.g. NVL72)."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _validate_gpu_fields(self) -> Self:
+        if self.gpus is not None and self.gpus_per_node is not None:
+            msg = "slurm.worker.gpus and slurm.worker.gpus_per_node are mutually exclusive; set only one"
+            raise ValueError(msg)
+        return self
 
 
 def _default_slurm_account() -> str | None:

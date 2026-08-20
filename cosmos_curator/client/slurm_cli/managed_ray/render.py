@@ -466,6 +466,7 @@ def render_worker_script(
             allocation=worker,
         ),
         *_slurm_directive("gpus", str(worker.gpus) if worker.gpus is not None else None),
+        *_slurm_directive("gpus-per-node", str(worker.gpus_per_node) if worker.gpus_per_node is not None else None),
         "#SBATCH --exclusive",
         "#SBATCH --mem=0",
         # Preemption requeues the same allocation rather than consuming one of the lane's, so preemption survival

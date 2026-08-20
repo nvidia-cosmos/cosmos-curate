@@ -161,6 +161,26 @@ class RobotActionSplitExecutionConfig(BaseModel):
     cut_attempts: int = Field(default=3, ge=1)
     media_write_attempts: int = Field(default=3, ge=1)
     progress: bool = False
+    tmp_dir: str | None = Field(
+        default=None,
+        description=(
+            "Base directory for temporary chunk MP4 files during cutting. "
+            "Defaults to the system temp dir (typically /tmp on Linux). "
+            "Set to a path with more space (e.g. /config/tmp, backed by the "
+            "workspace Lustre mount) when running many parallel Ray Data workers "
+            "that would otherwise exhaust node-local /tmp."
+        ),
+    )
+    ray_data: bool = Field(
+        default=True,
+        description=(
+            "Use Ray Data flat_map for parallel clip cutting (default). "
+            "When true, ray.init connects to an existing cluster (address='auto' in managed "
+            "Slurm-Ray jobs, local single-node otherwise). Workers process batches in parallel; "
+            "each worker downloads its own chunk copy. Set false to fall back to the sequential "
+            "single-threaded loop, e.g. for debugging."
+        ),
+    )
 
 
 class ResolvedRobotActionSplitConfig(BaseModel):

@@ -238,6 +238,7 @@ def process_batch(  # noqa: C901, PLR0912, PLR0915
     storage_profile = config.execution.storage_profile
     source_dataset = config.input.source_dataset
     bitrate = config.output.video_bitrate
+    tmp_dir = config.execution.tmp_dir or None
 
     def _batch_failure(stage: str, exc: Exception) -> list[dict[str, Any]]:
         return [
@@ -269,7 +270,7 @@ def process_batch(  # noqa: C901, PLR0912, PLR0915
     outcomes: list[dict[str, Any]] = []
     action_ext = ".bin" if action_format == "bin" else ".pickle"
 
-    with tempfile.TemporaryDirectory() as tmp:
+    with tempfile.TemporaryDirectory(dir=tmp_dir) as tmp:
         if not is_remote_path(batch.chunk_mp4_uri):
             # Local path (e.g. in tests) — read directly without staging a copy.
             chunk_local = batch.chunk_mp4_uri
@@ -300,7 +301,7 @@ def process_batch(  # noqa: C901, PLR0912, PLR0915
             cut_specs.append({"startFrame": abs_start, "endFrame": abs_end_incl, "output": local_clip})
 
         try:
-            cut_results = cut_plan(chunk_local, cut_specs, bitrate=bitrate, smart_cut=True)
+            cut_results = cut_plan(chunk_local, cut_specs, bitrate=bitrate, smart_cut=True, tmp_dir=tmp_dir)
         except Exception as exc:  # noqa: BLE001
             return _batch_failure("cut-index", exc)
 

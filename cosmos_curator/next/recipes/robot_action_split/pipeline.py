@@ -42,16 +42,97 @@ Example config (local paths, handful of videos)::
 import argparse
 import itertools
 import json
+import os
 import tempfile
 from pathlib import Path
+from typing import Any
 
 from loguru import logger
 
 from cosmos_curator.core.utils.storage.storage_utils import get_lance_storage_options
 from cosmos_curator.next.recipes.robot_action_split.config import ResolvedRobotActionSplitConfig, load_config
-from cosmos_curator.next.recipes.robot_action_split.discovery import discover_spans
+from cosmos_curator.next.recipes.robot_action_split.discovery import ChunkSpanBatch, discover_spans
 from cosmos_curator.next.recipes.robot_action_split.lance_sink import write_outcomes_to_lance
 from cosmos_curator.next.recipes.robot_action_split.processing import process_batch
+
+
+def _run_sequential(
+    batches: list[ChunkSpanBatch],
+    config: ResolvedRobotActionSplitConfig,
+) -> list[dict[str, Any]]:
+    """Process batches one at a time, reusing each downloaded chunk across its batches."""
+    all_outcomes: list[dict[str, Any]] = []
+    total = len(batches)
+    batch_num = 0
+    # Group consecutive batches by source chunk so the video file is downloaded
+    # once per chunk rather than once per batch.  max_segments_per_batch splits
+    # one chunk's spans across many batches; without grouping each call to
+    # process_batch would re-download the same (potentially large) source file.
+    for _chunk_uri, chunk_batches_iter in itertools.groupby(batches, key=lambda b: b.chunk_mp4_uri):
+        with tempfile.TemporaryDirectory(dir=config.execution.tmp_dir) as chunk_tmp:
+            staged_path = str(Path(chunk_tmp) / "chunk.mp4")
+            for batch in chunk_batches_iter:
+                batch_num += 1
+                logger.info(f"  Batch {batch_num}/{total}: {batch.chunk_mp4_uri} ({len(batch.items)} span(s))")
+                outcomes = process_batch(batch, config=config, staged_chunk_path=staged_path)
+                all_outcomes.extend(outcomes)
+                n_ok = sum(1 for o in outcomes if o["status"] == "success")
+                n_fail = len(outcomes) - n_ok
+                logger.info(f"    -> {n_ok} succeeded, {n_fail} failed")
+                for o in outcomes:
+                    if o["status"] != "success":
+                        logger.warning(f"      FAIL [{o.get('error_stage')}] {o.get('error_message', '')[:300]}")
+    return all_outcomes
+
+
+def _run_ray_data(
+    batches: list[ChunkSpanBatch],
+    config: ResolvedRobotActionSplitConfig,
+) -> list[dict[str, Any]]:
+    """Process batches in parallel using Ray Data flat_map across Ray workers.
+
+    Each task downloads its own copy of the source chunk — the staged-path
+    optimisation used by the sequential path does not apply here because tasks
+    are distributed across workers that do not share a local filesystem.  The
+    trade-off is acceptable: Ray Data parallelises many chunks simultaneously,
+    so overall throughput improves even though individual chunks are re-fetched
+    per task.
+    """
+    import ray  # noqa: PLC0415
+    import ray.data  # noqa: PLC0415
+
+    if not ray.is_initialized():
+        # In a managed Slurm-Ray run the driver sets RAY_ADDRESS to the head's
+        # address before launching this process.  For standalone sbatch jobs and
+        # local runs (development, CI) RAY_ADDRESS is unset and ray.init() starts
+        # a single-node cluster on the current machine.
+        ray_address = os.environ.get("RAY_ADDRESS") or None
+        ray.init(address=ray_address)
+        logger.info(f"Ray initialised: {ray.cluster_resources()}")  # type: ignore[no-untyped-call]
+
+    def _udf(batch_row: dict[str, Any]) -> list[dict[str, Any]]:
+        """Ray Data UDF: process one ChunkSpanBatch; config is captured in the closure."""
+        batch: ChunkSpanBatch = batch_row["batch"]
+        return process_batch(batch, config=config)
+
+    rows = [{"batch": b} for b in batches]
+    ds = ray.data.from_items(rows, override_num_blocks=len(rows))
+
+    # concurrency=None lets Ray choose based on available CPU resources.
+    # Each task uses cut_cpus CPUs as declared in the execution config.
+    all_outcomes: list[dict[str, Any]] = ds.flat_map(
+        _udf,
+        num_cpus=config.execution.cut_cpus,
+    ).take_all()
+
+    succeeded = sum(1 for o in all_outcomes if o["status"] == "success")
+    failed = len(all_outcomes) - succeeded
+    logger.info(f"Ray Data complete: {succeeded} succeeded, {failed} failed across {len(batches)} batch(es)")
+    for o in all_outcomes:
+        if o["status"] != "success":
+            logger.warning(f"  FAIL [{o.get('error_stage')}] {o.get('error_message', '')[:300]}")
+
+    return all_outcomes
 
 
 def run(
@@ -73,34 +154,12 @@ def run(
         logger.warning("No spans found; nothing to do.")
         return {"total": 0, "succeeded": 0, "failed": 0, "outcomes": []}
 
-    # Phase 2: cut + action bin (Ray Data in production; sequential loop for iteration).
-    # TODO: replace with Ray Data flat_map once the sequential path is validated.
-    #
-    # Group consecutive batches by chunk URI so the source video is downloaded once
-    # per chunk rather than once per batch.  max_segments_per_batch can split a single
-    # large chunk into many batches; without grouping each batch re-downloads the file.
+    # Phase 2: cut + action bin.
     logger.info("Cutting clips...")
-    all_outcomes = []
-    total = len(batches)
-    batch_num = 0
-    # Group consecutive batches by source chunk so the video file is downloaded
-    # once per chunk rather than once per batch.  max_segments_per_batch splits
-    # one chunk's spans across many batches; without grouping each call to
-    # process_batch would re-download the same (potentially large) source file.
-    for _chunk_uri, chunk_batches_iter in itertools.groupby(batches, key=lambda b: b.chunk_mp4_uri):
-        with tempfile.TemporaryDirectory() as chunk_tmp:
-            staged_path = str(Path(chunk_tmp) / "chunk.mp4")
-            for batch in chunk_batches_iter:
-                batch_num += 1
-                logger.info(f"  Batch {batch_num}/{total}: {batch.chunk_mp4_uri} ({len(batch.items)} span(s))")
-                outcomes = process_batch(batch, config=resolved, staged_chunk_path=staged_path)
-                all_outcomes.extend(outcomes)
-                n_ok = sum(1 for o in outcomes if o["status"] == "success")
-                n_fail = len(outcomes) - n_ok
-                logger.info(f"    -> {n_ok} succeeded, {n_fail} failed")
-                for o in outcomes:
-                    if o["status"] != "success":
-                        logger.warning(f"      FAIL [{o.get('error_stage')}] {o.get('error_message', '')[:300]}")
+    if resolved.execution.ray_data:
+        all_outcomes = _run_ray_data(batches, resolved)
+    else:
+        all_outcomes = _run_sequential(batches, resolved)
 
     # Summary.
     succeeded = [o for o in all_outcomes if o["status"] == "success"]

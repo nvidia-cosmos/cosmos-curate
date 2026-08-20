@@ -80,6 +80,41 @@ _PREFIX_VERIFY_SECONDS = 10
 
 
 @functools.lru_cache(maxsize=1)
+def _nvenc_available() -> bool:
+    """Return True if the local ffmpeg has a working h264_nvenc encoder.
+
+    Probed once per process (lru_cache) by attempting a tiny test encode.
+    A dry-run encode is used rather than just checking ``-encoders`` output
+    because the encoder may be listed but unavailable at runtime (no GPU,
+    driver mismatch, etc.).
+    """
+    try:
+        r = subprocess.run(
+            [  # noqa: S607
+                "ffmpeg",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "color=c=black:s=16x16:d=0.04",
+                "-c:v",
+                "h264_nvenc",
+                "-f",
+                "null",
+                "-",
+            ],
+            capture_output=True,
+            check=False,
+            timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return r.returncode == 0
+
+
+@functools.lru_cache(maxsize=1)
 def _timing_flags() -> tuple[str, ...]:
     """Frame-timing passthrough flags for the local ffmpeg.
 
@@ -356,17 +391,35 @@ def _seconds(ticks: float, num: int, den: int) -> str:
 
 
 def _encode_cmd(  # noqa: PLR0913
-    source: str, output: str, ss: str, nframes: int, bitrate: str, threads: int
+    source: str,
+    output: str,
+    ss: str,
+    nframes: int,
+    bitrate: str,
+    threads: int,
+    *,
+    gpu: bool = False,
 ) -> list[str]:
-    """Build the ffmpeg re-encode command for a single clip."""
-    # Fast input seek to just-before the start frame, then take exactly nframes frames.
-    # setpts=PTS-STARTPTS zeroes the clip start; passthrough frame timing keeps VFR
-    # timing (no frame drop/dup) -- see _timing_flags for the ffmpeg-version handling.
+    """Build the ffmpeg re-encode command for a single clip.
+
+    When *gpu* is True the NVIDIA NVENC hardware encoder (``h264_nvenc``) is
+    used instead of libopenh264, which offloads encoding to the GPU's dedicated
+    video-encode engine and is typically 5-10x faster.  Falls back to
+    libopenh264 if h264_nvenc is not available (callers should guard with a
+    capability check before setting gpu=True).
+    """
+    use_nvenc = gpu and _nvenc_available()
+    if gpu and not use_nvenc:
+        logger.warning("h264_nvenc requested but not available; falling back to libopenh264")
+    encoder = "h264_nvenc" if use_nvenc else "libopenh264"
+    # h264_nvenc uses -rc cbr for constant bitrate; libopenh264 uses -b:v directly.
+    extra: list[str] = ["-rc", "cbr"] if use_nvenc else []
     return [
         "ffmpeg", "-y", "-nostdin", "-v", "error", "-seek_timestamp", "1",
         "-ss", ss, "-i", source, "-map", "0:v:0", "-an",
         "-frames:v", str(nframes), "-vf", "setpts=PTS-STARTPTS",
-        "-c:v", "libopenh264", "-b:v", bitrate, "-pix_fmt", "yuv420p", "-threads", str(threads),
+        "-c:v", encoder, *extra, "-b:v", bitrate, "-pix_fmt", "yuv420p",
+        *([] if use_nvenc else ["-threads", str(threads)]),
         *_timing_flags(), output,
     ]  # fmt: skip
 
@@ -415,6 +468,9 @@ def _smartcut(  # noqa: PLR0913
     bitrate: str,
     threads: int,
     errf: IO[bytes],
+    *,
+    gpu: bool = False,
+    tmp_dir: str | None = None,
 ) -> bool:
     """Frame-exact smart cut of frames [start, end] when *kf* (a keyframe) satisfies start < kf <= end.
 
@@ -425,13 +481,13 @@ def _smartcut(  # noqa: PLR0913
     validates the output frame count and falls back to a full re-encode on any mismatch, so a bad
     concat can never ship a wrong clip.
     """
-    with tempfile.TemporaryDirectory() as _tmpdir:
+    with tempfile.TemporaryDirectory(dir=tmp_dir) as _tmpdir:
         head = str(Path(_tmpdir) / "head.mp4")
         body = str(Path(_tmpdir) / "body.mp4")
         lst = str(Path(_tmpdir) / "concat.txt")
         # Head: re-encode [start, kf-1]. Seek half a tick before start so -ss keeps frame `start`.
         head_ss = _seconds((index.pts[start] - 0.5) if start > 0 else index.pts[start], index.num, index.den)
-        if not _run_ff(_encode_cmd(source, head, head_ss, kf - start, bitrate, threads), errf):
+        if not _run_ff(_encode_cmd(source, head, head_ss, kf - start, bitrate, threads, gpu=gpu), errf):
             return False
         # Body: stream-copy [kf, end]. kf is a keyframe, so +0.25 tick lands exactly on it.
         body_ss = _seconds(index.pts[kf] + 0.25, index.num, index.den)
@@ -461,6 +517,8 @@ def _cut_one(  # noqa: C901, PLR0912, PLR0913
     *,
     allow_stream_copy: bool,
     smart_cut: bool = False,
+    gpu: bool = False,
+    tmp_dir: str | None = None,
 ) -> dict[str, Any]:
     start, end, output = cut["startFrame"], cut["endFrame"], cut["output"]
     expected = end - start + 1
@@ -516,7 +574,7 @@ def _cut_one(  # noqa: C901, PLR0912, PLR0913
                 )
             elif kf is not None and kf <= end:
                 rec["mode"] = "smartcut"
-                ok = _smartcut(source, output, start, kf, end, index, bitrate, threads, errf)
+                ok = _smartcut(source, output, start, kf, end, index, bitrate, threads, errf, gpu=gpu, tmp_dir=tmp_dir)
             else:
                 ok = False  # no fast path applies (or none enabled) -> full re-encode
 
@@ -530,7 +588,7 @@ def _cut_one(  # noqa: C901, PLR0912, PLR0913
             rec["mode"] = "encode"
             # Seek half a tick BEFORE the start frame so it survives the -ss discard.
             ss = _seconds((start_pts - 0.5) if start > 0 else start_pts, index.num, index.den)
-            if not _run_ff(_encode_cmd(source, output, ss, expected, bitrate, threads), errf):
+            if not _run_ff(_encode_cmd(source, output, ss, expected, bitrate, threads, gpu=gpu), errf):
                 errf.seek(0)
                 rec["error"] = f"ffmpeg re-encode failed: {errf.read().decode(errors='replace').strip()[-600:]}"
                 return rec
@@ -557,11 +615,14 @@ def cut_plan(  # noqa: C901, PLR0913
     allow_stream_copy: bool = True,
     smart_cut: bool = False,
     verify_index: str = "auto",
+    gpu: bool = False,
+    tmp_dir: str | None = None,
 ) -> list[dict[str, Any]]:
     """Cut every range in *cuts* from *source*, one independent ffmpeg per cut.
 
     Each cut fast-seeks to its exact start PTS and stream-copies (all-intra source) or
-    re-encodes with libopenh264 at the given *bitrate*. Returns one record per cut:
+    re-encodes with libopenh264 (CPU) or h264_nvenc (GPU, when *gpu* is True) at the
+    given *bitrate*. Returns one record per cut:
     ``{"output", "expected_frames", "written_frames", "success", "error", "mode"}``;
     ``success`` is True only when the exact requested frame count was produced. A per-cut
     failure is isolated to that cut.
@@ -604,7 +665,17 @@ def cut_plan(  # noqa: C901, PLR0913
     index = _probe_index(source, verify_index=verify_index)
 
     def run(c: dict[str, Any]) -> dict[str, Any]:
-        return _cut_one(source, c, index, bitrate, threads, allow_stream_copy=allow_stream_copy, smart_cut=smart_cut)
+        return _cut_one(
+            source,
+            c,
+            index,
+            bitrate,
+            threads,
+            allow_stream_copy=allow_stream_copy,
+            smart_cut=smart_cut,
+            gpu=gpu,
+            tmp_dir=tmp_dir,
+        )
 
     if workers <= 1:
         return [run(c) for c in cuts]
