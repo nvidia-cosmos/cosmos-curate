@@ -254,12 +254,15 @@ def _mutate(manifest_path: Path, run_id: str, mutation: _state.JsonObject) -> _s
     return _state.mutate_manifest(manifest_path, mutation, run_id=run_id)
 
 
-def _prepare_ray_temp_dir(root: str | None, run_id: str, role: str) -> Path | None:
+def _prepare_ray_temp_dir(root: str | None, role: str) -> Path | None:
     if root is None:
         return None
     job_id = os.getenv("SLURM_JOB_ID", "unknown")
     restart_count = os.getenv("SLURM_RESTART_COUNT", "0")
-    path = Path(root).expanduser() / run_id / f"{role}-{job_id}-{restart_count}"
+    # The Slurm allocation and restart identify one Ray node while Ray's own ``session_<timestamp>_<pid>``
+    # directory distinguishes starts within it. Omitting the longer run ID keeps AF_UNIX socket paths below
+    # Linux's 107-byte limit without making cleanup shared between active Ray nodes.
+    path = Path(root).expanduser() / f"{role}-{job_id}-{restart_count}"
     path.mkdir(parents=True, exist_ok=True)
     return path
 
@@ -409,7 +412,7 @@ def _supervise_head(args: argparse.Namespace, manifest_path: Path, teardown: Exi
     manifest = _wait_for_submitted_manifest(manifest_path, args.run_id, args.startup_timeout_seconds)
     head_job_id = _verified_head_job_id(manifest)
 
-    temp_dir = _prepare_ray_temp_dir(args.temp_dir, args.run_id, "head")
+    temp_dir = _prepare_ray_temp_dir(args.temp_dir, "head")
     if temp_dir is not None:
         teardown.callback(shutil.rmtree, temp_dir, ignore_errors=True)
 
@@ -547,7 +550,7 @@ def _run_worker(args: argparse.Namespace) -> int:
         msg = "Bootstrap record does not contain a Ray address"
         raise RuntimeError(msg)
 
-    temp_dir = _prepare_ray_temp_dir(args.temp_dir, args.run_id, f"lane-{args.lane}")
+    temp_dir = _prepare_ray_temp_dir(args.temp_dir, f"lane-{args.lane}")
     try:
         logger.info(
             "Starting lane %s incarnation %s for run %s against %s",

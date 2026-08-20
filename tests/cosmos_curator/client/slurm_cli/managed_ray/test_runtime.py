@@ -25,6 +25,7 @@ import pytest
 from cosmos_curator.client.slurm_cli.managed_ray.onnode.slurm_ray_runtime import (
     _HEAD_PORT_NAMES,
     _HEAD_PROBE_ATTEMPTS,
+    _prepare_ray_temp_dir,
     _queued_job_states,
     _ray_head_command,
     _ray_worker_command,
@@ -47,6 +48,26 @@ from tests.cosmos_curator.client.slurm_cli.managed_ray.launcher_stubs import (
 )
 
 RUNTIME_MODULE = "cosmos_curator.client.slurm_cli.managed_ray.onnode.slurm_ray_runtime"
+
+
+def test_ray_temp_dir_is_scoped_by_slurm_job(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The allocation isolates cleanup without adding the longer cluster ID to Ray's socket paths."""
+    monkeypatch.setenv("SLURM_JOB_ID", "1899271")
+    monkeypatch.setenv("SLURM_RESTART_COUNT", "3")
+
+    temp_dir = _prepare_ray_temp_dir(str(tmp_path), "lane-2")
+
+    assert temp_dir is not None
+    assert temp_dir == tmp_path / "lane-2-1899271-3"
+    assert temp_dir.is_dir()
+    socket_path = (
+        Path("/raid/scratch")
+        / temp_dir.name
+        / "session_2026-08-19_15-39-00_322429_2032562"
+        / "sockets"
+        / "plasma_store"
+    )
+    assert len(str(socket_path).encode()) <= 107
 
 
 def test_head_cleanup_cancels_lanes_then_publishes_terminal_state(
