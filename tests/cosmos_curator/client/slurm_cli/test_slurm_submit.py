@@ -453,7 +453,7 @@ def test_submit_uses_shared_defaults_for_container_runtime(
     assert env_vars["TRITON_HOME"] == "/cache/triton"
     assert env_vars["HF_HOME"] == "/cache/huggingface"
     assert env_vars["LAION_CACHE_HOME"] == "/cache/laion"
-    assert env_vars["CONDA_OVERRIDE_CUDA"] == "13.0.2"
+    assert env_vars["CONDA_OVERRIDE_CUDA"] == "13.0.3"
     assert env_vars["EXTRA"] == "value"
     assert env_vars["HOST_ONLY"] == "host-value"
     assert "SLURM_JOB_ID" not in env_vars

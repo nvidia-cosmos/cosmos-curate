@@ -52,5 +52,5 @@ WORKDIR /opt/cosmos-curator
 COPY --chown=ubuntu:ubuntu pixi.toml pixi.lock pyproject.toml setup.py MANIFEST.in README.md LICENSE ./
 COPY --chown=ubuntu:ubuntu cosmos_curator ./cosmos_curator
 
-RUN CONDA_OVERRIDE_CUDA=13.0.2 SETUPTOOLS_SCM_PRETEND_VERSION_FOR_COSMOS_CURATOR=0.0.0 pixi install --frozen -e dev \
+RUN CONDA_OVERRIDE_CUDA=13.0.3 SETUPTOOLS_SCM_PRETEND_VERSION_FOR_COSMOS_CURATOR=0.0.0 pixi install --frozen -e dev \
     && rm -rf /home/ubuntu/.cache/pip /home/ubuntu/.cache/pixi /home/ubuntu/.cache/rattler

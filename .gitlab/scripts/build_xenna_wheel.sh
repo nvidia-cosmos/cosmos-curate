@@ -110,7 +110,7 @@ uv sync --group dev
 # Let maturin auto-pick the manylinux tag based on the host glibc; the
 # Dockerfile's wheel glob (`cosmos_xenna-*manylinux*_${ARCH}.whl`) accepts
 # any manylinux version, and vm-builder runners have newer glibc than the
-# final cuda:13.0.2-ubuntu24.04 runtime image.
+# final cuda:13.0.3-ubuntu24.04 runtime image.
 uv run maturin build --release --strip
 
 echo "=== Built wheels ==="

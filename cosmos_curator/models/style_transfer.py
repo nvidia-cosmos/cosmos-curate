@@ -255,8 +255,8 @@ class Cosmos3OmniTransferModel(StyleTransferModel):
             "multi_modal_data": {"video": {"data": vision_frames, "fps": float(params.fps)}},
         }
         # ``fps`` (int) and ``frame_rate`` (float) are intentionally both set to the
-        # same value: vLLM-Omni reads ``frame_rate`` on the current 0.24 pin, while
-        # ``fps`` is kept for compatibility with older versions. Neither is dead code.
+        # same value: vLLM-Omni 0.27 accepts both aliases, and keeping both preserves
+        # compatibility with older releases. Neither is dead code.
         sampling_params = OmniDiffusionSamplingParams(
             num_frames=params.num_frames,
             fps=params.fps,

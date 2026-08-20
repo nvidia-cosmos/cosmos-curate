@@ -3,7 +3,7 @@
 [workspace]
 channels = ["rapidsai", "conda-forge"]
 name = "cosmos-curator-distributable"
-platforms = ["linux-64", "linux-aarch64", "osx-arm64", { name = "linux-64-cuda", platform = "linux-64", cuda = "13.0.2", glibc = "2.35" }, { name = "linux-aarch64-cuda", platform = "linux-aarch64", cuda = "13.0.2", glibc = "2.35" }]
+platforms = ["linux-64", "linux-aarch64", "osx-arm64", { name = "linux-64-cuda", platform = "linux-64", cuda = "13.0.3", glibc = "2.35" }, { name = "linux-aarch64-cuda", platform = "linux-aarch64", cuda = "13.0.3", glibc = "2.35" }]
 version = "1.0.0"
 
 [activation.env]
@@ -30,7 +30,7 @@ loguru = "*"
 mcap = ">=1.3.1,<2.0.0"
 numpy = ">2,<2.3"
 nvidia-ml-py = "*"
-nvtx = "*"
+nvtx = "==0.2.15"
 openssl = ">=3.6.2,<4.0a0"
 pandas = "*"
 pyarrow = ">=23.0.1"
@@ -77,7 +77,7 @@ channels = ["conda-forge", "nvidia"]
 platforms = ["linux-64-cuda", "linux-aarch64-cuda"]
 
 [feature.runtime.dependencies]
-cuda-libraries-dev = "==13.0.2"
+cuda-libraries-dev = "==13.0.3"
 gpustat = "*"
 libgl = "*"
 pycountry = "*"
@@ -91,9 +91,9 @@ nvidia-cuda-cccl = "==13.0.*"
 nvidia-cuda-crt = "==13.0.*"
 PyNvVideoCodec = ">=2.0.4,<2.1"
 timm = "*"
-torch = "==2.11.0"
-torchvision = "==0.26.0"
-vllm = "==0.24.0"
+torch = "==2.13.0"
+torchvision = "==0.28.0"
+vllm = "==0.27.1"
 paddlepaddle = { version = "==3.2.*", index = "https://www.paddlepaddle.org.cn/packages/stable/cpu/" }
 paddleocr = "==2.10.*"
 
@@ -106,7 +106,7 @@ cuda-nvrtc-static = "13.0.*"
 cuda-cupti = "13.0.*"
 cuda-cuobjdump = "13.0.*"
 cuda-nvdisasm = "13.0.*"
-triton = "==3.6.0"
+triton = "==3.7.1"
 
 [feature.runtime.target.linux-aarch64.pypi-dependencies]
 nvidia-cublas = "*"
@@ -126,7 +126,7 @@ nvidia-nvshmem-cu13 = "*"
 nvidia-nvtx = "*"
 
 [feature.vllm-omni.pypi-dependencies]
-vllm-omni = "==0.24.0"
+vllm-omni = "==0.27.0rc1"
 
 [feature.cuml]
 channels = ["nvidia"]
@@ -162,7 +162,7 @@ cuda-bindings = "==13.0.*"
 sentence-transformers = "*"
 
 [feature.seedvr.dependencies]
-cuda-libraries-dev = "==13.0.2"
+cuda-libraries-dev = "==13.0.3"
 einops = "*"
 omegaconf = "*"
 

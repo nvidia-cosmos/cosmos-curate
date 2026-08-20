@@ -183,7 +183,7 @@ def test_slurm_shell_command_uses_srun_and_live_source_mounts(  # noqa: PLR0915
     assert subprocess_env["UV_CACHE_DIR"] == "/cache/rattler/cache/uv-cache"
     assert subprocess_env["TORCH_HOME"] == "/cache/torch"
     assert subprocess_env["TRITON_HOME"] == "/cache/triton"
-    assert subprocess_env["CONDA_OVERRIDE_CUDA"] == "13.0.2"
+    assert subprocess_env["CONDA_OVERRIDE_CUDA"] == "13.0.3"
     assert subprocess_env["EXTRA"] == "value"
     assert subprocess_env["HOST_ONLY"] == "host-value"
     assert "PIXI_PROJECT_MANIFEST" not in subprocess_env

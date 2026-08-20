@@ -62,7 +62,7 @@ CONTAINER_ENV=(
   "PIXI_CACHE_DIR=/pixi-cache"
   "PIXI_CACHE_REPODATA_DIR=/config/project/.pixi/cache/repodata"
   "PIXI_CACHE_PYPI_MAPPING_DIR=/config/project/.pixi/cache/conda-pypi-mapping"
-  "CONDA_OVERRIDE_CUDA=13.0.2"
+  "CONDA_OVERRIDE_CUDA=13.0.3"
 )
 CONTAINER_ENV_STR=$(IFS=, ; echo "${CONTAINER_ENV[*]}")
 

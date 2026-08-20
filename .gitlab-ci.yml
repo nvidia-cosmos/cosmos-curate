@@ -430,7 +430,7 @@ stages:
     command -v pixi
     export PIXI_CACHE_DIR="${PIXI_CACHE_DIR:-${CI_PROJECT_DIR}/.pixi/cache}"
     export PYTHONNOUSERSITE=1
-    export CONDA_OVERRIDE_CUDA="${CONDA_OVERRIDE_CUDA:-13.0.2}"
+    export CONDA_OVERRIDE_CUDA="${CONDA_OVERRIDE_CUDA:-13.0.3}"
     git config --global --add safe.directory "${CI_PROJECT_DIR:-$(pwd)}"
     : "${SETUPTOOLS_SCM_PRETEND_VERSION_FOR_COSMOS_CURATOR:?resolve_version did not provide the package version}"
     pixi install --frozen -e dev
@@ -471,7 +471,7 @@ stages:
   # (e.g. cosmos-xenna) are picked up WITHOUT rebuilding the image.
   setup_ci_builder_env_synced: &setup_ci_builder_env_synced |
     export PYTHONNOUSERSITE=1
-    export CONDA_OVERRIDE_CUDA="${CONDA_OVERRIDE_CUDA:-13.0.2}"
+    export CONDA_OVERRIDE_CUDA="${CONDA_OVERRIDE_CUDA:-13.0.3}"
     export PATH="/opt/cosmos-curator/.pixi/envs/dev/bin:/usr/local/bin:${PATH}"
     cp "${CI_PROJECT_DIR}"/{pixi.toml,pixi.lock,conda-pypi-map.json} /opt/cosmos-curator/
     # Scope the version default to the pixi install invocation only (do NOT export
@@ -550,7 +550,7 @@ resolve_version:
     - pixi --version
     - export PIXI_CACHE_DIR="${PIXI_CACHE_DIR:-${CI_PROJECT_DIR}/.pixi/cache}"
     - export PYTHONNOUSERSITE=1
-    - export CONDA_OVERRIDE_CUDA="${CONDA_OVERRIDE_CUDA:-13.0.2}"
+    - export CONDA_OVERRIDE_CUDA="${CONDA_OVERRIDE_CUDA:-13.0.3}"
     - bash .gitlab/scripts/fetch_git_metadata.sh
     - pixi install --frozen -e dev
     - VERSION="$(pixi run --as-is -e dev python -m setuptools_scm)"
@@ -971,7 +971,7 @@ gpu_tests:
     - NODES=1
     - export LOCAL_DOCKER_ENV_VAR_NAME=1
     - export PIXI_CACHE_DIR=/pixi-cache
-    - export CONDA_OVERRIDE_CUDA=13.0.2
+    - export CONDA_OVERRIDE_CUDA=13.0.3
     # Run pytest for each environment; sleep 15 min before retry
     - >
       srun -A ${SLURM_ACCOUNT} \
@@ -1372,7 +1372,7 @@ k8s_gpu_tests:
     # Install pixi environments into /opt/cosmos-curator (where the slim
     # image has the source + lockfile) so Ray workers find them.
     - export PIXI_CACHE_DIR=/cache/pixi
-    - export CONDA_OVERRIDE_CUDA=13.0.2
+    - export CONDA_OVERRIDE_CUDA=13.0.3
     - pushd /opt/cosmos-curator
     - pixi install --frozen -e default -e legacy-transformers -e model-download
     # If build_xenna_wheels uploaded an artifact, override the pixi-installed

@@ -72,8 +72,8 @@ def test_workspace_default_feature_is_cross_platform_minimal() -> None:
         "linux-64",
         "linux-aarch64",
         "osx-arm64",
-        {"name": "linux-64-cuda", "platform": "linux-64", "cuda": "13.0.2", "glibc": "2.35"},
-        {"name": "linux-aarch64-cuda", "platform": "linux-aarch64", "cuda": "13.0.2", "glibc": "2.35"},
+        {"name": "linux-64-cuda", "platform": "linux-64", "cuda": "13.0.3", "glibc": "2.35"},
+        {"name": "linux-aarch64-cuda", "platform": "linux-aarch64", "cuda": "13.0.3", "glibc": "2.35"},
     ]
     assert pixi_config["dependencies"] == {"python": "==3.13.14", "pip": "*"}
     assert "pypi-dependencies" not in pixi_config
@@ -230,7 +230,7 @@ def test_vllm_omni_is_isolated_to_style_transfer_environment() -> None:
     features = pixi_config["feature"]
 
     assert "vllm-omni" not in features["runtime"]["pypi-dependencies"]
-    assert features["vllm-omni"]["pypi-dependencies"] == {"vllm-omni": "==0.24.0"}
+    assert features["vllm-omni"]["pypi-dependencies"] == {"vllm-omni": "==0.27.0rc1"}
     assert pixi_config["environments"]["style-transfer"] == [
         "core",
         "runtime",

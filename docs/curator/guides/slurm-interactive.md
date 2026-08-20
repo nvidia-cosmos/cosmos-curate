@@ -82,7 +82,7 @@ enroot start -w \
   -m "${REPO}":/opt/cosmos-curator \
   -m "${REPO}":"${REPO}" \
   -m "${CACHE_DIR}":/cache \
-  -e CONDA_OVERRIDE_CUDA=13.0.2 \
+  -e CONDA_OVERRIDE_CUDA=13.0.3 \
   -e PIXI_CACHE_DIR=/cache/pixi \
   -e XDG_CACHE_HOME=/cache/xdg \
   -e UV_CACHE_DIR=/cache/uv \
