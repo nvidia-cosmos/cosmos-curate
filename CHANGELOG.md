@@ -2,6 +2,78 @@
 
 ## Latest
 
+## [2.5.0]
+
+### Released
+
+- 2026-08-20
+
+### Breaking Changes
+
+- Require Python 3.13 for package and standalone client installs; supported versions are now
+  `>=3.13,<3.14`.
+- Replace the shared `SamplingPolicy` on `SamplingSpec` with explicit per-sensor policies:
+  - Use `NearestTimestampPolicy(max_delta_ns=...)` for timestamp-aligned sensors.
+  - Use `NoSamplingPolicy` for sensors whose sampling is policy-independent.
+  - Pass a policy to each sensor's `sample()` call, or a complete policy mapping to
+    `SensorGroup.sample()`; the previous `sensor_overlap` policy check is removed.
+- Move data-integrity workflow modules from `cosmos_curator.core.sensors.data_integrity` to
+  `cosmos_curator.next.recipes.data_integrity`. Measurement, evaluation, and result primitives
+  remain under the core namespace.
+- Rename `cosmos_curator.core.sensors.data.trajectory_data` to
+  `cosmos_curator.core.sensors.data.egotrajectory_data`; the `EgoTrajectory` class name is
+  unchanged.
+
+### Added
+
+- Add `cosmos-curator slurm ray` for managed Ray clusters on Slurm, including config templates,
+  schema validation and rendering, remote submission, elastic worker scaling, status, listing,
+  and shutdown controls.
+- Add the Curator Next `video-split` recipe for config-driven, fixed-stride MP4 splitting with Ray
+  Data, deterministic S3 media output, Lance clip/source snapshots, and durable cross-run recovery.
+- Add the Curator Next `multimodal-split` config and local/S3 recording-session discovery surface;
+  this release discovers candidate sessions but does not yet split them into episodes.
+- Add an optional Lance store for data-integrity measurements and verdicts, with local/S3 storage,
+  append-only run tracking, and re-evaluation under new thresholds without rereading source media.
+- Add preintegrated IMU data and sensor support, including pose resets, plus `EgoTrajectory` data,
+  sensor, protobuf schema, and mapping support.
+- Add embedded-video decoding for MCAP-backed camera sensors.
+- Add configurable embedding sampling FPS and configurable caption-quality thresholds, and expose
+  caption-quality flag counts and effective thresholds in split benchmark metrics.
+- Add trace/span correlation fields to structured JSON logs and Helm support for exporting Ray logs
+  and Prometheus metrics through standalone OTLP collectors.
+
+### Fixed
+
+- Improve Curator Next robot-action splitting after large-scale LeRobot runs by streaming and
+  reusing source downloads, reducing memory pressure, and correcting `libopenh264` handling and
+  subtask schemas.
+- Release extracted frames after embedding and filtering consumers finish, avoiding retained frame
+  memory on handled paths.
+- Honor the configured S3 profile region when explicit credentials are used.
+- Request the configured Slurm resources when importing container images.
+- Validate data-integrity store paths before processing begins.
+- Shorten managed Ray temporary paths to avoid Unix socket path-length failures.
+- Avoid importing Ray at storage-module import time so storage helpers remain usable in lightweight
+  client environments.
+
+### Changed
+
+- Add a Ray Data `flat_map` execution path for Curator Next robot-action splitting.
+- Isolate vLLM-Omni and style-transfer dependencies in a dedicated `style-transfer` Pixi
+  environment.
+- Package the complete `cosmos_curator` module tree and non-Python assets in built wheels.
+- Upgrade Cosmos-Xenna to 0.5.7, vLLM to 0.27.1, vLLM-Omni to 0.27.0rc1, PyTorch to 2.13.0,
+  CUDA to 13.0.3, and Pixi in runtime images to 0.76.2.
+
+### Documentation
+
+- Add design documentation for managed Ray on Slurm, Curator Next video splitting, multimodal AV
+  splitting, and the data-integrity Lance store.
+- Expand sensor-library documentation for explicit sampling policies, preintegrated IMU data,
+  ego trajectories, and MCAP video.
+- Document structured-log trace correlation and Helm-based OTLP log and metrics export.
+
 ## [2.4.0]
 
 ### Released
