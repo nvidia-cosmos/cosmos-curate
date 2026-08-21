@@ -270,6 +270,102 @@ def test_sample_boundary_timestamp_belongs_to_next_window(synthetic_video: io.By
     np.testing.assert_array_equal(batches[1].sensor_timestamps_ns, pts[3:6])
 
 
+@pytest.mark.parametrize("timestamp_offset_ns", [1_000, -1_000, np.int32(1_000), np.uint64(1_000)])
+def test_camera_sensor_timestamp_offset_shifts_sampling_and_reported_ns_timeline(
+    timestamp_offset_ns: int,
+    patch_camera_sensor_dependencies: Callable[..., None],
+) -> None:
+    """Camera offsets align sampling and reported ns values without changing stream PTS."""
+    index, metadata = _make_video_index_and_metadata(
+        pts_ns=[100, 200, 300],
+        pts_stream=[100, 200, 300],
+        is_keyframe=[True, False, False],
+        is_discard=[False, False, False],
+        kf_pts_ns=[100],
+        kf_pts_stream=[100],
+    )
+
+    def fake_make_index_and_metadata(
+        source: object,
+        stream_idx: int = 0,
+        index_method: object = None,
+        **_kwargs: object,
+    ) -> tuple[VideoIndex, VideoMetadata]:
+        del source, stream_idx, index_method
+        return index, metadata
+
+    def fake_decode(decode_plan: list[tuple[int, list[tuple[int, int]]]]) -> npt.NDArray[np.uint8]:
+        frame_count = sum(count for _, group in decode_plan for _, count in group)
+        return np.zeros((frame_count, metadata.height, metadata.width, 3), dtype=np.uint8)
+
+    def fake_decoder_open(
+        source: object,
+        stream_idx: int = 0,
+        config: object = None,
+        stats: object = None,
+        **_kwargs: object,
+    ) -> _FakeDecoder:
+        del source, stream_idx, config, stats
+        return _FakeDecoder(time_base=index.time_base, decode_fn=fake_decode)
+
+    patch_camera_sensor_dependencies(
+        make_index_and_metadata_fn=fake_make_index_and_metadata,
+        decoder_open_fn=fake_decoder_open,
+    )
+
+    normalized_timestamp_offset_ns = int(timestamp_offset_ns)
+    sensor = CameraSensor(b"not-used", timestamp_offset_ns=timestamp_offset_ns)
+    shifted_pts_ns = np.array([100, 200, 300], dtype=np.int64) + normalized_timestamp_offset_ns
+    grid_timestamps_ns = np.append(shifted_pts_ns, shifted_pts_ns[-1] + 1)
+    grid = make_sampling_grid(grid_timestamps_ns, stride_ns=1_000, duration_ns=1_000)
+
+    batch = next(sensor.sample(SamplingSpec(grid=grid), policy=NearestTimestampPolicy(max_delta_ns=0)))
+
+    assert sensor.timestamp_offset_ns == normalized_timestamp_offset_ns
+    assert type(sensor.timestamp_offset_ns) is int
+    np.testing.assert_array_equal(sensor.video_index.pts_ns, shifted_pts_ns)
+    np.testing.assert_array_equal(sensor.video_index.kf_pts_ns, shifted_pts_ns[:1])
+    np.testing.assert_array_equal(sensor.timestamps_ns, shifted_pts_ns)
+    assert sensor.start_ns == int(shifted_pts_ns[0])
+    assert sensor.end_ns == int(shifted_pts_ns[-1])
+    np.testing.assert_array_equal(next(sensor.stream_timestamps()), shifted_pts_ns)
+    np.testing.assert_array_equal(batch.align_timestamps_ns, shifted_pts_ns)
+    np.testing.assert_array_equal(batch.sensor_timestamps_ns, shifted_pts_ns)
+    np.testing.assert_array_equal(batch.pts_stream, np.array([100, 200, 300], dtype=np.int64))
+
+    assert index.timestamp_offset_ns == 0
+    np.testing.assert_array_equal(index.pts_ns, np.array([100, 200, 300], dtype=np.int64))
+
+
+@pytest.mark.parametrize(
+    "timestamp_offset_ns",
+    [
+        True,
+        np.bool_(True),  # noqa: FBT003
+        1.5,
+        "1",
+        np.iinfo(np.int64).max + 1,
+        np.uint64(np.iinfo(np.int64).max + 1),
+    ],
+)
+def test_camera_sensor_rejects_invalid_timestamp_offset_before_indexing(
+    timestamp_offset_ns: object,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Invalid offset configuration must fail before indexing the video source."""
+
+    def fail_to_index(*_args: object, **_kwargs: object) -> tuple[VideoIndex, VideoMetadata]:
+        pytest.fail("CameraSensor must validate timestamp_offset_ns before indexing")
+
+    monkeypatch.setattr(
+        "cosmos_curator.core.sensors.sensors.camera_sensor.make_index_and_metadata",
+        fail_to_index,
+    )
+
+    with pytest.raises(ValueError, match="timestamp_offset_ns"):
+        CameraSensor(b"not-used", timestamp_offset_ns=timestamp_offset_ns)  # type: ignore[arg-type]
+
+
 def test_sample_singleton_window_is_boundary_only() -> None:
     """A one-frame source yields a singleton window and therefore an empty batch."""
     buf = io.BytesIO()

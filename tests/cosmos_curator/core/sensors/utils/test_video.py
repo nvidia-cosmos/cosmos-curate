@@ -723,6 +723,36 @@ def test_video_index_rejects_invalid_array_dtype_or_ndim(
         VideoIndex(**kwargs)
 
 
+@pytest.mark.parametrize(
+    "timestamp_offset_ns",
+    [
+        True,
+        np.bool_(True),  # noqa: FBT003
+        1.5,
+        "1",
+        np.iinfo(np.int64).max + 1,
+        np.uint64(np.iinfo(np.int64).max + 1),
+    ],
+)
+def test_video_index_constructor_rejects_invalid_timestamp_offset(timestamp_offset_ns: object) -> None:
+    """VideoIndex constructor and shift-copy API share offset validation."""
+    kwargs: dict[str, Any] = {
+        "offset": np.array([0], dtype=np.int64),
+        "size": np.array([100], dtype=np.int64),
+        "pts_ns": np.array([0], dtype=np.int64),
+        "pts_stream": np.array([0], dtype=np.int64),
+        "is_keyframe": np.array([True], dtype=np.bool_),
+        "is_discard": np.array([False], dtype=np.bool_),
+        "kf_pts_ns": np.array([0], dtype=np.int64),
+        "kf_pts_stream": np.array([0], dtype=np.int64),
+        "time_base": Fraction(1, 1_000_000_000),
+        "timestamp_offset_ns": timestamp_offset_ns,
+    }
+
+    with pytest.raises(ValueError, match="timestamp_offset_ns"):
+        VideoIndex(**kwargs)
+
+
 def test_video_index_display_view_filters_discard_packets() -> None:
     """VideoIndex should expose a reusable display-frame view."""
     index = VideoIndex(
@@ -751,6 +781,88 @@ def test_video_index_display_view_filters_discard_packets() -> None:
     assert index.display_mask is display_mask_0
     assert index.display_pts_ns is display_pts_ns_0
     assert index.display_pts_stream is display_pts_stream_0
+
+
+def test_video_index_with_timestamp_offset_shifts_only_nanosecond_timeline() -> None:
+    """A timestamp offset must preserve the native PTS axis used for decode."""
+    index = VideoIndex(
+        offset=np.array([0, 10, 20], dtype=np.int64),
+        size=np.array([100, 100, 100], dtype=np.int64),
+        pts_ns=np.array([100, 200, 300], dtype=np.int64),
+        pts_stream=np.array([10, 20, 30], dtype=np.int64),
+        is_keyframe=np.array([True, False, True], dtype=np.bool_),
+        is_discard=np.array([False, True, False], dtype=np.bool_),
+        kf_pts_ns=np.array([100, 300], dtype=np.int64),
+        kf_pts_stream=np.array([10, 30], dtype=np.int64),
+        time_base=Fraction(1, 1_000_000_000),
+        timestamp_offset_ns=np.int32(0),
+    )
+
+    assert index.timestamp_offset_ns == 0
+    assert type(index.timestamp_offset_ns) is int
+
+    shifted = index.with_timestamp_offset(np.int32(-50))
+
+    assert shifted.timestamp_offset_ns == -50
+    assert type(shifted.timestamp_offset_ns) is int
+    np.testing.assert_array_equal(shifted.pts_ns, np.array([50, 150, 250], dtype=np.int64))
+    np.testing.assert_array_equal(shifted.kf_pts_ns, np.array([50, 250], dtype=np.int64))
+    np.testing.assert_array_equal(shifted.display_pts_ns, np.array([50, 250], dtype=np.int64))
+    np.testing.assert_array_equal(shifted.pts_stream, index.pts_stream)
+    np.testing.assert_array_equal(shifted.kf_pts_stream, index.kf_pts_stream)
+    assert shifted.time_base == index.time_base
+
+    assert index.timestamp_offset_ns == 0
+    np.testing.assert_array_equal(index.pts_ns, np.array([100, 200, 300], dtype=np.int64))
+    assert index.with_timestamp_offset(0) is index
+
+
+def test_video_index_rejects_reapplying_timestamp_offset() -> None:
+    """Only a native index may receive a timestamp offset."""
+    index = VideoIndex(
+        offset=np.array([0], dtype=np.int64),
+        size=np.array([100], dtype=np.int64),
+        pts_ns=np.array([0], dtype=np.int64),
+        pts_stream=np.array([0], dtype=np.int64),
+        is_keyframe=np.array([True], dtype=np.bool_),
+        is_discard=np.array([False], dtype=np.bool_),
+        kf_pts_ns=np.array([0], dtype=np.int64),
+        kf_pts_stream=np.array([0], dtype=np.int64),
+        time_base=Fraction(1, 1_000_000_000),
+    )
+
+    shifted_index = index.with_timestamp_offset(1)
+
+    with pytest.raises(ValueError, match="only be applied to a native VideoIndex"):
+        shifted_index.with_timestamp_offset(1)
+
+
+@pytest.mark.parametrize(
+    ("pts_ns", "timestamp_offset_ns"),
+    [
+        ([np.iinfo(np.int64).max - 1, np.iinfo(np.int64).max], np.int64(1)),
+        ([np.iinfo(np.int64).min, np.iinfo(np.int64).min + 1], np.int64(-1)),
+    ],
+)
+def test_video_index_with_timestamp_offset_rejects_int64_overflow(
+    pts_ns: list[int],
+    timestamp_offset_ns: np.int64,
+) -> None:
+    """Timestamp shifting must not silently wrap an int64 timeline."""
+    index = VideoIndex(
+        offset=np.array([0, 10], dtype=np.int64),
+        size=np.array([100, 100], dtype=np.int64),
+        pts_ns=np.array(pts_ns, dtype=np.int64),
+        pts_stream=np.array([10, 20], dtype=np.int64),
+        is_keyframe=np.array([True, False], dtype=np.bool_),
+        is_discard=np.array([False, False], dtype=np.bool_),
+        kf_pts_ns=np.array([pts_ns[0]], dtype=np.int64),
+        kf_pts_stream=np.array([10], dtype=np.int64),
+        time_base=Fraction(1, 1_000_000_000),
+    )
+
+    with pytest.raises(ValueError, match="outside signed int64"):
+        index.with_timestamp_offset(timestamp_offset_ns)
 
 
 def test_video_index_does_not_mutate_caller_owned_arrays() -> None:

@@ -135,6 +135,33 @@ not:
 - “these are all source samples that happened to occur during this
   wall-clock interval”
 
+### Camera fixed timestamp offset
+
+`CameraSensor(timestamp_offset_ns=...)` accepts a Python integer or NumPy
+integer scalar fixed signed-nanosecond offset, normalizes it to a Python `int`,
+and applies it to its MP4 PTS-derived nanosecond timeline. This lets a camera's
+frames and reported bounds use the same timeline as an alignment grid without
+changing the MP4 values required for decoding. Boolean values and values outside
+the signed-`int64` range are rejected. CameraSensor applies the offset once to
+the native MP4 index during construction.
+
+For a configured `timestamp_offset_ns`, the index satisfies:
+
+```text
+pts_ns = pts_to_ns(pts_stream, time_base) + timestamp_offset_ns
+```
+
+The offset shifts `VideoIndex.pts_ns`, `kf_pts_ns`, and derived
+`display_pts_ns`. Consequently, `CameraSensor.start_ns`, `end_ns`,
+`timestamps_ns`, `stream_timestamps()`, and `CameraData.sensor_timestamps_ns`
+all use the offset timeline. `CameraData.pts_stream`, `VideoIndex.pts_stream`,
+`kf_pts_stream`, and `time_base` remain native MP4 values, so decode planning
+and seeking are unchanged.
+
+The offset changes timestamp positions, not durations. In particular,
+`NearestTimestampPolicy.max_delta_ns` remains an unshifted tolerance in
+nanoseconds; no offset is added to it.
+
 ### Reference-Grid Sampling Contract
 
 `SamplingGrid` defines the canonical reference timeline for alignment. It is

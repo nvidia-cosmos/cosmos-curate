@@ -23,7 +23,11 @@ import numpy.typing as npt
 from cosmos_curator.core.sensors.data.camera_data import CameraData
 from cosmos_curator.core.sensors.data.extrinsics import SensorExtrinsics
 from cosmos_curator.core.sensors.data.intrinsics import CameraIntrinsics
-from cosmos_curator.core.sensors.data.video import VideoIndex, VideoMetadata
+from cosmos_curator.core.sensors.data.video import (
+    VideoIndex,
+    VideoMetadata,
+    validate_timestamp_offset_ns,
+)
 from cosmos_curator.core.sensors.sampling.policy import NearestTimestampPolicy, require_nearest_timestamp_policy
 from cosmos_curator.core.sensors.sampling.sampler import sample_window_indices
 from cosmos_curator.core.sensors.sampling.spec import SamplingSpec
@@ -69,6 +73,7 @@ class CameraSensor:
         index_method: VideoIndexCreationMethod = VideoIndexCreationMethod.AUTO,
         intrinsics: CameraIntrinsics | None = None,
         extrinsics: SensorExtrinsics | None = None,
+        timestamp_offset_ns: int = 0,
     ) -> None:
         """Initialize the camera sensor.
 
@@ -93,8 +98,12 @@ class CameraSensor:
                 before constructing ``CameraSensor``.
             extrinsics: Optional pre-parsed rigid transform from the camera frame
                 to a caller-defined reference frame.
+            timestamp_offset_ns: Fixed signed-nanosecond offset applied to the
+                camera's nanosecond timeline. Stream-native PTS values remain
+                unchanged for decode planning and seeking.
 
         """
+        timestamp_offset_ns = validate_timestamp_offset_ns(timestamp_offset_ns)
         self._source = source
         self._stream_idx = stream_idx
         self._decode_config = decode_config
@@ -103,6 +112,7 @@ class CameraSensor:
         self._video_index, self._video_metadata = make_index_and_metadata(
             self._source, self._stream_idx, index_method=index_method
         )
+        self._video_index = self._video_index.with_timestamp_offset(timestamp_offset_ns)
         if len(self._video_index.display_pts_ns) == 0:
             msg = "video stream contains no displayable frames"
             raise ValueError(msg)
@@ -117,6 +127,11 @@ class CameraSensor:
     def video_metadata(self) -> VideoMetadata:
         """Return the video metadata for this sensor."""
         return self._video_metadata
+
+    @property
+    def timestamp_offset_ns(self) -> int:
+        """Return the fixed offset applied to this sensor's nanosecond timeline."""
+        return self._video_index.timestamp_offset_ns
 
     @property
     def start_ns(self) -> int:
@@ -289,7 +304,8 @@ class CameraSensor:
 
                 yield CameraData(
                     align_timestamps_ns=window.timestamps_ns,
-                    sensor_timestamps_ns=pts_to_ns(pts_stream_expanded, decoder.time_base),
+                    sensor_timestamps_ns=pts_to_ns(pts_stream_expanded, decoder.time_base)
+                    + self._video_index.timestamp_offset_ns,
                     pts_stream=pts_stream_expanded,
                     frames=frames,
                     metadata=self._video_metadata,
