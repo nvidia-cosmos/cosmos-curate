@@ -33,6 +33,7 @@ def assert_ffmpeg_supports_h264() -> None:
             text=True,
             check=True,
             timeout=30,
+            stdin=subprocess.DEVNULL,
         )
     except (subprocess.SubprocessError, FileNotFoundError) as e:
         msg = f"Failed to query FFmpeg decoders: {e}"

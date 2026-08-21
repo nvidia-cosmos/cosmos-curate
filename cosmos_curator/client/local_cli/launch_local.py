@@ -451,6 +451,9 @@ def _launch_in_docker_container(opts: LaunchDocker) -> None:
         f"{LOCAL_DOCKER_ENV_VAR_NAME}=1",
         "-e",
         "NVCF_REQUEST_STATUS=false",
+        # Replaces the line buffering a pseudo-TTY used to give us; see the -t note below.
+        "-e",
+        "PYTHONUNBUFFERED=1",
     ]
     if opts.docker_network:
         docker_command.append(f"--network={opts.docker_network}")
@@ -471,9 +474,12 @@ def _launch_in_docker_container(opts: LaunchDocker) -> None:
     for vol in opts.extra_volumes:
         docker_command.extend(["-v", vol])
     docker_command.extend(_get_identity_mounts(scratch_home))
+    # Deliberately no "-t": a pseudo-TTY becomes the container's controlling terminal, and Ray
+    # (>=2.57) puts each worker in its own process group. Any child that reads stdin from such a
+    # background group is stopped with SIGTTIN, which silently hangs ffmpeg mid-pipeline. Without a
+    # TTY, job control signals cannot be raised at all.
     docker_command.extend(
         [
-            "-t",
             f"{opts.image_label}",
             "bash",
             "-c",

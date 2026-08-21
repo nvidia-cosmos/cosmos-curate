@@ -576,6 +576,7 @@ def copy_model_weights(source_dir: pathlib.Path, dest_dir: pathlib.Path, *, size
             capture_output=True,
             text=True,
             check=True,
+            stdin=subprocess.DEVNULL,
         )
 
         # Log rclone output

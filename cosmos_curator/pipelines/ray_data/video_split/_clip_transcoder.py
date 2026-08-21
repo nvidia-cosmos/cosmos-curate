@@ -177,7 +177,9 @@ def _run_ffmpeg(  # noqa: PLR0913
         )
 
     try:
-        subprocess.check_output(command, cwd=working_dir, stderr=subprocess.STDOUT)  # noqa: S603
+        subprocess.check_output(  # noqa: S603
+            command, cwd=working_dir, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL
+        )
     except subprocess.CalledProcessError as e:
         output_text = e.output.decode("utf-8") if e.output else str(e)
         logger.exception("FFmpeg failed (rc=%d): %s", e.returncode, output_text)

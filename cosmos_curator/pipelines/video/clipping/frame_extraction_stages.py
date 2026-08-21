@@ -59,7 +59,11 @@ def get_frames_from_ffmpeg(
         f"{width}x{height}",
         "-",
     ]
-    process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)  # noqa: S603
+    # stdin=DEVNULL keeps FFmpeg from polling an inherited TTY, which stops it with SIGTTIN once
+    # the worker is in its own process group. See the note in clip_extraction_stages.
+    process = subprocess.Popen(  # noqa: S603
+        command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL
+    )
     video_stream, err = process.communicate()
     if process.returncode != 0:
         logger.exception(f"FFmpeg error: {err.decode('utf-8')}")

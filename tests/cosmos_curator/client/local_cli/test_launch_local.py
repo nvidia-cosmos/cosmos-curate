@@ -65,6 +65,13 @@ def test_launch_command() -> None:
     assert called_args[:3] == ["docker", "run", "--rm"]
     assert "--network=host" not in called_args
     assert "--cap-add=SYS_ADMIN" not in called_args
+    # A pseudo-TTY becomes the container's controlling terminal, and Ray (>=2.57) puts each worker
+    # in its own process group. Any worker child reading stdin from such a background group is
+    # stopped with SIGTTIN, which silently hangs ffmpeg mid-pipeline. PYTHONUNBUFFERED replaces the
+    # line buffering the TTY used to provide.
+    assert "-t" not in called_args
+    assert "-it" not in called_args
+    assert "PYTHONUNBUFFERED=1" in called_args
 
 
 def test_launch_command_with_docker_network() -> None:

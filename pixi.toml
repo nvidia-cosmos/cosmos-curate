@@ -67,7 +67,7 @@ pillow = ">=12.2.0"  # CVE-2026-40192: patched in Pillow 12.2.0+ (core PyPI dep)
 pyasn1 = ">=0.6.3" # CVE remediation: require 0.6.3+ (fixes vs vulnerable 0.6.2 in default/core envs)
 pylance = ">=0.39.0" # conda-forge package is too old
 pulp = "*" # conda-forge package is too old
-ray = { version = "==2.56.1", extras = ["default", "data"] } # conda-forge package pulls in an old version of protobuf
+ray = { version = "==2.57.0", extras = ["default", "data"] } # conda-forge package pulls in an old version of protobuf
 webdataset = "*" # conda-forge package pulls in pytorch
 
 [feature.core.tasks]

@@ -100,7 +100,9 @@ def assert_video_encoder_available(encoder: str) -> None:
     """
     command = ["ffmpeg", "-hide_banner", "-encoders"]
     try:
-        result = subprocess.run(command, check=True, capture_output=True, timeout=30)  # noqa: S603
+        result = subprocess.run(  # noqa: S603
+            command, check=True, capture_output=True, timeout=30, stdin=subprocess.DEVNULL
+        )
     except (subprocess.SubprocessError, FileNotFoundError) as exc:
         msg = f"Failed to query FFmpeg encoders: {exc}"
         raise RuntimeError(msg) from exc
@@ -140,7 +142,9 @@ def probe_video_source(source: str | Path, *, timeout_s: int = 120) -> VideoMeta
         command.extend(("-seekable", "1"))
     command.append(source_text)
     try:
-        result = subprocess.run(command, check=True, capture_output=True, timeout=timeout_s)  # noqa: S603
+        result = subprocess.run(  # noqa: S603
+            command, check=True, capture_output=True, timeout=timeout_s, stdin=subprocess.DEVNULL
+        )
     except subprocess.TimeoutExpired as exc:
         msg = f"FFprobe timed out after {exc.timeout}s on <source>"
         raise ProbeError(msg) from exc
@@ -224,7 +228,9 @@ def transcode_span_to_path(  # noqa: PLR0913
         )
     )
     try:
-        subprocess.run(command, check=True, capture_output=True, timeout=timeout_s)  # noqa: S603
+        subprocess.run(  # noqa: S603
+            command, check=True, capture_output=True, timeout=timeout_s, stdin=subprocess.DEVNULL
+        )
     except subprocess.TimeoutExpired as exc:
         msg = f"FFmpeg timed out after {exc.timeout}s on <source>"
         raise TranscodeError(msg) from exc

@@ -114,7 +114,12 @@ class PreviewStage(CuratorStage):
             ]
 
             try:
-                output = subprocess.check_output(command, stderr=subprocess.STDOUT)  # noqa: S603
+                # stdin=DEVNULL keeps FFmpeg from polling an inherited TTY, which stops it with
+                # SIGTTIN once the worker is in its own process group. See the note in
+                # clip_extraction_stages.
+                output = subprocess.check_output(  # noqa: S603
+                    command, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL
+                )
                 if output:
                     logger.warning(f"ffmpeg output: {output.decode('utf-8')}")
             except subprocess.CalledProcessError as e:

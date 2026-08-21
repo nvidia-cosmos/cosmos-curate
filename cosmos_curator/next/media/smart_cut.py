@@ -108,6 +108,7 @@ def _nvenc_available() -> bool:
             capture_output=True,
             check=False,
             timeout=10,
+            stdin=subprocess.DEVNULL,
         )
     except (OSError, subprocess.SubprocessError):
         return False
@@ -128,7 +129,7 @@ def _timing_flags() -> tuple[str, ...]:
         probe = subprocess.run(
             ["ffmpeg", "-hide_banner", "-loglevel", "error", "-f", "lavfi",  # noqa: S607
              "-i", "color=c=black:s=16x16:d=0.04", "-fps_mode", "passthrough", "-f", "null", "-"],
-            capture_output=True, text=True, check=False, timeout=30,
+            capture_output=True, text=True, check=False, timeout=30, stdin=subprocess.DEVNULL,
         )  # fmt: skip
         if probe.returncode == 0:
             return ("-fps_mode", "passthrough")
@@ -143,12 +144,16 @@ def _ffprobe(args: list[str]) -> subprocess.CompletedProcess[str]:
     # network mount / S3), so a transient blip should not fail the whole chunk. Fast
     # failures (nonzero return) retry cheaply; a genuine timeout raises and is handled.
     cmd = ["ffprobe", "-v", "error", *args]
-    result = subprocess.run(cmd, capture_output=True, text=True, check=False, timeout=_PROBE_TIMEOUT_S)  # noqa: S603
+    result = subprocess.run(  # noqa: S603
+        cmd, capture_output=True, text=True, check=False, timeout=_PROBE_TIMEOUT_S, stdin=subprocess.DEVNULL
+    )
     for attempt in range(1, _PROBE_RETRIES + 1):
         if result.returncode == 0:
             break
         time.sleep(0.5 * attempt)
-        result = subprocess.run(cmd, capture_output=True, text=True, check=False, timeout=_PROBE_TIMEOUT_S)  # noqa: S603
+        result = subprocess.run(  # noqa: S603
+            cmd, capture_output=True, text=True, check=False, timeout=_PROBE_TIMEOUT_S, stdin=subprocess.DEVNULL
+        )
     return result
 
 
@@ -454,7 +459,10 @@ def _output_frame_count(path: str) -> int:
 def _run_ff(cmd: list[str], errf: IO[bytes]) -> bool:
     """Run an ffmpeg/ffprobe command, capturing stderr to *errf*. True iff exit code 0."""
     return (
-        subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=errf, timeout=_CUT_TIMEOUT_S, check=False).returncode == 0  # noqa: S603
+        subprocess.run(  # noqa: S603
+            cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=errf, timeout=_CUT_TIMEOUT_S, check=False
+        ).returncode
+        == 0
     )
 
 
