@@ -594,7 +594,6 @@ def _build_processor(
                 chat_template_stage=False,
                 tokenize_stage=False,
                 detokenize_stage=False,
-                prepare_image_stage=False,
                 prepare_multimodal_stage=False,
                 engine_kwargs=engine_kwargs,
             ),

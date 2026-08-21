@@ -54,7 +54,7 @@ uvicorn = "*"
 websockets = "<16"
 
 [feature.core.pypi-dependencies]
-cosmos-xenna = "==0.5.7"
+cosmos-xenna = "==0.5.9"
 foxglove-schemas-protobuf = "*"
 google-genai = ">=1.59.0"
 ngcsdk = "*"
@@ -62,7 +62,7 @@ pillow = ">=12.2.0"
 pyasn1 = ">=0.6.3"
 pylance = ">=0.39.0"
 pulp = "*"
-ray = { version = "==2.56.0", extras = ["default", "data"] }
+ray = { version = "==2.56.1", extras = ["default", "data"] }
 webdataset = "*"
 
 [feature.core.tasks]
