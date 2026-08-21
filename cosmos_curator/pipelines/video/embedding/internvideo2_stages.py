@@ -122,13 +122,10 @@ class InternVideo2FrameCreationStage(CuratorStage):
 
         Memory lifecycle:
             ``extracted_frames`` is a ``LazyData`` wrapping a dict keyed by
-            frame extraction signature. This stage is the map's last consumer:
-            every handled exit releases it—missing encoded data,
-            missing extraction data or signature, and successful formulation—
-            because no downstream stage needs the decoded frame arrays.
-            Propagating exceptions retain it: configured Xenna retries re-invoke
-            ``process_data()`` with the same task objects, while exhausted
-            failures never continue downstream.
+            frame extraction signature. This stage is the map's terminal
+            consumer. It is released on every handled exit—missing encoded
+            data, missing extraction data or signature, and successful
+            formulation. Propagating exceptions retain it.
 
         Args:
             tasks: Tasks containing video clips to process.

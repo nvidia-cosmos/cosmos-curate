@@ -214,11 +214,13 @@ In case you want the output to be in a different S3 bucket than the input, you c
 
 Use `--embedding-sampling-fps` to control how densely candidate frames are initially extracted for embedding, independently of captioning.
 
-**Example — Full Eight-Second Cosmos-Embed1 Clips:** For a full eight-second constant-frame-rate clip created with `--splitting-algorithm fixed-stride --fixed-stride-split-duration 8`, setting the rate to `1` extracts about eight initial candidate frames instead of about sixteen at the default `2.0`. Cosmos-Embed1's fixed eight-frame model input is unchanged; only the initial candidate set differs.
+**Example — Full Eight-Second Cosmos-Embed1 Clips:** For a full eight-second constant-frame-rate clip created with `--splitting-algorithm fixed-stride --fixed-stride-split-duration 8`, setting the rate to `1` typically materializes about eight initial candidate frames instead of about sixteen at the default `2.0`. Cosmos-Embed1 still consumes eight model frames, so the model input is unchanged; the difference is fewer intermediate candidate frames and a smaller logical payload. This does not establish a retrieval-quality improvement, an equivalent physical-memory reduction, or guaranteed codec decode savings.
 
-Cosmos-Embed1 and InternVideo2 retain their existing frame preparation and short-clip fallback behavior. An OpenAI-compatible backend sends every selected candidate, so this setting directly affects request frame count and payload size.
+Cosmos-Embed1 and InternVideo2 retain their existing frame preparation and short-clip fallback behavior. When either backend receives fewer candidates than its required model-frame count, its frame-creation stage re-extracts from the encoded clip at successively doubled target rates, capped at 20 FPS. Lower initial sampling can therefore increase the chance of re-decoding short, partial, variable-frame-rate, or irregular-timestamp clips. An OpenAI-compatible backend instead sends every selected candidate, so the setting directly affects its request frame count and payload size.
 
-This example illustrates one configuration. Other rates and clip durations are accepted subject to configuration validation. When aesthetic filtering is enabled, an embedding rate that differs from aesthetics' 1-FPS rate but resolves to the same extraction signature is rejected. Candidate counts depend on the input, and downstream frame selection depends on the backend; check representative clips for your configuration.
+When aesthetics is enabled, exact signature matches share frames, distinct signatures use separate entries, and distinct requested rates that truncate to the same integer milli-FPS signature are rejected. See [Shared Clip Frame Extraction](split-pipeline-stages.md#shared-clip-frame-extraction).
+
+Other rates and clip durations are accepted subject to configuration validation. Exact candidate counts depend on clip boundaries, source cadence and timestamps, re-extraction, and backend frame-selection behavior. Check representative clips for your configuration.
 
 #### Options for Performance
 
