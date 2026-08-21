@@ -28,6 +28,13 @@ from mcap.writer import CompressionType, Writer
 from cosmos_curator.core.sensors.sampling.grid import SamplingGrid
 from cosmos_curator.core.sensors.sampling.spec import SamplingSpec
 
+# Time origins for sampling tests. make_ts_grid builds its grid in float64 seconds, so its
+# precision depends on where in time the grid starts: near zero the nanosecond error is 0, but
+# at wall-clock epoch magnitudes adjacent float64 values are ~238 ns apart. See CVC-1199.
+ZERO_ORIGIN_NS = 0
+EPOCH_ROUND_NS = 1_700_000_000_000_000_000
+EPOCH_ODD_NS = 1_700_000_000_123_456_789
+
 _PROTO_SCALAR_TYPES = {
     "bool": descriptor_pb2.FieldDescriptorProto.TYPE_BOOL,
     "double": descriptor_pb2.FieldDescriptorProto.TYPE_DOUBLE,

@@ -24,6 +24,7 @@ from cosmos_curator.core.sensors.sampling.sampler import (
     find_closest_indices,
     sample_window_indices,
 )
+from tests.cosmos_curator.core.sensors.test_utils import EPOCH_ODD_NS
 
 
 def _window_from_grid(grid: npt.NDArray[np.int64]) -> SamplingWindow:
@@ -661,3 +662,29 @@ def test_sample_window_indices_differs_from_global_nearest_neighbour() -> None:
     np.testing.assert_array_equal(window_indices, np.array([1, 2], dtype=np.int64))
     np.testing.assert_array_equal(canonical[window_indices], np.array([200, 300], dtype=np.int64))
     np.testing.assert_array_equal(window_counts, np.array([1, 1], dtype=np.int64))
+
+
+def test_sampler_selection_is_origin_invariant() -> None:
+    """Shifting canonical and grid timestamps to an epoch origin should not change what gets selected."""
+    canonical = np.array([0, 90_000_000, 210_000_000, 290_000_000, 400_000_000], dtype=np.int64)
+    grid = np.array([0, 100_000_000, 200_000_000, 300_000_000, 400_000_000], dtype=np.int64)
+
+    base_closest = find_closest_indices(canonical, grid)
+    shifted_closest = find_closest_indices(canonical + EPOCH_ODD_NS, grid + EPOCH_ODD_NS)
+
+    np.testing.assert_array_equal(shifted_closest, base_closest)
+
+    base_indices, base_counts = sample_window_indices(
+        canonical=canonical,
+        window=_window_from_grid(grid),
+        policy=NearestTimestampPolicy(),
+    )
+    shifted_indices, shifted_counts = sample_window_indices(
+        canonical=canonical + EPOCH_ODD_NS,
+        window=_window_from_grid(grid + EPOCH_ODD_NS),
+        policy=NearestTimestampPolicy(),
+    )
+
+    # Indices and counts address the same canonical slots, so they are identical rather than shifted.
+    np.testing.assert_array_equal(shifted_indices, base_indices)
+    np.testing.assert_array_equal(shifted_counts, base_counts)

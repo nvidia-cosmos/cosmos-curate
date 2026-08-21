@@ -22,6 +22,7 @@ from cosmos_curator.core.sensors.sampling.compat import make_decoder_utils_compa
 from cosmos_curator.core.sensors.sampling.grid import SamplingGrid, SamplingWindow
 from cosmos_curator.core.sensors.sampling.policy import NearestTimestampPolicy
 from cosmos_curator.core.sensors.sampling.sampler import sample_window_indices
+from tests.cosmos_curator.core.sensors.test_utils import EPOCH_ODD_NS
 
 _NS_PER_SECOND = 1_000_000_000
 
@@ -164,3 +165,25 @@ def test_make_decoder_utils_compat_grid_samples_irregular_source_timestamps() ->
 
     np.testing.assert_array_equal(indices, np.array([0, 2, 3], dtype=np.int64))
     np.testing.assert_array_equal(counts, np.array([1, 1, 1], dtype=np.int64))
+
+
+def test_make_decoder_utils_compat_grid_is_origin_invariant() -> None:
+    """Shifting the compat grid inputs to an epoch origin should shift its outputs by the same offset."""
+    start_ns = 0
+    stop_ns = 5 * _NS_PER_SECOND
+    sample_rate_hz = 29.97
+
+    base_start_ns, base_exclusive_end_ns, base_timestamps_ns = make_decoder_utils_compat_grid(
+        start_ns,
+        stop_ns,
+        sample_rate_hz,
+    )
+    shifted_start_ns, shifted_exclusive_end_ns, shifted_timestamps_ns = make_decoder_utils_compat_grid(
+        start_ns + EPOCH_ODD_NS,
+        stop_ns + EPOCH_ODD_NS,
+        sample_rate_hz,
+    )
+
+    assert shifted_start_ns == base_start_ns + EPOCH_ODD_NS
+    assert shifted_exclusive_end_ns == base_exclusive_end_ns + EPOCH_ODD_NS
+    np.testing.assert_array_equal(shifted_timestamps_ns, base_timestamps_ns + EPOCH_ODD_NS)
