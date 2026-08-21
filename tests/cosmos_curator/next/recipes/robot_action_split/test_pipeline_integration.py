@@ -188,6 +188,11 @@ def _write_dataset(root: Path) -> Path:
     frame_indices = list(range(n))
     subtask_indices = [0] * _FRAMES_PER_SUBTASK + [1] * _FRAMES_PER_SUBTASK
     action_data = [[float(i), float(i) * 0.1] for i in range(n)]
+    # Straight-line dolly trajectory (identity orientation, position drifting
+    # along one axis) so process_batch's camera-motion annotation has a
+    # non-trivial, deterministic trajectory to describe.
+    camera_position = [[0.0, i * 0.02, 0.0] for i in range(n)]
+    camera_rotation = [[0.0, 0.0, 0.0, 1.0] for _ in range(n)]
     pq.write_table(
         pa.table(
             {
@@ -196,6 +201,8 @@ def _write_dataset(root: Path) -> Path:
                 "subtask_index": pa.array(subtask_indices, type=pa.int64()),
                 "task_index": pa.array([0] * n, type=pa.int64()),
                 "action": pa.array(action_data),
+                "observation.state.camera_position": pa.array(camera_position),
+                "observation.state.camera_rotation": pa.array(camera_rotation),
             }
         ),
         str(data_dir / "file-000.parquet"),
@@ -361,6 +368,26 @@ def test_cut_produces_clips_and_action_files(dataset: Path, output_path: Path) -
         action_data = pickle.loads(_uri_to_path(outcome["action_data_uri"]).read_bytes())  # noqa: S301
         assert "action" in action_data
         assert len(action_data["action"]) == _FRAMES_PER_SUBTASK
+
+
+def test_camera_motion_annotation_populated(dataset: Path, output_path: Path) -> None:
+    """Stage 2b: a clip with camera trajectory data gets a non-empty motion annotation.
+
+    The fixture's ``camera_position``/``camera_rotation`` columns describe a
+    straight-line dolly move, so ``process_batch`` should compute a non-``None``
+    ``camera_motion_annotation`` string for both successful spans.
+    """
+    config = _make_config(dataset, output_path)
+    batches = discover_spans(config)
+    outcomes = process_batch(batches[0], config=config)
+
+    succeeded = [o for o in outcomes if o["status"] == "success"]
+    assert len(succeeded) == 2
+    for outcome in succeeded:
+        annotation = outcome["camera_motion_annotation"]
+        assert isinstance(annotation, str)
+        assert annotation
+        assert "dollies" in annotation.lower()
 
 
 def test_lance_write_produces_correct_rows(dataset: Path, output_path: Path) -> None:

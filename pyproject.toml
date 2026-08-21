@@ -176,6 +176,8 @@ module = [
     "ngcsdk",
     "pyarrow",
     "pyarrow.*",
+    "scipy.ndimage",
+    "scipy.spatial.transform",
     "registry.api.image",
     "registry.api.models",
     "vllm",

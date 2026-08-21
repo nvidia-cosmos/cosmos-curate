@@ -34,6 +34,7 @@ from cosmos_curator.core.utils.storage.storage_utils import (
 )
 from cosmos_curator.next.media.action_binary import encode_action_bin, get_action_binary_spec
 from cosmos_curator.next.media.smart_cut import cut_plan
+from cosmos_curator.next.recipes.robot_action_split.camera_motion import compute_camera_motion_annotation
 from cosmos_curator.next.recipes.robot_action_split.config import ResolvedRobotActionSplitConfig
 from cosmos_curator.next.recipes.robot_action_split.discovery import ChunkSpanBatch, SpanWorkItem
 from cosmos_curator.next.recipes.robot_action_split.identities import make_action_id
@@ -246,6 +247,7 @@ def process_batch(  # noqa: C901, PLR0912, PLR0915
                 **_make_base_fields(item, source_dataset),
                 "clip_uri": None,
                 "action_data_uri": None,
+                "camera_motion_annotation": None,
                 "status": "failed",
                 "error_stage": stage,
                 "error_message": str(exc),
@@ -326,6 +328,7 @@ def process_batch(  # noqa: C901, PLR0912, PLR0915
                         **base,
                         "clip_uri": None,
                         "action_data_uri": None,
+                        "camera_motion_annotation": None,
                         "status": "failed",
                         "error_stage": "cut",
                         "error_message": err,
@@ -341,6 +344,7 @@ def process_batch(  # noqa: C901, PLR0912, PLR0915
                         **base,
                         "clip_uri": None,
                         "action_data_uri": None,
+                        "camera_motion_annotation": None,
                         "status": "failed",
                         "error_stage": "clip-write",
                         "error_message": str(exc),
@@ -350,6 +354,12 @@ def process_batch(  # noqa: C901, PLR0912, PLR0915
 
             try:
                 action_data = _slice_action(action_arrays, item.episode_index, item.frame_start, item.frame_end)
+                camera_motion_annotation = compute_camera_motion_annotation(
+                    action_data.get("camera_position"),
+                    action_data.get("camera_rotation"),
+                    item.native_fps,
+                    clip_id=item.clip_id,
+                )
                 if item.camera_intrinsics is not None:
                     # Only inject intrinsics when the dataset's ACT2 spec declares
                     # it as a per-clip field (e.g. mecka). Injecting it for other
@@ -376,6 +386,7 @@ def process_batch(  # noqa: C901, PLR0912, PLR0915
                         **base,
                         "clip_uri": None,
                         "action_data_uri": None,
+                        "camera_motion_annotation": None,
                         "status": "failed",
                         "error_stage": "action",
                         "error_message": str(exc),
@@ -392,6 +403,7 @@ def process_batch(  # noqa: C901, PLR0912, PLR0915
                         **base,
                         "clip_uri": None,
                         "action_data_uri": None,
+                        "camera_motion_annotation": None,
                         "status": "failed",
                         "error_stage": "sidecar",
                         "error_message": str(exc),
@@ -404,6 +416,7 @@ def process_batch(  # noqa: C901, PLR0912, PLR0915
                     **base,
                     "clip_uri": artifact_uri(clip_uri),
                     "action_data_uri": artifact_uri(action_uri),
+                    "camera_motion_annotation": camera_motion_annotation,
                     "status": "success",
                     "error_stage": None,
                     "error_message": None,

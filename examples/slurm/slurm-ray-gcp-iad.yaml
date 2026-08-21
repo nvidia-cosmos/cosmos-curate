@@ -1,0 +1,42 @@
+schema_version: 1
+job_name: cosmos_curator
+worker_lanes: 4
+slurm:
+  account: YOUR_SLURM_ACCOUNT
+  head:
+    partition: cpu
+    qos: cpu-long
+    time: 2-00:00:00
+    cpus: 64
+    memory: 128G
+  worker:
+    partition: cpu
+    qos: cpu-long
+    time: 2-00:00:00
+runtime:
+  # gcp-iad-cs-001 nodes are GB200 (aarch64) — this must be an arm64 image,
+  # cross-built with `docker buildx build --platform linux/arm64` (QEMU) and
+  # converted with `enroot import`. An x86_64 slim image will fail to run.
+  container_image: ~/container_images/cosmos-curator+latest-arm64.sqsh
+  curator_path: ~/src/cosmos-curate
+  workspace_path: ~/cosmos_curator_local_workspace
+  cache_path: ~/.cache
+  mount_s3_creds: false
+  mounts:
+    # Mount S3/GCS credentials into the container.
+    # Required for pipelines that read/write S3 or GCS paths.
+    # Replace with the actual path to your credentials file.
+    #
+    # Note: pyxis on this cluster's Slurm version does not auto-create
+    # bind-mount target directories (unlike some other clusters), so the
+    # container image must already contain the mount point (e.g. `RUN mkdir
+    # -p /creds` in the image build) or the mount will fail.
+    - source: ~/.aws/credentials
+      destination: /creds/s3_creds
+      mode: ro
+  pixi_envs: [default]
+ray:
+  startup_timeout: 10m
+  # Short temp dir keeps the Ray plasma store's AF_UNIX socket path under the
+  # ~107-byte OS limit once nested under the per-run session directory.
+  temp_dir: /tmp/r

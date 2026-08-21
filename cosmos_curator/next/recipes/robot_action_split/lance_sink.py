@@ -53,6 +53,7 @@ OUTCOME_SCHEMA = pa.schema(
         pa.field("episode_from_timestamp", pa.float64(), nullable=False),
         pa.field("clip_uri", pa.large_string()),
         pa.field("action_data_uri", pa.large_string()),
+        pa.field("camera_motion_annotation", pa.large_string()),
         pa.field("status", pa.string(), nullable=False),
         pa.field("error_stage", pa.string()),
         pa.field("error_message", pa.large_string()),
@@ -181,6 +182,9 @@ def _build_table(rows: list[dict[str, Any]]) -> pa.Table:
         arrays["clip_uri"].append(str(row["clip_uri"]) if row.get("clip_uri") is not None else None)
         arrays["action_data_uri"].append(
             str(row["action_data_uri"]) if row.get("action_data_uri") is not None else None
+        )
+        arrays["camera_motion_annotation"].append(
+            str(row["camera_motion_annotation"]) if row.get("camera_motion_annotation") is not None else None
         )
         arrays["status"].append(str(row["status"]))
         arrays["error_stage"].append(str(row["error_stage"]) if row.get("error_stage") is not None else None)
