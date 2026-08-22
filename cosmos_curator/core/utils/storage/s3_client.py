@@ -362,14 +362,13 @@ class S3Client(StorageClient):
             error_msg = f"Object {remote_path.path} already exists and overwriting is not allowed."
             raise ValueError(error_msg)
 
-        logger.info(f"Uploading {local_path} to {remote_path}")
         self.s3.upload_file(
             local_path,
             remote_path.bucket,
             remote_path.prefix,
             Config=TransferConfig(multipart_threshold=chunk_size, max_concurrency=10),
         )
-        logger.info(f"Upload complete: {remote_path}")
+        logger.trace(f"Uploaded {local_path} to {remote_path}")
 
     def sync_remote_to_local(
         self,

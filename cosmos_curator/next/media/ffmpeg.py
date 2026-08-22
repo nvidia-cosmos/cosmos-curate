@@ -18,6 +18,7 @@
 import json
 import subprocess
 import tempfile
+from collections.abc import Sequence
 from dataclasses import dataclass
 from fractions import Fraction
 from functools import lru_cache
@@ -25,6 +26,9 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from cosmos_curator.next.media.spans import Span, nanoseconds_to_ffmpeg_timestamp, seconds_to_nanoseconds
+
+_DECODER_THREADS = 1
+_FILTER_THREADS = 1
 
 
 class TranscodeSettings(Protocol):
@@ -190,57 +194,110 @@ def transcode_span_to_path(  # noqa: PLR0913
     timeout_s: int = 120,
 ) -> None:
     """Seek, transcode, and write one span without materializing source bytes in Python."""
+    transcode_spans_to_paths(
+        source,
+        ((span, destination),),
+        config,
+        encoder_threads=encoder_threads,
+        timeout_s=timeout_s,
+    )
+
+
+def transcode_spans_to_paths(
+    source: str | Path,
+    outputs: Sequence[tuple[Span, Path]],
+    config: TranscodeSettings,
+    *,
+    encoder_threads: int = 1,
+    timeout_s: int = 120,
+) -> None:
+    """Transcode several independently seekable spans in one FFmpeg process.
+
+    Decoder and simple-filter parallelism stay single-threaded per clip because
+    the batch already supplies clip-level concurrency. ``encoder_threads`` only
+    controls each output encoder.
+    """
+    jobs = tuple(outputs)
+    if not jobs:
+        msg = "At least one span and destination are required"
+        raise ValueError(msg)
+
+    destinations = tuple(destination for _, destination in jobs)
+    if len(set(destinations)) != len(destinations):
+        msg = "FFmpeg output destinations must be unique"
+        raise ValueError(msg)
+
     source_text = str(source)
-    destination.parent.mkdir(parents=True, exist_ok=True)
+    for destination in destinations:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.unlink(missing_ok=True)
+
     command = [
         "ffmpeg",
         "-hide_banner",
         "-loglevel",
         "error",
+        "-filter_threads",
+        str(_FILTER_THREADS),
         "-y",
-        # Input-side seeking is load-bearing for ranged cloud access.
-        "-ss",
-        nanoseconds_to_ffmpeg_timestamp(span.start_ns),
     ]
-    if _is_http_source(source_text):
-        command.extend(("-seekable", "1"))
-    command.extend(
-        (
-            "-i",
-            source_text,
-            "-t",
-            nanoseconds_to_ffmpeg_timestamp(span.duration_ns),
-            "-map",
-            "0:v:0",
-            "-c:v",
-            config.video_encoder,
-            "-b:v",
-            config.video_bitrate,
-            "-threads",
-            str(encoder_threads),
-            "-map",
-            "0:a:0?",
-            "-c:a",
-            config.audio_mode,
-            "-movflags",
-            "+faststart",
-            str(destination),
+
+    # Repeat the input so every output gets independent input-side seeking.
+    # This is load-bearing for ranged cloud access and avoids decoding the
+    # source from the beginning for every requested span.
+    for span, _ in jobs:
+        command.extend(("-threads", str(_DECODER_THREADS), "-ss", nanoseconds_to_ffmpeg_timestamp(span.start_ns)))
+        if _is_http_source(source_text):
+            command.extend(("-seekable", "1"))
+        command.extend(("-i", source_text))
+
+    for input_index, (span, destination) in enumerate(jobs):
+        command.extend(
+            (
+                "-t",
+                nanoseconds_to_ffmpeg_timestamp(span.duration_ns),
+                "-map",
+                f"{input_index}:v:0",
+                "-c:v",
+                config.video_encoder,
+                "-b:v",
+                config.video_bitrate,
+                "-threads",
+                str(encoder_threads),
+                "-map",
+                f"{input_index}:a:0?",
+                "-c:a",
+                config.audio_mode,
+                "-movflags",
+                "+faststart",
+                str(destination),
+            )
         )
-    )
+
     try:
         subprocess.run(  # noqa: S603
             command, check=True, capture_output=True, timeout=timeout_s, stdin=subprocess.DEVNULL
         )
     except subprocess.TimeoutExpired as exc:
+        _remove_destinations(destinations)
         msg = f"FFmpeg timed out after {exc.timeout}s on <source>"
         raise TranscodeError(msg) from exc
     except subprocess.CalledProcessError as exc:
+        _remove_destinations(destinations)
         diagnostic = _redacted_diagnostic(exc.stderr, source_text)
         msg = diagnostic or f"FFmpeg exited with status {exc.returncode}"
         raise TranscodeError(msg) from exc
-    if not destination.is_file():
-        msg = "FFmpeg completed without creating the expected MP4"
+
+    missing_count = sum(not destination.is_file() for destination in destinations)
+    if missing_count:
+        _remove_destinations(destinations)
+        msg = f"FFmpeg completed without creating {missing_count} of {len(destinations)} expected MP4s"
         raise TranscodeError(msg)
+
+
+def _remove_destinations(destinations: Sequence[Path]) -> None:
+    for destination in destinations:
+        destination.unlink(missing_ok=True)
 
 
 def _is_http_source(source: str) -> bool:

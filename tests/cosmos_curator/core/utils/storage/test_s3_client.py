@@ -12,14 +12,16 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Tests for S3 client listing semantics."""
+"""Tests for S3 client behavior."""
 
 import subprocess
 import sys
+from pathlib import Path
 from typing import Any
 
 import pytest
 
+from cosmos_curator.core.utils.storage import s3_client
 from cosmos_curator.core.utils.storage.s3_client import S3Client, S3ClientConfig, S3Prefix
 
 
@@ -36,10 +38,22 @@ class _FakePaginator:
 class _FakeS3:
     def __init__(self, pages: list[dict[str, Any]]) -> None:
         self.paginator = _FakePaginator(pages)
+        self.uploads: list[tuple[str, str, str]] = []
 
     def get_paginator(self, name: str) -> _FakePaginator:
         assert name == "list_objects_v2"
         return self.paginator
+
+    def upload_file(self, local_path: str, bucket: str, prefix: str, **_kwargs: object) -> None:
+        self.uploads.append((local_path, bucket, prefix))
+
+
+class _TraceLogger:
+    def __init__(self) -> None:
+        self.messages: list[str] = []
+
+    def trace(self, message: str) -> None:
+        self.messages.append(message)
 
 
 def test_list_recursive_respects_limit_within_large_page() -> None:
@@ -96,6 +110,25 @@ def test_list_recursive_without_limit_returns_all_pages() -> None:
     results = client.list_recursive(S3Prefix("s3://bucket/root"), limit=0)
     assert len(results) == 2
     assert [item["Key"] for item in results] == ["root/a.mp4", "root/b.mp4"]
+
+
+def test_upload_file_emits_one_trace_instead_of_per_object_info(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Bulk uploads stay quiet at normal log levels while retaining opt-in detail."""
+    fake_s3 = _FakeS3([])
+    trace_logger = _TraceLogger()
+    client = object.__new__(S3Client)
+    client.s3 = fake_s3
+    client.can_overwrite = True
+    monkeypatch.setattr(s3_client, "logger", trace_logger)
+    local_path = str(tmp_path / "clip.mp4")
+
+    client.upload_file(local_path, S3Prefix("s3://bucket/clips/clip.mp4"))
+
+    assert fake_s3.uploads == [(local_path, "bucket", "clips/clip.mp4")]
+    assert trace_logger.messages == [f"Uploaded {local_path} to s3://bucket/clips/clip.mp4"]
 
 
 def test_client_uses_configured_region(monkeypatch: pytest.MonkeyPatch) -> None:

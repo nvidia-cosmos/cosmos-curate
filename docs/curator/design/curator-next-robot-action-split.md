@@ -381,5 +381,5 @@ In addition to the `video-split` validation criteria, the first
   attempts and batch configurations
 - `span_group_id` is identical across per-view rows for the same span
 - action `.bin` files contain the expected per-frame fields in the registered spec
-- the standard `video-split` Lance publication / recovery / receipt protocol is
-  exercised without modification
+- the `video-split` clip-only Lance publication shape is exercised; recovery is
+  qualified separately once the shared receipt protocol exists

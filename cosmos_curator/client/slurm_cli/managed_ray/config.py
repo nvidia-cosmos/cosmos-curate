@@ -372,6 +372,11 @@ class SlurmRayRayConfig(BaseModel):
         pattern=_STARTUP_TIMEOUT_PATTERN.pattern,
     )
     temp_dir: str | None = Field(default=None, description="Optional node-local root for Ray temporary files.")
+    io_slots_per_node: int = Field(
+        default=environment.DEFAULT_CURATOR_IO_SLOTS_PER_NODE,
+        ge=1,
+        description="Logical source-IO capacity advertised by each elastic worker node.",
+    )
 
     @field_validator("temp_dir")
     @classmethod

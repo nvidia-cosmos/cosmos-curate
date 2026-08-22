@@ -48,8 +48,8 @@ def test_explicit_uris_are_normalized_deduplicated_and_sorted() -> None:
         "s3://example-bucket/z.MP4",
     )
     assert config.output.media_root == "s3://example-bucket/output"
-    assert config.output.clips_lance_uri == "s3://example-bucket/output/lance/clips.lance"
-    assert config.output.sources_lance_uri == "s3://example-bucket/output/lance/sources.lance"
+    assert config.output.clips_lance_uri == "s3://example-bucket/output/lance"
+    assert config.output.errors_uri == "s3://example-bucket/output/errors.json"
 
 
 def test_exact_input_uri_preserves_its_trailing_slash() -> None:
@@ -100,21 +100,19 @@ def test_config_accepts_s3_compatible_bucket_names() -> None:
     assert config.input.uris == ("s3://example_bucket/a.mp4",)
 
 
-def test_lance_snapshots_may_use_driver_local_paths(tmp_path: Path) -> None:
-    """A local Ray run can publish Lance snapshots on its driver's filesystem."""
+def test_lance_snapshot_may_use_a_driver_local_path(tmp_path: Path) -> None:
+    """A local Ray run can publish its Lance snapshot on the driver's filesystem."""
     config = resolve_config_data(
         {
             **_config({"uris": ["s3://example-bucket/a.mp4"]}),
             "output": {
                 "media_root": "s3://example-bucket/output",
-                "clips_lance_uri": str(tmp_path / "clips.lance"),
-                "sources_lance_uri": str(tmp_path / "sources.lance"),
+                "clips_lance_uri": str(tmp_path / "lance"),
             },
         }
     )
 
-    assert config.output.clips_lance_uri == str(tmp_path / "clips.lance")
-    assert config.output.sources_lance_uri == str(tmp_path / "sources.lance")
+    assert config.output.clips_lance_uri == str(tmp_path / "lance")
 
 
 def test_overrides_apply_before_validation() -> None:
@@ -137,7 +135,9 @@ def test_template_shows_every_supported_setting_and_resolves() -> None:
     assert set(template["transcode"]) == set(TranscodeConfig.model_fields)
     assert set(template["output"]) == set(VideoSplitOutputConfig.model_fields)
     assert set(template["execution"]) == set(VideoSplitExecutionConfig.model_fields)
-    assert template["execution"]["clips_per_publish_batch"] == 1_048_576
+    assert template["execution"]["transcode_cpus"] == 5.0
+    assert template["execution"]["ffmpeg_batch_size"] == 16
+    assert template["execution"]["clips_per_publish_batch"] == 100_000
 
     rendered = config_template_yaml()
     assert "replace `uris` with `root_uri:" in rendered

@@ -453,6 +453,8 @@ def render_worker_script(
         _CONTAINER_BOOTSTRAP,
         "--startup-timeout-seconds",
         str(timeout),
+        "--io-slots-per-node",
+        str(config.ray.io_slots_per_node),
     ]
     if runtime_paths["ray_temp_dir"] is not None:
         worker_command.extend(["--temp-dir", runtime_paths["ray_temp_dir"]])

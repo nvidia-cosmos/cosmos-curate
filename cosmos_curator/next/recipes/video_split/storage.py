@@ -38,10 +38,22 @@ def download_file(source_uri: str, destination_path: str, *, storage_profile: st
     client.download_to_path(S3Prefix(source_uri), destination_path)
 
 
+def download_bytes(source_uri: str, *, storage_profile: str) -> bytes:
+    """Download one S3 object into memory for handoff through Ray's object store."""
+    client = _s3_client(source_uri, storage_profile=storage_profile)
+    return client.download_object_as_bytes(S3Prefix(source_uri))
+
+
 def upload_file(source_path: str, destination_uri: str, *, storage_profile: str) -> None:
     """Atomically replace one deterministic S3 object from a worker-local file."""
     client = _s3_client(destination_uri, storage_profile=storage_profile, can_overwrite=True)
     client.upload_file(source_path, S3Prefix(destination_uri))
+
+
+def upload_bytes(payload: bytes, destination_uri: str, *, storage_profile: str) -> None:
+    """Atomically replace one deterministic S3 object from an in-memory payload."""
+    client = _s3_client(destination_uri, storage_profile=storage_profile, can_overwrite=True)
+    client.upload_bytes(S3Prefix(destination_uri), payload)
 
 
 def _s3_client(location: str, *, storage_profile: str, can_overwrite: bool = False) -> S3Client:

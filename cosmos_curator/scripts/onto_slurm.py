@@ -62,6 +62,7 @@ from typing import Self, TextIO
 import attrs
 import tenacity
 
+from cosmos_curator.core.utils import environment
 from cosmos_curator.core.utils.misc.json_logging import configure_stdlib_logging
 
 logger = logging.getLogger(__name__)
@@ -187,6 +188,10 @@ class RayConfig:
     dashboard_host: str = _RAY_DASHBOARD_HOST
     dashboard_port: int = _RAY_DASHBOARD_PORT
     dashboard_agent_grpc_port: int = _RAY_DASHBOARD_AGENT_GRPC_PORT
+    io_slots_per_node: int = attrs.field(
+        default=environment.DEFAULT_CURATOR_IO_SLOTS_PER_NODE,
+        validator=attrs.validators.ge(1),
+    )
     system_config: RaySystemConfig = attrs.field(default=RaySystemConfig())
 
     @classmethod
@@ -203,6 +208,12 @@ class RayConfig:
             ),
             runtime_env_agent_port=int(os.environ.get("RAY_RUNTIME_ENV_AGENT_PORT", str(_RAY_RUNTIME_ENV_AGENT_PORT))),
             metrics_export_port=int(os.environ.get("XENNA_RAY_METRICS_PORT", str(_RAY_METRICS_EXPORT_PORT))),
+            io_slots_per_node=int(
+                os.environ.get(
+                    environment.CURATOR_IO_SLOTS_PER_NODE_ENV_VAR,
+                    str(environment.DEFAULT_CURATOR_IO_SLOTS_PER_NODE),
+                )
+            ),
         )
 
 
@@ -251,6 +262,8 @@ def get_ray_command(config: RayConfig, head_node: str | None = None) -> list[str
             "--dashboard-agent-grpc-port",
             str(config.dashboard_agent_grpc_port),
             "--disable-usage-stats",
+            "--resources",
+            json.dumps({environment.CURATOR_IO_RESOURCE_NAME: config.io_slots_per_node}),
         ]
 
     return [
@@ -272,6 +285,8 @@ def get_ray_command(config: RayConfig, head_node: str | None = None) -> list[str
         "--dashboard-agent-grpc-port",
         str(config.dashboard_agent_grpc_port),
         "--disable-usage-stats",
+        "--resources",
+        json.dumps({environment.CURATOR_IO_RESOURCE_NAME: config.io_slots_per_node}),
     ]
 
 

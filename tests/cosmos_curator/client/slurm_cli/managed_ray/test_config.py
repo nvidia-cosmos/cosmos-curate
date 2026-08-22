@@ -77,6 +77,7 @@ def test_environment_account_default_and_set_overrides(monkeypatch: pytest.Monke
             "slurm.worker.gpus=8",
             "runtime.mount_s3_creds=false",
             "ray.startup_timeout=2h",
+            "ray.io_slots_per_node=9",
         ],
     )
 
@@ -85,6 +86,7 @@ def test_environment_account_default_and_set_overrides(monkeypatch: pytest.Monke
     assert config.slurm.worker.gpus == 8
     assert config.runtime.mount_s3_creds is False
     assert startup_timeout_seconds(config.ray.startup_timeout) == 7200
+    assert config.ray.io_slots_per_node == 9
 
 
 def test_explicit_null_account_uses_slurm_default(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -138,6 +140,10 @@ def test_explicit_null_account_uses_slurm_default(monkeypatch: pytest.MonkeyPatc
         {
             "schema_version": 1,
             "slurm": {"head": {"memory": "64 GB"}},
+        },
+        {
+            "schema_version": 1,
+            "ray": {"io_slots_per_node": 0},
         },
         {
             "schema_version": 1,

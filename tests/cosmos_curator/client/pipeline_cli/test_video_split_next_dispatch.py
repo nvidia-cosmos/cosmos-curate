@@ -61,15 +61,11 @@ def test_runtime_dispatches_hyphenated_kind_to_next_recipe(
     """run-pipeline delegates video-split to the new snapshot recipe."""
     expected = {
         "sources": 1,
-        "sources_succeeded": 1,
-        "sources_failed": 0,
-        "clips_planned": 2,
         "clips_published": 2,
-        "clips_failed": 0,
-        "clips_lance_uri": "s3://example-bucket/output/lance/clips.lance",
+        "errors": 0,
+        "clips_lance_uri": "s3://example-bucket/output/lance",
         "clips_lance_version": 1,
-        "sources_lance_uri": "s3://example-bucket/output/lance/sources.lance",
-        "sources_lance_version": 1,
+        "errors_uri": "s3://example-bucket/output/errors.json",
     }
     monkeypatch.setattr(next_video_split, "run_config", lambda _config: expected)
 

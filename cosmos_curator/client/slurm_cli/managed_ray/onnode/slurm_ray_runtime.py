@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import argparse
 import getpass
+import json
 import logging
 import os
 import shutil
@@ -62,6 +63,10 @@ _NODE_MANAGER_PORT = 8077
 _DASHBOARD_AGENT_GRPC_PORT = 52366
 _RUNTIME_ENV_AGENT_PORT = 20267
 _METRICS_EXPORT_PORT = 9002
+# This module also runs as a standalone Python 3.8 script, so these mirror the
+# shared Curator resource contract instead of importing the package there.
+_CURATOR_IO_RESOURCE_NAME = "curator_io"
+_DEFAULT_IO_SLOTS_PER_NODE = 16
 # Every port ``ray start --head`` pre-selects, all of them named by the head rather than left to a Ray default.
 # Ray refuses to start when two pre-selected ports collide, and three of its defaults are fixed values a shared
 # node cannot use: the client server at 10001, the dashboard agent's HTTP listener at 52365, and the whole
@@ -165,7 +170,11 @@ def _ray_head_command(head_node: str, ports: dict[str, int], temp_dir: Path | No
     return command
 
 
-def _ray_worker_command(address: str, temp_dir: Path | None) -> list[str]:
+def _ray_worker_command(
+    address: str,
+    temp_dir: Path | None,
+    io_slots_per_node: int = _DEFAULT_IO_SLOTS_PER_NODE,
+) -> list[str]:
     command = [
         "ray",
         "start",
@@ -185,6 +194,8 @@ def _ray_worker_command(address: str, temp_dir: Path | None) -> list[str]:
         "--dashboard-agent-grpc-port",
         str(_DASHBOARD_AGENT_GRPC_PORT),
         "--disable-usage-stats",
+        "--resources",
+        json.dumps({_CURATOR_IO_RESOURCE_NAME: io_slots_per_node}),
     ]
     if temp_dir is not None:
         command.extend(["--temp-dir", str(temp_dir)])
@@ -559,7 +570,10 @@ def _run_worker(args: argparse.Namespace) -> int:
             args.run_id,
             address,
         )
-        completed = subprocess.run(_ray_worker_command(address, temp_dir), check=False)  # noqa: S603
+        completed = subprocess.run(  # noqa: S603
+            _ray_worker_command(address, temp_dir, args.io_slots_per_node),
+            check=False,
+        )
         return completed.returncode
     finally:
         if temp_dir is not None:
@@ -672,6 +686,14 @@ def _run_cleanup(args: argparse.Namespace) -> int:
     return 0
 
 
+def _positive_int(value: str) -> int:
+    parsed = int(value)
+    if parsed < 1:
+        msg = "--io-slots-per-node must be at least 1"
+        raise argparse.ArgumentTypeError(msg)
+    return parsed
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="role", required=True)
@@ -689,6 +711,7 @@ def _parser() -> argparse.ArgumentParser:
     worker.add_argument("--lane", type=int, default=os.getenv(WORKER_LANE_ENV))
     worker.add_argument("--bootstrap", required=True)
     worker.add_argument("--startup-timeout-seconds", required=True, type=int)
+    worker.add_argument("--io-slots-per-node", type=_positive_int, default=_DEFAULT_IO_SLOTS_PER_NODE)
     worker.add_argument("--temp-dir")
 
     cleanup = subparsers.add_parser("cleanup")

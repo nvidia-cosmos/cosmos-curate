@@ -72,8 +72,8 @@ def _prepare_run(
         return PipelineRunOutput(
             json_payload=summary,
             message=(
-                f"video-split: {summary['clips_published']}/{summary['clips_planned']} clip(s) published "
-                f"from {summary['sources']} source(s)"
+                f"video-split: {summary['clips_published']} clip(s) published from "
+                f"{summary['sources']} source(s), {summary['errors']} error(s)"
             ),
         )
 

@@ -40,21 +40,23 @@ def test_explicit_selection_needs_no_listing(monkeypatch: pytest.MonkeyPatch) ->
         )
     )
 
-    assert selected == ("s3://example-bucket/a.mp4", "s3://example-bucket/b.mp4")
+    expected = ("s3://example-bucket/a.mp4", "s3://example-bucket/b.mp4")
+    assert selected.canonical_uris == expected
+    assert selected.scheduled_uris == expected
 
 
-def test_root_discovery_is_recursive_filtered_and_sorted(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A root is listed once with a directory boundary and only MP4 descendants survive."""
+def test_root_discovery_is_canonicalized_and_scheduled_largest_first(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Root listing size prioritizes execution without changing canonical URI order."""
     seen: list[str] = []
 
     class FakeS3Client:
-        def list_recursive_directory(self, root: S3Prefix) -> list[S3Prefix]:
+        def list_recursive(self, root: S3Prefix) -> list[dict[str, object]]:
             seen.append(root.path)
             return [
-                S3Prefix("s3://example-bucket/raw/nested/z.MP4"),
-                S3Prefix("s3://example-bucket/raw/readme.txt"),
-                S3Prefix("s3://example-bucket/raw/a.mp4"),
-                S3Prefix("s3://example-bucket/raw/a.mp4"),
+                {"Key": "raw/nested/z.MP4", "Size": 300},
+                {"Key": "raw/readme.txt", "Size": 1_000},
+                {"Key": "raw/a.mp4", "Size": 100},
+                {"Key": "raw/a.mp4", "Size": 100},
             ]
 
     monkeypatch.setattr(discovery, "S3Client", FakeS3Client)
@@ -66,9 +68,38 @@ def test_root_discovery_is_recursive_filtered_and_sorted(monkeypatch: pytest.Mon
     )
 
     assert seen == ["s3://example-bucket/raw/"]
-    assert selected == (
+    assert selected.canonical_uris == (
         "s3://example-bucket/raw/a.mp4",
         "s3://example-bucket/raw/nested/z.MP4",
+    )
+    assert selected.scheduled_uris == (
+        "s3://example-bucket/raw/nested/z.MP4",
+        "s3://example-bucket/raw/a.mp4",
+    )
+
+
+def test_root_schedule_is_deterministic_for_ties_and_missing_sizes(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Unknown sizes follow known sizes and every tie falls back to URI order."""
+
+    class FakeS3Client:
+        def list_recursive(self, _root: S3Prefix) -> list[dict[str, object]]:
+            return [
+                {"Key": "raw/d.mp4"},
+                {"Key": "raw/c.mp4", "Size": "unknown"},
+                {"Key": "raw/b.mp4", "Size": 100},
+                {"Key": "raw/a.mp4", "Size": 100},
+            ]
+
+    monkeypatch.setattr(discovery, "S3Client", FakeS3Client)
+    monkeypatch.setattr(discovery, "get_storage_client", lambda *_args, **_kwargs: FakeS3Client())
+
+    selected = discovery.resolve_input_selection(_resolved_input({"root_uri": "s3://example-bucket/raw"}))
+
+    assert selected.scheduled_uris == (
+        "s3://example-bucket/raw/a.mp4",
+        "s3://example-bucket/raw/b.mp4",
+        "s3://example-bucket/raw/c.mp4",
+        "s3://example-bucket/raw/d.mp4",
     )
 
 
@@ -76,8 +107,8 @@ def test_root_discovery_rejects_client_results_outside_root(monkeypatch: pytest.
     """A buggy/custom S3 backend cannot expand a lexical sibling into the selection."""
 
     class FakeS3Client:
-        def list_recursive_directory(self, _root: S3Prefix) -> list[S3Prefix]:
-            return [S3Prefix("s3://example-bucket/raw-old/a.mp4")]
+        def list_recursive(self, _root: S3Prefix) -> list[dict[str, object]]:
+            return [{"Key": "raw-old/a.mp4", "Size": 100}]
 
     monkeypatch.setattr(discovery, "S3Client", FakeS3Client)
     monkeypatch.setattr(discovery, "get_storage_client", lambda *_args, **_kwargs: FakeS3Client())

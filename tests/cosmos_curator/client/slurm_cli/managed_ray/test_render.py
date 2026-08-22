@@ -168,7 +168,7 @@ def test_launcher_owned_node_local_sources_are_always_created() -> None:
     config = resolve_slurm_ray_config_data(
         {
             "schema_version": 1,
-            "ray": {"temp_dir": "/raid/ray"},
+            "ray": {"temp_dir": "/raid/ray", "io_slots_per_node": 9},
             "runtime": {"node_local_mounts": [{"source": "/raid/scratch", "destination": "/scratch"}]},
         }
     )
@@ -187,6 +187,7 @@ def test_launcher_owned_node_local_sources_are_always_created() -> None:
     assert runtime_paths["prepare_directories"] == ["/raid/ray"]
     assert "mkdir -p -- /raid/ray" in script
     assert "mkdir -p -- /raid/scratch" not in script
+    assert "--io-slots-per-node 9" in script
 
 
 def test_configured_node_local_mounts_are_created_on_request() -> None:

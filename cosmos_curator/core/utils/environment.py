@@ -24,6 +24,14 @@ import pathlib
 LOCAL_DOCKER_ENV_VAR_NAME = "COSMOS_CURATOR_LOCAL_DOCKER_JOB"
 SLURM_RAY_ENV_VAR_NAME = "COSMOS_CURATOR_RAY_SLURM_JOB"
 
+# Curator-owned Ray clusters advertise one logical token for each concurrent
+# source-level IO operation the node should accept. Tasks request one token;
+# because Ray resources are node-local, capacity follows elastic workers
+# without taking a one-time snapshot of the cluster size.
+CURATOR_IO_RESOURCE_NAME = "curator_io"
+CURATOR_IO_SLOTS_PER_NODE_ENV_VAR = "COSMOS_CURATOR_RAY_IO_SLOTS_PER_NODE"
+DEFAULT_CURATOR_IO_SLOTS_PER_NODE = 16
+
 # Where pipeline code is located.
 CONTAINER_PATHS_CODE_DIR = pathlib.Path("/opt/cosmos-curator")
 

@@ -14,6 +14,7 @@
 # limitations under the License.
 """Tests for the container and compute-node entrypoints a managed Ray run executes."""
 
+import json
 import signal
 import subprocess
 from argparse import Namespace
@@ -25,6 +26,7 @@ import pytest
 from cosmos_curator.client.slurm_cli.managed_ray.onnode.slurm_ray_runtime import (
     _HEAD_PORT_NAMES,
     _HEAD_PROBE_ATTEMPTS,
+    _parser,
     _prepare_ray_temp_dir,
     _queued_job_states,
     _ray_head_command,
@@ -48,6 +50,27 @@ from tests.cosmos_curator.client.slurm_cli.managed_ray.launcher_stubs import (
 )
 
 RUNTIME_MODULE = "cosmos_curator.client.slurm_cli.managed_ray.onnode.slurm_ray_runtime"
+
+
+@pytest.mark.parametrize("value", ["0", "-1"])
+def test_worker_parser_rejects_nonpositive_io_slots(value: str, capsys: pytest.CaptureFixture[str]) -> None:
+    """A worker cannot advertise a zero or negative logical IO capacity to Ray."""
+    with pytest.raises(SystemExit, match="2"):
+        _parser().parse_args(
+            [
+                "worker",
+                "--run-id",
+                "cc-ray-deadbeef",
+                "--bootstrap",
+                "bootstrap.json",
+                "--startup-timeout-seconds",
+                "60",
+                "--io-slots-per-node",
+                value,
+            ]
+        )
+
+    assert "--io-slots-per-node must be at least 1" in capsys.readouterr().err
 
 
 def test_ray_temp_dir_is_scoped_by_slurm_job(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -255,13 +278,15 @@ def test_runtime_ray_commands_keep_work_off_the_head() -> None:
     """The runtime advertises no application resources on the CPU head."""
     ports = _reserve_head_ports()
     head = _ray_head_command("head-node", ports, None)
-    worker = _ray_worker_command("head-node:6379", None)
+    worker = _ray_worker_command("head-node:6379", None, io_slots_per_node=9)
 
     assert head[head.index("--num-cpus") + 1] == "0"
     assert head[head.index("--num-gpus") + 1] == "0"
     assert head[head.index("--dashboard-host") + 1] == "127.0.0.1"
     assert "--block" in head
     assert worker[worker.index("--address") + 1] == "head-node:6379"
+    assert json.loads(worker[worker.index("--resources") + 1]) == {"curator_io": 9}
+    assert "--resources" not in head
     assert "--block" in worker
 
 

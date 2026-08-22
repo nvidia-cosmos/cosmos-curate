@@ -15,7 +15,12 @@
 
 """Shared Ray Data runtime configuration for Curator Next recipes."""
 
+import os
+from collections.abc import Mapping
+
 import ray
+
+from cosmos_curator.core.utils import environment
 
 # Substring patterns matched against ``"ClassName: message"`` (via
 # ``ray._common.retry.format_exception``) to decide whether a map function
@@ -79,7 +84,51 @@ def configure_ray_data_stability() -> None:
         ctx.max_map_retries = _MAP_MAX_RETRIES  # type: ignore[attr-defined]
 
 
-def ensure_ray_initialized() -> None:
-    """Initialize Ray locally when the caller has not already connected to a cluster."""
+def curator_io_slots_per_node() -> int:
+    """Return the configured logical IO capacity for a Curator Ray node."""
+    raw_value = os.environ.get(
+        environment.CURATOR_IO_SLOTS_PER_NODE_ENV_VAR,
+        str(environment.DEFAULT_CURATOR_IO_SLOTS_PER_NODE),
+    )
+    try:
+        slots = int(raw_value)
+    except ValueError as exc:
+        msg = f"{environment.CURATOR_IO_SLOTS_PER_NODE_ENV_VAR} must be an integer, got {raw_value!r}"
+        raise ValueError(msg) from exc
+    if slots < 1:
+        msg = f"{environment.CURATOR_IO_SLOTS_PER_NODE_ENV_VAR} must be at least 1, got {slots}"
+        raise ValueError(msg)
+    return slots
+
+
+def curator_io_resources() -> dict[str, float]:
+    """Return the standard custom resources for a Curator-owned Ray node."""
+    return {environment.CURATOR_IO_RESOURCE_NAME: float(curator_io_slots_per_node())}
+
+
+def ensure_ray_initialized(*, local_resources: Mapping[str, float] | None = None) -> None:
+    """Initialize Ray and verify resources required by the calling recipe.
+
+    ``local_resources`` are supplied only when this process owns a new local
+    Ray node. Slurm and externally managed clusters must advertise the same
+    resources when their nodes start; Ray cannot add them after the fact.
+    """
     if not ray.is_initialized():
-        ray.init(ignore_reinit_error=True)
+        connects_to_existing_cluster = bool(os.environ.get("RAY_ADDRESS")) or (
+            environment.SLURM_RAY_ENV_VAR_NAME in os.environ
+        )
+        if local_resources and not connects_to_existing_cluster:
+            ray.init(ignore_reinit_error=True, resources=dict(local_resources))
+        else:
+            ray.init(ignore_reinit_error=True)
+
+    if local_resources:
+        cluster_resources = ray.cluster_resources()  # type: ignore[no-untyped-call]
+        missing = [name for name in local_resources if float(cluster_resources.get(name, 0.0)) <= 0.0]
+        if missing:
+            names = ", ".join(sorted(missing))
+            msg = (
+                f"The connected Ray cluster does not advertise required resource(s): {names}. "
+                "Start each Curator work node with the matching custom Ray resources."
+            )
+            raise RuntimeError(msg)

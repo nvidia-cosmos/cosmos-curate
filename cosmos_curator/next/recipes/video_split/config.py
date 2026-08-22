@@ -130,13 +130,13 @@ class TranscodeConfig(BaseModel):
 
 
 class VideoSplitOutputConfig(BaseModel):
-    """S3 media and local-or-S3 Lance snapshot destinations."""
+    """S3 media/error and local-or-S3 Lance snapshot destinations."""
 
     model_config = _MODEL_CONFIG
 
     media_root: str = Field(min_length=1, examples=["s3://example-bucket/curated/video-split/"])
     clips_lance_uri: str = Field(default="", description="Complete clip snapshot URI.")
-    sources_lance_uri: str = Field(default="", description="Complete source-outcome snapshot URI.")
+    errors_uri: str = Field(default="", description="Run error report URI.")
 
     @model_validator(mode="before")
     @classmethod
@@ -146,8 +146,8 @@ class VideoSplitOutputConfig(BaseModel):
         resolved = dict(value)
         media_root = resolved.get("media_root")
         if isinstance(media_root, str):
-            resolved.setdefault("clips_lance_uri", join_s3_uri(media_root, "lance", "clips.lance"))
-            resolved.setdefault("sources_lance_uri", join_s3_uri(media_root, "lance", "sources.lance"))
+            resolved.setdefault("clips_lance_uri", join_s3_uri(media_root, "lance"))
+            resolved.setdefault("errors_uri", join_s3_uri(media_root, "errors.json"))
         return resolved
 
     @field_validator("media_root")
@@ -155,29 +155,24 @@ class VideoSplitOutputConfig(BaseModel):
     def _normalize_media_root(cls, location: str) -> str:
         return normalize_s3_uri(location, strip_trailing_slash=True)
 
-    @field_validator("clips_lance_uri", "sources_lance_uri")
+    @field_validator("clips_lance_uri")
     @classmethod
     def _normalize_lance_uri(cls, location: str) -> str:
         if not location or location != location.strip():
             msg = "Lance locations must be non-empty and cannot have surrounding whitespace"
             raise ValueError(msg)
         if "://" in location:
-            normalized = normalize_s3_uri(location, strip_trailing_slash=True)
-            suffix = PurePosixPath(urlsplit(normalized).path).suffix
-        else:
-            normalized = str(Path(location).expanduser().resolve())
-            suffix = Path(normalized).suffix
-        if suffix.lower() != ".lance":
-            msg = f"Lance dataset URIs must end in .lance, got {location!r}"
+            return normalize_s3_uri(location, strip_trailing_slash=True)
+        return str(Path(location).expanduser().resolve())
+
+    @field_validator("errors_uri")
+    @classmethod
+    def _normalize_errors_uri(cls, location: str) -> str:
+        normalized = normalize_s3_uri(location, strip_trailing_slash=True)
+        if PurePosixPath(urlsplit(normalized).path).suffix.lower() != ".json":
+            msg = f"Error report URIs must end in .json, got {location!r}"
             raise ValueError(msg)
         return normalized
-
-    @model_validator(mode="after")
-    def _distinct_datasets(self) -> Self:
-        if self.clips_lance_uri == self.sources_lance_uri:
-            msg = "output.clips_lance_uri and output.sources_lance_uri must be different"
-            raise ValueError(msg)
-        return self
 
 
 class VideoSplitExecutionConfig(BaseModel):
@@ -186,18 +181,24 @@ class VideoSplitExecutionConfig(BaseModel):
     model_config = _MODEL_CONFIG
 
     storage_profile: str = Field(default="default", min_length=1)
-    transcode_cpus: float = Field(default=1.0, gt=0.0, allow_inf_nan=False)
-    # Threads per FFmpeg encode. Deliberately not part of TranscodeConfig: it
-    # trades per-clip latency against task concurrency without changing what the
-    # clip is, so raising it must not relocate every clip in the dataset.
+    # Match the legacy CPU transcoder's empirically useful resource shape:
+    # several single-threaded outputs share one FFmpeg process, while Ray
+    # reserves enough cores to keep that bounded fan-out honest.
+    transcode_cpus: float = Field(default=5.0, gt=0.0, allow_inf_nan=False)
+    # Threads per FFmpeg output encoder. Input decoders and simple filter
+    # pipelines remain single-threaded because the batch already supplies
+    # clip-level concurrency. Deliberately not part of TranscodeConfig: it
+    # changes execution speed, not clip identity.
     encoder_threads: int = Field(default=1, ge=1)
-    # Clips per publish task and therefore the upper bound for the fragment that
-    # task writes. Lance may subdivide a batch further at its native file limits.
-    # The default matches Lance's 1,048,576-row file limit. At roughly 0.6KB of
-    # worker Arrow per clip, that is about 600MB per task and a 400-550MB Lance
-    # fragment for this metadata-only schema. Lower this on memory-constrained
-    # workers at the cost of creating more fragments.
-    clips_per_publish_batch: int = Field(default=1_048_576, ge=1)
+    # Planned clips from one source are grouped into multi-output FFmpeg
+    # invocations. This amortizes process startup and shared input access while
+    # preserving one source download per transcode task.
+    ffmpeg_batch_size: int = Field(default=16, ge=1)
+    # Terminal records per publish task and therefore the upper bound for one
+    # fragment or one in-memory error batch. Lance may subdivide further at its
+    # native limits. A conservative default bounds the all-errors case while
+    # still producing a small number of useful fragments at target scale.
+    clips_per_publish_batch: int = Field(default=100_000, ge=1)
     storage_attempts: int = Field(default=3, ge=1)
     probe_attempts: int = Field(default=3, ge=1)
     transcode_attempts: int = Field(default=3, ge=1)
@@ -230,7 +231,7 @@ _TEMPLATE = ResolvedVideoSplitConfig.model_validate(_TEMPLATE_BASE).model_dump(m
 _TEMPLATE_PREAMBLE = """\
 # All supported settings and their defaults are shown. Unchanged settings may be removed.
 # To discover a prefix recursively, replace `uris` with `root_uri: s3://example-bucket/raw/`.
-# The two Lance URIs are optional; when omitted, they are derived from `media_root`.
+# The Lance and error-report URIs are optional; when omitted, they are derived from `media_root`.
 """
 
 
@@ -296,7 +297,7 @@ def config_template_payload() -> dict[str, Any]:
     """Return structured template metadata for agents."""
     return {
         "kind": "video-split",
-        "description": "Split S3 MP4 sources into fixed-stride clips and publish Lance snapshots.",
+        "description": "Split S3 MP4 sources into fixed-stride clips and publish a Lance snapshot.",
         "required_fields": [
             {"path": "schema_version", "example": 1},
             {"path": "kind", "example": "video-split"},

@@ -155,6 +155,7 @@ def test_render_sbatch_script(exclude_nodes: list[str] | None) -> None:
         time_limit="01:00:00",
         log_dir=pathlib.Path("/logs"),
         stop_retries_after=100,
+        ray_io_slots_per_node=9,
         exclude_nodes=exclude_nodes,
         comment="test_comment",
     )
@@ -169,6 +170,7 @@ def test_render_sbatch_script(exclude_nodes: list[str] | None) -> None:
     assert f"--gres={GRES}" in sbatch_script
     assert f"--time={job_spec.time_limit}" in sbatch_script
     assert f"STOP_RETRIES_AFTER={job_spec.stop_retries_after}" in sbatch_script
+    assert f"COSMOS_CURATOR_RAY_IO_SLOTS_PER_NODE={job_spec.ray_io_slots_per_node}" in sbatch_script
     if exclude_nodes:
         assert f"--exclude={expected_exclude_nodes}" in sbatch_script
     else:

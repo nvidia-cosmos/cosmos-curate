@@ -37,6 +37,8 @@ from cosmos_curator.client.environment import (
     CONTAINER_PATHS_CODE_DIR,
     CONTAINER_PATHS_COSMOS_CURATOR_CONFIG_FILE,
     CONTAINER_PATHS_DEFAULT_WORKSPACE_DIR,
+    CURATOR_IO_SLOTS_PER_NODE_ENV_VAR,
+    DEFAULT_CURATOR_IO_SLOTS_PER_NODE,
     LOCAL_AWS_CREDENTIALS_FILE,
     LOCAL_AZURE_CREDENTIALS_FILE,
     LOCAL_COSMOS_CURATOR_CONFIG_FILE,
@@ -71,6 +73,7 @@ class LaunchDocker:
     mount_s3_creds: bool
     mount_azure_creds: bool
     extra_volumes: list[str]  # each entry is HOST_PATH:CONTAINER_PATH[:MODE]
+    ray_io_slots_per_node: int
 
 
 # Stable while we use nvidia/cuda:*-devel-ubuntu*: those base images ship a
@@ -179,6 +182,15 @@ def launch(  # noqa: PLR0913
             rich_help_panel="local-docker",
         ),
     ] = "",
+    ray_io_slots_per_node: Annotated[
+        int,
+        Option(
+            "--ray-io-slots-per-node",
+            help="Logical source-IO capacity advertised when the command starts a local Ray node.",
+            rich_help_panel="local-docker",
+            min=1,
+        ),
+    ] = DEFAULT_CURATOR_IO_SLOTS_PER_NODE,
 ) -> None:
     """Launch video-curation pipeline in local docker container.
 
@@ -201,6 +213,7 @@ def launch(  # noqa: PLR0913
         mount_s3_creds=mount_s3_creds,
         mount_azure_creds=mount_azure_creds,
         extra_volumes=_parse_extra_volumes(extra_volumes),
+        ray_io_slots_per_node=ray_io_slots_per_node,
     )
     return _launch_in_docker_container(opts)
 
@@ -451,6 +464,8 @@ def _launch_in_docker_container(opts: LaunchDocker) -> None:
         f"{LOCAL_DOCKER_ENV_VAR_NAME}=1",
         "-e",
         "NVCF_REQUEST_STATUS=false",
+        "-e",
+        f"{CURATOR_IO_SLOTS_PER_NODE_ENV_VAR}={opts.ray_io_slots_per_node}",
         # Replaces the line buffering a pseudo-TTY used to give us; see the -t note below.
         "-e",
         "PYTHONUNBUFFERED=1",

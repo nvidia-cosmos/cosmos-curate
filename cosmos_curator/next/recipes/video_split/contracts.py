@@ -21,8 +21,7 @@ from typing import Literal
 MEDIA_CONTRACT_VERSION = 1
 
 CLIP_RECORD_SCHEMA_VERSION = 1
-SOURCE_RECORD_SCHEMA_VERSION = 1
-RECOVERY_RECORD_SCHEMA_VERSION = 1
+ERROR_RECORD_SCHEMA_VERSION = 1
 LANCE_DATA_STORAGE_VERSION: Literal["2.2"] = "2.2"
 
 # Frame counts are unknown for some containers. Work records carry this sentinel
