@@ -58,6 +58,7 @@ import pyarrow.parquet as pq
 import pytest
 import yaml
 
+import cosmos_curator.next.recipes.robot_action_split.lance_sink as lance_sink_mod
 from cosmos_curator.next.recipes.robot_action_split.config import ResolvedRobotActionSplitConfig
 from cosmos_curator.next.recipes.robot_action_split.discovery import discover_spans
 from cosmos_curator.next.recipes.robot_action_split.lance_sink import write_outcomes_to_lance
@@ -420,6 +421,25 @@ def test_lance_write_produces_correct_rows(dataset: Path, output_path: Path) -> 
     txn = ds.read_transaction(version)
     assert txn is not None
     assert txn.transaction_properties == {"kind": "robot-action-split", "snapshot": "clips"}
+
+
+def test_lance_write_produces_multiple_fragments(
+    dataset: Path, output_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """write_outcomes_to_lance writes one fragment per _ROWS_PER_FRAGMENT rows."""
+    monkeypatch.setattr(lance_sink_mod, "_ROWS_PER_FRAGMENT", 1)
+
+    config = _make_config(dataset, output_path)
+    batches = discover_spans(config)
+    outcomes = process_batch(batches[0], config=config)
+    success = [o for o in outcomes if o["status"] == "success"]
+
+    lance_uri = str(output_path / "clips_frags.lance")
+    lance_sink_mod.write_outcomes_to_lance(outcomes, lance_uri=lance_uri)
+
+    ds = lance.dataset(lance_uri)
+    assert ds.count_rows() == len(success)
+    assert len(ds.get_fragments()) == len(success)
 
 
 def test_full_pipeline_run(dataset: Path, output_path: Path) -> None:

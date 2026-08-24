@@ -29,6 +29,18 @@ from cosmos_curator.next.recipes.robot_action_split.contracts import LANCE_DATA_
 from cosmos_curator.next.utils.lance_utils import open_dataset
 
 # ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+
+# Target rows per Lance fragment. Downstream Ray Data stages (embedding, dedup)
+# get one parallel task per fragment, so fragment count bounds GPU parallelism.
+# This write is driver-side, so GPU count is unknown here — size fragments so
+# total count comfortably exceeds any expected GPU fleet (e.g. 32-64 GPUs).
+# 8k rows ≈ 16 fragments for a 130k-row dataset; expose via execution config
+# if callers need to match a specific cluster size.
+_ROWS_PER_FRAGMENT = 8_000
+
+# ---------------------------------------------------------------------------
 # Schema
 # ---------------------------------------------------------------------------
 
@@ -106,13 +118,17 @@ def write_outcomes_to_lance(
         fragment_mode = "append"
         read_version = dataset.version
 
-    # Write fragments (uncommitted).
+    # Write fragments (uncommitted). max_rows_per_file causes write_fragments
+    # to split the table into ceil(rows / N) fragments internally, giving
+    # downstream Ray Data scans (embedding, dedup) enough partitions to
+    # saturate available GPU parallelism.
     reader = pa.RecordBatchReader.from_batches(OUTCOME_SCHEMA, table.to_batches())
     fragments = write_fragments(
         reader,
         lance_uri,
         schema=OUTCOME_SCHEMA,
         mode=fragment_mode,
+        max_rows_per_file=_ROWS_PER_FRAGMENT,
         data_storage_version=LANCE_DATA_STORAGE_VERSION,
         storage_options=storage_options,
     )
