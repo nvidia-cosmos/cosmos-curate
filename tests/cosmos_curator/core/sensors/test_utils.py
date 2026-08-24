@@ -28,9 +28,9 @@ from mcap.writer import CompressionType, Writer
 from cosmos_curator.core.sensors.sampling.grid import SamplingGrid
 from cosmos_curator.core.sensors.sampling.spec import SamplingSpec
 
-# Time origins for sampling tests. make_ts_grid builds its grid in float64 seconds, so its
-# precision depends on where in time the grid starts: near zero the nanosecond error is 0, but
-# at wall-clock epoch magnitudes adjacent float64 values are ~238 ns apart. See CVC-1199.
+# Time origins for sampling tests. These pin origin invariance: at wall-clock epoch magnitudes
+# adjacent float64 values are ~238 ns apart, so any code that routes an absolute nanosecond
+# timestamp through a float64 loses detail here that survives near zero. See CVC-1199.
 ZERO_ORIGIN_NS = 0
 EPOCH_ROUND_NS = 1_700_000_000_000_000_000
 EPOCH_ODD_NS = 1_700_000_000_123_456_789

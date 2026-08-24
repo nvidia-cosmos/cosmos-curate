@@ -28,6 +28,9 @@ else:
 
 AttrsValidator = Callable[[object, AttrsAttribute, Any], None]
 
+INT64_MIN = int(np.iinfo(np.int64).min)
+INT64_MAX = int(np.iinfo(np.int64).max)
+
 _QUATERNION_COLUMNS = 4
 _QUATERNION_NORM_TOLERANCE = 1e-6
 _COVARIANCE_TOLERANCE = 1e-9

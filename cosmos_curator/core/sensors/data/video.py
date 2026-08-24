@@ -23,11 +23,15 @@ import numpy as np
 import numpy.typing as npt
 
 from cosmos_curator.core.sensors.utils.helpers import as_readonly_view
-from cosmos_curator.core.sensors.utils.validation import bool_array, int64_array, strictly_increasing_int64_array
+from cosmos_curator.core.sensors.utils.validation import (
+    INT64_MAX,
+    INT64_MIN,
+    bool_array,
+    int64_array,
+    strictly_increasing_int64_array,
+)
 
 VIDEO_METADATA_VERSION = "2"
-_INT64_MIN = np.iinfo(np.int64).min
-_INT64_MAX = np.iinfo(np.int64).max
 
 
 def validate_timestamp_offset_ns(value: object) -> int:
@@ -37,7 +41,7 @@ def validate_timestamp_offset_ns(value: object) -> int:
         raise ValueError(msg)  # noqa: TRY004
 
     normalized_value = int(value)
-    if not _INT64_MIN <= normalized_value <= _INT64_MAX:
+    if not INT64_MIN <= normalized_value <= INT64_MAX:
         msg = f"timestamp_offset_ns must fit signed int64, got {normalized_value}"
         raise ValueError(msg)
     return normalized_value
@@ -268,7 +272,7 @@ class VideoIndex:
             # bounded by these endpoints and cannot overflow independently.
             shifted_first_ns = int(self.pts_ns[0]) + timestamp_offset_ns
             shifted_last_ns = int(self.pts_ns[-1]) + timestamp_offset_ns
-            if not (_INT64_MIN <= shifted_first_ns <= _INT64_MAX and _INT64_MIN <= shifted_last_ns <= _INT64_MAX):
+            if not (INT64_MIN <= shifted_first_ns <= INT64_MAX and INT64_MIN <= shifted_last_ns <= INT64_MAX):
                 msg = (
                     "timestamp_offset_ns shifts VideoIndex timestamps outside signed int64: "
                     f"offset={timestamp_offset_ns}"

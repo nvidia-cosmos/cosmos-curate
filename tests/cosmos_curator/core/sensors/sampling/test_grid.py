@@ -23,7 +23,12 @@ import numpy as np
 import numpy.typing as npt
 import pytest
 
-from cosmos_curator.core.sensors.sampling.grid import SamplingGrid, SamplingWindow, make_ts_grid
+from cosmos_curator.core.sensors.sampling.grid import (
+    SamplingGrid,
+    SamplingWindow,
+    make_ts_grid,
+)
+from cosmos_curator.core.sensors.utils.validation import INT64_MAX
 from tests.cosmos_curator.core.sensors.test_utils import (
     EPOCH_ODD_NS,
     EPOCH_ROUND_NS,
@@ -37,7 +42,7 @@ def exact_ts_grid(start_ns: int, inclusive_end_ns: int, sample_rate_hz: float) -
     rational and each offset rounded to an integer before being added to ``start_ns``, so no
     absolute timestamp passes through ``float64``.
     """  # noqa: D205, D401
-    # This sample count deliberately mirrors grid.py:135-137, but floors the span exactly where
+    # This sample count deliberately mirrors grid.py:140-141, but floors the span exactly where
     # the implementation floors nextafter(span / interval, inf) in float64. The nudge absorbs
     # float undershoot at an exact boundary; for a span landing within ~1e-13 *below* an integer
     # it overshoots instead and the two counts differ by one -- 29.97 Hz over exactly 100 s is
@@ -175,24 +180,8 @@ def test_exact_ts_grid_agrees_with_implementation_at_zero_base(
     ("start_ns", "end_ns"),
     [
         pytest.param(ZERO_ORIGIN_NS, ZERO_ORIGIN_NS + 5_000_000_000, id="zero_origin"),
-        pytest.param(
-            EPOCH_ROUND_NS,
-            EPOCH_ROUND_NS + 5_000_000_000,
-            marks=pytest.mark.xfail(
-                strict=True,
-                reason="CVC-1199: float64 seconds quantize epoch-scale grid offsets to ~477 ns",
-            ),
-            id="epoch_round_origin",
-        ),
-        pytest.param(
-            EPOCH_ODD_NS,
-            EPOCH_ODD_NS + 5_000_000_000,
-            marks=pytest.mark.xfail(
-                strict=True,
-                reason="CVC-1199: an odd-nanosecond epoch start does not survive float64 seconds",
-            ),
-            id="epoch_odd_origin",
-        ),
+        pytest.param(EPOCH_ROUND_NS, EPOCH_ROUND_NS + 5_000_000_000, id="epoch_round_origin"),
+        pytest.param(EPOCH_ODD_NS, EPOCH_ODD_NS + 5_000_000_000, id="epoch_odd_origin"),
     ],
 )
 def test_make_ts_grid(start_ns: int, end_ns: int) -> None:
@@ -221,56 +210,11 @@ def test_make_ts_grid(start_ns: int, end_ns: int) -> None:
         pytest.param(EPOCH_ROUND_NS, EPOCH_ROUND_NS + 1_000_000_000, 30.0, id="epoch_round_origin-30hz"),
         pytest.param(EPOCH_ROUND_NS, EPOCH_ROUND_NS + 987_654_198, 29.97, id="epoch_round_origin-29.97hz"),
         pytest.param(EPOCH_ROUND_NS, EPOCH_ROUND_NS + 5_000_000_000, 59.94, id="epoch_round_origin-59.94hz"),
-        pytest.param(
-            EPOCH_ROUND_NS,
-            EPOCH_ROUND_NS + 1_000_000,
-            1_000.0,
-            marks=pytest.mark.xfail(
-                strict=True,
-                reason="CVC-1199: float64 rounding pulls exclusive_end_ns below end_ns at epoch scale",
-            ),
-            id="epoch_round_origin-1000hz",
-        ),
-        pytest.param(
-            EPOCH_ODD_NS,
-            EPOCH_ODD_NS + 1_000_000_000,
-            30.0,
-            marks=pytest.mark.xfail(
-                strict=True,
-                reason="CVC-1199: an odd-nanosecond epoch start does not survive float64 seconds",
-            ),
-            id="epoch_odd_origin-30hz",
-        ),
-        pytest.param(
-            EPOCH_ODD_NS,
-            EPOCH_ODD_NS + 987_654_198,
-            29.97,
-            marks=pytest.mark.xfail(
-                strict=True,
-                reason="CVC-1199: an odd-nanosecond epoch start does not survive float64 seconds",
-            ),
-            id="epoch_odd_origin-29.97hz",
-        ),
-        pytest.param(
-            EPOCH_ODD_NS,
-            EPOCH_ODD_NS + 5_000_000_000,
-            59.94,
-            marks=pytest.mark.xfail(
-                strict=True,
-                reason="CVC-1199: an odd-nanosecond epoch start does not survive float64 seconds",
-            ),
-            id="epoch_odd_origin-59.94hz",
-        ),
-        pytest.param(
-            EPOCH_ODD_NS,
-            EPOCH_ODD_NS + 1_000_000,
-            1_000.0,
-            marks=pytest.mark.xfail(
-                strict=True,
-                reason="CVC-1199: an odd-nanosecond epoch start does not survive float64 seconds",
-            ),
-            id="epoch_odd_origin-1000hz",
-        ),
+        pytest.param(EPOCH_ROUND_NS, EPOCH_ROUND_NS + 1_000_000, 1_000.0, id="epoch_round_origin-1000hz"),
+        pytest.param(EPOCH_ODD_NS, EPOCH_ODD_NS + 1_000_000_000, 30.0, id="epoch_odd_origin-30hz"),
+        pytest.param(EPOCH_ODD_NS, EPOCH_ODD_NS + 987_654_198, 29.97, id="epoch_odd_origin-29.97hz"),
+        pytest.param(EPOCH_ODD_NS, EPOCH_ODD_NS + 5_000_000_000, 59.94, id="epoch_odd_origin-59.94hz"),
+        pytest.param(EPOCH_ODD_NS, EPOCH_ODD_NS + 1_000_000, 1_000.0, id="epoch_odd_origin-1000hz"),
     ],
 )
 def test_make_ts_grid_brackets_end_ns(start_ns: int, end_ns: int, sample_rate_hz: float) -> None:
@@ -289,80 +233,14 @@ def test_make_ts_grid_brackets_end_ns(start_ns: int, end_ns: int, sample_rate_hz
         pytest.param(123, 987_654_321, 29.97, id="zero_origin-29.97hz"),
         pytest.param(0, 5_000_000_000, 59.94, id="zero_origin-59.94hz"),
         pytest.param(42, 42 + 1_000_000, 1_000.0, id="zero_origin-1000hz"),
-        pytest.param(
-            EPOCH_ROUND_NS,
-            EPOCH_ROUND_NS + 1_000_000_000,
-            30.0,
-            marks=pytest.mark.xfail(
-                strict=True,
-                reason="CVC-1199: float64 quantization jitters epoch-scale sample spacing by hundreds of ns",
-            ),
-            id="epoch_round_origin-30hz",
-        ),
-        pytest.param(
-            EPOCH_ROUND_NS,
-            EPOCH_ROUND_NS + 987_654_198,
-            29.97,
-            marks=pytest.mark.xfail(
-                strict=True,
-                reason="CVC-1199: float64 quantization jitters epoch-scale sample spacing by hundreds of ns",
-            ),
-            id="epoch_round_origin-29.97hz",
-        ),
-        pytest.param(
-            EPOCH_ROUND_NS,
-            EPOCH_ROUND_NS + 5_000_000_000,
-            59.94,
-            marks=pytest.mark.xfail(
-                strict=True,
-                reason="CVC-1199: float64 quantization jitters epoch-scale sample spacing by hundreds of ns",
-            ),
-            id="epoch_round_origin-59.94hz",
-        ),
-        # 1000 Hz at a round epoch origin is vacuous rather than correct: float64 loses the
-        # millisecond span, the grid collapses to a single timestamp, and there is no delta left
-        # to check. CVC-1199 shows up in the brackets test above instead.
+        pytest.param(EPOCH_ROUND_NS, EPOCH_ROUND_NS + 1_000_000_000, 30.0, id="epoch_round_origin-30hz"),
+        pytest.param(EPOCH_ROUND_NS, EPOCH_ROUND_NS + 987_654_198, 29.97, id="epoch_round_origin-29.97hz"),
+        pytest.param(EPOCH_ROUND_NS, EPOCH_ROUND_NS + 5_000_000_000, 59.94, id="epoch_round_origin-59.94hz"),
         pytest.param(EPOCH_ROUND_NS, EPOCH_ROUND_NS + 1_000_000, 1_000.0, id="epoch_round_origin-1000hz"),
-        pytest.param(
-            EPOCH_ODD_NS,
-            EPOCH_ODD_NS + 1_000_000_000,
-            30.0,
-            marks=pytest.mark.xfail(
-                strict=True,
-                reason="CVC-1199: float64 quantization jitters epoch-scale sample spacing by hundreds of ns",
-            ),
-            id="epoch_odd_origin-30hz",
-        ),
-        pytest.param(
-            EPOCH_ODD_NS,
-            EPOCH_ODD_NS + 987_654_198,
-            29.97,
-            marks=pytest.mark.xfail(
-                strict=True,
-                reason="CVC-1199: float64 quantization jitters epoch-scale sample spacing by hundreds of ns",
-            ),
-            id="epoch_odd_origin-29.97hz",
-        ),
-        pytest.param(
-            EPOCH_ODD_NS,
-            EPOCH_ODD_NS + 5_000_000_000,
-            59.94,
-            marks=pytest.mark.xfail(
-                strict=True,
-                reason="CVC-1199: float64 quantization jitters epoch-scale sample spacing by hundreds of ns",
-            ),
-            id="epoch_odd_origin-59.94hz",
-        ),
-        pytest.param(
-            EPOCH_ODD_NS,
-            EPOCH_ODD_NS + 1_000_000,
-            1_000.0,
-            marks=pytest.mark.xfail(
-                strict=True,
-                reason="CVC-1199: float64 quantization jitters epoch-scale sample spacing by tens of ns",
-            ),
-            id="epoch_odd_origin-1000hz",
-        ),
+        pytest.param(EPOCH_ODD_NS, EPOCH_ODD_NS + 1_000_000_000, 30.0, id="epoch_odd_origin-30hz"),
+        pytest.param(EPOCH_ODD_NS, EPOCH_ODD_NS + 987_654_198, 29.97, id="epoch_odd_origin-29.97hz"),
+        pytest.param(EPOCH_ODD_NS, EPOCH_ODD_NS + 5_000_000_000, 59.94, id="epoch_odd_origin-59.94hz"),
+        pytest.param(EPOCH_ODD_NS, EPOCH_ODD_NS + 1_000_000, 1_000.0, id="epoch_odd_origin-1000hz"),
     ],
 )
 def test_make_ts_grid_is_strictly_increasing_and_on_grid(start_ns: int, end_ns: int, sample_rate_hz: float) -> None:
@@ -380,22 +258,8 @@ def test_make_ts_grid_is_strictly_increasing_and_on_grid(start_ns: int, end_ns: 
     "origin_ns",
     [
         pytest.param(ZERO_ORIGIN_NS, id="zero_origin"),
-        pytest.param(
-            EPOCH_ROUND_NS,
-            marks=pytest.mark.xfail(
-                strict=True,
-                reason="CVC-1199: float64 seconds drop the nanosecond offset of an epoch-scale start",
-            ),
-            id="epoch_round_origin",
-        ),
-        pytest.param(
-            EPOCH_ODD_NS,
-            marks=pytest.mark.xfail(
-                strict=True,
-                reason="CVC-1199: float64 seconds drop the nanosecond offset of an epoch-scale start",
-            ),
-            id="epoch_odd_origin",
-        ),
+        pytest.param(EPOCH_ROUND_NS, id="epoch_round_origin"),
+        pytest.param(EPOCH_ODD_NS, id="epoch_odd_origin"),
     ],
 )
 def test_make_ts_grid_single_timestamp(origin_ns: int) -> None:
@@ -429,6 +293,210 @@ def test_make_ts_grid_raises_when_end_precedes_start() -> None:
         make_ts_grid(10, 0, 1.0)
 
 
+# Rates spanning every shape the exact interval can take: exactly representable in
+# float64 (denominator 1), a repeating third (30/60 Hz), and the NTSC family whose
+# exact interval has a ~2e14 denominator and therefore sits arbitrarily close to a
+# rounding tie. Only the last group deviates from exact arithmetic at all.
+_ACCURACY_RATE_CASES = [
+    pytest.param(1_000.0, id="exact_in_float64-1000hz"),
+    pytest.param(10.0, id="exact_in_float64-10hz"),
+    pytest.param(25.0, id="exact_in_float64-25hz"),
+    pytest.param(30.0, id="repeating_third-30hz"),
+    pytest.param(60.0, id="repeating_third-60hz"),
+    pytest.param(29.97, id="ntsc-29.97hz"),
+    pytest.param(59.94, id="ntsc-59.94hz"),
+    pytest.param(23.976, id="ntsc-23.976hz"),
+]
+
+_ONE_NANOSECOND = 1
+
+
+def _exact_timestamps_at(start_ns: int, sample_rate_hz: float, indices: np.ndarray) -> np.ndarray:
+    """Exact timestamps at the given sample indices.
+
+    Indexed rather than counted on purpose. ``exact_ts_grid`` derives its own sample
+    count by an exact floor where ``make_ts_grid`` floors a ``nextafter`` nudge, and
+    the two differ by one on spans landing just below a whole multiple of the interval
+    -- 10 min at 29.97 Hz is such a span. That is a counting disagreement, not a
+    precision one, so accuracy assertions index into the grid actually returned.
+    """
+    interval_ns = Fraction(1_000_000_000) / Fraction(sample_rate_hz)
+    return np.array([start_ns + round(interval_ns * int(k)) for k in indices], dtype=np.int64)
+
+
+def _spread_indices(count: int, limit: int = 2_000) -> np.ndarray:
+    """Up to ``limit`` indices spanning the grid, always including its final sample."""
+    if count <= limit:
+        return np.arange(count, dtype=np.int64)
+    return np.unique(np.linspace(0, count - 1, limit).astype(np.int64))
+
+
+@pytest.mark.parametrize("sample_rate_hz", _ACCURACY_RATE_CASES)
+@pytest.mark.parametrize(
+    "duration_ns",
+    [
+        pytest.param(10_000_000_000, id="10s"),
+        pytest.param(600_000_000_000, id="10min"),
+        pytest.param(7_200_000_000_000, id="2h"),
+    ],
+)
+def test_make_ts_grid_stays_within_one_nanosecond_of_exact(sample_rate_hz: float, duration_ns: int) -> None:
+    """Timestamps must track the exact rational grid to within 1 ns.
+
+    Offsets are computed in float64, which is sound because they are relative to an
+    integer origin and therefore small -- but only sound to within a nanosecond. A
+    rate whose exact interval has a large denominator puts values arbitrarily close
+    to a rounding tie, and float64 tips some of them. Pin the bound so it cannot
+    quietly grow.
+    """
+    end_ns = EPOCH_ODD_NS + duration_ns
+
+    got_start_ns, _, got_timestamps_ns = make_ts_grid(EPOCH_ODD_NS, end_ns, sample_rate_hz)
+
+    indices = _spread_indices(len(got_timestamps_ns))
+    expected = _exact_timestamps_at(EPOCH_ODD_NS, sample_rate_hz, indices)
+    assert got_start_ns == EPOCH_ODD_NS
+    deviation = np.abs(got_timestamps_ns.astype(np.int64)[indices] - expected)
+    assert deviation.max() <= _ONE_NANOSECOND
+
+
+@pytest.mark.parametrize("sample_rate_hz", _ACCURACY_RATE_CASES)
+def test_make_ts_grid_deviation_does_not_accumulate(sample_rate_hz: float) -> None:
+    """The deviation must stay bounded along the grid rather than growing with it.
+
+    This is what separates ``step_ns * k`` from the two tempting rewrites, both of
+    which stay under 1 ns on a short grid and so cannot be caught by a small case:
+    accumulating the step (a running sum, ``np.cumsum``) drifts ~1132 ns over 18 h at
+    29.97 Hz, and pre-rounding the step to whole nanoseconds drifts ~36 us per hour
+    at 30 Hz -- enough to pull the boundary marker below ``end_ns``.
+    """
+    end_ns = 10_800_000_000_000  # 3 h
+
+    _, _, got_timestamps_ns = make_ts_grid(0, end_ns, sample_rate_hz)
+    got = got_timestamps_ns.astype(np.int64)
+    count = len(got)
+
+    # Contiguous runs at each end: any formulation that accumulates error puts the
+    # tail run far off the head run, whatever it does in between.
+    window = min(1_000, count)
+    head = np.arange(window, dtype=np.int64)
+    tail = np.arange(count - window, count, dtype=np.int64)
+    head_deviation = np.abs(got[head] - _exact_timestamps_at(0, sample_rate_hz, head))
+    tail_deviation = np.abs(got[tail] - _exact_timestamps_at(0, sample_rate_hz, tail))
+
+    assert head_deviation.max() <= _ONE_NANOSECOND
+    assert tail_deviation.max() <= _ONE_NANOSECOND
+
+
+@pytest.mark.parametrize("sample_rate_hz", _ACCURACY_RATE_CASES)
+def test_make_ts_grid_spacing_is_no_more_jittery_than_exact(sample_rate_hz: float) -> None:
+    """float64 offsets must not add jitter beyond what exact rounding already has.
+
+    The exact grid itself jitters by 1 ns whenever the interval is not a whole number
+    of nanoseconds, so that is the ceiling, not zero.
+    """
+    end_ns = 600_000_000_000  # 10 min
+    interval_ns = Fraction(1_000_000_000) / Fraction(sample_rate_hz)
+    # An exact grid steps by floor or ceil of the interval, so it is perfectly regular
+    # only when the interval is a whole number of nanoseconds.
+    allowed_jitter_ns = 0 if interval_ns.denominator == 1 else 1
+
+    _, _, got_timestamps_ns = make_ts_grid(0, end_ns, sample_rate_hz)
+    spacing = np.diff(got_timestamps_ns.astype(np.int64))
+
+    assert spacing.min() > 0
+    assert spacing.max() - spacing.min() <= allowed_jitter_ns
+    assert int(interval_ns) <= spacing.min() <= spacing.max() <= int(interval_ns) + allowed_jitter_ns
+
+
+@pytest.mark.parametrize("origin_ns", [ZERO_ORIGIN_NS, EPOCH_ROUND_NS, EPOCH_ODD_NS])
+def test_make_ts_grid_matches_exact_on_an_hour_long_grid(origin_ns: int) -> None:
+    """At 30 Hz an hour-long grid is exact, not merely within a nanosecond.
+
+    30 Hz reduces to denominator 3, so no value comes nearer than 1/6 ns to a
+    rounding tie while float64 error at these offsets is ~1e-3 ns. Exactness holds
+    out to roughly 8 days of grid; assert it here so a regression that merely stays
+    inside the 1 ns bound still shows up.
+    """
+    sample_rate_hz = 30.0
+    end_ns = origin_ns + 3_600_000_000_000
+
+    expected = exact_ts_grid(origin_ns, end_ns, sample_rate_hz)
+    got = make_ts_grid(origin_ns, end_ns, sample_rate_hz)
+
+    assert got[0] == expected[0]
+    assert got[1] == expected[1]
+    np.testing.assert_array_equal(got[2], expected[2])
+
+
+@pytest.mark.parametrize(
+    ("start_ns", "end_ns", "sample_rate_hz"),
+    [
+        # A 292-year span at a very low rate: the offsets run past int64 while the grid
+        # is only ~11 samples, so nothing preempts it. Both the offsets array and the
+        # np.diff guard are int64 and wrap, and the wraps cancel well enough that the
+        # grid used to be returned with a negative exclusive_end_ns below its own last
+        # timestamp.
+        pytest.param(0, 2**63 - 1, 1e-9, id="huge_span_low_rate"),
+        # Same, but split across the origin so the offsets alone exceed int64 even
+        # though start_ns + last_offset does not.
+        pytest.param(-(2**62), 2**62, 1e-9, id="span_straddling_zero"),
+    ],
+)
+def test_make_ts_grid_rejects_offsets_that_leave_int64(start_ns: int, end_ns: int, sample_rate_hz: float) -> None:
+    """A span whose offsets overflow int64 must be rejected, not silently wrapped."""
+    with pytest.raises(ValueError, match="outside signed int64 nanoseconds"):
+        make_ts_grid(start_ns, end_ns, sample_rate_hz)
+
+
+def test_make_ts_grid_raises_when_grid_leaves_int64() -> None:
+    """A grid that would run past int64 must raise rather than wrap silently.
+
+    ValueError, not OverflowError: every other make_ts_grid rejection is a ValueError,
+    and VideoIndex.with_timestamp_offset raises ValueError for the same condition.
+    """
+    start_ns = 2**63 - 1 - 10
+
+    with pytest.raises(ValueError, match="outside signed int64 nanoseconds"):
+        make_ts_grid(start_ns, start_ns + 5, 30.0)
+
+
+def test_make_ts_grid_rejects_a_grid_whose_float_offsets_wrap_int64() -> None:
+    """A grid the exact-arithmetic pre-check clears, but whose float64 offsets wrap.
+
+    The pre-check bounds ``round(Fraction(1e9) / Fraction(rate) * k)``; the array is built
+    from ``round(step_ns * k)`` in float64. The two agree to 1 ns, and 1 ns is the whole
+    margin at the int64 boundary. At 29.97 Hz the first index whose float offset lands one
+    nanosecond *above* the exact one is k = 104880, about an hour of grid.
+
+    Place ``start_ns`` so the exact last timestamp is ``INT64_MAX`` exactly -- the largest
+    value the pre-check accepts -- and the float offset carries it one past, wrapping to
+    ``INT64_MIN``. ``np.diff`` cannot catch that: the wrapped pair's difference wraps back
+    positive. Without the post-check this returns a grid whose ``exclusive_end_ns`` sits
+    below its own last timestamp.
+
+    Reachable only for footage timestamped April 2262, so this pins the guard, not a
+    workload.
+    """
+    sample_rate_hz = 29.97
+    last_index = 104_880
+    interval_ns = Fraction(1_000_000_000) / Fraction(sample_rate_hz)
+
+    exact_last_offset_ns = round(interval_ns * last_index)
+    start_ns = INT64_MAX - exact_last_offset_ns
+    # Half an interval past index last_index - 1, so last_index is the final grid index.
+    end_ns = start_ns + round(interval_ns * Fraction(2 * last_index - 1, 2))
+
+    # The setup is only meaningful if the pre-check passes: it sees the exact offset, which
+    # lands the last timestamp exactly on INT64_MAX. Assert that rather than trusting it,
+    # so a drift in either bound fails here instead of silently testing nothing.
+    assert start_ns + exact_last_offset_ns == INT64_MAX
+    assert round(np.float64(1_000_000_000.0 / sample_rate_hz) * last_index) == exact_last_offset_ns + 1
+
+    with pytest.raises(ValueError, match="wrapped past signed int64 nanoseconds"):
+        make_ts_grid(start_ns, end_ns, sample_rate_hz)
+
+
 def test_make_ts_grid_raises_when_rounding_makes_grid_non_increasing() -> None:
     """make_ts_grid should reject sample rates that cannot produce a strictly increasing ns grid."""
     with pytest.raises(ValueError, match="does not produce a strictly increasing nanosecond grid"):
@@ -439,22 +507,8 @@ def test_make_ts_grid_raises_when_rounding_makes_grid_non_increasing() -> None:
     "origin_ns",
     [
         pytest.param(ZERO_ORIGIN_NS, id="zero_origin"),
-        pytest.param(
-            EPOCH_ROUND_NS,
-            marks=pytest.mark.xfail(
-                strict=True,
-                reason="CVC-1199: float64 rounding lands the final epoch-scale sample on the exclusive boundary",
-            ),
-            id="epoch_round_origin",
-        ),
-        pytest.param(
-            EPOCH_ODD_NS,
-            marks=pytest.mark.xfail(
-                strict=True,
-                reason="CVC-1199: an odd-nanosecond epoch start does not survive float64 seconds",
-            ),
-            id="epoch_odd_origin",
-        ),
+        pytest.param(EPOCH_ROUND_NS, id="epoch_round_origin"),
+        pytest.param(EPOCH_ODD_NS, id="epoch_odd_origin"),
     ],
 )
 def test_make_ts_grid_exclusive_end_aligned_boundary(origin_ns: int) -> None:
@@ -482,22 +536,8 @@ def test_make_ts_grid_exclusive_end_aligned_boundary(origin_ns: int) -> None:
     "origin_ns",
     [
         pytest.param(ZERO_ORIGIN_NS, id="zero_origin"),
-        pytest.param(
-            EPOCH_ROUND_NS,
-            marks=pytest.mark.xfail(
-                strict=True,
-                reason="CVC-1199: float64 rounding lands the final epoch-scale sample on the exclusive boundary",
-            ),
-            id="epoch_round_origin",
-        ),
-        pytest.param(
-            EPOCH_ODD_NS,
-            marks=pytest.mark.xfail(
-                strict=True,
-                reason="CVC-1199: an odd-nanosecond epoch start does not survive float64 seconds",
-            ),
-            id="epoch_odd_origin",
-        ),
+        pytest.param(EPOCH_ROUND_NS, id="epoch_round_origin"),
+        pytest.param(EPOCH_ODD_NS, id="epoch_odd_origin"),
     ],
 )
 def test_make_ts_grid_exclusive_end_non_aligned_boundary(origin_ns: int) -> None:
@@ -522,16 +562,7 @@ def test_make_ts_grid_exclusive_end_non_aligned_boundary(origin_ns: int) -> None
     "origin_ns",
     [
         pytest.param(ZERO_ORIGIN_NS, id="zero_origin"),
-        pytest.param(
-            EPOCH_ROUND_NS,
-            marks=pytest.mark.xfail(
-                strict=True,
-                reason="CVC-1199: the last float64 timestamp reaches exclusive_end_ns, so SamplingGrid rejects it",
-            ),
-            id="epoch_round_origin",
-        ),
-        # An odd-nanosecond origin happens to round the grid *down*, so SamplingGrid still
-        # accepts it. The defect is real here too; this assertion set just cannot see it.
+        pytest.param(EPOCH_ROUND_NS, id="epoch_round_origin"),
         pytest.param(EPOCH_ODD_NS, id="epoch_odd_origin"),
     ],
 )
@@ -1158,22 +1189,8 @@ def test_sampling_grid_iter_is_origin_invariant() -> None:
     "origin_ns",
     [
         pytest.param(ZERO_ORIGIN_NS, id="zero_origin"),
-        pytest.param(
-            EPOCH_ROUND_NS,
-            marks=pytest.mark.xfail(
-                strict=True,
-                reason="CVC-1199: the returned origin is read back out of the float64 grid, not the request",
-            ),
-            id="epoch_round_origin",
-        ),
-        pytest.param(
-            EPOCH_ODD_NS,
-            marks=pytest.mark.xfail(
-                strict=True,
-                reason="CVC-1199: the returned origin is read back out of the float64 grid, not the request",
-            ),
-            id="epoch_odd_origin",
-        ),
+        pytest.param(EPOCH_ROUND_NS, id="epoch_round_origin"),
+        pytest.param(EPOCH_ODD_NS, id="epoch_odd_origin"),
     ],
 )
 def test_make_ts_grid_preserves_start_ns(origin_ns: int) -> None:
