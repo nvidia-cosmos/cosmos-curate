@@ -91,6 +91,17 @@
         "precision": "BF16",
         "nvcf_model_id": "cosmos3_super_64b"
     },
+    "dinov2_small": {
+        "model_id": "facebook/dinov2-small",
+        "version": "ed25f3a31f01632728cabb09d1542f84ab7b0056",
+        "filelist": [
+            "config.json",
+            "model.safetensors",
+            "preprocessor_config.json"
+        ],
+        "precision": "FP32",
+        "nvcf_model_id": "dinov2_small"
+    },
     "gpt2": {
         "model_id": "openai-community/gpt2",
         "version": "607a30d783dfa663caf39e06633721c8d4cfcd7e",

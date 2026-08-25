@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -19,13 +19,14 @@ with S3-compatible object storage systems, including chunked downloads and uploa
 """
 
 import configparser
+import contextlib
 import io
 import os
 import pathlib
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     import numpy as np
@@ -266,17 +267,44 @@ class S3Client(StorageClient):
             raise
 
     def download_object_as_bytes(self, uri: StoragePrefix, chunk_size_bytes: int = DOWNLOAD_CHUNK_SIZE_BYTES) -> bytes:
-        """Download an object as bytes from the specified S3 prefix.
+        """Download an object as bytes, by the transfer shape its size warrants.
+
+        ``chunk_size_bytes`` is the multipart threshold and so also the branch point.
+        Below it one ``get_object`` both measures and delivers, since the response
+        reports ``ContentLength`` before the body is consumed. At or above it the
+        managed transfer's parallel ranged GETs take over, at the cost of an extra
+        round trip for the size probe. An object whose response omits
+        ``ContentLength`` is unmeasured and takes the managed path.
+
+        Both paths return identical bytes, but they are NOT exception-type
+        equivalent: a missing object raises ``NoSuchKey`` here and a ``404``
+        ``ClientError`` from the managed transfer's internal HeadObject, and the
+        managed transfer may surface its own wrapper types besides. A caller that
+        retries broadly - as ``do_with_retries`` does - behaves the same on either
+        path; a caller that narrows to its own exception tuple cannot assume the two
+        paths agree on which type it will see, and has to cover both. The managed
+        transfer additionally retries a mid-stream failure in place; the small path
+        leaves that class to the caller's own retry wrapper.
 
         Args:
             uri (S3Prefix): The S3 prefix of the object to download.
-            chunk_size_bytes (int): The size of chunks to use for downloading.
+            chunk_size_bytes (int): Multipart threshold, and so also the size at or
+                above which this hands over to the managed transfer.
 
         Returns:
             bytes: The object's content as bytes.
 
         """
         assert isinstance(uri, S3Prefix)
+        response = self.s3.get_object(Bucket=uri.bucket, Key=uri.prefix)
+        # A response that omits ContentLength leaves the object unmeasured, so it
+        # takes the managed-transfer path rather than being read blind.
+        content_length = response.get("ContentLength")
+        with contextlib.closing(response["Body"]) as body:
+            if content_length is not None and content_length < chunk_size_bytes:
+                return cast("bytes", body.read())
+        # The probe's stream is discarded unread and nothing from it is reused: the
+        # managed transfer below re-resolves the size itself via HeadObject.
         fileobj = io.BytesIO()
         self.s3.download_fileobj(
             uri.bucket,

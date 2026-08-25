@@ -423,6 +423,7 @@ def test_lance_write_produces_correct_rows(dataset: Path, output_path: Path) -> 
     assert txn.transaction_properties == {"kind": "robot-action-split", "snapshot": "clips"}
 
 
+@pytest.mark.usefixtures("ray_local")
 def test_lance_write_produces_multiple_fragments(
     dataset: Path, output_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -443,7 +444,14 @@ def test_lance_write_produces_multiple_fragments(
 
 
 def test_full_pipeline_run(dataset: Path, output_path: Path) -> None:
-    """Full sequential pipeline: run() returns a summary dict with correct counts."""
+    """Full pipeline over the default Ray Data path: run() reports correct counts.
+
+    Declares ``ray_local`` so the run always lands on the small shared cluster
+    rather than on whatever cluster an earlier test happened to leave behind.
+    Pinning the cluster also pins its CPU budget, so ``execution.cut_cpus`` is
+    written explicitly below instead of inheriting the production default, which
+    is larger than that budget.
+    """
     config_path = output_path / "config.yaml"
     config_path.write_text(
         yaml.safe_dump(
@@ -461,7 +469,16 @@ def test_full_pipeline_run(dataset: Path, output_path: Path) -> None:
                     "action_format": "pickle",
                     "views": [],
                 },
-                "execution": {"storage_profile": "default", "discovery_workers": 1},
+                "execution": {
+                    "storage_profile": "default",
+                    "discovery_workers": 1,
+                    # Must fit the ``ray_local`` CPU budget. Ray Data does not
+                    # reject a task whose request exceeds cluster capacity - it
+                    # backpressures it under ``ResourceBudget`` with no error and
+                    # no progress - so an oversized value hangs the run instead
+                    # of failing it.
+                    "cut_cpus": 1.0,
+                },
             }
         ),
         encoding="utf-8",

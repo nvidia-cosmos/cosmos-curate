@@ -25,8 +25,7 @@ import lance
 import pyarrow as pa
 from lance.fragment import write_fragments
 
-from cosmos_curator.next.recipes.robot_action_split.contracts import LANCE_DATA_STORAGE_VERSION
-from cosmos_curator.next.utils.lance_utils import open_dataset
+from cosmos_curator.next.utils.lance_utils import LANCE_DATA_STORAGE_VERSION, open_dataset
 
 # ---------------------------------------------------------------------------
 # Constants

@@ -23,6 +23,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+import attrs
 import numpy as np
 import pytest
 import ray
@@ -567,10 +568,20 @@ def test_caption_window_rows_runs_window_generation_once(monkeypatch: pytest.Mon
 
     ds = ray.data.from_items([_base_window_row(clip_uuid="clip-1")])
 
+    # ``num_cpus_for_prepare`` defaults to 2.0, a figure sized for a production
+    # cluster. This module declares no Ray cluster of its own, so it runs against
+    # whichever one an earlier test left initialized - and on a small runner Ray
+    # Data auto-initializes a cluster narrower than 2 CPUs. An operator asking for
+    # more CPU than the cluster holds is not rejected; Ray Data backpressures it
+    # under ResourceBudget forever. Pinning the knob to the same 0.25 the sibling
+    # maps in this plan use keeps the test independent of the inherited shape.
+    vllm_config = attrs.evolve(make_default_vllm_config(), num_cpus_for_prepare=0.25)
+
     rows = _captioner.caption_window_rows(
         ds,
         model_source="unused",
         caption_workers=1,
+        vllm_config=vllm_config,
     ).take_all()
 
     assert calls_path.read_text(encoding="utf-8").splitlines() == ["clip-1"]

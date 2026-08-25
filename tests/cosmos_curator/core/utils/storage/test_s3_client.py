@@ -12,10 +12,12 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Tests for S3 client behavior."""
+"""Tests for S3 client listing and download semantics."""
 
+import io
 import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -54,6 +56,60 @@ class _TraceLogger:
 
     def trace(self, message: str) -> None:
         self.messages.append(message)
+
+
+class _FakeStreamingBody:
+    """Botocore StreamingBody stand-in that records its read and close calls.
+
+    ``raise_on_read`` makes ``read`` fail the way a connection dropped mid-stream
+    would, so a test can assert the stream is still closed on that path.
+    """
+
+    def __init__(self, payload: bytes, *, raise_on_read: bool = False) -> None:
+        self._payload = payload
+        self._raise_on_read = raise_on_read
+        self.read_count = 0
+        self.closed = False
+
+    def read(self) -> bytes:
+        self.read_count += 1
+        if self._raise_on_read:
+            msg = "connection reset mid-stream"
+            raise OSError(msg)
+        return self._payload
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class _FakeDownloadS3:
+    """Single-object S3 stand-in that records which download shape was used.
+
+    Passing ``report_content_length=False`` omits ``ContentLength`` from the
+    ``get_object`` response, leaving the object unmeasured. Passing
+    ``raise_on_read=True`` makes the served body fail when it is read.
+    """
+
+    def __init__(self, payload: bytes, *, report_content_length: bool = True, raise_on_read: bool = False) -> None:
+        self._payload = payload
+        self._report_content_length = report_content_length
+        self._raise_on_read = raise_on_read
+        self.bodies: list[_FakeStreamingBody] = []
+        self.get_object_calls: list[dict[str, object]] = []
+        self.download_fileobj_calls: list[tuple[str, str]] = []
+
+    def get_object(self, **kwargs: object) -> dict[str, Any]:
+        self.get_object_calls.append(kwargs)
+        body = _FakeStreamingBody(self._payload, raise_on_read=self._raise_on_read)
+        self.bodies.append(body)
+        response: dict[str, Any] = {"Body": body}
+        if self._report_content_length:
+            response["ContentLength"] = len(self._payload)
+        return response
+
+    def download_fileobj(self, bucket: str, key: str, fileobj: io.BytesIO, **_kwargs: object) -> None:
+        self.download_fileobj_calls.append((bucket, key))
+        fileobj.write(self._payload)
 
 
 def test_list_recursive_respects_limit_within_large_page() -> None:
@@ -160,6 +216,105 @@ def test_client_without_configured_region_defers_to_environment(monkeypatch: pyt
     )
 
     assert client.s3.meta.region_name == "eu-central-1"
+
+
+DownloadClientFactory = Callable[..., tuple[S3Client, _FakeDownloadS3]]
+
+
+@pytest.fixture
+def make_download_client() -> DownloadClientFactory:
+    """Return a closure building a client wired to a fresh fake S3 for one object."""
+
+    def _factory(
+        payload: bytes, *, report_content_length: bool = True, raise_on_read: bool = False
+    ) -> tuple[S3Client, _FakeDownloadS3]:
+        fake = _FakeDownloadS3(payload, report_content_length=report_content_length, raise_on_read=raise_on_read)
+        client = object.__new__(S3Client)
+        client.s3 = fake
+        return client, fake
+
+    return _factory
+
+
+def test_small_object_is_served_by_a_single_get_object(make_download_client: DownloadClientFactory) -> None:
+    """Serve an object below the multipart threshold from one get_object response."""
+    payload = b"below-threshold-payload"
+    client, fake = make_download_client(payload)
+
+    data = client.download_object_as_bytes(S3Prefix("s3://bucket/root/a.mp4"), chunk_size_bytes=len(payload) + 1)
+
+    assert data == payload
+    assert fake.get_object_calls == [{"Bucket": "bucket", "Key": "root/a.mp4"}]
+    assert fake.download_fileobj_calls == []
+
+
+def test_large_object_is_served_by_the_managed_transfer(make_download_client: DownloadClientFactory) -> None:
+    """Serve an object above the multipart threshold through the managed transfer."""
+    payload = b"above-threshold-payload"
+    client, fake = make_download_client(payload)
+
+    data = client.download_object_as_bytes(S3Prefix("s3://bucket/root/a.mp4"), chunk_size_bytes=len(payload) - 1)
+
+    assert data == payload
+    assert fake.download_fileobj_calls == [("bucket", "root/a.mp4")]
+
+
+def test_object_sized_exactly_at_the_threshold_is_served_by_the_managed_transfer(
+    make_download_client: DownloadClientFactory,
+) -> None:
+    """Treat the threshold as exclusive: an object of exactly that size takes the managed transfer."""
+    payload = b"exactly-at-threshold"
+    client, fake = make_download_client(payload)
+
+    data = client.download_object_as_bytes(S3Prefix("s3://bucket/root/a.mp4"), chunk_size_bytes=len(payload))
+
+    assert data == payload
+    assert fake.download_fileobj_calls == [("bucket", "root/a.mp4")]
+
+
+def test_unread_body_is_closed_when_the_managed_transfer_is_used(
+    make_download_client: DownloadClientFactory,
+) -> None:
+    """Close the get_object probe's stream instead of leaking it when the transfer takes over."""
+    payload = b"above-threshold-payload"
+    client, fake = make_download_client(payload)
+
+    client.download_object_as_bytes(S3Prefix("s3://bucket/root/a.mp4"), chunk_size_bytes=len(payload) - 1)
+
+    assert len(fake.bodies) == 1
+    assert fake.bodies[0].closed
+    assert fake.bodies[0].read_count == 0
+
+
+def test_body_is_closed_when_the_small_path_read_fails(
+    make_download_client: DownloadClientFactory,
+) -> None:
+    """Close the stream even when reading it raises, so a failed small read leaks no connection.
+
+    A caller that retries re-enters this method on every attempt, so a stream left
+    open on the failing path would leak once per attempt rather than once per run.
+    """
+    payload = b"below-threshold-payload"
+    client, fake = make_download_client(payload, raise_on_read=True)
+
+    with pytest.raises(OSError, match="connection reset mid-stream"):
+        client.download_object_as_bytes(S3Prefix("s3://bucket/root/a.mp4"), chunk_size_bytes=len(payload) + 1)
+
+    assert fake.bodies[0].closed
+
+
+def test_response_without_content_length_falls_back_to_the_managed_transfer(
+    make_download_client: DownloadClientFactory,
+) -> None:
+    """Hand an unmeasured object to the managed transfer rather than reading its body blind."""
+    payload = b"unmeasured-payload"
+    client, fake = make_download_client(payload, report_content_length=False)
+
+    data = client.download_object_as_bytes(S3Prefix("s3://bucket/root/a.mp4"), chunk_size_bytes=len(payload) + 1)
+
+    assert data == payload
+    assert fake.download_fileobj_calls == [("bucket", "root/a.mp4")]
+    assert fake.bodies[0].read_count == 0
 
 
 # Blocks ``ray`` at the import system level, then does what the client CLI does: import the

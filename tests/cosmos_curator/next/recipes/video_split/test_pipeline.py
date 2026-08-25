@@ -26,6 +26,11 @@ _PLANNED_CLIPS = {"long": 10, "partial": 3, "unreadable": -1, "short": 0}
 _URIS = tuple(f"s3://example-bucket/raw/{name}.mp4" for name in _PLANNED_CLIPS)
 _TERMINAL_ROWS = 14
 
+# These tests drive real Ray Data plans, so they take the session cluster rather
+# than start one of their own: a module that re-initialises Ray strands the
+# cached session fixture for every module collected after it.
+pytestmark = pytest.mark.usefixtures("ray_local")
+
 
 class _NullLogger:
     def info(self, _message: str, *_args: object) -> None:
@@ -134,19 +139,6 @@ def _config(tmp_path: Path, *, clips_per_publish_batch: int = 4) -> ResolvedVide
             "execution": {"transcode_cpus": 1.0, "clips_per_publish_batch": clips_per_publish_batch},
         }
     )
-
-
-@pytest.fixture(scope="module", autouse=True)
-def _ray_cluster() -> Iterator[None]:
-    ray.shutdown()
-    ray.init(
-        num_cpus=4,
-        resources={"curator_io": 16},
-        include_dashboard=False,
-        log_to_driver=False,
-    )
-    yield
-    ray.shutdown()
 
 
 @pytest.fixture(autouse=True)

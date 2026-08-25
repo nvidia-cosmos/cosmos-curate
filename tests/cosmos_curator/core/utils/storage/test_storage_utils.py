@@ -14,6 +14,7 @@
 # limitations under the License.
 """Tests for cosmos_curator.core.utils.storage.storage_utils."""
 
+import urllib.parse
 from pathlib import Path
 
 import pytest
@@ -167,6 +168,47 @@ def test_read_helpers_consume_local_paths(tmp_path: Path) -> None:
     assert storage_utils.read_json_file(json_file) == {"value": 1}
 
 
+def test_read_bytes_accepts_file_uri(tmp_path: Path) -> None:
+    """read_bytes reads a ``file://`` URI, the form producers emit via Path.as_uri().
+
+    Artifact producers record durable URIs with ``Path.as_uri()`` (e.g.
+    ``robot_action_split``'s ``action_data_uri``). A consumer reading that string
+    back must resolve the ``file://`` scheme to the underlying local path rather
+    than treating it as the literal path ``file:/...``.
+    """
+    data_file = tmp_path / "artifact.bin"
+    data_file.write_bytes(b"payload")
+    file_uri = data_file.as_uri()
+
+    assert file_uri.startswith("file://")
+    assert storage_utils.read_bytes(file_uri) == b"payload"
+
+
+def test_read_bytes_file_uri_decodes_percent_escapes(tmp_path: Path) -> None:
+    """A ``file://`` URI with percent-encoded characters resolves to the real path."""
+    data_file = tmp_path / "has space.bin"
+    data_file.write_bytes(b"spaced")
+    file_uri = data_file.as_uri()
+
+    assert "%20" in file_uri
+    assert storage_utils.read_bytes(file_uri) == b"spaced"
+
+
+def test_read_bytes_file_uri_localhost_authority_is_case_insensitive(tmp_path: Path) -> None:
+    """A ``file://`` URI with an uppercase ``localhost`` authority still resolves locally.
+
+    RFC 3986 makes the URI authority case-insensitive, so ``file://LOCALHOST/x``
+    must resolve to the same local path as ``file:///x`` rather than falling
+    through to a mangled literal path.
+    """
+    data_file = tmp_path / "artifact.bin"
+    data_file.write_bytes(b"payload")
+    uri = data_file.as_uri().replace("file://", "file://LOCALHOST", 1)
+
+    assert uri.startswith("file://LOCALHOST/")
+    assert storage_utils.read_bytes(uri) == b"payload"
+
+
 def test_read_bytes_remote_path_uses_storage_client(monkeypatch: pytest.MonkeyPatch) -> None:
     """Ensure remote reads use the provided storage client."""
     remote_path = _remote_path("root", "sample.bin")
@@ -189,6 +231,38 @@ def test_path_exists_handles_remote_and_local(tmp_path: Path, monkeypatch: pytes
     local_file = tmp_path / "local.txt"
     local_file.write_text("ok", encoding="utf-8")
     assert storage_utils.path_exists(local_file) is True
+
+
+def test_path_exists_accepts_file_uri_for_a_present_file(tmp_path: Path) -> None:
+    """A present file is found through its ``file://`` URI as well as its bare path.
+
+    ``path_exists`` gates readers such as ``read_bytes``, which resolves the
+    ``file://`` scheme. Disagreeing on the same string would let an existence
+    check report an object that the reader can read as missing.
+    """
+    data_file = tmp_path / "artifact.npz"
+    data_file.write_bytes(b"payload")
+
+    assert storage_utils.path_exists(str(data_file)) is True
+    assert storage_utils.path_exists(data_file.as_uri()) is True
+
+
+def test_path_exists_reports_a_missing_file_uri_as_absent(tmp_path: Path) -> None:
+    """An absent file is absent through its ``file://`` URI as well as its bare path."""
+    missing = tmp_path / "never-written.npz"
+
+    assert storage_utils.path_exists(str(missing)) is False
+    assert storage_utils.path_exists(missing.as_uri()) is False
+
+
+def test_path_exists_answers_for_a_bare_path_urlparse_rejects() -> None:
+    """A bare path that no URI parser accepts is still answered, not raised on.
+
+    ``urlparse`` reads a bracketed authority as a malformed IPv6 URL, but a
+    double-slash path containing brackets is a legal filesystem path, and
+    ``path_exists`` promises a bool for any string it is given.
+    """
+    assert storage_utils.path_exists("//host[0]/share/missing.bin") is False
 
 
 def test_verify_path_respects_level(tmp_path: Path) -> None:
@@ -381,3 +455,42 @@ def test_is_missing_object_error_rejects_other_client_errors() -> None:
 def test_is_missing_object_error_rejects_unrelated_exceptions() -> None:
     """A plain ValueError (e.g. decode failure) is not 'missing' -- it's 'unreadable'."""
     assert not storage_utils.is_missing_object_error(ValueError("bad bytes"))
+
+
+def test_backend_key_groups_urls_by_scheme_and_bucket() -> None:
+    """Two URLs share a key exactly when they share a scheme and a bucket."""
+    assert storage_utils.backend_key("s3://bucket-a/x.bin") == storage_utils.backend_key("s3://bucket-a/y.bin")
+    assert storage_utils.backend_key("s3://bucket-a/x.bin") != storage_utils.backend_key("s3://bucket-b/x.bin")
+
+
+def test_backend_key_collapses_local_paths_to_one_backend() -> None:
+    """A bare path and a ``file://`` URL name the same backend, so one cache entry serves both."""
+    assert storage_utils.backend_key("/data/action/a.bin") == storage_utils.backend_key("file:///data/action/a.bin")
+
+
+def test_backend_key_returns_a_key_for_an_authority_the_parser_rejects() -> None:
+    """A malformed authority yields a key rather than raising, so one bad row cannot fail a batch.
+
+    The URLs this keys are untrusted table data read row by row, and every caller
+    is a read path whose contract is that an unusable URL costs its own row. An
+    unmatched bracket is what makes this authority unparseable: a tab or a newline
+    would be DELETED by the parser rather than rejected by it, so such a value
+    would exercise the ordinary path instead of the fallback.
+    """
+    malformed = "s3://[bad/clip.mp4"
+    with pytest.raises(ValueError, match="IPv6"):
+        urllib.parse.urlparse(malformed)
+
+    assert storage_utils.backend_key(malformed)
+
+
+def test_backend_key_keeps_backends_apart_when_the_authority_is_unparseable() -> None:
+    """The fallback key merges two URLs only when their raw authority text is identical.
+
+    One shared constant for every rejected URL would route reads for one backend
+    through another backend's cached client, which is the whole failure this key
+    exists to prevent; objects under a single malformed authority still share one
+    entry rather than resolving per object.
+    """
+    assert storage_utils.backend_key("s3://[bad/a.mp4") != storage_utils.backend_key("az://[bad/a.mp4")
+    assert storage_utils.backend_key("s3://[bad/a.mp4") == storage_utils.backend_key("s3://[bad/b.mp4")

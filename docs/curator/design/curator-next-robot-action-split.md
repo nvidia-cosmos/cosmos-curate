@@ -313,6 +313,13 @@ The v1 schema is defined by `lance_sink.OUTCOME_SCHEMA`:
 multi-view sources. `action_data_uri` is keyed by `action_id`, which hashes
 `(action_contract_version, span_group_id, action_format, source_dataset)`.
 
+**Downstream — embeddings.** The embed leg
+([curator-next-embeddings.md](curator-next-embeddings.md)) consumes a projection
+of this table (`clip_id`, `task_name`, `subtask_name`, `clip_uri`,
+`action_data_uri`, `source_dataset`) and adds its vectors as additive, nullable
+per-modality column groups (`embedding_<modality>_*`) written directly onto
+`clips.lance`, plus a fitted action-PCA basis.
+
 ---
 
 ## Pipeline Execution

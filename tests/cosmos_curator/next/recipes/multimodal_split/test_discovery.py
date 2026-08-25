@@ -67,9 +67,8 @@ def test_local_session_uri_is_an_absolute_filesystem_path(tmp_path: Path) -> Non
 def test_local_session_uri_is_directly_consumable_by_the_storage_helpers(tmp_path: Path) -> None:
     """The splitting stage must be able to join artifact patterns on without converting.
 
-    A ``file://`` URI would look equivalent but ``path_exists`` returns ``False``
-    for one instead of raising, so a forgotten conversion downstream would reject
-    every local session as missing its cameras with no error at all.
+    The sensor library parses no URI scheme, so a ``file://`` session_uri would
+    reject every local session as missing its cameras.
     """
     _make_sessions(tmp_path, ["session-a"])
     config = MultimodalSplitInputConfig(input_path_prefix=str(tmp_path))

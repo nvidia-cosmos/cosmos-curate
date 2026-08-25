@@ -132,12 +132,11 @@ def _session_uri_base(input_path_prefix: str) -> str:
     """Return the location that session IDs are appended to.
 
     Local prefixes stay filesystem paths rather than becoming ``file://`` URIs so
-    that a ``session_uri`` can be handed straight to the storage helpers and the
-    sensor library. None of them parse ``file://``, and ``path_exists`` returns
-    ``False`` for such a URI instead of raising, so emitting one would turn a
-    forgotten conversion downstream into a silently empty run. They are resolved
-    to absolute paths because Ray workers do not share the driver's working
-    directory.
+    that a ``session_uri`` can be handed straight to the sensor library, which
+    parses no URI scheme; emitting one would turn a forgotten conversion
+    downstream into a decode failure on media that is present on disk. They are
+    resolved to absolute paths because Ray workers do not share the driver's
+    working directory.
 
     Trailing slashes are dropped so the join adds exactly one separator. Both a
     bucket root (``s3://bucket/``) and a filesystem root (``/``) reduce correctly.
