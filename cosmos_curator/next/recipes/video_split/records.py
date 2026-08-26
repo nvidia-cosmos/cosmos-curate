@@ -22,6 +22,16 @@ import pyarrow.compute as pc
 
 from cosmos_curator.next.recipes.video_split.contracts import UNKNOWN_FRAME_COUNT
 
+SOURCE_MEDIA_FIELDS = (
+    "source_size_bytes",
+    "source_duration_ns",
+    "source_width",
+    "source_height",
+    "source_frame_rate",
+    "source_frame_count",
+    "source_video_codec",
+)
+
 CLIP_SCHEMA = pa.schema(
     [
         pa.field("record_schema_version", pa.int32(), nullable=False),

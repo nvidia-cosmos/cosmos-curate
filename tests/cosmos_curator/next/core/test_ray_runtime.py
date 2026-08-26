@@ -5,12 +5,49 @@
 
 import subprocess
 import sys
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
 
 from cosmos_curator.core.utils import environment
 from cosmos_curator.next.core import ray_runtime
+
+
+def test_stability_configuration_preserves_high_memory_detector_by_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Shared stability settings do not suppress memory warnings for every recipe."""
+    high_memory_detector_config = SimpleNamespace(detection_time_interval_s=30)
+    context = SimpleNamespace(
+        default_map_logical_memory_enabled=False,
+        retried_map_errors=[],
+        max_map_retries=0,
+        issue_detectors_config=SimpleNamespace(high_memory_detector_config=high_memory_detector_config),
+    )
+    monkeypatch.setattr(ray_runtime.ray.data.DataContext, "get_current", lambda: context)
+
+    ray_runtime.configure_ray_data_stability()
+
+    assert high_memory_detector_config.detection_time_interval_s == 30
+
+
+def test_stability_configuration_can_disable_expected_video_memory_warnings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Pipelines with intentional large payloads can suppress reservation warnings."""
+    high_memory_detector_config = SimpleNamespace(detection_time_interval_s=30)
+    context = SimpleNamespace(
+        default_map_logical_memory_enabled=False,
+        retried_map_errors=[],
+        max_map_retries=0,
+        issue_detectors_config=SimpleNamespace(high_memory_detector_config=high_memory_detector_config),
+    )
+    monkeypatch.setattr(ray_runtime.ray.data.DataContext, "get_current", lambda: context)
+
+    ray_runtime.configure_ray_data_stability(disable_high_memory_detector=True)
+
+    assert high_memory_detector_config.detection_time_interval_s == -1
 
 
 def test_recipes_do_not_reach_into_the_deprecated_ray_data_package() -> None:

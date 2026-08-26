@@ -55,7 +55,7 @@ def configure_ray_data_progress(*, progress: bool) -> None:
     ctx.use_ray_tqdm = False
 
 
-def configure_ray_data_stability() -> None:
+def configure_ray_data_stability(*, disable_high_memory_detector: bool = False) -> None:
     """Enable Ray 2.56 stability knobs for map-heavy Ray Data pipelines.
 
     - ``default_map_logical_memory_enabled`` (PR ray-project/ray#63814) gives
@@ -69,6 +69,9 @@ def configure_ray_data_stability() -> None:
       this layer for those stages; what it backstops there is the stages that
       cannot -- publication writes, where a transient failure has no row to
       become and would otherwise fail the run.
+    - ``disable_high_memory_detector`` suppresses reservation-based warnings
+      for pipelines that intentionally hold large payloads in memory. The
+      detector keeps its existing Ray configuration by default.
 
     Attributes are guarded with ``hasattr`` so importing this module on a
     stale (pre-2.56) Ray wheel still works.
@@ -82,6 +85,11 @@ def configure_ray_data_stability() -> None:
     if hasattr(ctx, "retried_map_errors") and hasattr(ctx, "max_map_retries"):
         ctx.retried_map_errors = list(_MAP_RETRY_PATTERNS)  # type: ignore[attr-defined]
         ctx.max_map_retries = _MAP_MAX_RETRIES  # type: ignore[attr-defined]
+    if disable_high_memory_detector:
+        issue_detectors_config = getattr(ctx, "issue_detectors_config", None)
+        high_memory_detector_config = getattr(issue_detectors_config, "high_memory_detector_config", None)
+        if high_memory_detector_config is not None:
+            high_memory_detector_config.detection_time_interval_s = -1
 
 
 def curator_io_slots_per_node() -> int:

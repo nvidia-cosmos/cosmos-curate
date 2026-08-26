@@ -24,7 +24,7 @@ import argparse
 import json
 import logging
 import tempfile
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from functools import partial
 from pathlib import Path
 from time import monotonic
@@ -45,7 +45,11 @@ from cosmos_curator.next.core.ray_runtime import (
 from cosmos_curator.next.media.ffmpeg import assert_video_encoder_available
 from cosmos_curator.next.recipes.video_split.config import ResolvedVideoSplitConfig, resolve_config
 from cosmos_curator.next.recipes.video_split.discovery import resolve_input_selection
-from cosmos_curator.next.recipes.video_split.lance_sink import commit_clip_snapshot, write_clip_fragments
+from cosmos_curator.next.recipes.video_split.lance_sink import (
+    append_clip_fragment,
+    open_or_create_clip_table,
+    write_clip_fragment,
+)
 from cosmos_curator.next.recipes.video_split.processing import (
     download_and_plan_source,
     transcode_source,
@@ -56,6 +60,7 @@ from cosmos_curator.next.recipes.video_split.records import (
     error_table,
     validate_terminal_record_types,
 )
+from cosmos_curator.next.recipes.video_split.recovery import reconcile_sources
 from cosmos_curator.next.recipes.video_split.storage import RETRYABLE_STORAGE_ERRORS, upload_file
 
 PUBLISH_RESULT_SCHEMA = pa.schema(
@@ -73,7 +78,7 @@ _MAX_BACKOFF_S = 30.0
 
 
 def run_config(config: ResolvedVideoSplitConfig) -> dict[str, object]:
-    """Run the streaming happy path and publish clips plus sparse errors."""
+    """Reconcile sources, stream missing clips, and publish sparse errors."""
     started_at = monotonic()
     selection = resolve_input_selection(
         config.input,
@@ -83,18 +88,36 @@ def run_config(config: ResolvedVideoSplitConfig) -> dict[str, object]:
     logger.info("Realized {} source video(s)", len(source_uris))
     if not source_uris:
         msg = (
-            "Input selection realized 0 source videos; refusing to overwrite "
+            "Input selection realized 0 source videos; refusing to change "
             f"{config.output.clips_lance_uri} and {config.output.errors_uri}"
         )
         raise ValueError(msg)
 
-    assert_video_encoder_available(config.transcode.video_encoder)
-    ensure_ray_initialized(local_resources=curator_io_resources())
-    configure_ray_data_progress(progress=config.execution.progress)
-    configure_ray_data_stability()
+    clip_dataset = open_or_create_clip_table(
+        uri=config.output.clips_lance_uri,
+        storage_profile=config.execution.storage_profile,
+    )
+    reconciliation = reconcile_sources(selection.scheduled_uris, dataset=clip_dataset, config=config)
+    logger.info(
+        "Reconciled {} complete, {} partial, and {} unknown source(s) from {} committed clip row(s)",
+        reconciliation.complete_sources,
+        reconciliation.partial_sources,
+        reconciliation.unknown_sources,
+        reconciliation.committed_clip_rows,
+    )
 
-    terminal = clip_result_dataset(selection.scheduled_uris, config)
-    clips_version, clips_published, errors = _publish_results(terminal, config)
+    terminal: ray.data.Dataset | None = None
+    if reconciliation.source_items:
+        assert_video_encoder_available(config.transcode.video_encoder)
+        ensure_ray_initialized(local_resources=curator_io_resources())
+        configure_ray_data_progress(progress=config.execution.progress)
+        configure_ray_data_stability(disable_high_memory_detector=True)
+        terminal = clip_result_dataset(reconciliation.source_items, config)
+    clips_version, clips_published, errors = _publish_results(
+        terminal,
+        config,
+        initial_clips_version=int(clip_dataset.version),
+    )
     summary: dict[str, object] = {
         "sources": len(source_uris),
         "clips_published": clips_published,
@@ -115,10 +138,9 @@ def run_config(config: ResolvedVideoSplitConfig) -> dict[str, object]:
     return summary
 
 
-def clip_result_dataset(source_uris: tuple[str, ...], config: ResolvedVideoSplitConfig) -> ray.data.Dataset:
+def clip_result_dataset(source_items: tuple[dict[str, Any], ...], config: ResolvedVideoSplitConfig) -> ray.data.Dataset:
     """Build the download, streaming transcode, and independent upload path."""
-    source_items = [{"source_uri": uri} for uri in source_uris]
-    sources: ray.data.Dataset = ray.data.from_items(source_items, override_num_blocks=len(source_items))
+    sources: ray.data.Dataset = ray.data.from_items(list(source_items), override_num_blocks=len(source_items))
     downloaded = sources.map(
         cast("Any", download_and_plan_source),
         fn_kwargs={"config": config},
@@ -150,10 +172,9 @@ def publish_batch(work_records: pa.Table, *, uri: str, storage_profile: str) -> 
             "clip_count": clips.num_rows,
         }
     ]
-    rows.extend(
-        {"result_type": "fragment", "payload": fragment, "clip_count": 0}
-        for fragment in write_clip_fragments(clips, uri=uri, storage_profile=storage_profile)
-    )
+    candidate = write_clip_fragment(clips, uri=uri, storage_profile=storage_profile)
+    if candidate is not None:
+        rows.append({"result_type": "fragment", "payload": candidate, "clip_count": 0})
     rows.extend(
         {
             "result_type": "error",
@@ -165,52 +186,80 @@ def publish_batch(work_records: pa.Table, *, uri: str, storage_profile: str) -> 
     return pa.Table.from_pylist(rows, schema=PUBLISH_RESULT_SCHEMA)
 
 
-def _publish_results(terminal: ray.data.Dataset, config: ResolvedVideoSplitConfig) -> tuple[int, int, int]:
-    """Commit the clip snapshot, then replace the complete JSON error report."""
-    # This boundary keeps source transcodes as independent Ray tasks while
-    # coalescing their metadata into useful Lance fragments. The conservative
-    # default also bounds a pathological batch made entirely of error messages.
-    publication_batches = terminal.repartition(
-        target_num_rows_per_block=config.execution.clips_per_publish_batch,
-        strict=True,
-    )
-    publication_results = publication_batches.map_batches(
-        cast("Any", publish_batch),
-        batch_format="pyarrow",
+def _iter_publication_rows(publication_results: ray.data.Dataset) -> Iterator[dict[str, Any]]:
+    """Yield completed control blocks without Ray Data's one-block lookahead."""
+    # ``iter_rows()`` hardcodes one batch of prefetch. For whole-block batches,
+    # Ray fetches the next RefBundle before yielding the current one, delaying
+    # every commit until another fragment is staged (or the pipeline finishes).
+    control_batches = publication_results.iter_batches(
+        prefetch_batches=0,
         batch_size=None,
-        fn_kwargs={
-            "uri": config.output.clips_lance_uri,
-            "storage_profile": config.execution.storage_profile,
-        },
+        batch_format="pyarrow",
     )
+    for control_batch in control_batches:
+        yield from cast("pa.Table", control_batch).to_pylist()
 
-    fragments: list[str] = []
+
+def _publish_results(
+    terminal: ray.data.Dataset | None,
+    config: ResolvedVideoSplitConfig,
+    *,
+    initial_clips_version: int,
+) -> tuple[int, int, int]:
+    """Append fragments as they stream, then replace the complete error report."""
+    publication_results: ray.data.Dataset | None = None
+    if terminal is not None:
+        # This boundary keeps source transcodes as independent Ray tasks while
+        # coalescing their metadata into useful Lance fragments. The conservative
+        # default also bounds a pathological batch made entirely of error messages.
+        publication_batches = terminal.repartition(
+            target_num_rows_per_block=config.execution.clips_per_publish_batch,
+            strict=True,
+        )
+        publication_results = publication_batches.map_batches(
+            cast("Any", publish_batch),
+            batch_format="pyarrow",
+            batch_size=None,
+            fn_kwargs={
+                "uri": config.output.clips_lance_uri,
+                "storage_profile": config.execution.storage_profile,
+            },
+        )
+
+    clips_version = initial_clips_version
     clips_published = 0
     error_count = 0
     with tempfile.TemporaryDirectory(prefix="curator_next_video_split_publish_") as tmp_dir:
         errors_path = Path(tmp_dir) / "errors.json"
         with errors_path.open("w", encoding="utf-8") as report:
             report.write("[")
-            for result in publication_results.iter_rows():
-                result_type = str(result["result_type"])
-                if result_type == "stats":
-                    clips_published += int(result["clip_count"])
-                elif result_type == "fragment":
-                    fragments.append(str(result["payload"]))
-                elif result_type == "error":
-                    report.write("\n" if error_count == 0 else ",\n")
-                    report.write(str(result["payload"]))
-                    error_count += 1
-                else:
-                    msg = f"Publication returned unexpected result type {result_type!r}"
-                    raise ValueError(msg)
+            if publication_results is not None:
+                for result in _iter_publication_rows(publication_results):
+                    result_type = str(result["result_type"])
+                    if result_type == "stats":
+                        clips_published += int(result["clip_count"])
+                    elif result_type == "fragment":
+                        candidate_json = str(result["payload"])
+                        logger.info(
+                            "Received staged Lance fragment descriptor from Ray for {}: payload_chars={}",
+                            config.output.clips_lance_uri,
+                            len(candidate_json),
+                        )
+                        clips_version = append_clip_fragment(
+                            candidate_json,
+                            uri=config.output.clips_lance_uri,
+                            storage_profile=config.execution.storage_profile,
+                            attempts=config.execution.storage_attempts,
+                        )
+                    elif result_type == "error":
+                        report.write("\n" if error_count == 0 else ",\n")
+                        report.write(str(result["payload"]))
+                        error_count += 1
+                    else:
+                        msg = f"Publication returned unexpected result type {result_type!r}"
+                        raise ValueError(msg)
             report.write("\n]\n" if error_count else "]\n")
 
-        clips_version = commit_clip_snapshot(
-            fragments,
-            uri=config.output.clips_lance_uri,
-            storage_profile=config.execution.storage_profile,
-        )
         _retry_report_upload(errors_path, config=config)
 
     return clips_version, clips_published, error_count

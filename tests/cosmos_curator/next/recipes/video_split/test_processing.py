@@ -3,6 +3,7 @@
 
 """Tests for streaming source transcoding and independent clip upload."""
 
+import json
 from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
@@ -14,6 +15,7 @@ from cosmos_curator.next.media.ffmpeg import ProbeError, TranscodeError, VideoMe
 from cosmos_curator.next.media.spans import Span
 from cosmos_curator.next.recipes.video_split import processing
 from cosmos_curator.next.recipes.video_split.config import ResolvedVideoSplitConfig, resolve_config_data
+from cosmos_curator.next.recipes.video_split.identities import make_source_id
 
 _SOURCE_URI = "s3://example-bucket/raw/source.mp4"
 
@@ -72,6 +74,7 @@ def _happy_media(
         return b"source bytes"
 
     def fake_probe(path: Path, **_kwargs: object) -> VideoMetadata:
+        state.setdefault("probes", []).append(path.name)
         return _metadata(duration_ns) if path.name == "source.mp4" else _metadata(10_000_000_000)
 
     def fake_transcode(source: Path, destination: Path, span: Span, *_args: object, **_kwargs: object) -> None:
@@ -165,6 +168,36 @@ def test_valid_short_source_emits_nothing(monkeypatch: pytest.MonkeyPatch) -> No
     _happy_media(monkeypatch, duration_ns=1_000_000_000)
 
     assert _transcode(_config()) == []
+
+
+def test_known_partial_source_reuses_metadata_and_plans_only_missing_spans(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Canonical source metadata avoids a second probe while one download serves missing clips."""
+    observed: dict[str, Any] = {}
+    _happy_media(monkeypatch, observed=observed)
+    row = {
+        "source_uri": _SOURCE_URI,
+        "source_id": make_source_id(_SOURCE_URI),
+        "source_known": True,
+        "source_size_bytes": 1024,
+        "source_duration_ns": 25_000_000_000,
+        "source_width": 1920,
+        "source_height": 1080,
+        "source_frame_rate": 30.0,
+        "source_frame_count": 750,
+        "source_video_codec": "h264",
+        "missing_spans_json": json.dumps([[10_000_000_000, 20_000_000_000]]),
+    }
+    config = _config()
+
+    downloaded = processing.download_and_plan_source(row, config=config)
+    records = list(processing.transcode_source(downloaded, config=config))
+
+    assert observed["downloads"] == [_SOURCE_URI]
+    assert "source.mp4" not in observed["probes"]
+    assert [(span.start_ns, span.end_ns) for span in observed["spans"]] == [(10_000_000_000, 20_000_000_000)]
+    assert len(records) == 1
 
 
 def _raise(error: Exception) -> Callable[..., object]:

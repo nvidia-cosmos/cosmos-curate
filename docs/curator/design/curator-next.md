@@ -58,6 +58,10 @@ Conceptually, a Curator workflow looks like this:
 Tabular sensor data can live directly in Lance. Payload references point to media and other bulk sensor data in
 user-selected storage.
 
+The [Incremental Curation design](curator-next-incremental-curation.md) develops this durable dataset into a canonical
+clip table. Splitting appends rows in new fragments, while later curation dynamically adds columns and fills them one
+existing fragment at a time. Each commit is also a recovery boundary.
+
 The center box lists capabilities available inside the program, not required stages or a class hierarchy. Users choose
 the operations and ordering their workflow requires.
 

@@ -15,6 +15,7 @@
 
 """Streaming download, transcode, and upload operations for ``video-split``."""
 
+import json
 import tempfile
 from collections.abc import Callable, Iterator
 from itertools import batched
@@ -43,6 +44,7 @@ from cosmos_curator.next.recipes.video_split.contracts import (
     UNKNOWN_FRAME_COUNT,
 )
 from cosmos_curator.next.recipes.video_split.identities import make_clip_id, make_source_id
+from cosmos_curator.next.recipes.video_split.records import SOURCE_MEDIA_FIELDS
 from cosmos_curator.next.recipes.video_split.storage import (
     RETRYABLE_STORAGE_ERRORS,
     STORAGE_ERRORS,
@@ -60,24 +62,15 @@ _MAX_BACKOFF_S = 30.0
 
 _SOURCE_READY = "ready"
 _SOURCE_ERROR = "error"
-
-_SOURCE_MEDIA_FIELDS = (
-    "source_size_bytes",
-    "source_duration_ns",
-    "source_width",
-    "source_height",
-    "source_frame_rate",
-    "source_frame_count",
-    "source_video_codec",
-)
+_SPAN_ITEM_LENGTH = 2
 
 type _PreparedClip = tuple[dict[str, Any], Path | None]
 
 
 def download_and_plan_source(row: dict[str, Any], *, config: ResolvedVideoSplitConfig) -> dict[str, Any]:
-    """Download, probe, and plan one source for the transcode generator."""
+    """Download one source, probing unknown sources and reusing known metadata."""
     source_uri = str(row["source_uri"])
-    source_id = make_source_id(source_uri)
+    source_id = str(row.get("source_id") or make_source_id(source_uri))
     execution = config.execution
     envelope = _source_envelope(source_uri, source_id)
 
@@ -95,31 +88,36 @@ def download_and_plan_source(row: dict[str, Any], *, config: ResolvedVideoSplitC
             "error_message": _error_message(exc),
         }
 
-    with tempfile.TemporaryDirectory(prefix="curator_next_video_split_probe_") as tmp_dir:
-        source_path = Path(tmp_dir) / "source.mp4"
-        source_path.write_bytes(source_bytes)
-        try:
-            metadata = _retry(
-                lambda: probe_video_path(source_path, timeout_s=execution.probe_timeout_s),
-                _RETRYABLE_MEDIA_ERRORS,
-                attempts=execution.probe_attempts,
-                name="source-probe",
-            )
-        except MediaError as exc:
-            return envelope | {
-                "source_state": _SOURCE_ERROR,
-                "error_stage": "source-probe",
-                "error_message": _error_message(exc),
-            }
+    if bool(row.get("source_known", False)):
+        source_fields = _known_source_fields(row, source_uri=source_uri, source_id=source_id)
+        clip_work = _plan_missing_clips(source_fields, str(row["missing_spans_json"]), config=config)
+    else:
+        with tempfile.TemporaryDirectory(prefix="curator_next_video_split_probe_") as tmp_dir:
+            source_path = Path(tmp_dir) / "source.mp4"
+            source_path.write_bytes(source_bytes)
+            try:
+                metadata = _retry(
+                    lambda: probe_video_path(source_path, timeout_s=execution.probe_timeout_s),
+                    _RETRYABLE_MEDIA_ERRORS,
+                    attempts=execution.probe_attempts,
+                    name="source-probe",
+                )
+            except MediaError as exc:
+                return envelope | {
+                    "source_state": _SOURCE_ERROR,
+                    "error_stage": "source-probe",
+                    "error_message": _error_message(exc),
+                }
+        source_fields = _source_fields(source_uri, source_id, len(source_bytes), metadata)
+        clip_work = plan_clip_work(source_fields, config=config)
 
-    source_fields = _source_fields(source_uri, source_id, len(source_bytes), metadata)
     return (
         envelope
         | source_fields
         | {
             "source_state": _SOURCE_READY,
             "source_bytes": source_bytes,
-            "clip_work": _plan_clips(source_fields, config=config),
+            "clip_work": clip_work,
         }
     )
 
@@ -309,7 +307,7 @@ def _inspect_transcoded_clip(
     )
 
 
-def _plan_clips(source_fields: dict[str, Any], *, config: ResolvedVideoSplitConfig) -> list[dict[str, Any]]:
+def plan_clip_work(source_fields: dict[str, Any], *, config: ResolvedVideoSplitConfig) -> list[dict[str, Any]]:
     """Build deterministic clip work after the source has been probed."""
     split = config.split
     spans = fixed_stride_spans(
@@ -320,6 +318,39 @@ def _plan_clips(source_fields: dict[str, Any], *, config: ResolvedVideoSplitConf
     )
     records: list[dict[str, Any]] = []
     for span in spans:
+        clip_id = make_clip_id(str(source_fields["source_id"]), span, config.transcode)
+        records.append(
+            _clip_work_record(
+                source_fields,
+                span=span,
+                clip_id=clip_id,
+                clip_uri=join_s3_uri(config.output.media_root, "clips", f"{clip_id}.mp4"),
+            )
+        )
+    return records
+
+
+def _plan_missing_clips(
+    source_fields: dict[str, Any],
+    missing_spans_json: str,
+    *,
+    config: ResolvedVideoSplitConfig,
+) -> list[dict[str, Any]]:
+    raw_spans = json.loads(missing_spans_json)
+    if not isinstance(raw_spans, list):
+        msg = "Reconciled missing spans must be a JSON array"
+        raise TypeError(msg)
+
+    records: list[dict[str, Any]] = []
+    for raw_span in raw_spans:
+        if (
+            not isinstance(raw_span, list)
+            or len(raw_span) != _SPAN_ITEM_LENGTH
+            or not all(isinstance(value, int) and not isinstance(value, bool) for value in raw_span)
+        ):
+            msg = f"Invalid reconciled span: {raw_span!r}"
+            raise TypeError(msg)
+        span = Span(start_ns=raw_span[0], end_ns=raw_span[1])
         clip_id = make_clip_id(str(source_fields["source_id"]), span, config.transcode)
         records.append(
             _clip_work_record(
@@ -366,6 +397,14 @@ def _source_fields(source_uri: str, source_id: str, size_bytes: int, metadata: V
     }
 
 
+def _known_source_fields(row: dict[str, Any], *, source_uri: str, source_id: str) -> dict[str, Any]:
+    return {
+        "source_id": source_id,
+        "source_uri": source_uri,
+        **{field: row[field] for field in SOURCE_MEDIA_FIELDS},
+    }
+
+
 def _source_failure(source_uri: str, source_id: str, *, stage: str, message: str) -> dict[str, Any]:
     """Build an error record for a source that could not be planned."""
     source_fields = _source_envelope(source_uri, source_id)
@@ -384,7 +423,7 @@ def _base_record(source_fields: dict[str, Any], *, record_type: str) -> dict[str
         "media_contract_version": MEDIA_CONTRACT_VERSION,
         "source_id": source_fields["source_id"],
         "source_uri": source_fields["source_uri"],
-        **{field: source_fields[field] for field in _SOURCE_MEDIA_FIELDS},
+        **{field: source_fields[field] for field in SOURCE_MEDIA_FIELDS},
         "start_ns": 0,
         "end_ns": 0,
         "clip_id": "",

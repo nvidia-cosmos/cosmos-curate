@@ -130,12 +130,12 @@ class TranscodeConfig(BaseModel):
 
 
 class VideoSplitOutputConfig(BaseModel):
-    """S3 media/error and local-or-S3 Lance snapshot destinations."""
+    """S3 media/error and local-or-S3 canonical Lance destinations."""
 
     model_config = _MODEL_CONFIG
 
     media_root: str = Field(min_length=1, examples=["s3://example-bucket/curated/video-split/"])
-    clips_lance_uri: str = Field(default="", description="Complete clip snapshot URI.")
+    clips_lance_uri: str = Field(default="", description="Canonical append-only clip table URI.")
     errors_uri: str = Field(default="", description="Run error report URI.")
 
     @model_validator(mode="before")
@@ -194,10 +194,10 @@ class VideoSplitExecutionConfig(BaseModel):
     # invocations. This amortizes process startup and shared input access while
     # preserving one source download per transcode task.
     ffmpeg_batch_size: int = Field(default=16, ge=1)
-    # Terminal records per publish task and therefore the upper bound for one
-    # fragment or one in-memory error batch. Lance may subdivide further at its
-    # native limits. A conservative default bounds the all-errors case while
-    # still producing a small number of useful fragments at target scale.
+    # Terminal records per publish task and therefore the upper bound for rows
+    # in one fragment or one in-memory error batch. Each nonempty clip batch is
+    # required to stage exactly one Lance fragment. A conservative default
+    # bounds the all-errors case while producing few fragments at target scale.
     clips_per_publish_batch: int = Field(default=100_000, ge=1)
     storage_attempts: int = Field(default=3, ge=1)
     probe_attempts: int = Field(default=3, ge=1)
@@ -297,7 +297,7 @@ def config_template_payload() -> dict[str, Any]:
     """Return structured template metadata for agents."""
     return {
         "kind": "video-split",
-        "description": "Split S3 MP4 sources into fixed-stride clips and publish a Lance snapshot.",
+        "description": "Split S3 MP4 sources into fixed-stride clips and publish a canonical Lance table.",
         "required_fields": [
             {"path": "schema_version", "example": 1},
             {"path": "kind", "example": "video-split"},

@@ -100,8 +100,8 @@ def test_config_accepts_s3_compatible_bucket_names() -> None:
     assert config.input.uris == ("s3://example_bucket/a.mp4",)
 
 
-def test_lance_snapshot_may_use_a_driver_local_path(tmp_path: Path) -> None:
-    """A local Ray run can publish its Lance snapshot on the driver's filesystem."""
+def test_lance_table_may_use_a_driver_local_path(tmp_path: Path) -> None:
+    """A local Ray run can publish its Lance table on the driver's filesystem."""
     config = resolve_config_data(
         {
             **_config({"uris": ["s3://example-bucket/a.mp4"]}),
