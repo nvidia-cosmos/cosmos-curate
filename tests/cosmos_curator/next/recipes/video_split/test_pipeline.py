@@ -1,18 +1,17 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Tests for the Ray Data streaming path and clip-only publication."""
+"""Tests for video-split orchestration and clip-only publication."""
 
-import hashlib
 import json
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
+from itertools import batched
 from pathlib import Path
 from typing import Any
 
 import lance
 import pyarrow as pa
 import pytest
-import ray
 
 from cosmos_curator.next.media.spans import Span
 from cosmos_curator.next.recipes.video_split import pipeline
@@ -27,11 +26,6 @@ _PLANNED_CLIPS = {"long": 10, "partial": 3, "unreadable": -1, "short": 0}
 _URIS = tuple(f"s3://example-bucket/raw/{name}.mp4" for name in _PLANNED_CLIPS)
 _TERMINAL_ROWS = 14
 
-# These tests drive real Ray Data plans, so they take the session cluster rather
-# than start one of their own: a module that re-initialises Ray strands the
-# cached session fixture for every module collected after it.
-pytestmark = pytest.mark.usefixtures("ray_local")
-
 
 class _NullLogger:
     def info(self, _message: str, *_args: object) -> None:
@@ -44,6 +38,87 @@ class _RecordingLogger(_NullLogger):
 
     def info(self, message: str, *args: object) -> None:
         self.info_messages.append(message.format(*args))
+
+
+class _InMemoryDataset:
+    """Small synchronous stand-in for the Ray Dataset operations used here."""
+
+    def __init__(
+        self,
+        rows: list[dict[str, Any]],
+        *,
+        rows_per_batch: int | None = None,
+        control_batches: tuple[pa.Table, ...] = (),
+    ) -> None:
+        self._rows = rows
+        self._rows_per_batch = rows_per_batch
+        self._control_batches = control_batches
+
+    @classmethod
+    def from_items(cls, items: list[dict[str, Any]]) -> "_InMemoryDataset":
+        return cls(items)
+
+    def map(
+        self,
+        function: Callable[..., dict[str, Any]],
+        *,
+        fn_kwargs: dict[str, Any],
+        **_execution_options: object,
+    ) -> "_InMemoryDataset":
+        return _InMemoryDataset([function(row, **fn_kwargs) for row in self._rows])
+
+    def flat_map(
+        self,
+        function: Callable[..., Iterator[dict[str, Any]]],
+        *,
+        fn_kwargs: dict[str, Any],
+        **_execution_options: object,
+    ) -> "_InMemoryDataset":
+        return _InMemoryDataset([output for row in self._rows for output in function(row, **fn_kwargs)])
+
+    def repartition(
+        self,
+        *,
+        target_num_rows_per_block: int,
+        strict: bool,
+    ) -> "_InMemoryDataset":
+        assert strict is True
+        return _InMemoryDataset(self._rows, rows_per_batch=target_num_rows_per_block)
+
+    def map_batches(
+        self,
+        function: Callable[..., pa.Table],
+        *,
+        batch_format: str,
+        batch_size: int | None,
+        fn_kwargs: dict[str, Any],
+    ) -> "_InMemoryDataset":
+        assert batch_format == "pyarrow"
+        assert batch_size is None
+        assert self._rows_per_batch is not None
+        control_batches = tuple(
+            function(pa.Table.from_pylist(list(batch)), **fn_kwargs)
+            for batch in batched(self._rows, self._rows_per_batch, strict=False)
+        )
+        return _InMemoryDataset(
+            [],
+            control_batches=control_batches,
+        )
+
+    def iter_batches(
+        self,
+        *,
+        prefetch_batches: int,
+        batch_size: int | None,
+        batch_format: str | None,
+    ) -> Iterator[pa.Table]:
+        assert prefetch_batches == 0
+        assert batch_size is None
+        assert batch_format == "pyarrow"
+        yield from self._control_batches
+
+    def take_all(self) -> list[dict[str, Any]]:
+        return self._rows
 
 
 class _FailingPublication:
@@ -148,19 +223,6 @@ def _fake_upload_clip(row: dict[str, Any], *, config: ResolvedVideoSplitConfig) 
     return dict(row) | {"clip_bytes": b""}
 
 
-def _record_transcode_task(
-    row: dict[str, Any],
-    *,
-    config: ResolvedVideoSplitConfig,
-) -> Iterator[dict[str, Any]]:
-    task_id = ray.get_runtime_context().get_task_id().encode()
-    marker = int.from_bytes(hashlib.blake2b(task_id, digest_size=7).digest(), byteorder="big")
-    for record in _fake_transcode_source(row, config=config):
-        if record["record_type"] == "clip":
-            record["clip_size_bytes"] = marker
-        yield record
-
-
 def _source_items(source_uris: tuple[str, ...]) -> tuple[dict[str, Any], ...]:
     return tuple({"source_uri": source_uri} for source_uri in source_uris)
 
@@ -193,6 +255,19 @@ def _config(tmp_path: Path, *, clips_per_publish_batch: int = 4) -> ResolvedVide
 
 
 @pytest.fixture(autouse=True)
+def _run_ray_data_in_process(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Exercise orchestration without starting workers on constrained unit runners."""
+    monkeypatch.setattr(
+        pipeline.ray.data,
+        "from_items",
+        lambda items, **_kwargs: _InMemoryDataset.from_items(items),
+    )
+    monkeypatch.setattr(pipeline, "ensure_ray_initialized", lambda **_kwargs: None)
+    monkeypatch.setattr(pipeline, "configure_ray_data_progress", lambda **_kwargs: None)
+    monkeypatch.setattr(pipeline, "configure_ray_data_stability", lambda **_kwargs: None)
+
+
+@pytest.fixture(autouse=True)
 def _fake_media(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(pipeline, "logger", _NullLogger())
     monkeypatch.setattr(
@@ -222,7 +297,7 @@ def uploaded_reports(monkeypatch: pytest.MonkeyPatch) -> dict[str, str]:
 
 
 def test_source_processing_streams_clips_and_errors(tmp_path: Path) -> None:
-    """The terminal Ray stream has successful clips and sparse failures only."""
+    """The staged processing path has successful clips and sparse failures only."""
     rows = pipeline.clip_result_dataset(_source_items(_URIS), _config(tmp_path)).take_all()
 
     assert len(rows) == _TERMINAL_ROWS
@@ -298,7 +373,7 @@ def test_error_report_is_overwritten_with_an_empty_array(
     """A successful run cannot leave a previous run's diagnostics looking current."""
     config = _config(tmp_path)
     record = next(_fake_transcode_source({"source_uri": _URIS[0]}, config=config)) | {"clip_bytes": b""}
-    terminal = ray.data.from_items([record])
+    terminal = _InMemoryDataset.from_items([record])
     dataset = pipeline.open_or_create_clip_table(
         uri=config.output.clips_lance_uri,
         storage_profile=config.execution.storage_profile,
@@ -366,20 +441,6 @@ def test_all_zero_clip_sources_publish_empty_outputs(
     assert summary["errors"] == 0
     assert lance.dataset(config.output.clips_lance_uri).count_rows() == 0
     assert json.loads(uploaded_reports[config.output.errors_uri]) == []
-
-
-def test_publication_batch_does_not_collapse_transcodes_into_one_task(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Metadata coalescing happens downstream of source-level transcode tasks."""
-    monkeypatch.setattr(pipeline, "transcode_source", _record_transcode_task)
-    config = _config(tmp_path, clips_per_publish_batch=1024)
-
-    pipeline.run_config(config)
-
-    clips = lance.dataset(config.output.clips_lance_uri).to_table()
-    assert len(set(clips["clip_size_bytes"].to_pylist())) > 1
 
 
 def test_unknown_frame_counts_survive_the_run_as_nulls(

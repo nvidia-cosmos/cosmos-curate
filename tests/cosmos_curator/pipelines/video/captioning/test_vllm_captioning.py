@@ -16,6 +16,7 @@
 """Test vLLM captioning results."""
 
 import pathlib
+import re
 import uuid
 from collections import Counter
 
@@ -41,6 +42,7 @@ from cosmos_curator.pipelines.video.utils.data_model import (
     WindowConfig,
 )  # type: ignore[import-untyped]
 
+_WORD_PATTERN = re.compile(r"[^\W_]+")
 _THRESHOLDS = {
     "qwen": 0.8,
     "cosmos_r1": 0.7,
@@ -231,7 +233,7 @@ def tf_vector(sentence: str) -> dict[str, float]:
         Term frequency vector for the sentence.
 
     """
-    words = sentence.lower().split()
+    words = _WORD_PATTERN.findall(sentence.casefold())
     tf = Counter(words)
     total = sum(tf.values())
     return {word: count / total for word, count in tf.items()}
@@ -256,6 +258,14 @@ def cosine_similarity(s1: str, s2: str) -> float:
     v2 = [tf2.get(w, 0) for w in all_words]
 
     return 1 - cosine(v1, v2)  # type: ignore[no-any-return]
+
+
+def test_cosine_similarity_normalizes_word_formatting() -> None:
+    """Ignore case, punctuation, and Markdown when comparing caption words."""
+    formatted = "**VISUAL ELEMENTS:** __snowy__, _snow-covered_ mountains."
+    plain = "visual elements snowy snow covered mountains"
+
+    assert cosine_similarity(formatted, plain) == pytest.approx(1.0)
 
 
 @pytest.fixture
