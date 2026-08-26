@@ -62,7 +62,7 @@ pillow = ">=12.2.0"
 pyasn1 = ">=0.6.3"
 pylance = ">=0.39.0"
 pulp = "*"
-ray = { version = "==2.57.0", extras = ["default", "data"] }
+ray = { version = "==2.58.0", extras = ["default", "data"] }
 webdataset = "*"
 
 [feature.core.tasks]
