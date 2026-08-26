@@ -551,7 +551,7 @@ def _get_videos_durations(videos: list[Video]) -> list[float]:
 
     """
 
-    # Note: this is technically not correct, see CVC-690 for more details.
+    # Note: this is technically not correct.
     # The correct duration is the difference between the last and first
     # timestamps. However, this decision was made early in development, and
     # correcting the behavior may be more complicated than expected.

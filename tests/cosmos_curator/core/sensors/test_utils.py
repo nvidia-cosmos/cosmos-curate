@@ -30,7 +30,7 @@ from cosmos_curator.core.sensors.sampling.spec import SamplingSpec
 
 # Time origins for sampling tests. These pin origin invariance: at wall-clock epoch magnitudes
 # adjacent float64 values are ~238 ns apart, so any code that routes an absolute nanosecond
-# timestamp through a float64 loses detail here that survives near zero. See CVC-1199.
+# timestamp through a float64 loses detail here that survives near zero.
 ZERO_ORIGIN_NS = 0
 EPOCH_ROUND_NS = 1_700_000_000_000_000_000
 EPOCH_ODD_NS = 1_700_000_000_123_456_789

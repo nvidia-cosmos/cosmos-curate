@@ -320,8 +320,8 @@ class ClipFrameExtractionStage(CuratorStage):
                 logger.exception(f"Error extracting frames from clip {clip.uuid}: {e}")
                 clip.errors["frame_extraction"] = "video_decode_failed"
                 # drop the transported buffer, but still attempt motion-vector extraction below from
-                # the in-hand bytes: frame decode and motion export are independent (as the separate
-                # ClipFrameExtractionStage/MotionVectorDecodeStage were pre-CVC-1078), so a frame
+                # the in-hand bytes: frame decode and motion export are independent (as they were
+                # when ClipFrameExtractionStage and MotionVectorDecodeStage were separate), so a frame
                 # failure should still record its own motion_decode outcome rather than be silently
                 # skipped.
                 clip.encoded_data.drop()

@@ -46,7 +46,7 @@ def _verdict(source: str) -> IndexVerdict:
 
 
 def test_bframe_file_is_header_bypassed_not_corrupt(tmp_path: pathlib.Path, h264_video: Callable[..., bytes]) -> None:
-    """A valid B-frame file is reported as header-bypassed, not a mismatch (CVC-1035 AC#2)."""
+    """A valid B-frame file is reported as header-bypassed, not a mismatch."""
     # B-frame input is a checked-in pre-encoded clip (this env's openh264 can't
     # encode B-frames; libx264/GPL is not bundled). See conftest.h264_video.
     source = _write(tmp_path, "bframe.mp4", h264_video(bframes=2))

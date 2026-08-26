@@ -325,7 +325,7 @@ def test_mcap_camera_sensor_samples_from_single_seekable_stream() -> None:
 
 
 def test_mcap_camera_sensor_uses_log_time_when_payload_timestamp_differs(tmp_path: Path) -> None:
-    """CVC-1220 decision: v1 samples by MCAP log_time, not CompressedVideo.timestamp."""
+    """v1 samples by MCAP log_time, not by the CompressedVideo.timestamp payload field."""
     packets = _annex_b_packets_from_mp4(_TEST_CLIP, packet_limit=4)
     path = tmp_path / "payload-timestamp-differs.mcap"
     _write_compressed_video_mcap(path, packets, payload_timestamp_offset_ns=10 * _NS_PER_FRAME_30FPS)

@@ -14,11 +14,11 @@
 # limitations under the License.
 """Functional test for CameraSensor motion-vector export and motion filtering stages.
 
-Motion vectors are exported by the CameraSensor clip-extraction path (the sole source after
-CVC-1078) and scored by ``MotionFilterStage`` using a sample video. The expected motion score
-values were captured from the original (now removed) PyAV decode path; asserting the CameraSensor
-path reproduces them serves as both an equivalence anchor and a regression test to ensure the
-motion detection algorithm maintains consistency across code changes.
+Motion vectors are exported by the CameraSensor clip-extraction path (the sole source since the
+legacy PyAV decode path was removed) and scored by ``MotionFilterStage`` using a sample video. The
+expected motion score values were captured from that original path; asserting the CameraSensor path
+reproduces them serves as both an equivalence anchor and a regression test to ensure the motion
+detection algorithm maintains consistency across code changes.
 """
 
 from uuid import uuid4
@@ -189,7 +189,7 @@ def test_motion_filter_calculation(
     """Test that motion scores are calculated correctly and filtering works as expected.
 
     The golden scores were captured from the (removed) legacy PyAV decode path; asserting the
-    CameraSensor path reproduces them is the durable equivalence anchor for CVC-1078.
+    CameraSensor path reproduces them is the durable equivalence anchor for that migration.
 
     Args:
         camera_sensor_motion_stage: The CameraSensor extraction stage to use

@@ -372,8 +372,9 @@ def test_clip_frame_extraction_stage_frame_failure_still_records_motion_decode(
 ) -> None:
     """A frame-decode failure must still attempt motion export and record its own motion_decode error.
 
-    The standalone MotionVectorDecodeStage set motion_decode independently pre-CVC-1078; the fused
-    extraction stage must not silently skip motion export when frame extraction fails.
+    The standalone MotionVectorDecodeStage set motion_decode independently before the two stages
+    were fused; the fused extraction stage must not silently skip motion export when frame
+    extraction fails.
     """
     task = _make_task(tmp_path, sample_clip_data)
 

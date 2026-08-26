@@ -84,7 +84,7 @@ def test_local_prefix_discovery_never_enumerates_inside_a_session(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Discovery stops at the session boundary and leaves artifacts to CVC-1226.
+    """Discovery stops at the session boundary and leaves artifact enumeration to later work.
 
     Every directory-enumeration entry point is recorded, so descending into a
     session by any of them fails this test rather than only the one currently in
