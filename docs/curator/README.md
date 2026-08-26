@@ -47,6 +47,7 @@ This directory collects documentation for Cosmos Curator. It is organized by the
 - [Efficient Sparse Video Decode](design/sensor-library-efficient-video-decode.md) - efficient decode strategy for sampled video.
 - [Data Integrity Design](design/data-integrity-design.md) - architecture, v1 API, and phased delivery plan for the sensor data-integrity framework.
 - [Data Integrity Metrics](design/data-integrity-metrics.md) - initial metric catalog for sensor data-integrity checks.
+- [Data Integrity Pipeline](design/data-integrity-pipeline.md) - Ray Data recipe running the data-integrity metrics across many sessions into one store.
 - [Orca Agentic Curation](design/orca.md) - agentic orchestration direction for large-scale curation.
 - [Managed Ray Clusters for Curator Pipelines on Slurm](design/curator-next-slurm-ray.md) - run-scoped Ray clusters built from independent Slurm jobs.
 - [Schema-Validated Pipeline Configs](design/pipeline-configs.md) - Ray Data config input contract and implementation plan.

@@ -42,7 +42,11 @@ import pyarrow.compute as pc
 from botocore.exceptions import ClientError
 
 from cosmos_curator.core.utils.storage.s3_client import S3Client, S3Prefix, is_s3path
-from cosmos_curator.core.utils.storage.storage_utils import get_storage_client, read_text
+from cosmos_curator.core.utils.storage.storage_utils import (
+    get_storage_client,
+    list_child_directories,
+    read_text,
+)
 from cosmos_curator.next.recipes.multimodal_split.config import MultimodalSplitInputConfig
 
 CANDIDATE_SESSION_SCHEMA = pa.schema(
@@ -183,28 +187,12 @@ def _list_child_session_ids(input_path_prefix: str, *, storage_profile: str) -> 
 def _list_local_child_session_ids(input_path_prefix: str) -> list[str]:
     """List the immediate child directories of a local prefix.
 
-    ``DirEntry.is_dir`` follows symlinks, so a symlinked child counts as a
-    session. That is deliberate, but it has a consequence worth knowing about: a
-    drop directory carrying the common ``latest -> session-a`` convention yields
-    both ``latest`` and ``session-a`` as candidates. Deduplication is by session
-    ID, not by target, so the same recording is curated twice under two IDs.
-
-    Skipping symlinks would remove that duplicate, but it would also break the
-    equally common layout where every session is a symlink into content-addressed
-    storage. Neither rule is right for both, so the behavior follows the
-    filesystem and the choice is left to how the input prefix is laid out. This
-    divergence has no S3 analogue, where a prefix cannot alias another.
-
-    A dangling symlink is excluded rather than reported, because ``is_dir`` is
-    false for one; a session whose mount is not yet ready is therefore silently
-    absent rather than failing the run.
+    The listing itself, including its symlink semantics, is
+    :func:`list_child_directories`. This wrapper only restates its errors in
+    terms of the config field the prefix came from.
     """
-    # ``scandir`` rather than ``iterdir``: it carries the directory bit from the
-    # single readdir syscall instead of rebuilding a Path and stat-ing each child,
-    # which matters on a network filesystem holding millions of sessions.
     try:
-        with os.scandir(_local_path(input_path_prefix)) as entries:
-            return [entry.name for entry in entries if entry.is_dir()]
+        return list_child_directories(_local_path(input_path_prefix))
     except FileNotFoundError as exc:
         msg = f"Input path prefix does not exist: {input_path_prefix}"
         raise FileNotFoundError(msg) from exc
@@ -214,42 +202,20 @@ def _list_local_child_session_ids(input_path_prefix: str) -> list[str]:
 
 
 def _list_s3_child_session_ids(input_path_prefix: str, *, storage_profile: str) -> list[str]:
-    """List child prefixes with a delimited listing so the store does the scoping.
+    """List the immediate child prefixes of an S3 prefix.
 
-    A recursive listing would return every object beneath every session, which is
-    unusable when a prefix holds millions of sessions. ``Delimiter="/"`` makes S3
-    collapse each session into one ``CommonPrefixes`` entry instead, and leaves
-    loose objects sitting directly under the prefix in ``Contents``, where they
-    are correctly ignored.
-
-    ``limit`` is deliberately not pushed into the listing. It is applied only
-    after deduplication and sorting, so stopping early would change which
-    sessions are selected rather than just how many pages are fetched.
+    The delimited listing itself, including why a prefix holding no keys is an
+    error rather than an empty result, is
+    :meth:`S3Client.list_child_prefixes`. This wrapper only restates that error
+    in terms of the config field the prefix came from.
     """
     prefix = S3Prefix(input_path_prefix)
     client = _require_s3_client(prefix.path, storage_profile=storage_profile)
-    listing_key = f"{prefix.prefix.rstrip('/')}/" if prefix.prefix else ""
-
-    session_ids: list[str] = []
-    prefix_exists = False
-    paginator = client.s3.get_paginator("list_objects_v2")
-    for page in paginator.paginate(Bucket=prefix.bucket, Prefix=listing_key, Delimiter="/"):
-        common_prefixes = page.get("CommonPrefixes", [])
-        prefix_exists = prefix_exists or bool(common_prefixes) or bool(page.get("Contents"))
-        for common_prefix in common_prefixes:
-            child = common_prefix["Prefix"][len(listing_key) :].rstrip("/")
-            if child:
-                session_ids.append(child)
-
-    if not prefix_exists:
-        # S3 answers a listing of a nonexistent prefix with 200 and no keys, so a
-        # typo is otherwise indistinguishable from an empty result and the run
-        # would curate nothing without ever reporting an error. A prefix holding
-        # no objects at all does not exist in S3, so this matches the local branch
-        # raising for a missing directory.
+    try:
+        return client.list_child_prefixes(prefix)
+    except FileNotFoundError as exc:
         msg = f"Input path prefix does not exist or contains no objects: {input_path_prefix}"
-        raise FileNotFoundError(msg)
-    return session_ids
+        raise FileNotFoundError(msg) from exc
 
 
 def _remote_object_exists(client: S3Client, prefix: S3Prefix, location: str) -> bool:

@@ -93,6 +93,50 @@ def get_storage_client(
     return None
 
 
+def list_child_directories(path: str | pathlib.Path) -> list[str]:
+    """List the immediate child directory names of a local path.
+
+    ``DirEntry.is_dir`` follows symlinks, so a symlinked child counts. That is
+    deliberate, but it has a consequence worth knowing about: a drop directory
+    carrying the common ``latest -> child-a`` convention yields both ``latest``
+    and ``child-a``. Callers deduplicate by name, not by target, so the same
+    directory is processed twice under two names.
+
+    Skipping symlinks would remove that duplicate, but it would also break the
+    equally common layout where every child is a symlink into content-addressed
+    storage. Neither rule is right for both, so the behavior follows the
+    filesystem and the choice is left to how the path is laid out. This
+    divergence has no S3 analogue, where a prefix cannot alias another.
+
+    A dangling symlink is excluded rather than reported, because ``is_dir`` is
+    false for one; a child whose mount is not yet ready is therefore silently
+    absent rather than failing the caller.
+
+    Args:
+        path: The directory whose immediate children to list.
+
+    Returns:
+        The child directory names, in whatever order the filesystem reports.
+
+    Raises:
+        FileNotFoundError: If *path* does not exist.
+        NotADirectoryError: If *path* names a file instead of a directory.
+
+    """
+    # ``scandir`` rather than ``iterdir``: it carries the directory bit from the
+    # single readdir syscall instead of rebuilding a Path and stat-ing each child,
+    # which matters on a network filesystem holding millions of entries.
+    try:
+        with os.scandir(path) as entries:
+            return [entry.name for entry in entries if entry.is_dir()]
+    except FileNotFoundError as exc:
+        msg = f"Path does not exist: {path}"
+        raise FileNotFoundError(msg) from exc
+    except NotADirectoryError as exc:
+        msg = f"Path is not a directory: {path}"
+        raise NotADirectoryError(msg) from exc
+
+
 def get_lance_storage_options(path: str, *, profile_name: str = "default") -> dict[str, str] | None:
     """Build storage options for Lance based on configured profiles."""
     if is_s3path(path):

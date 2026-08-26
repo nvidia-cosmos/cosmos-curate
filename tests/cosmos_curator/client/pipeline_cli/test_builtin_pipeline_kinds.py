@@ -15,6 +15,7 @@ def test_registered_kind_names_are_derived_from_concrete_objects() -> None:
     """The composition root never restates discriminator strings as mapping keys."""
     assert BUILTIN_PIPELINE_KINDS.names() == (
         "caption_judge",
+        "data-integrity",
         "multimodal-split",
         "robot-action-split",
         "video-split",

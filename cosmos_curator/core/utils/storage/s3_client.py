@@ -35,6 +35,7 @@ if TYPE_CHECKING:
 import attrs
 import boto3
 from boto3.s3.transfer import TransferConfig
+from botocore.client import BaseClient
 from botocore.config import Config as BotoConfig
 from botocore.exceptions import ClientError
 from loguru import logger
@@ -345,6 +346,23 @@ class S3Client(StorageClient):
             results.append(S3Prefix(path))
         return results
 
+    def list_child_prefixes(self, uri: StoragePrefix) -> list[str]:
+        """List the immediate child prefix names under ``uri``, without descending.
+
+        Convenience wrapper over :func:`list_child_prefixes` for callers that
+        already hold an ``S3Client``. Callers that build their own boto3 client
+        from a different credential source should use that function directly.
+
+        Args:
+            uri: The S3 prefix whose children to list.
+
+        Returns:
+            The child prefix names, without a trailing delimiter.
+
+        """
+        assert isinstance(uri, S3Prefix)
+        return list_child_prefixes(self.s3, bucket=uri.bucket, prefix=uri.prefix)
+
     def list_recursive(self, s3_prefix: StoragePrefix, limit: int = 0) -> list[dict[str, Any]]:
         """List all objects in a bucket recursively, starting from the given prefix.
 
@@ -542,6 +560,60 @@ class S3BackgroundUploader(BackgroundUploader):
         """
         remote_prefix = S3Prefix(remote_path)
         self.client.upload_file(str(local_path), remote_prefix, self.chunk_size_bytes)  # type: ignore[attr-defined]
+
+
+def list_child_prefixes(s3_client: BaseClient, *, bucket: str, prefix: str) -> list[str]:
+    """List child prefixes with a delimited listing so the store does the scoping.
+
+    A recursive listing would return every object beneath every child, which is
+    unusable when a prefix holds millions of them. ``Delimiter="/"`` makes S3
+    collapse each child into one ``CommonPrefixes`` entry instead, and leaves
+    loose objects sitting directly under the prefix in ``Contents``, where they
+    are correctly ignored.
+
+    The boto3 client is supplied by the caller rather than built here, because
+    credentials come from different places depending on the caller: Curator's
+    own profile store via :func:`get_s3_client_config`, or an AWS named profile
+    plus an endpoint override. Listing must use the same credentials as the
+    reads that follow it.
+
+    No limit is accepted. A caller that caps its selection should do so after
+    deduplicating and sorting, since stopping the listing early would change
+    which children are selected rather than just how many pages are fetched.
+
+    Args:
+        s3_client: A boto3 S3 client, however the caller chose to build it.
+        bucket: The bucket to list.
+        prefix: The key prefix whose immediate children to list. Trailing
+            delimiters are normalized, and an empty prefix lists the bucket root.
+
+    Returns:
+        The child prefix names, without a trailing delimiter, in listing order.
+
+    Raises:
+        FileNotFoundError: If the prefix holds no keys at all. S3 answers a
+            listing of a nonexistent prefix with 200 and no keys, so a typo is
+            otherwise indistinguishable from an empty result and the caller
+            would proceed with nothing without ever reporting an error.
+
+    """
+    listing_key = f"{prefix.rstrip('/')}/" if prefix else ""
+
+    children: list[str] = []
+    prefix_exists = False
+    paginator = s3_client.get_paginator("list_objects_v2")
+    for page in paginator.paginate(Bucket=bucket, Prefix=listing_key, Delimiter="/"):
+        common_prefixes = page.get("CommonPrefixes", [])
+        prefix_exists = prefix_exists or bool(common_prefixes) or bool(page.get("Contents"))
+        for common_prefix in common_prefixes:
+            child = common_prefix["Prefix"][len(listing_key) :].rstrip("/")
+            if child:
+                children.append(child)
+
+    if not prefix_exists:
+        msg = f"Prefix does not exist or contains no objects: s3://{bucket}/{listing_key}"
+        raise FileNotFoundError(msg)
+    return children
 
 
 def _make_s3_client_config(

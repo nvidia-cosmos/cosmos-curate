@@ -180,7 +180,7 @@ def test_run_session_aggregates_streams(monkeypatch: pytest.MonkeyPatch) -> None
     """run_session preserves discovery order and rolls the per-stream verdicts up."""
     monkeypatch.setattr(session_runner, "discover_streams", lambda *_a, **_k: ["x", "y"])
     canned = {"x": _canned("x", CheckStatus.PASS), "y": _canned("y", CheckStatus.FAIL)}
-    monkeypatch.setattr(session_runner, "_run_one_stream", lambda source, **_k: canned[source])
+    monkeypatch.setattr(session_runner, "run_one_stream", lambda source, **_k: canned[source])
 
     report = run_session("sess")
 
@@ -253,7 +253,7 @@ def test_run_session_keeps_discovery_order_regardless_of_completion_order(
         time.sleep(0.02 * (len(sources) - sources.index(source)))
         return _canned(source, CheckStatus.PASS)
 
-    monkeypatch.setattr(session_runner, "_run_one_stream", _one)
+    monkeypatch.setattr(session_runner, "run_one_stream", _one)
 
     report = run_session("sess", max_workers=max_workers)
 
@@ -274,7 +274,7 @@ def test_run_session_overlaps_streams_when_given_workers(monkeypatch: pytest.Mon
         barrier.wait()
         return _canned(source, CheckStatus.PASS)
 
-    monkeypatch.setattr(session_runner, "_run_one_stream", _one)
+    monkeypatch.setattr(session_runner, "run_one_stream", _one)
 
     report = run_session("sess", max_workers=workers)
 
@@ -315,7 +315,7 @@ def test_cancelling_aborts_in_flight_reads_instead_of_waiting_for_them(monkeypat
         assert reader.read(4096) == b""
         return _canned(source, CheckStatus.PASS)
 
-    monkeypatch.setattr(session_runner, "_run_one_stream", _one)
+    monkeypatch.setattr(session_runner, "run_one_stream", _one)
 
     with pytest.raises(KeyboardInterrupt):
         run_session("sess", max_workers=2, cancel=cancel)
@@ -344,7 +344,7 @@ def test_cancelling_wraps_the_callers_own_stream_wrapper(monkeypatch: pytest.Mon
         stream_wrapper(io.BytesIO(b"x"))  # type: ignore[operator]
         return _canned(source, CheckStatus.PASS)
 
-    monkeypatch.setattr(session_runner, "_run_one_stream", _one)
+    monkeypatch.setattr(session_runner, "run_one_stream", _one)
 
     run_session("sess", cancel=threading.Event(), make_stream_wrapper=_make_counter)
 
@@ -370,7 +370,7 @@ def test_a_cancelled_stream_is_not_logged_as_a_failed_run(monkeypatch: pytest.Mo
     monkeypatch.setattr(session_runner.logger, "opt", lambda **_k: SimpleNamespace(debug=logged.append))
 
     with pytest.raises(KeyboardInterrupt):
-        session_runner._run_one_stream(
+        session_runner.run_one_stream(
             "s3://b/k.mp4",
             expected_hz=None,
             thresholds=DEFAULT_THRESHOLDS,
@@ -407,7 +407,7 @@ def test_interrupt_stops_starting_queued_streams(monkeypatch: pytest.MonkeyPatch
         time.sleep(0.05)
         return _canned(source, CheckStatus.PASS)
 
-    monkeypatch.setattr(session_runner, "_run_one_stream", _one)
+    monkeypatch.setattr(session_runner, "run_one_stream", _one)
 
     with pytest.raises(KeyboardInterrupt):
         run_session("sess", max_workers=2)
@@ -415,6 +415,146 @@ def test_interrupt_stops_starting_queued_streams(monkeypatch: pytest.MonkeyPatch
     # Only streams already running when the interrupt landed may have started; the
     # remaining ~190 are cancelled while still queued.
     assert len(started) <= 10, f"kept starting streams after the interrupt: {started}"
+
+
+def _count_attempts(
+    monkeypatch: pytest.MonkeyPatch,
+    exc: BaseException,
+    *,
+    max_attempts: int,
+    succeed_after: int = 0,
+) -> tuple[StreamResult, int]:
+    """Run one stream whose first attempts raise ``exc``, and count the attempts."""
+    attempts = 0
+
+    def _flaky(*_a: object, **_k: object) -> tuple[object, object, object]:
+        nonlocal attempts
+        attempts += 1
+        if succeed_after and attempts > succeed_after:
+            return [], SimpleNamespace(), SimpleNamespace()
+        raise exc
+
+    monkeypatch.setattr(session_runner, "run_checks", _flaky)
+    monkeypatch.setattr(session_runner, "stream_result", lambda source, *_a, **_k: _canned(source, CheckStatus.PASS))
+    monkeypatch.setattr(session_runner.time, "sleep", lambda _s: None)
+
+    result = session_runner.run_one_stream(
+        "s3://b/k.mp4",
+        expected_hz=None,
+        thresholds=DEFAULT_THRESHOLDS,
+        batch_size=0,
+        s3_profile_name=None,
+        azure_profile_name="default",
+        endpoint_url=None,
+        max_attempts=max_attempts,
+    )
+    return result, attempts
+
+
+def test_a_single_session_does_not_retry_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``di-session`` behaviour is unchanged: one attempt, then the errored result."""
+    result, attempts = _count_attempts(monkeypatch, TimeoutError("read timed out"), max_attempts=1)
+
+    assert attempts == 1
+    assert result.error == "read timed out"
+
+
+def test_a_transport_hiccup_is_retried_until_it_succeeds(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Over thousands of cloud streams, a read timeout is not a data-quality finding."""
+    result, attempts = _count_attempts(
+        monkeypatch,
+        TimeoutError("read timed out"),
+        max_attempts=3,
+        succeed_after=2,
+    )
+
+    assert attempts == 3
+    assert result.error is None
+
+
+def test_a_bad_stream_fails_on_its_first_attempt(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A malformed file is not a transport problem, and re-reading it wastes the budget."""
+    result, attempts = _count_attempts(
+        monkeypatch,
+        ValueError("Invalid data found when processing input"),
+        max_attempts=3,
+    )
+
+    assert attempts == 1
+    assert result.error == "Invalid data found when processing input"
+
+
+def test_a_missing_file_is_not_retried(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``OSError`` is deliberately not on the transient list; a missing path stays missing."""
+    _, attempts = _count_attempts(monkeypatch, FileNotFoundError("no such object"), max_attempts=3)
+
+    assert attempts == 1
+
+
+def test_an_exhausted_retry_budget_still_returns_the_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The last attempt's failure is recorded, so the stream is never silently dropped."""
+    result, attempts = _count_attempts(monkeypatch, TimeoutError("read timed out"), max_attempts=3)
+
+    assert attempts == 3
+    assert result.error == "read timed out"
+
+
+def test_an_interrupt_during_the_backoff_is_not_held_for_the_whole_wait(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A cancel landing mid-backoff ends the stream at once, and buys it no further attempt.
+
+    The wait is on the cancel event rather than the clock, so an operator's Ctrl-C is not
+    held for the remaining backoff -- which, on a wide session, would be paid once per
+    stream still in flight.
+    """
+    cancel = threading.Event()
+    attempts = 0
+    # Long enough that a plain sleep would dominate this test, so passing it means the
+    # wait really was interruptible.
+    backoff_s = 30.0
+    monkeypatch.setattr(session_runner, "_RETRY_BACKOFF_FACTOR", backoff_s)
+    monkeypatch.setattr(session_runner, "_RETRY_MAX_WAIT_S", backoff_s)
+
+    def _timeout(*_a: object, **_k: object) -> tuple[object, object, object]:
+        nonlocal attempts
+        attempts += 1
+        threading.Timer(0.05, cancel.set).start()  # stands in for the SIGINT landing
+        msg = "read timed out"
+        raise TimeoutError(msg)
+
+    monkeypatch.setattr(session_runner, "run_checks", _timeout)
+
+    started = time.monotonic()
+    with pytest.raises(KeyboardInterrupt):
+        session_runner.run_one_stream(
+            "s3://b/k.mp4",
+            expected_hz=None,
+            thresholds=DEFAULT_THRESHOLDS,
+            batch_size=0,
+            s3_profile_name=None,
+            azure_profile_name="default",
+            endpoint_url=None,
+            cancel=cancel,
+            max_attempts=2,
+        )
+    elapsed = time.monotonic() - started
+
+    assert attempts == 1, "an interrupt bought the aborted read another attempt"
+    assert elapsed < backoff_s / 2, f"waited out the backoff before noticing the interrupt ({elapsed:.1f}s)"
+
+
+def test_a_nonpositive_attempt_budget_is_rejected() -> None:
+    """Zero attempts would return nothing at all, so it cannot mean "no retries"."""
+    with pytest.raises(ValueError, match="max_attempts"):
+        session_runner.run_one_stream(
+            "s3://b/k.mp4",
+            expected_hz=None,
+            thresholds=DEFAULT_THRESHOLDS,
+            batch_size=0,
+            s3_profile_name=None,
+            azure_profile_name="default",
+            endpoint_url=None,
+            max_attempts=0,
+        )
 
 
 def test_run_session_serial_does_not_use_worker_threads(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -426,7 +566,7 @@ def test_run_session_serial_does_not_use_worker_threads(monkeypatch: pytest.Monk
         threads.append(threading.current_thread().name)
         return _canned(source, CheckStatus.PASS)
 
-    monkeypatch.setattr(session_runner, "_run_one_stream", _one)
+    monkeypatch.setattr(session_runner, "run_one_stream", _one)
 
     run_session("sess")
 

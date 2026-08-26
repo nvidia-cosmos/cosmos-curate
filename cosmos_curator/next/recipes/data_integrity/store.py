@@ -181,7 +181,7 @@ def stream_key(stream: StreamResult) -> str:
     )
 
 
-def _stream_row(  # noqa: PLR0913 -- one argument per fact the row records
+def stream_row(  # noqa: PLR0913 -- one argument per fact the row records
     stream: StreamResult,
     *,
     stream_id: str,
@@ -216,7 +216,7 @@ def _stream_row(  # noqa: PLR0913 -- one argument per fact the row records
     }
 
 
-def _measurement_row(  # noqa: PLR0913 -- a metric row is its identity prefix, all independent
+def measurement_row(  # noqa: PLR0913 -- a metric row is its identity prefix, all independent
     spec: InstrumentSpec,
     result: CheckResult,
     *,
@@ -448,7 +448,7 @@ def write_run(  # noqa: PLR0913 -- a run's provenance is genuinely many independ
         )
         key = stream_key(stream)
         stream_rows.append(
-            _stream_row(
+            stream_row(
                 stream,
                 stream_id=key,
                 run_id=run_id,
@@ -464,7 +464,7 @@ def write_run(  # noqa: PLR0913 -- a run's provenance is genuinely many independ
         for result in stream.metrics:
             spec = instrument(result.name)
             measurement_rows[spec.name].append(
-                _measurement_row(
+                measurement_row(
                     spec,
                     result,
                     stream_id=key,

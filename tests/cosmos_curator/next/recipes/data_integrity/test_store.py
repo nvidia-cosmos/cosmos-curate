@@ -30,6 +30,7 @@ from cosmos_curator.core.sensors.data_integrity.instruments import (
     DEFAULT_THRESHOLDS,
     INSTRUMENTS,
     Thresholds,
+    instrument,
 )
 from cosmos_curator.core.sensors.data_integrity.results import StreamResult
 from cosmos_curator.core.sensors.scripts._cli_cloud import CloudCliError, CloudObjectStat
@@ -398,6 +399,68 @@ def test_manifest_records_the_run(
     assert manifest["store_schema_version"] == store_schema.STORE_SCHEMA_VERSION
     assert manifest["policy_id"] == store.policy_id(DEFAULT_THRESHOLDS)
     assert manifest["instruments"] == {spec.name: spec.version for spec in INSTRUMENTS}
+
+
+def test_a_caller_can_assemble_a_run_from_the_public_builders(
+    store_root: str, make_stream: Callable[..., StreamResult], perfect: Callable[..., list[int]]
+) -> None:
+    """What a Ray driver needs: rows built one at a time, then appended and committed.
+
+    ``write_run`` gathers a whole session before writing anything, which a driver
+    measuring thousands of streams across many sessions cannot do. The builders are
+    therefore public API, and this is the sequence that uses them.
+    """
+    stream = make_stream(FRONT, perfect())
+    created_at = datetime.datetime(2026, 8, 20, tzinfo=datetime.UTC)
+    run_id = store.new_run_id()
+    key = store.stream_key(stream)
+    shared = {"stream_id": key, "run_id": run_id, "created_at": created_at, "session_path": SESSION}
+
+    store.append_rows(
+        [store.stream_row(stream, content=store.content_identity(FRONT), **shared)],
+        store.join(store_root, store_schema.STREAM_DATASET),
+        store_schema.STREAM_SCHEMA,
+        None,
+    )
+    for check in stream.metrics:
+        spec = instrument(check.name)
+        store.append_rows(
+            [store.measurement_row(spec, check, source=FRONT, **shared)],
+            store.join(store_root, store_schema.metric_dataset_path(spec.name)),
+            store_schema.MEASUREMENT_SCHEMAS[spec.name],
+            None,
+        )
+        store.append_rows(
+            [
+                store.build_evaluation_row(
+                    spec,
+                    check,
+                    source=FRONT,
+                    measurement_run_id=run_id,
+                    thresholds=DEFAULT_THRESHOLDS,
+                    **shared,
+                )
+            ],
+            store.join(store_root, store_schema.EVALUATION_DATASET),
+            store_schema.EVALUATION_SCHEMA,
+            None,
+        )
+    store.commit_run(
+        store_root,
+        run_id=run_id,
+        created_at=created_at,
+        tool="data-integrity",
+        session_path=None,
+        thresholds=DEFAULT_THRESHOLDS,
+        num_streams=1,
+        storage_options=None,
+    )
+
+    (row,) = store.read_streams(store_root)
+    assert row["stream_id"] == key
+    assert row["session_id"] == identity.session_id(SESSION)
+    assert len(store.read_evaluations(store_root)) == len(INSTRUMENTS)
+    assert [run["tool"] for run in store.read_runs(store_root)] == ["data-integrity"]
 
 
 def test_policy_id_is_a_function_of_the_thresholds() -> None:

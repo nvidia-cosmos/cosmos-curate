@@ -152,7 +152,8 @@ RUN_SCHEMA: pa.Schema = pa.schema(
         # them is how long the run took to write.
         pa.field("created_at", _TIMESTAMP, nullable=False),
         pa.field("committed_at", _TIMESTAMP, nullable=False),
-        # Which entry point wrote it: "di-check", "di-session", or "di-reevaluate".
+        # Which entry point wrote it: "di-check", "di-session", "di-reevaluate", or
+        # "data-integrity" for the Ray Data pipeline, which writes many sessions per run.
         pa.field("tool", pa.string(), nullable=False),
         pa.field("session_path", pa.string()),
         pa.field("policy_id", pa.string(), nullable=False),

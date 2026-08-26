@@ -23,12 +23,18 @@ session's streams, runs the shared engine on each, classifies open/decode failur
 as a per-stream ``ERROR``, and aggregates the results into a
 :class:`SessionReport`.
 
+:func:`run_one_stream` is the per-stream unit :func:`run_session` is built from --
+open one source, measure it, and turn any failure into that stream's ``ERROR`` rather
+than the run's. It is public because the Ray Data pipeline distributes exactly that
+unit and must not grow a second copy of the failure contract.
+
 :func:`run_stream` is a thin convenience over
 :func:`~cosmos_curator.core.sensors.data_integrity.engine.run_metrics` for an
 already-open sensor, packaging its output as a :class:`StreamResult`.
 """
 
 import threading
+import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from typing import BinaryIO
@@ -86,7 +92,41 @@ def run_stream(
     return stream_result(source, metrics, video_info, resolved_cfg)
 
 
-def _run_one_stream(  # noqa: PLR0913
+#: Exception class names, matched anywhere in the raised exception's class hierarchy,
+#: that mean "the transport hiccuped" rather than "this stream is bad".
+#:
+#: Named rather than imported because the types live in botocore, urllib3 and
+#: http.client, and this module should not import a transport stack to describe one.
+#: Matching the hierarchy (not just the concrete class) is what makes the short list
+#: sufficient: ``ConnectionResetError`` arrives via ``ConnectionError``, and a socket
+#: stall via ``TimeoutError``.
+#:
+#: Bare ``OSError`` is deliberately absent even though Ray's own list carries it (see
+#: ``next/core/ray_runtime.py``): Ray matches a formatted string and so cannot see the
+#: hierarchy, while here it would drag in every deterministic filesystem failure --
+#: ``FileNotFoundError``, ``PermissionError`` -- and spend the whole retry budget
+#: re-confirming that a path is still missing. ``botocore.exceptions.ClientError`` is
+#: absent for the same reason: it is the base of every AWS HTTP response, 4xx included.
+_TRANSIENT_TRANSPORT_ERRORS = frozenset(
+    {
+        "ConnectionError",
+        "TimeoutError",
+        "EndpointConnectionError",
+        "ReadTimeoutError",
+        "ConnectionClosedError",
+        "IncompleteRead",
+    }
+)
+_RETRY_BACKOFF_FACTOR = 2.0
+_RETRY_MAX_WAIT_S = 8.0
+
+
+def _is_transient_transport_error(exc: BaseException) -> bool:
+    """Report whether ``exc`` names a transport failure worth another attempt."""
+    return any(cls.__name__ in _TRANSIENT_TRANSPORT_ERRORS for cls in type(exc).__mro__)
+
+
+def run_one_stream(  # noqa: PLR0913
     source: str,
     *,
     expected_hz: float | None,
@@ -97,47 +137,94 @@ def _run_one_stream(  # noqa: PLR0913
     endpoint_url: str | None,
     stream_wrapper: Callable[[BinaryIO], BinaryIO] | None = None,
     cancel: threading.Event | None = None,
+    max_attempts: int = 1,
 ) -> StreamResult:
     """Open a single stream and run the integrity metrics, capturing failures as ERROR.
+
+    Args:
+        source: the stream's path or URI.
+        expected_hz: expected sample rate; ``None`` uses the stream's nominal rate.
+        thresholds: pass/fail policy.
+        batch_size: window size for streaming timestamps; ``0`` = one batch.
+        s3_profile_name: AWS profile for ``s3://`` sources.
+        azure_profile_name: Azure profile for ``az://`` sources.
+        endpoint_url: S3 endpoint override for S3-compatible stores.
+        stream_wrapper: optional wrapper around the opened byte stream.
+        cancel: optional event that aborts the read.
+        max_attempts: how many times to open the stream when the failure looks like a
+            transport hiccup rather than a bad stream. ``1`` (default) never retries,
+            which is what a single session wants: the caller is watching, and the
+            failure is one line of its report. A run over thousands of cloud streams
+            wants more, because there a read timeout would otherwise be persisted as
+            an unreadable input -- a data-quality finding manufactured by the network.
+            Only the errors in :data:`_TRANSIENT_TRANSPORT_ERRORS` are retried; a
+            malformed file fails on its first attempt as it always did.
+
+    Returns:
+        The stream's result, carrying ``error`` when it could not be measured.
 
     Raises:
         KeyboardInterrupt: If *cancel* was set, rather than reporting the aborted read
             as this stream's verdict.
+        ValueError: If ``max_attempts`` is not positive.
 
     """
-    try:
-        metrics, video_info, resolved_cfg = run_checks(
-            source,
-            expected_hz=expected_hz,
-            thresholds=thresholds,
-            batch_size=batch_size,
-            s3_profile_name=s3_profile_name,
-            azure_profile_name=azure_profile_name,
-            endpoint_url=endpoint_url,
-            stream_wrapper=stream_wrapper,
-        )
-    # A session is a batch: one unreadable or malformed stream must not abandon the
-    # ones behind it, and the set of exceptions PyAV, botocore, and smart_open can
-    # raise is too broad to enumerate safely. So the catch stays wide and the stream
-    # is reported as ERROR. The traceback is logged at DEBUG so a genuine bug in the
-    # engine is still diagnosable rather than flattened into a one-line message.
-    except Exception as exc:  # noqa: BLE001 - see above; per-stream isolation is the contract
-        # An abort is a casualty, not a diagnosis: cancelling makes the reader report EOF,
-        # which libav raises as a decode error, so every stream still in flight would log
-        # an annotated traceback and bury the interrupt message that follows.
-        raise_if_interrupted(cancel)
-        logger.opt(exception=True).debug("data-integrity run failed for {}", source)
-        return StreamResult(
-            source=source,
-            codec_name=None,
-            has_bframes=None,
-            num_samples=None,
-            start_ns=None,
-            end_ns=None,
-            metrics=[],
-            error=str(exc),
-        )
-    return stream_result(source, metrics, video_info, resolved_cfg)
+    max_attempts = validate_positive_int("max_attempts", max_attempts)
+    attempt = 1
+    while True:
+        try:
+            metrics, video_info, resolved_cfg = run_checks(
+                source,
+                expected_hz=expected_hz,
+                thresholds=thresholds,
+                batch_size=batch_size,
+                s3_profile_name=s3_profile_name,
+                azure_profile_name=azure_profile_name,
+                endpoint_url=endpoint_url,
+                stream_wrapper=stream_wrapper,
+            )
+        # A session is a batch: one unreadable or malformed stream must not abandon the
+        # ones behind it, and the set of exceptions PyAV, botocore, and smart_open can
+        # raise is too broad to enumerate safely. So the catch stays wide and the stream
+        # is reported as ERROR. The traceback is logged at DEBUG so a genuine bug in the
+        # engine is still diagnosable rather than flattened into a one-line message.
+        except Exception as exc:  # noqa: BLE001 - see above; per-stream isolation is the contract
+            # An abort is a casualty, not a diagnosis: cancelling makes the reader report EOF,
+            # which libav raises as a decode error, so every stream still in flight would log
+            # an annotated traceback and bury the interrupt message that follows. Ahead of the
+            # retry, too -- an interrupt must never buy the aborted read another attempt.
+            raise_if_interrupted(cancel)
+            if attempt < max_attempts and _is_transient_transport_error(exc):
+                wait_s = min(_RETRY_BACKOFF_FACTOR**attempt, _RETRY_MAX_WAIT_S)
+                logger.warning(
+                    "data-integrity attempt {}/{} for {} hit a transport error ({}); retrying in {}s",
+                    attempt,
+                    max_attempts,
+                    source,
+                    exc,
+                    wait_s,
+                )
+                attempt += 1
+                # Waiting on the event rather than sleeping keeps the backoff from holding
+                # an interrupt for the whole wait, once per stream still in flight.
+                if cancel is None:
+                    time.sleep(wait_s)
+                else:
+                    cancel.wait(wait_s)
+                raise_if_interrupted(cancel)
+                continue
+            logger.opt(exception=True).debug("data-integrity run failed for {}", source)
+            return StreamResult(
+                source=source,
+                codec_name=None,
+                has_bframes=None,
+                num_samples=None,
+                start_ns=None,
+                end_ns=None,
+                metrics=[],
+                error=str(exc),
+            )
+        return stream_result(source, metrics, video_info, resolved_cfg)
 
 
 def run_session(  # noqa: PLR0913
@@ -233,7 +320,7 @@ def run_session(  # noqa: PLR0913
         raise_if_interrupted(cancel)
         if on_stream_start is not None:
             on_stream_start(index, total, source)
-        result = _run_one_stream(
+        result = run_one_stream(
             source,
             expected_hz=expected_hz,
             thresholds=thresholds,
