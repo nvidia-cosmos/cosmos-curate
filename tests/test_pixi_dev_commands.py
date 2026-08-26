@@ -192,7 +192,7 @@ def test_runtime_features_are_separated_from_core() -> None:
     media_dependencies = media_feature["dependencies"]
 
     assert "channels" not in core_feature
-    assert core_pypi_dependencies["cosmos-xenna"] == "==0.5.9"
+    assert core_pypi_dependencies["cosmos-xenna"] == "==0.5.10"
     assert core_pypi_dependencies["ray"] == {"version": "==2.57.0", "extras": ["default", "data"]}
     for dependency_name in ("fastapi", "starlette", "uvicorn", "websockets"):
         assert dependency_name in core_dependencies

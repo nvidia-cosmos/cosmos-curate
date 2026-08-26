@@ -213,7 +213,7 @@ RUN cd /pyav-build && \
     export PKG_CONFIG_PATH="/opt/ffmpeg/lib/pkgconfig" && \
     export LD_LIBRARY_PATH="/opt/ffmpeg/lib:${LD_LIBRARY_PATH:-}" && \
     mkdir -p /pyav-wheelhouse && \
-    pixi run --as-is -e default pip wheel --no-binary av --no-cache-dir \
+    pixi run --as-is -e default pip wheel --no-binary av --no-cache-dir --no-build-isolation \
         --wheel-dir /pyav-wheelhouse av==17.0.0 && \
     rm -rf /pyav-build/.pixi /root/.cache/pip /tmp/pip-*
 
