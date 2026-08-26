@@ -174,6 +174,16 @@ variables:
   VAULT_OTLP_LEAF_ROLE: "$VAULT_OTLP_LEAF_ROLE"
   VAULT_OTLP_LEAF_COMMON_NAME: "$VAULT_OTLP_LEAF_COMMON_NAME"
 
+  # NOTE: ARTIFACTORY_URL is deliberately NOT set here. It's a plain CI/CD
+  # variable (project settings), same as it was pre-migration -- flipping
+  # between legacy/cloud is a variable-value edit in the GitLab UI, no
+  # commit/MR needed. vault-auth.sh + ci-secrets.tmpl derive the Vault
+  # secret path from whatever ARTIFACTORY_URL resolves to at job run time.
+  #
+  # A project-level UI variable of the same name always wins over anything
+  # declared here (global or job-level) -- GitLab's own variable precedence
+  # puts project variables above .gitlab-ci.yml entirely, both scopes.
+
   # Perf benchmark configuration
   PERF_NGC_NVCF_ORG_ID: "$PERF_NGC_NVCF_ORG_ID"
   PERF_NVCF_FUNC_ID: "$PERF_NVCF_FUNC_ID"
