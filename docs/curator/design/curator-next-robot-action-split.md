@@ -44,10 +44,110 @@ model, giving it:
   videos/<view>/chunk-NNN/file-MMM.mp4   # one dir per camera view
 ```
 
+`NNN` and `MMM` are three-digit and zero-padded. Discovery lists `data/` by
+parsing any digit width, but rebuilds every data and video path with three, so a
+name padded to another width is listed and then unreadable. That raises rather
+than skipping the file: a skip drops the file's spans while surviving spans from
+its siblings keep the run reporting success, so the loss is invisible.
+
 Episodes can span multiple shards. A single episode's video and its data parquet
 may live in different chunk files (multi-file layout). `meta/episodes/*/` records,
 per episode and per view, which `chunk_index`/`file_index` holds that episode's
 frames and the `from_timestamp` offset within that MP4.
+
+### Label Resolution
+
+`task_name` and `subtask_name` come from the meta parquets. The label column is
+resolved against the file's **Arrow schema**, by name and by type:
+
+| Meta file | Index column | Accepted label column, in precedence order | Required type |
+| --- | --- | --- | --- |
+| `meta/tasks.parquet` | `task_index` | `task`, `task_name`, `__index_level_0__` | any Arrow string |
+| `meta/subtasks.parquet` | `subtask_index` | `subtask`, `subtask_name`, `__index_level_0__` | any Arrow string |
+
+`__index_level_0__` is last so a real named column always wins over a preserved
+index. "Any Arrow string" means `string`, `large_string`, `string_view`, or a
+dictionary of those — every encoding that survives a parquet round trip as text.
+`binary` is excluded: its values arrive as `bytes`, which stringify to
+`b'make coffee'` rather than to the text, and that repr would also stop matching
+the span filters.
+
+Exporters carry the label either as a real column or as a pandas index, which
+`DataFrame.to_parquet` preserves as an ordinary Arrow column — named (`task`) when
+the index had a name, `__index_level_0__` when it did not. Reading the file
+through `Table.to_pandas()` would move a preserved index back into
+`DataFrame.index`, where a column scan cannot see it and the label appears
+absent, so resolution reads `Table.column_names` directly and never goes through
+pandas. See `_read_label_map` in
+`cosmos_curator/next/recipes/robot_action_split/discovery.py`.
+
+The **type** half of the contract matters as much as the name: `__index_level_0__`
+means "pandas preserved whatever the index was", and a non-`RangeIndex` integer
+index lands there as `int64`. Accepting it on name alone would turn row numbers
+into labels, which is the defect this contract exists to prevent, so a candidate
+column that does not hold text is rejected as though it were absent.
+
+The type gate rejects *numeric* identifiers, not identifiers in general: a
+preserved index holding strings such as `task_0001` satisfies it and is accepted
+as a label. Telling an id-shaped string from prose would need a heuristic, which
+is exactly what this contract replaced, so the name precedence carries that
+weight instead — a real named column always wins over a preserved index, so an
+export that also carries prose resolves to the prose.
+
+Labels are never synthesized from an index. Three failure modes follow from that.
+
+A meta file **raises**, failing the whole discovery run, when it:
+
+- carries no accepted label column of a text type — the error names the file, the
+  expected name and every observed column with its type;
+- maps one index to two different labels;
+- has rows but none carrying a usable label;
+- is `tasks.parquet` and yields no labels at all.
+
+A span is **dropped** when its `task_index` or `subtask_index` resolves to no
+label — either the index has no row in the meta parquet, or its row's label is
+null or blank. Spans also drop, for a reason unrelated to labels, when their
+`episode_index` has no row in `meta/episodes/`. Each data file reports both
+causes, with the indices behind them, in one warning per cause.
+
+A **run** raises when its data files produced no span at all. A drop is per-span
+and tolerable in isolation, but a meta file that overlaps no index in `data/` —
+stale, or numbered from 1 against 0-based data — drops *every* span, whether it
+is `subtasks.parquet` missing the labels or `meta/episodes/` missing the rows.
+Returning nothing is indistinguishable from a dataset with nothing to do, which
+the caller reports as a successful empty run, so total data loss would exit 0.
+The check runs before the span filters, because filtering every span out is a
+legitimate outcome of the configured rules rather than a data fault.
+
+Two cases are **not** drops, and both fall back to `task_name`: a dataset whose
+`data/` declares no `subtask_index` column, and a shard whose `subtask_map` is
+empty — no `subtasks.parquet`, or one that resolves to nothing. The fallback is
+keyed on the *map*, not on the index: a `subtask_map` that exists but has no row
+for a declared `subtask_index` is the drop case above, not this one.
+
+The distinction is what the label would claim.
+Where no subtask bounds exist the span *is* the task run, so the task label
+describes it exactly; where a subtask bounds it, the span is a fragment of that
+task and the task label would over-claim the whole. Falling back there would
+relabel a fragment as the entire task — quietly, and in the field, at whatever
+rate the meta file is incomplete.
+
+A fallback label also carries no dedup weight. Per-episode dedup caps spans per
+description, so spans sharing one stand-in label would compete for a single
+allowance and lose every run past it — deleting a label table would then cost
+spans that the geometry still supports. Fallback spans are bucketed by
+`subtask_index` instead; two indices resolving to the same real text stay one
+description and share one allowance.
+
+The enumeration is deliberately no narrower than what it replaced. The previous
+reader resolved `tasks.parquet` with a wildcard — *any* column that was not
+`task_index` — and `subtasks.parquet` against `("subtask", "subtask_name")`.
+Dropping the wildcard is the point of this contract: it could not tell prose from
+an identifier, so a wrong pick was indistinguishable from a right one. Dropping
+`task_name` or `subtask_name` would not have been, since both name the label
+explicitly, so both are still accepted. A column under any *other* name now
+raises rather than being guessed at, and the error names it: admitting a new
+spelling is a one-line change.
 
 ### Span Definition
 
@@ -321,6 +421,7 @@ per-modality column groups (`embedding_<modality>_*`) written directly onto
 `clips.lance`, plus a fitted action-PCA basis.
 
 ---
+
 
 ## Pipeline Execution
 
