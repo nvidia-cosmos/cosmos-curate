@@ -65,6 +65,33 @@ def test_the_packaged_template_is_a_valid_config(tmp_path: Path) -> None:
     assert resolved.input.limit is None
 
 
+def test_the_rendered_template_matches_the_models_own_dump() -> None:
+    """The template must not omit, rename, or invent a section relative to the model.
+
+    A field whose default is not ``None`` cannot go missing from the template
+    without this failing. Fields defaulting to ``None`` are dropped by
+    ``exclude_none`` on both sides, so those are named in the preamble instead.
+    """
+    rendered = yaml.safe_load(MULTIMODAL_SPLIT_KIND.template_yaml())
+
+    expected = ResolvedMultimodalSplitConfig.model_validate(rendered).model_dump(mode="json", exclude_none=True)
+    assert rendered == expected
+
+
+def test_the_template_preamble_names_the_settings_that_exclude_none_drops() -> None:
+    """Optional settings vanish from a derived template, so the preamble is their only trace.
+
+    ``session_id_list_path`` selects one of the two discovery modes and defaults to
+    ``None``, so an operator starting from `pipeline template` would not otherwise
+    learn it exists.
+    """
+    rendered = MULTIMODAL_SPLIT_KIND.template_yaml()
+
+    assert "input.session_id_list_path" in rendered
+    assert "input.limit" in rendered
+    assert yaml.safe_load(rendered)["input"].keys() == {"input_path_prefix"}
+
+
 def test_the_template_payload_agrees_with_the_template_yaml() -> None:
     """The JSON and YAML template surfaces must not drift apart."""
     payload = MULTIMODAL_SPLIT_KIND.template_payload()
@@ -85,6 +112,36 @@ def test_validate_accepts_a_good_config_and_reports_the_failure_for_a_bad_one(tm
     )
     with pytest.raises(ValidationError, match="Unsupported storage scheme"):
         MULTIMODAL_SPLIT_KIND.validate(bad, [])
+
+
+def test_a_config_without_a_clip_section_resolves_to_the_clip_defaults(tmp_path: Path) -> None:
+    """Configs written before the clip section existed must keep loading unchanged."""
+    path = _write_config(tmp_path, "s3://example-bucket/recordings")
+
+    resolved = resolve_config(path)
+
+    assert resolved.clip.duration_s == 10.0
+    assert resolved.clip.output_fps == 30
+    assert resolved.clip.caption_fps == 2
+
+
+def test_an_invalid_rate_pair_fails_when_the_config_loads(tmp_path: Path) -> None:
+    """The divisibility rule is a config error, not something a stage discovers mid-run."""
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        yaml.safe_dump(
+            {
+                "schema_version": 1,
+                "kind": "multimodal-split",
+                "input": {"input_path_prefix": "s3://example-bucket/recordings"},
+                "clip": {"output_fps": 30, "caption_fps": 4},
+            },
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValidationError, match=r"must divide clip\.output_fps"):
+        MULTIMODAL_SPLIT_KIND.validate(path, [])
 
 
 def test_render_emits_the_canonicalized_config(tmp_path: Path) -> None:
@@ -119,8 +176,23 @@ def test_malformed_overrides_are_rejected(tmp_path: Path, override: str) -> None
     """A mistyped --set is a config error rather than a silently ignored flag."""
     path = _write_config(tmp_path, "s3://example-bucket/recordings")
 
-    with pytest.raises(ValueError, match="Override"):
+    with pytest.raises(ValueError, match="--set override"):
         resolve_config(path, overrides=[override])
+
+
+def test_an_empty_override_value_is_the_empty_string_and_null_is_spelled_out(tmp_path: Path) -> None:
+    """`--set key=` assigns "", which is what the shared override helper means by it.
+
+    A bare ``key=`` used to resolve to ``None`` here, so it silently cleared an
+    optional field; it now reaches validation as the empty string and is rejected
+    by the field's own rules. Clearing a field is spelled with YAML's ``null``.
+    """
+    path = _write_config(tmp_path, "s3://example-bucket/recordings", session_id_list_path="/data/sessions.txt")
+
+    with pytest.raises(ValidationError, match="Storage locations cannot be empty"):
+        resolve_config(path, overrides=["input.session_id_list_path="])
+
+    assert resolve_config(path, overrides=["input.session_id_list_path=null"]).input.session_id_list_path is None
 
 
 def test_a_missing_config_file_is_reported_by_path(tmp_path: Path) -> None:
@@ -157,6 +229,10 @@ def test_the_schema_documents_the_input_section() -> None:
     schema = json.loads(MULTIMODAL_SPLIT_KIND.schema_json())
 
     assert schema["$defs"]["MultimodalSplitInputConfig"]["required"] == ["input_path_prefix"]
+    assert {"duration_s", "output_fps", "caption_fps"} <= schema["$defs"]["MultimodalSplitClipConfig"][
+        "properties"
+    ].keys()
+    # ``clip`` is fully defaulted, so adding it must not make it mandatory.
     assert set(schema["required"]) == {"schema_version", "kind", "input"}
 
 

@@ -16,14 +16,19 @@
 """Typed config and resolution for Curator Next ``multimodal-split``."""
 
 import json
+from decimal import Decimal
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal, Self
 from urllib.parse import unquote, urlsplit
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from cosmos_curator.next.core.config import apply_dotted_overrides
 
 _MODEL_CONFIG = ConfigDict(frozen=True, strict=True, extra="forbid")
+_BITRATE_SUFFIXES = frozenset({"K", "M"})
+_BITRATE_PATTERN = r"^[1-9][0-9]*(?:\.[0-9]+)?[KkMm]$"
 _SUPPORTED_SCHEMES = frozenset({"s3", "file"})
 _YAML_SUFFIXES = frozenset({".yaml", ".yml"})
 _PARENT_SEGMENT = ".."
@@ -34,6 +39,8 @@ _URI_STRIPPED_WHITESPACE = ("\t", "\n", "\r")
 
 SchemaVersion = Literal[1]
 MultimodalSplitKind = Literal["multimodal-split"]
+# One member today. Supporting another encoder is adding it here and nowhere else.
+MultimodalSplitVideoEncoder = Literal["libopenh264"]
 
 
 class MultimodalSplitInputConfig(BaseModel):
@@ -76,12 +83,142 @@ class MultimodalSplitInputConfig(BaseModel):
         return _validate_location(path, strip_trailing_slash=False)
 
 
+class MultimodalSplitClipConfig(BaseModel):
+    """Clip geometry and the two frame rates a clip is sampled at.
+
+    Clips are contiguous and non-overlapping: there is no stride setting, so the
+    stride is the clip duration. A trailing span shorter than ``duration_s`` is
+    dropped rather than kept short, because the runtime generates full spans only.
+
+    ``output_fps`` is the rate of the clip's own frame timeline. ``caption_fps``
+    is the rate of the subset of those frames that captioning sees.
+    """
+
+    model_config = _MODEL_CONFIG
+
+    duration_s: float = Field(
+        default=10.0,
+        gt=0.0,
+        allow_inf_nan=False,
+        description="Duration of one clip in seconds.",
+    )
+    output_fps: int = Field(
+        default=30,
+        ge=1,
+        description="Frame rate of the clip timeline, as a positive integer FPS.",
+    )
+    caption_fps: int = Field(
+        default=2,
+        ge=1,
+        description="Frame rate of the captioned subset of the clip timeline; must divide output_fps.",
+    )
+
+    @model_validator(mode="after")
+    def _validate_clip_geometry(self) -> Self:
+        """Check the two rules that need more than one field to state.
+
+        The rates must share one alignment grid. When ``caption_fps`` divides
+        ``output_fps``, the captioned frames are every Nth point of the output
+        grid, so subsampling picks exactly the frames that sampling at
+        ``caption_fps`` directly would have. Otherwise the two paths land on
+        different instants and disagree about which frame a caption describes.
+        Equal rates are the degenerate valid case.
+
+        The duration must come to a whole number of output frames. A clip is a
+        whole number of frames or it is not a valid clip, and 0.333 s at 30 fps is
+        9.99 of them. This is deliberately stricter than the design document,
+        whose ``row_count = floor(duration_ns * output_fps / 1_000_000_000)``
+        would truncate that tail: refusing the config beats silently dropping a
+        partial frame at runtime.
+
+        Every arithmetic check here goes through ``Decimal`` rather than float.
+        The two diverge on ordinary durations -- ``65.693362 * 1e9`` is
+        ``65693361999.99999`` in binary floating point -- which would make a
+        remainder test reject a clip that is exact.
+        """
+        if self.output_fps % self.caption_fps != 0:
+            msg = (
+                f"clip.caption_fps ({self.caption_fps}) must divide clip.output_fps ({self.output_fps}) exactly, "
+                f"so captioned frames stay a subset of the clip's frames instead of falling on a second, "
+                f"misaligned grid"
+            )
+            raise ValueError(msg)
+
+        frames_per_clip = Decimal(str(self.duration_s)) * self.output_fps
+        if frames_per_clip % 1 != 0:
+            msg = (
+                f"clip.duration_s ({self.duration_s}) at clip.output_fps ({self.output_fps}) is "
+                f"{format(frames_per_clip.normalize(), 'f')} frames, which is not a whole number. A clip is a "
+                f"whole number of output frames, so adjust the duration or the rate"
+            )
+            raise ValueError(msg)
+        return self
+
+
+class MultimodalSplitTranscodeConfig(BaseModel):
+    """Video encode settings for the clips this pipeline writes.
+
+    Nothing reads these yet. The transcode stage is separate work, and this
+    section exists so a config can state its encode settings before that stage
+    does -- there is no consumer to go looking for.
+
+    The section name and the ``video_`` prefix deliberately mirror
+    ``video_split``'s equivalent settings, so one vocabulary covers both recipes
+    and a reader moving between them recognizes the same concept. ``video_`` reads
+    as redundant inside a section already called ``transcode``; it is not, and
+    shortening it here would split that vocabulary again.
+
+    There is no ``audio_mode``. Audio is a deferred capability for this pipeline,
+    so there is no stream to copy or re-encode.
+    """
+
+    model_config = _MODEL_CONFIG
+
+    video_encoder: MultimodalSplitVideoEncoder = "libopenh264"
+    video_bitrate: str = Field(
+        default="4M",
+        pattern=_BITRATE_PATTERN,
+        description="Target video bitrate as a magnitude and a K or M suffix, such as 4M or 800K.",
+    )
+
+    @field_validator("video_bitrate", mode="before")
+    @classmethod
+    def _canonicalize_bitrate(cls, value: object) -> object:
+        """Fold the spellings of one bitrate together before the pattern sees them.
+
+        ``4M``, ``4.0M`` and ``4m`` all name the same rate, and a setting that
+        reaches a stage in three spellings is three different strings to compare,
+        log, or hash into an output identity. Canonicalizing here means the
+        resolved config holds one of them.
+
+        Anything this cannot parse is returned untouched, so the field pattern
+        reports the bad value the operator actually wrote rather than some
+        half-normalized rewrite of it.
+        """
+        if not isinstance(value, str):
+            return value
+        magnitude, suffix = value[:-1], value[-1:]
+        if not magnitude or suffix.upper() not in _BITRATE_SUFFIXES:
+            return value
+        try:
+            parsed = Decimal(magnitude)
+        except ArithmeticError:
+            return value
+        return f"{format(parsed.normalize(), 'f')}{suffix.upper()}"
+
+
 class ResolvedMultimodalSplitConfig(BaseModel):
     """Canonical execution contract for Curator Next ``multimodal-split``.
 
-    Only the ``input`` section exists so far, because discovery is the only stage
-    implemented. The splitting stage adds clip geometry, sensor selection, and
-    output sections alongside it rather than replacing this one.
+    ``input`` selects the candidate sessions, ``clip`` describes the geometry and
+    frame rates each session is split into, and ``transcode`` describes how
+    the resulting clips are encoded. Discovery is the only stage implemented, so
+    nothing reads ``clip`` or ``transcode`` yet. The splitting stage adds
+    sensor selection and output sections alongside these rather than replacing
+    them.
+
+    Both new sections are defaulted, so a config written before either existed
+    still resolves.
     """
 
     model_config = _MODEL_CONFIG
@@ -89,6 +226,45 @@ class ResolvedMultimodalSplitConfig(BaseModel):
     schema_version: SchemaVersion
     kind: MultimodalSplitKind
     input: MultimodalSplitInputConfig
+    clip: MultimodalSplitClipConfig = Field(default_factory=MultimodalSplitClipConfig)
+    transcode: MultimodalSplitTranscodeConfig = Field(default_factory=MultimodalSplitTranscodeConfig)
+
+
+_TEMPLATE_BASE: dict[str, Any] = {
+    "schema_version": 1,
+    "kind": "multimodal-split",
+    "input": {"input_path_prefix": "s3://example-bucket/recordings"},
+}
+# Settings that default to null are dumped away by ``exclude_none``, so the two
+# that an operator would otherwise never discover are named here instead.
+_TEMPLATE_PREAMBLE = """\
+# Every setting with a non-null default is shown; unchanged settings may be removed.
+# Two optional settings default to null and are omitted: input.session_id_list_path reads session
+# IDs from a file instead of listing the prefix, and input.limit caps how many sessions are kept.
+"""
+
+
+def config_template() -> dict[str, Any]:
+    """Return an editable config template carrying every non-null default.
+
+    Derived from the model rather than hand-written, so a section added to
+    ``ResolvedMultimodalSplitConfig`` reaches ``cosmos-curator pipeline template``
+    with no edit here and cannot disagree with what the model accepts.
+
+    Built per call rather than as a module constant for two reasons. The
+    validators it runs are defined below this point in the module, so an
+    import-time constant here raises ``NameError``. Moving it past them would fix
+    that but would make every import of this module validate the example ``s3://``
+    prefix, which pulls in boto3 -- the cost ``_validate_s3_location`` defers its
+    import to avoid. A fresh mapping per call is also what callers may edit in
+    place.
+    """
+    return ResolvedMultimodalSplitConfig.model_validate(_TEMPLATE_BASE).model_dump(mode="json", exclude_none=True)
+
+
+def config_template_yaml() -> str:
+    """Render the template as YAML for ``cosmos-curator pipeline template``."""
+    return _TEMPLATE_PREAMBLE + yaml.safe_dump(config_template(), sort_keys=False)
 
 
 def load_config(config_path: str | Path) -> ResolvedMultimodalSplitConfig:
@@ -102,10 +278,13 @@ def resolve_config(
 ) -> ResolvedMultimodalSplitConfig:
     """Load a config file and apply ``--set`` overrides before validation.
 
-    Each override has the form ``"path.to.key=value"``, where the value is parsed
-    with ``yaml.safe_load`` so numeric, boolean, and null literals become native
-    types instead of strings. That matters here because the config is strict:
-    a quoted ``"5"`` would be rejected for ``input.limit``.
+    Overrides go through the shared dotted-override helper every Curator Next
+    recipe uses, so ``--set`` behaves identically across kinds. Each has the form
+    ``"path.to.key=value"``, where the value is parsed with ``yaml.safe_load`` so
+    numeric, boolean, and null literals become native types instead of strings.
+    That matters here because the config is strict: a quoted ``"5"`` would be
+    rejected for ``input.limit``. A bare ``key=`` assigns the empty string; null
+    stays reachable through YAML's own ``null`` and ``~`` spellings.
 
     Example::
 
@@ -122,33 +301,8 @@ def resolve_config(
         raise TypeError(msg)
 
     raw: dict[str, object] = loaded
-    for override in overrides:
-        _apply_override(raw, override)
+    apply_dotted_overrides(raw, overrides)
     return ResolvedMultimodalSplitConfig.model_validate(raw)
-
-
-def _apply_override(raw: dict[str, object], override: str) -> None:
-    """Set one dotted ``path.to.key=value`` override in place."""
-    if "=" not in override:
-        msg = f"Override must have the form 'path.to.key=value', got {override!r}"
-        raise ValueError(msg)
-    key_path, _, value_str = override.partition("=")
-    if not key_path:
-        msg = f"Override has an empty key path: {override!r}"
-        raise ValueError(msg)
-    keys = key_path.split(".")
-    if any(not key for key in keys):
-        msg = f"Override path {key_path!r} contains an empty segment"
-        raise ValueError(msg)
-
-    node: dict[str, object] = raw
-    for key in keys[:-1]:
-        child = node.setdefault(key, {})
-        if not isinstance(child, dict):
-            msg = f"Override path {key_path!r} passes through a non-dict at {key!r}"
-            raise TypeError(msg)
-        node = child
-    node[keys[-1]] = yaml.safe_load(value_str)
 
 
 def _validate_location(location: str, *, strip_trailing_slash: bool) -> str:

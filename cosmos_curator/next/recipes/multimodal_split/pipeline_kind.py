@@ -29,19 +29,9 @@ from cosmos_curator.next.core.pipeline_kind import PipelineKind, PipelinePreset,
 
 
 def _template_yaml() -> str:
-    return """\
-schema_version: 1
-kind: multimodal-split
+    from cosmos_curator.next.recipes.multimodal_split.config import config_template_yaml  # noqa: PLC0415
 
-input:
-  # Local directory or s3:// prefix holding one child directory per session.
-  input_path_prefix: s3://example-bucket/recordings
-  # Optional newline-delimited UTF-8 file of session IDs to use instead of
-  # listing the prefix. Each ID is joined to input_path_prefix.
-  session_id_list_path: null
-  # Optional cap applied after deduplication and sorting.
-  limit: null
-"""
+    return config_template_yaml()
 
 
 def _template_payload() -> dict[str, Any]:

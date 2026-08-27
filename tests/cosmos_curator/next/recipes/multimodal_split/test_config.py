@@ -13,12 +13,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tests for the strict ``multimodal-split`` candidate session input config."""
+"""Tests for the strict ``multimodal-split`` input and clip config sections."""
 
 import pytest
 from pydantic import ValidationError
 
-from cosmos_curator.next.recipes.multimodal_split.config import MultimodalSplitInputConfig
+from cosmos_curator.next.recipes.multimodal_split.config import (
+    MultimodalSplitClipConfig,
+    MultimodalSplitInputConfig,
+    MultimodalSplitTranscodeConfig,
+)
 
 
 def test_prefix_only_mode_defaults_to_no_list_and_no_limit() -> None:
@@ -300,3 +304,183 @@ def test_stripped_whitespace_is_rejected_in_an_s3_uri(whitespace: str) -> None:
     """S3 keys carry the same characters and lose them the same way."""
     with pytest.raises(ValidationError, match="whitespace"):
         MultimodalSplitInputConfig(input_path_prefix=f"s3://example-bucket/rec{whitespace}ord")
+
+
+def test_clip_defaults_describe_ten_second_clips_at_thirty_fps() -> None:
+    """The defaults are the contract for a config that omits the clip section entirely."""
+    clip = MultimodalSplitClipConfig()
+
+    assert clip.duration_s == 10.0
+    assert clip.output_fps == 30
+    assert clip.caption_fps == 2
+
+
+def test_clip_config_is_frozen() -> None:
+    """Clip geometry cannot drift after resolution any more than the input can."""
+    clip = MultimodalSplitClipConfig()
+
+    with pytest.raises(ValidationError, match="frozen"):
+        clip.duration_s = 5.0
+
+
+@pytest.mark.parametrize(("output_fps", "caption_fps"), [(30, 30), (30, 2), (30, 15), (30, 1), (1, 1)])
+def test_a_caption_rate_that_divides_the_output_rate_is_accepted(output_fps: int, caption_fps: int) -> None:
+    """Every proper divisor is a valid subsample, and equal rates are the degenerate case."""
+    clip = MultimodalSplitClipConfig(output_fps=output_fps, caption_fps=caption_fps)
+
+    assert clip.output_fps == output_fps
+    assert clip.caption_fps == caption_fps
+
+
+@pytest.mark.parametrize(("output_fps", "caption_fps"), [(30, 4), (30, 7), (10, 3), (30, 60), (2, 3)])
+def test_a_caption_rate_that_does_not_divide_the_output_rate_is_rejected(output_fps: int, caption_fps: int) -> None:
+    """Two rates off one grid disagree about which frame a caption describes.
+
+    Captioned frames are meant to be every Nth frame of the clip timeline. When
+    the rates do not divide, subsampling and sampling directly at ``caption_fps``
+    land on different instants, so the caption and the frame it names come apart.
+    ``(30, 60)`` covers the likely authoring mistake of captioning faster than the
+    clip has frames.
+    """
+    with pytest.raises(ValidationError, match=r"must divide clip\.output_fps"):
+        MultimodalSplitClipConfig(output_fps=output_fps, caption_fps=caption_fps)
+
+
+@pytest.mark.parametrize("field", ["output_fps", "caption_fps"])
+@pytest.mark.parametrize("value", [0, -1])
+def test_frame_rates_must_be_positive(field: str, value: int) -> None:
+    """A rate of zero or less names no frames at all."""
+    with pytest.raises(ValidationError, match="greater than or equal to 1"):
+        MultimodalSplitClipConfig(**{field: value})
+
+
+@pytest.mark.parametrize("field", ["output_fps", "caption_fps"])
+@pytest.mark.parametrize("value", [30.0, 2.5, "30"])
+def test_frame_rates_must_be_integers(field: str, value: object) -> None:
+    """Strict typing rejects a fractional or quoted rate instead of rounding it.
+
+    The episode timeline is built from a positive integer FPS, so ``30.0`` is not
+    silently narrowed and ``"30"`` is not silently parsed.
+    """
+    with pytest.raises(ValidationError, match="valid integer"):
+        MultimodalSplitClipConfig(**{field: value})
+
+
+@pytest.mark.parametrize("duration_s", [0.0, -1.0])
+def test_clip_duration_must_be_positive(duration_s: float) -> None:
+    """A clip of zero or negative length has no frames to sample."""
+    with pytest.raises(ValidationError, match="greater than 0"):
+        MultimodalSplitClipConfig(duration_s=duration_s)
+
+
+@pytest.mark.parametrize("duration_s", [float("inf"), float("-inf"), float("nan")])
+def test_clip_duration_must_be_finite(duration_s: float) -> None:
+    """A clip length has to become integer nanoseconds, which none of these can.
+
+    ``inf`` is the case the ``> 0`` bound cannot see, since it satisfies it. The
+    match is on the finiteness message for all three so that the bound alone
+    cannot stand in for the check.
+    """
+    with pytest.raises(ValidationError, match="finite number"):
+        MultimodalSplitClipConfig(duration_s=duration_s)
+
+
+@pytest.mark.parametrize("field", ["stride_s", "min_duration_s"])
+def test_stride_and_minimum_duration_are_not_settings_here(field: str) -> None:
+    """Both are deliberately absent, and both have defined behaviour in their absence.
+
+    No ``stride_s`` fixes the stride to the clip duration, giving contiguous
+    non-overlapping clips. No ``min_duration_s`` means a trailing partial span is
+    dropped rather than kept short. Rejecting them keeps a config copied from a
+    design example or from ``video_split`` from implying behaviour that is not
+    implemented.
+    """
+    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+        MultimodalSplitClipConfig(**{field: 2.0})
+
+
+@pytest.mark.parametrize(("duration_s", "output_fps"), [(0.333, 30), (0.05, 30), (1.001, 30), (0.1, 24)])
+def test_a_duration_that_is_not_a_whole_number_of_frames_is_rejected(duration_s: float, output_fps: int) -> None:
+    """A clip is a whole number of output frames or it is not a valid clip.
+
+    0.333 s at 30 fps is 9.99 frames. This is deliberately stricter than the
+    design document, whose ``floor(duration_ns * output_fps / 1_000_000_000)``
+    would truncate the tail: refusing the config beats silently dropping a partial
+    frame during a run.
+    """
+    with pytest.raises(ValidationError, match="frames, which is not a whole number"):
+        MultimodalSplitClipConfig(duration_s=duration_s, output_fps=output_fps)
+
+
+@pytest.mark.parametrize(("duration_s", "output_fps"), [(10.0, 30), (0.5, 30), (2.5, 24), (0.04, 50)])
+def test_a_fractional_duration_yielding_whole_frames_is_accepted(duration_s: float, output_fps: int) -> None:
+    """The rule counts frames, not seconds, so a sub-second clip is fine when it lands on one.
+
+    0.5 s at 30 fps is exactly 15 frames. Requiring a whole number of seconds
+    instead would reject it for no reason.
+    """
+    clip = MultimodalSplitClipConfig(duration_s=duration_s, output_fps=output_fps)
+
+    assert clip.duration_s == duration_s
+
+
+def test_the_frame_count_is_computed_exactly_rather_than_in_binary_floating_point() -> None:
+    """0.28 s at 25 fps is exactly 7 frames, but ``0.28 * 25`` is 7.000000000000001.
+
+    Float and exact arithmetic disagree on which durations are whole frames for
+    about one in a thousand millisecond-resolution durations, so a float remainder
+    test would reject clips that are exact. The same hazard applies to the
+    nanosecond rule below it.
+    """
+    clip = MultimodalSplitClipConfig(duration_s=0.28, output_fps=25, caption_fps=5)
+
+    assert clip.duration_s == 0.28
+
+
+def test_transcode_defaults_to_the_shared_encoder_and_bitrate() -> None:
+    """The defaults match ``video_split``'s, so a clip encodes the same way in either recipe."""
+    transcode = MultimodalSplitTranscodeConfig()
+
+    assert transcode.video_encoder == "libopenh264"
+    assert transcode.video_bitrate == "4M"
+
+
+@pytest.mark.parametrize(
+    ("written", "canonical"),
+    [("4M", "4M"), ("4.0M", "4M"), ("4m", "4M"), ("4.00m", "4M"), ("800k", "800K"), ("4.50M", "4.5M")],
+)
+def test_equivalent_bitrate_spellings_canonicalize_to_one_value(written: str, canonical: str) -> None:
+    """One bitrate written three ways must resolve to one string.
+
+    ``4M``, ``4.0M`` and ``4m`` name the same rate. Left alone they are three
+    different values to compare, log, or hash into an output identity, so the
+    resolved config holds only the canonical spelling.
+    """
+    assert MultimodalSplitTranscodeConfig(video_bitrate=written).video_bitrate == canonical
+
+
+@pytest.mark.parametrize("video_bitrate", ["4", "4G", "0.5M", "4MB", "four M", "0M"])
+def test_a_malformed_bitrate_is_rejected(video_bitrate: str) -> None:
+    """A bitrate needs a magnitude of at least one and a K or M suffix.
+
+    A missing suffix, an unsupported one, or a leading zero would otherwise reach
+    the encoder as an argument it cannot read, long after config load.
+    """
+    with pytest.raises(ValidationError, match="should match pattern"):
+        MultimodalSplitTranscodeConfig(video_bitrate=video_bitrate)
+
+
+def test_an_unknown_encoder_is_rejected() -> None:
+    """The encoder is a closed set, so a typo fails at config load rather than at spawn time."""
+    with pytest.raises(ValidationError, match="Input should be 'libopenh264'"):
+        MultimodalSplitTranscodeConfig(video_encoder="libx264")
+
+
+def test_audio_mode_is_not_a_setting_here() -> None:
+    """Audio is a deferred capability for this pipeline, so there is no stream to copy.
+
+    ``video_split`` carries an ``audio_mode``; a config copied across would
+    otherwise imply this pipeline handles audio, which it does not.
+    """
+    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+        MultimodalSplitTranscodeConfig(audio_mode="copy")
