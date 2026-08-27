@@ -18,7 +18,7 @@ import numpy as np
 import numpy.typing as npt
 import pytest
 
-from cosmos_curator.core.sensors.sampling.grid import SamplingWindow
+from cosmos_curator.core.sensors.sampling.grid import SamplingGrid, SamplingWindow
 from cosmos_curator.core.sensors.sampling.policy import NearestTimestampPolicy, NoSamplingPolicy
 from cosmos_curator.core.sensors.sampling.sampler import (
     find_closest_indices,
@@ -149,31 +149,30 @@ def test_find_closest_indices_input_validation(
 @pytest.mark.parametrize(
     ("canonical", "grid", "expected_canonical", "expected_indices", "expected_counts", "dedup"),
     [
-        # Basic in-window matching
-        # Establish the normal behavior
+        # Basic matching.
         # Why:
         # - active reference timestamps are 150, 260
-        # - eligible canonicals are 200, 300
-        # - both get used
-        # Basic in-window matching.
+        # - 150 is equidistant from 100 and 200, so the left one wins
+        # - 260 is nearest to 300
         (
             np.array([100, 200, 300, 400], dtype=np.int64),
             np.array([150, 260, 350], dtype=np.int64),
-            np.array([200, 300], dtype=np.int64),
-            np.array([1, 2], dtype=np.int64),
+            np.array([100, 300], dtype=np.int64),
+            np.array([0, 2], dtype=np.int64),
             np.array([1, 1], dtype=np.int64),
             True,
         ),
-        # Boundary marker is not sampled.
+        # Boundary marker is not sampled: 300 ends the window, so only 150 and 250
+        # get rows.
         (
             np.array([100, 200, 300], dtype=np.int64),
             np.array([150, 250, 300], dtype=np.int64),
-            np.array([200, 200], dtype=np.int64),
-            np.array([1, 1], dtype=np.int64),
+            np.array([100, 200], dtype=np.int64),
+            np.array([0, 1], dtype=np.int64),
             np.array([1, 1], dtype=np.int64),
             False,
         ),
-        # Right boundary is exclusive for canonical eligibility.
+        # A canonical timestamp equal to the exclusive end is still selectable.
         (
             np.array([150, 250, 350], dtype=np.int64),
             np.array([150, 260, 350], dtype=np.int64),
@@ -182,21 +181,21 @@ def test_find_closest_indices_input_validation(
             np.array([1, 1], dtype=np.int64),
             True,
         ),
-        # Repeated picks collapse under dedup.
+        # Repeated picks collapse under dedup: 110 and 140 both take 100.
         (
             np.array([100, 200, 300], dtype=np.int64),
             np.array([110, 140, 240, 350], dtype=np.int64),
-            np.array([200], dtype=np.int64),
-            np.array([1], dtype=np.int64),
-            np.array([3], dtype=np.int64),
+            np.array([100, 200], dtype=np.int64),
+            np.array([0, 1], dtype=np.int64),
+            np.array([2, 1], dtype=np.int64),
             True,
         ),
         # Repeated picks are preserved when dedup is disabled.
         (
             np.array([100, 200, 300], dtype=np.int64),
             np.array([110, 140, 240, 350], dtype=np.int64),
-            np.array([200, 200, 200], dtype=np.int64),
-            np.array([1, 1, 1], dtype=np.int64),
+            np.array([100, 100, 200], dtype=np.int64),
+            np.array([0, 0, 1], dtype=np.int64),
             np.array([1, 1, 1], dtype=np.int64),
             False,
         ),
@@ -260,8 +259,8 @@ def test_sample_window_indices_core_contract(  # noqa: PLR0913
         (
             np.array([100, 200, 300], dtype=np.int64),
             np.array([150, 250, 300], dtype=np.int64),
-            np.array([200, 200], dtype=np.int64),
-            np.array([1, 1], dtype=np.int64),
+            np.array([100, 200], dtype=np.int64),
+            np.array([0, 1], dtype=np.int64),
             np.array([1, 1], dtype=np.int64),
             False,
         ),
@@ -278,8 +277,8 @@ def test_sample_window_indices_core_contract(  # noqa: PLR0913
         (
             np.array([100, 200, 300], dtype=np.int64),
             np.array([150, 250], dtype=np.int64),
-            np.array([200], dtype=np.int64),
-            np.array([1], dtype=np.int64),
+            np.array([100], dtype=np.int64),
+            np.array([0], dtype=np.int64),
             np.array([1], dtype=np.int64),
             False,
         ),
@@ -314,25 +313,24 @@ def test_sample_window_indices_half_open_window_semantics(  # noqa: PLR0913
 @pytest.mark.parametrize(
     ("canonical", "grid", "expected_canonical", "expected_indices", "expected_counts"),
     [
-        # Out-of-window canonical timestamps are ignored even if they would be
-        # closer under a global nearest-neighbour search.
+        # A canonical timestamp before the window is selected when it is nearest.
         (
             np.array([100, 200, 300], dtype=np.int64),
             np.array([150, 260, 350], dtype=np.int64),
-            np.array([200, 300], dtype=np.int64),
-            np.array([1, 2], dtype=np.int64),
+            np.array([100, 300], dtype=np.int64),
+            np.array([0, 2], dtype=np.int64),
             np.array([1, 1], dtype=np.int64),
         ),
-        # If there are no canonical timestamps in the current window, return
-        # empty arrays rather than sampling from neighbouring windows.
+        # A window past the end of the timeline still emits a row per reference
+        # timestamp, taking the nearest canonical timestamp that exists.
         (
             np.array([100, 200, 300], dtype=np.int64),
             np.array([400, 500], dtype=np.int64),
-            np.array([], dtype=np.int64),
-            np.array([], dtype=np.int64),
-            np.array([], dtype=np.int64),
+            np.array([300], dtype=np.int64),
+            np.array([2], dtype=np.int64),
+            np.array([1], dtype=np.int64),
         ),
-        # Canonical timestamps on both sides of the window do not leak in.
+        # An in-window canonical timestamp still wins when it is the nearest one.
         (
             np.array([100, 200, 300, 400], dtype=np.int64),
             np.array([180, 220, 280], dtype=np.int64),
@@ -342,14 +340,14 @@ def test_sample_window_indices_half_open_window_semantics(  # noqa: PLR0913
         ),
     ],
 )
-def test_sample_window_indices_window_local_eligibility(
+def test_sample_window_indices_ignores_window_bounds_for_eligibility(
     canonical: npt.NDArray[np.int64],
     grid: npt.NDArray[np.int64],
     expected_canonical: npt.NDArray[np.int64],
     expected_indices: npt.NDArray[np.int64],
     expected_counts: npt.NDArray[np.int64],
 ) -> None:
-    """sample_window_indices should use only canonical timestamps from the current window."""
+    """Window bounds select reference timestamps, not eligible canonical timestamps."""
     window = _window_from_grid(grid)
     indices, counts = sample_window_indices(canonical=canonical, window=window, policy=NearestTimestampPolicy())
 
@@ -373,7 +371,7 @@ def test_sample_window_indices_window_local_eligibility(
             np.array([1, 1, 1], dtype=np.int64),
             False,
         ),
-        # Left/right nearest choice inside the eligible window-local subset.
+        # Left/right nearest choice.
         (
             np.array([100, 200, 300], dtype=np.int64),
             np.array([160, 260, 350], dtype=np.int64),
@@ -382,16 +380,16 @@ def test_sample_window_indices_window_local_eligibility(
             np.array([1, 1], dtype=np.int64),
             False,
         ),
-        # Midpoint ties resolve to the left eligible canonical timestamp.
+        # Midpoint ties resolve to the left canonical timestamp.
         (
             np.array([100, 200, 300], dtype=np.int64),
             np.array([150, 250, 350], dtype=np.int64),
-            np.array([200, 200], dtype=np.int64),
-            np.array([1, 1], dtype=np.int64),
+            np.array([100, 200], dtype=np.int64),
+            np.array([0, 1], dtype=np.int64),
             np.array([1, 1], dtype=np.int64),
             False,
         ),
-        # Values beyond the last eligible canonical snap to the last eligible one.
+        # Values beyond the last canonical timestamp snap to it.
         (
             np.array([100, 200, 300], dtype=np.int64),
             np.array([260, 340], dtype=np.int64),
@@ -400,18 +398,18 @@ def test_sample_window_indices_window_local_eligibility(
             np.array([1], dtype=np.int64),
             False,
         ),
-        # Values before the first eligible canonical snap to the first eligible one.
+        # A tie and a clear win against the same neighbouring pair.
         (
             np.array([100, 200, 300], dtype=np.int64),
             np.array([150, 170, 350], dtype=np.int64),
-            np.array([200, 200], dtype=np.int64),
-            np.array([1, 1], dtype=np.int64),
+            np.array([100, 200], dtype=np.int64),
+            np.array([0, 1], dtype=np.int64),
             np.array([1, 1], dtype=np.int64),
             False,
         ),
     ],
 )
-def test_sample_window_indices_nearest_neighbor_within_window(  # noqa: PLR0913
+def test_sample_window_indices_nearest_neighbour_selection(  # noqa: PLR0913
     canonical: npt.NDArray[np.int64],
     grid: npt.NDArray[np.int64],
     expected_canonical: npt.NDArray[np.int64],
@@ -467,8 +465,8 @@ def test_sample_window_indices_max_delta_passes() -> None:
 
     indices, counts = sample_window_indices(canonical=canonical, window=window, policy=policy, dedup=False)
 
-    np.testing.assert_array_equal(indices, np.array([1, 1], dtype=np.int64))
-    np.testing.assert_array_equal(canonical[indices], np.array([200, 200], dtype=np.int64))
+    np.testing.assert_array_equal(indices, np.array([0, 1], dtype=np.int64))
+    np.testing.assert_array_equal(canonical[indices], np.array([100, 200], dtype=np.int64))
     np.testing.assert_array_equal(counts, np.array([1, 1], dtype=np.int64))
 
 
@@ -485,8 +483,8 @@ def test_sample_window_indices_max_delta_none_disables_delta_check() -> None:
         dedup=False,
     )
 
-    np.testing.assert_array_equal(indices, np.array([1, 2], dtype=np.int64))
-    np.testing.assert_array_equal(canonical[indices], np.array([200, 300], dtype=np.int64))
+    np.testing.assert_array_equal(indices, np.array([0, 2], dtype=np.int64))
+    np.testing.assert_array_equal(canonical[indices], np.array([100, 300], dtype=np.int64))
     np.testing.assert_array_equal(counts, np.array([1, 1], dtype=np.int64))
 
 
@@ -516,21 +514,8 @@ def test_sample_window_indices_max_delta_raises_with_offending_pair() -> None:
     window = _window_from_grid(grid)
     policy = NearestTimestampPolicy(max_delta_ns=30)
 
-    with pytest.raises(ValueError, match=r"max_delta_ns=30 exceeded: max delta was 50 ns for grid=150, canonical=200"):
+    with pytest.raises(ValueError, match=r"max_delta_ns=30 exceeded: max delta was 50 ns for grid=150, canonical=100"):
         sample_window_indices(canonical=canonical, window=window, policy=policy)
-
-
-def test_sample_window_indices_max_delta_returns_empty_when_no_canonical_timestamps_are_in_window() -> None:
-    """An empty in-window result with policy should return empty arrays rather than raising."""
-    canonical = np.array([100, 200, 300], dtype=np.int64)
-    grid = np.array([400, 500], dtype=np.int64)
-    window = _window_from_grid(grid)
-    policy = NearestTimestampPolicy(max_delta_ns=0)
-
-    indices, counts = sample_window_indices(canonical=canonical, window=window, policy=policy)
-
-    np.testing.assert_array_equal(indices, np.array([], dtype=np.int64))
-    np.testing.assert_array_equal(counts, np.array([], dtype=np.int64))
 
 
 @pytest.mark.parametrize(
@@ -571,8 +556,8 @@ def test_sample_window_indices_input_validation(
         (
             np.array([100, 200, 300], dtype=np.int64),
             np.array([110, 140, 240, 350], dtype=np.int64),
-            np.array([200, 200, 200], dtype=np.int64),
-            np.array([1, 1, 1], dtype=np.int64),
+            np.array([100, 100, 200], dtype=np.int64),
+            np.array([0, 0, 1], dtype=np.int64),
             np.array([1, 1, 1], dtype=np.int64),
             False,
         ),
@@ -589,18 +574,18 @@ def test_sample_window_indices_input_validation(
         (
             np.array([101, 199, 301, 399], dtype=np.int64),
             np.array([110, 210, 310, 410], dtype=np.int64),
-            np.array([199, 301], dtype=np.int64),
-            np.array([1, 2], dtype=np.int64),
-            np.array([2, 1], dtype=np.int64),
+            np.array([101, 199, 301], dtype=np.int64),
+            np.array([0, 1, 2], dtype=np.int64),
+            np.array([1, 1, 1], dtype=np.int64),
             True,
         ),
         # Sparse canonical timestamps inside a wider window.
         (
             np.array([100, 300], dtype=np.int64),
             np.array([110, 210, 310, 410], dtype=np.int64),
-            np.array([300], dtype=np.int64),
-            np.array([1], dtype=np.int64),
-            np.array([3], dtype=np.int64),
+            np.array([100, 300], dtype=np.int64),
+            np.array([0, 1], dtype=np.int64),
+            np.array([1, 2], dtype=np.int64),
             True,
         ),
         # Dense canonical timestamps with only a few active reference timestamps.
@@ -640,30 +625,6 @@ def test_sample_window_indices_shape_and_density_cases(  # noqa: PLR0913
     assert np.all(indices < len(canonical))
 
 
-def test_sample_window_indices_differs_from_global_nearest_neighbour() -> None:
-    """Window-local sampling should ignore a globally closer canonical timestamp that lies outside the window."""
-    canonical = np.array([100, 200, 300], dtype=np.int64)
-    grid = np.array([150, 260, 350], dtype=np.int64)
-    window = _window_from_grid(grid)
-    global_indices = find_closest_indices(canonical, window.timestamps_ns)
-    window_indices, window_counts = sample_window_indices(
-        canonical=canonical,
-        window=window,
-        policy=NearestTimestampPolicy(),
-        dedup=False,
-    )
-
-    # A global nearest-neighbour search would use 100 for the first reference
-    # timestamp, because 100 is closer to 150 than 200 is.
-    np.testing.assert_array_equal(global_indices, np.array([0, 2], dtype=np.int64))
-    np.testing.assert_array_equal(canonical[global_indices], np.array([100, 300], dtype=np.int64))
-
-    # Window-local sampling ignores 100 because it lies outside [150, 350).
-    np.testing.assert_array_equal(window_indices, np.array([1, 2], dtype=np.int64))
-    np.testing.assert_array_equal(canonical[window_indices], np.array([200, 300], dtype=np.int64))
-    np.testing.assert_array_equal(window_counts, np.array([1, 1], dtype=np.int64))
-
-
 def test_sampler_selection_is_origin_invariant() -> None:
     """Shifting canonical and grid timestamps to an epoch origin should not change what gets selected."""
     canonical = np.array([0, 90_000_000, 210_000_000, 290_000_000, 400_000_000], dtype=np.int64)
@@ -688,3 +649,158 @@ def test_sampler_selection_is_origin_invariant() -> None:
     # Indices and counts address the same canonical slots, so they are identical rather than shifted.
     np.testing.assert_array_equal(shifted_indices, base_indices)
     np.testing.assert_array_equal(shifted_counts, base_counts)
+
+
+def _select_over_grid(
+    canonical: npt.NDArray[np.int64],
+    grid: SamplingGrid,
+) -> tuple[list[int], list[int]]:
+    """Concatenate per-window sampler output, as a pipeline consuming batches would.
+
+    Returns ``(reference_timestamps, selected_canonical_timestamps)``.
+    """
+    reference: list[int] = []
+    selected: list[int] = []
+    for window in grid:
+        if len(window) == 0:
+            continue
+        indices, _counts = sample_window_indices(
+            canonical=canonical,
+            window=window,
+            policy=NearestTimestampPolicy(),
+            dedup=False,
+        )
+        reference.extend(int(value) for value in window.timestamps_ns)
+        selected.extend(int(value) for value in canonical[indices])
+    return reference, selected
+
+
+_INVARIANCE_CANONICAL = np.array(
+    [100, 900, 1900, 2800, 4100, 5100, 5900, 6800, 8100, 9100],
+    dtype=np.int64,
+)
+_INVARIANCE_GRID_TS = np.arange(0, 10_000, 1000, dtype=np.int64)
+
+
+@pytest.mark.parametrize("duration_ns", [1000, 2000, 3000, 5000, 10_000])
+def test_sample_window_indices_selection_is_invariant_to_window_size(duration_ns: int) -> None:
+    """Splitting one span into more windows must not change which timestamps are selected."""
+    whole_span = SamplingGrid(
+        start_ns=0,
+        exclusive_end_ns=10_000,
+        timestamps_ns=_INVARIANCE_GRID_TS,
+        stride_ns=10_000,
+        duration_ns=10_000,
+    )
+    subdivided = SamplingGrid(
+        start_ns=0,
+        exclusive_end_ns=10_000,
+        timestamps_ns=_INVARIANCE_GRID_TS,
+        stride_ns=duration_ns,
+        duration_ns=duration_ns,
+    )
+
+    expected_reference, expected_selected = _select_over_grid(_INVARIANCE_CANONICAL, whole_span)
+    reference, selected = _select_over_grid(_INVARIANCE_CANONICAL, subdivided)
+
+    assert reference == expected_reference
+    assert selected == expected_selected
+
+
+def test_sample_window_indices_reaches_across_the_window_edge() -> None:
+    """A reference timestamp must select its nearest canonical timestamp even across a window edge."""
+    canonical = np.array([1900, 2800, 4100], dtype=np.int64)
+    window = SamplingWindow(
+        start_ns=2000,
+        exclusive_end_ns=4000,
+        timestamps_ns=np.array([2000, 3000], dtype=np.int64),
+    )
+
+    indices, counts = sample_window_indices(
+        canonical=canonical,
+        window=window,
+        policy=NearestTimestampPolicy(),
+        dedup=False,
+    )
+
+    # 1900 is 100 ns from the reference timestamp 2000 and 2800 is 800 ns from it.
+    np.testing.assert_array_equal(canonical[indices], np.array([1900, 2800], dtype=np.int64))
+    np.testing.assert_array_equal(counts, np.array([1, 1], dtype=np.int64))
+
+
+def test_sample_window_indices_selection_depends_only_on_the_reference_timestamp() -> None:
+    """The same reference timestamp must select the same canonical timestamp in any window."""
+    canonical = np.array([1900, 2800, 4100], dtype=np.int64)
+    reference_ts = np.array([2000], dtype=np.int64)
+
+    picks = set()
+    for start_ns, exclusive_end_ns in ((2000, 4000), (1500, 2500), (0, 10_000), (2000, 2001)):
+        window = SamplingWindow(
+            start_ns=start_ns,
+            exclusive_end_ns=exclusive_end_ns,
+            timestamps_ns=reference_ts,
+        )
+        indices, _counts = sample_window_indices(
+            canonical=canonical,
+            window=window,
+            policy=NearestTimestampPolicy(),
+            dedup=False,
+        )
+        picks.add(int(canonical[indices][0]))
+
+    assert picks == {1900}
+
+
+def test_sample_window_indices_emits_one_row_per_reference_timestamp() -> None:
+    """A window whose span holds no canonical timestamp must still emit a row per reference timestamp."""
+    canonical = np.array([100, 9500], dtype=np.int64)
+    window = SamplingWindow(
+        start_ns=4000,
+        exclusive_end_ns=6000,
+        timestamps_ns=np.array([4000, 5000], dtype=np.int64),
+    )
+
+    indices, counts = sample_window_indices(
+        canonical=canonical,
+        window=window,
+        policy=NearestTimestampPolicy(),
+        dedup=False,
+    )
+
+    assert len(indices) == len(window)
+    np.testing.assert_array_equal(canonical[indices], np.array([100, 9500], dtype=np.int64))
+    np.testing.assert_array_equal(counts, np.array([1, 1], dtype=np.int64))
+
+
+def test_sample_window_indices_max_delta_raises_when_nothing_is_within_tolerance() -> None:
+    """A reference timestamp stranded in a dropout must raise rather than silently emit nothing."""
+    canonical = np.array([100, 9500], dtype=np.int64)
+    window = SamplingWindow(
+        start_ns=4000,
+        exclusive_end_ns=6000,
+        timestamps_ns=np.array([4000, 5000], dtype=np.int64),
+    )
+
+    with pytest.raises(ValueError, match="max_delta_ns=500 exceeded"):
+        sample_window_indices(
+            canonical=canonical,
+            window=window,
+            policy=NearestTimestampPolicy(max_delta_ns=500),
+        )
+
+
+def test_sample_window_indices_max_delta_ignores_window_size() -> None:
+    """Subdividing a span must not make a clip that satisfies max_delta_ns start raising."""
+    policy = NearestTimestampPolicy(max_delta_ns=500)
+    for duration_ns in (10_000, 2000, 1000):
+        grid = SamplingGrid(
+            start_ns=0,
+            exclusive_end_ns=10_000,
+            timestamps_ns=_INVARIANCE_GRID_TS,
+            stride_ns=duration_ns,
+            duration_ns=duration_ns,
+        )
+        for window in grid:
+            if len(window) == 0:
+                continue
+            sample_window_indices(canonical=_INVARIANCE_CANONICAL, window=window, policy=policy)

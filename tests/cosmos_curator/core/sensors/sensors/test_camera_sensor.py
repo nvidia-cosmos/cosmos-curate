@@ -751,75 +751,6 @@ def test_camera_sensor_populates_decoder_motion_vectors(
     assert batch.motion_vectors is motion_vectors
 
 
-def test_camera_sensor_returns_empty_when_window_has_no_displayable_matches(
-    patch_camera_sensor_dependencies: Callable[..., None],
-) -> None:
-    """A non-empty reference window can still produce an empty sampled payload."""
-    index, metadata = _make_video_index_and_metadata(
-        pts_ns=[100, 200, 300],
-        pts_stream=[10, 20, 30],
-        is_keyframe=[True, False, False],
-        is_discard=[False, False, False],
-        kf_pts_ns=[100],
-        kf_pts_stream=[10],
-    )
-    decode_calls: list[list[tuple[int, list[tuple[int, int]]]]] = []
-
-    def fake_make_index_and_metadata(
-        source: object,
-        stream_idx: int = 0,
-        index_method: object = None,
-        **_kwargs: object,
-    ) -> tuple[VideoIndex, VideoMetadata]:
-        del source, stream_idx, index_method
-        return index, metadata
-
-    def _decode_with_capture(decode_plan: list[tuple[int, list[tuple[int, int]]]]) -> npt.NDArray[np.uint8]:
-        decode_calls.append(decode_plan)
-        return np.empty((0, metadata.height, metadata.width, 3), dtype=np.uint8)
-
-    def fake_decoder_open(
-        source: object,
-        stream_idx: int = 0,
-        config: object = None,
-        stats: object = None,
-        **_kwargs: object,
-    ) -> _FakeDecoder:
-        del source, stream_idx, config, stats
-        return _FakeDecoder(time_base=index.time_base, decode_fn=_decode_with_capture)
-
-    def fake_sample_window_indices(
-        canonical: npt.NDArray[np.int64],
-        grid: npt.NDArray[np.int64],
-        *,
-        policy: object = None,
-        dedup: bool = True,
-    ) -> tuple[npt.NDArray[np.int64], npt.NDArray[np.int64]]:
-        del canonical, grid, policy, dedup
-        return np.array([], dtype=np.int64), np.array([], dtype=np.int64)
-
-    patch_camera_sensor_dependencies(
-        make_index_and_metadata_fn=fake_make_index_and_metadata,
-        decoder_open_fn=fake_decoder_open,
-        sample_window_indices_fn=fake_sample_window_indices,
-    )
-
-    sensor = CameraSensor(b"not-used")
-    grid = make_sampling_grid(
-        timestamps_ns=np.array([150, 250, 350], dtype=np.int64),
-        stride_ns=1_000,
-        duration_ns=1_000,
-    )
-
-    batch = next(sensor.sample(SamplingSpec(grid=grid), policy=NearestTimestampPolicy()))
-
-    assert batch.align_timestamps_ns.shape == (0,)
-    assert batch.sensor_timestamps_ns.shape == (0,)
-    assert batch.pts_stream.shape == (0,)
-    assert batch.frames.shape == (0, 2, 2, 3)
-    assert decode_calls == []
-
-
 def test_camera_sensor_propagates_extrinsics_to_sampled_batches(
     patch_camera_sensor_dependencies: Callable[..., None],
 ) -> None:
@@ -1097,16 +1028,6 @@ def test_camera_sensor_empty_batches_preserve_extrinsics(
         del source, stream_idx, index_method
         return index, metadata
 
-    def fake_sample_window_indices(
-        canonical: npt.NDArray[np.int64],
-        grid: npt.NDArray[np.int64],
-        *,
-        policy: object = None,
-        dedup: bool = True,
-    ) -> tuple[npt.NDArray[np.int64], npt.NDArray[np.int64]]:
-        del canonical, grid, policy, dedup
-        return np.array([], dtype=np.int64), np.array([], dtype=np.int64)
-
     def fake_decoder_open(
         source: object,
         stream_idx: int = 0,
@@ -1117,25 +1038,31 @@ def test_camera_sensor_empty_batches_preserve_extrinsics(
         del source, stream_idx, config, stats
         return _FakeDecoder(
             time_base=index.time_base,
-            decode_fn=lambda decode_plan: np.empty((0, metadata.height, metadata.width, 3), dtype=np.uint8),  # noqa: ARG005
+            decode_fn=lambda decode_plan: np.zeros(
+                (sum(count for _, targets in decode_plan for _, count in targets), metadata.height, metadata.width, 3),
+                dtype=np.uint8,
+            ),
         )
 
     patch_camera_sensor_dependencies(
         make_index_and_metadata_fn=fake_make_index_and_metadata,
         decoder_open_fn=fake_decoder_open,
-        sample_window_indices_fn=fake_sample_window_indices,
     )
 
     sensor = CameraSensor(b"not-used", extrinsics=extrinsics)
+    # Windows advance by 1000 ns from 150, so only the first holds a reference
+    # timestamp; every later window is empty and yields the cached empty batch.
     grid = make_sampling_grid(
-        timestamps_ns=np.array([150, 250], dtype=np.int64),
+        timestamps_ns=np.array([150, 5_150], dtype=np.int64),
         stride_ns=1_000,
         duration_ns=1_000,
     )
 
-    empty0 = next(sensor.sample(SamplingSpec(grid=grid), policy=NearestTimestampPolicy()))
+    batches = list(sensor.sample(SamplingSpec(grid=grid), policy=NearestTimestampPolicy()))
+    empty0 = batches[1]
     empty1 = sensor._get_empty_camera_data()
 
+    assert len(empty0.align_timestamps_ns) == 0
     assert empty0.extrinsics is extrinsics
     assert empty1.extrinsics is extrinsics
     assert empty0 is empty1
@@ -1164,16 +1091,6 @@ def test_camera_sensor_empty_batches_preserve_intrinsics(
         del source, stream_idx, index_method
         return index, metadata
 
-    def fake_sample_window_indices(
-        canonical: npt.NDArray[np.int64],
-        grid: npt.NDArray[np.int64],
-        *,
-        policy: object = None,
-        dedup: bool = True,
-    ) -> tuple[npt.NDArray[np.int64], npt.NDArray[np.int64]]:
-        del canonical, grid, policy, dedup
-        return np.array([], dtype=np.int64), np.array([], dtype=np.int64)
-
     def fake_decoder_open(
         source: object,
         stream_idx: int = 0,
@@ -1184,25 +1101,31 @@ def test_camera_sensor_empty_batches_preserve_intrinsics(
         del source, stream_idx, config, stats
         return _FakeDecoder(
             time_base=index.time_base,
-            decode_fn=lambda decode_plan: np.empty((0, metadata.height, metadata.width, 3), dtype=np.uint8),  # noqa: ARG005
+            decode_fn=lambda decode_plan: np.zeros(
+                (sum(count for _, targets in decode_plan for _, count in targets), metadata.height, metadata.width, 3),
+                dtype=np.uint8,
+            ),
         )
 
     patch_camera_sensor_dependencies(
         make_index_and_metadata_fn=fake_make_index_and_metadata,
         decoder_open_fn=fake_decoder_open,
-        sample_window_indices_fn=fake_sample_window_indices,
     )
 
     sensor = CameraSensor(b"not-used", intrinsics=intrinsics)
+    # Windows advance by 1000 ns from 150, so only the first holds a reference
+    # timestamp; every later window is empty and yields the cached empty batch.
     grid = make_sampling_grid(
-        timestamps_ns=np.array([150, 250], dtype=np.int64),
+        timestamps_ns=np.array([150, 5_150], dtype=np.int64),
         stride_ns=1_000,
         duration_ns=1_000,
     )
 
-    empty0 = next(sensor.sample(SamplingSpec(grid=grid), policy=NearestTimestampPolicy()))
+    batches = list(sensor.sample(SamplingSpec(grid=grid), policy=NearestTimestampPolicy()))
+    empty0 = batches[1]
     empty1 = sensor._get_empty_camera_data()
 
+    assert len(empty0.align_timestamps_ns) == 0
     assert empty0.intrinsics is intrinsics
     assert empty1.intrinsics is intrinsics
     assert empty0 is empty1

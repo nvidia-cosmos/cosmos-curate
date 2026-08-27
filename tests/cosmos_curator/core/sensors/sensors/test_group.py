@@ -260,8 +260,13 @@ def test_sensor_group_rejects_sensor_without_policy_support_before_sampling() ->
     assert not sensor.sample_started
 
 
-def test_sensor_with_no_coverage_omitted_from_frame() -> None:
-    """A sensor with no eligible data for a window is excluded from that frame's sensor_data."""
+def test_sensor_past_its_coverage_snaps_to_its_last_timestamp() -> None:
+    """A sensor whose timeline ends early keeps emitting rows, snapped to its last timestamp.
+
+    Window bounds do not restrict which sensor timestamps may be selected, so a
+    sensor is only omitted from a frame when it has no timestamps at all for that
+    window. Rejecting a snap that reaches too far is ``max_delta_ns``'s job.
+    """
     ts_short = np.array([0, 1_000], dtype=np.int64)
     grid = _make_grid(_TS, _STRIDE, _STRIDE)
     spec = SamplingSpec(grid=grid)
@@ -269,13 +274,14 @@ def test_sensor_with_no_coverage_omitted_from_frame() -> None:
 
     frames = list(group.sample(spec, policies=_nearest_policies("full", "short")))
 
-    # ts_short covers windows [0,1000) and [1000,2000) — both sensors present
-    assert "short" in frames[0].sensor_data
-    assert "short" in frames[1].sensor_data
+    # ts_short covers windows [0,1000) and [1000,2000) exactly.
+    assert frames[0].sensor_data["short"].sensor_timestamps_ns.tolist() == [0]
+    assert frames[1].sensor_data["short"].sensor_timestamps_ns.tolist() == [1_000]
+    assert len(frames) == len(_TS)
 
-    # Windows [2000,5000) are outside ts_short's range — "short" omitted
+    # Windows [2000,5000) are past ts_short's range, so every row snaps to 1000.
     for frame in frames[2:]:
-        assert "short" not in frame.sensor_data
+        assert frame.sensor_data["short"].sensor_timestamps_ns.tolist() == [1_000]
         assert "full" in frame.sensor_data
 
 

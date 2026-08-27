@@ -294,9 +294,6 @@ class CameraSensor:
                     continue
 
                 indices, counts = sample_window_indices(self.video_index.display_pts_ns, window, policy=policy)
-                if len(indices) == 0:
-                    yield self._get_empty_camera_data()
-                    continue
                 sampled_pts_stream = self.video_index.display_pts_stream[indices]
                 decode_plan = make_decode_plan(self.video_index.kf_pts_stream, sampled_pts_stream, counts)
                 frames, motion_vectors = decoder.decode(decode_plan)

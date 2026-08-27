@@ -400,9 +400,6 @@ class McapCameraSensor:
 
         log_times_ns = np.array(decoded_log_times_ns, dtype=np.int64)
         indices, _counts = sample_window_indices(log_times_ns, window, policy=policy, dedup=False)
-        if len(indices) == 0:
-            return self._get_empty_camera_data(metadata)
-
         sampled_sensor_timestamps_ns = log_times_ns[indices]
         sampled_sensor_timestamps_ns.flags.writeable = False
         frames = np.stack([decoded_frames[int(index)] for index in indices]).astype(np.uint8, copy=False)

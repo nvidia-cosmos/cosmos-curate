@@ -579,38 +579,6 @@ def test_mcap_camera_sensor_get_empty_camera_data_is_cached() -> None:
     assert empty0.metadata.height == 3
 
 
-def test_mcap_camera_sensor_sample_window_returns_empty_when_sampler_selects_no_indices(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A non-empty message window can still produce an empty sampled batch."""
-
-    def fake_sample_window_indices(
-        timestamps_ns: npt.NDArray[np.int64],
-        window: SamplingWindow,
-        *,
-        policy: object,
-        dedup: bool,
-    ) -> tuple[npt.NDArray[np.int64], npt.NDArray[np.int64]]:
-        del timestamps_ns, window, policy, dedup
-        return np.array([], dtype=np.int64), np.array([], dtype=np.int64)
-
-    monkeypatch.setattr(mcap_camera_sensor, "sample_window_indices", fake_sample_window_indices)
-    sensor = McapCameraSensor(b"not-used")
-    sensor._video_metadata = _make_metadata(width=2, height=2)
-
-    batch = sensor._sample_window(
-        SamplingWindow(start_ns=100, exclusive_end_ns=200, timestamps_ns=np.array([100], dtype=np.int64)),
-        [100],
-        [_decoded_frame()],
-        policy=_policy(),
-        metadata=sensor.video_metadata,
-    )
-
-    assert batch.align_timestamps_ns.shape == (0,)
-    assert batch.sensor_timestamps_ns.shape == (0,)
-    assert batch.frames.shape == (0, 2, 2, 3)
-
-
 def test_mcap_camera_sensor_sample_window_stacks_only_selected_frames(monkeypatch: pytest.MonkeyPatch) -> None:
     """Sparse sampling should not stack every decoded frame in the source window."""
 

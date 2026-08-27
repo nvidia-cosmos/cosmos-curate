@@ -30,8 +30,6 @@ def find_closest_indices(canonical: npt.NDArray[np.int64], grid: npt.NDArray[np.
 
     This is a low-level nearest-neighbour helper only. It does not apply any
     sampling-window semantics or restrict ``canonical`` by timestamp range.
-    Callers that need window-local matching must filter ``canonical`` before
-    calling this function.
 
     Args:
         canonical: The canonical timestamps to sample from. Must be strictly
@@ -81,21 +79,26 @@ def sample_window_indices(
 ) -> tuple[npt.NDArray[np.int64], npt.NDArray[np.int64]]:
     """Sample ``canonical`` using one window from ``grid`` and return indices into ``canonical``.
 
-    Window-local semantics
-    ----------------------
-    This function treats ``grid`` as one sampling window emitted by
+    Window semantics
+    ----------------
+    This function treats ``window`` as one sampling window emitted by
     :class:`~cosmos_curator.core.sensors.sampling.grid.SamplingGrid`.
 
     - ``window.timestamps_ns`` are the reference timestamps that belong to the current
-      half-open window.
+      half-open window, and therefore the rows this call produces.
     - ``window.exclusive_end_ns`` is the exclusive right boundary marker.
-    - Eligible canonical timestamps are restricted to the same half-open
-      interval ``[window.timestamps_ns[0], window.exclusive_end_ns)``.
 
-    In other words, this function performs nearest-neighbour matching only
-    within the current window. Canonical timestamps outside the window are
-    ignored, even if one of them would be closer in absolute time to a
-    reference timestamp in ``window.timestamps_ns``.
+    The window bounds choose reference timestamps. They do **not** restrict which
+    canonical timestamps may serve them: every timestamp in ``canonical`` is
+    eligible for every reference timestamp, and matching is plain
+    nearest-neighbour. A window is a batching choice, so letting it filter
+    ``canonical`` would make the selected data depend on ``stride_ns`` and
+    ``duration_ns``.
+
+    Reach is bounded by ``policy.max_delta_ns``, not by any span. Callers that
+    can only materialise part of the timeline -- a forward-only decoder, say --
+    bound it further by what they pass in ``canonical``; one observation beyond
+    each window edge is enough to reproduce whole-timeline selection exactly.
 
     Return value semantics
     ----------------------
@@ -123,8 +126,9 @@ def sample_window_indices(
         - ``indices`` are indices into the original ``canonical`` array.
         - ``counts`` records multiplicity for each returned canonical index.
 
-        If there are no eligible canonical timestamps in the current window,
-        returns two empty ``int64`` arrays.
+        With ``dedup=False`` there is one index per reference timestamp. If the
+        window carries no reference timestamps, returns two empty ``int64``
+        arrays.
 
     Raises:
         ValueError: If ``canonical`` is empty.
@@ -145,52 +149,18 @@ def sample_window_indices(
 
     require_strictly_increasing("canonical", canonical)
 
-    if len(window) < 1:
+    # A window with no reference timestamps produces no rows. `len(window)` is
+    # `len(window.timestamps_ns)`, so this is the only emptiness check needed.
+    if len(window) == 0:
         return np.empty(0, dtype=np.int64), np.empty(0, dtype=np.int64)
 
-    # `grid[-1]` is the exclusive boundary marker for the half-open interval.
-    # The actual reference timestamps to sample in this window are `grid[:-1]`.
     active_grid = window.timestamps_ns
 
-    # If the current window contains only the boundary marker, there are no
-    # reference timestamps to sample.
-    if len(active_grid) == 0:
-        return np.empty(0, dtype=np.int64), np.empty(0, dtype=np.int64)
-
-    # Build a boolean mask selecting only canonical timestamps that are
-    # eligible for this window.
-    #
-    # Window-local contract:
-    #   eligible canonical timestamps are those in [grid[0], grid[-1])
-    eligible_mask = (canonical >= window.timestamps_ns[0]) & (canonical < window.exclusive_end_ns)
-
-    # Convert the mask into integer indices into the ORIGINAL canonical array.
-    # We keep these indices so that after matching on the filtered subset, we
-    # can map the results back to original-array coordinates for the caller.
-    eligible_indices = np.nonzero(eligible_mask)[0]
-
-    # Pull out just the in-window canonical timestamps for nearest-neighbour
-    # matching.
-    eligible_canonical = canonical[eligible_indices]
-
-    # No eligible canonical timestamps means this sensor has no data in the
-    # current window, so return an empty result rather than sampling from a
-    # neighbouring window.
-    if len(eligible_canonical) == 0:
-        return np.empty(0, dtype=np.int64), np.empty(0, dtype=np.int64)
-
-    # Perform nearest-neighbour matching against ONLY the eligible canonical
-    # timestamps from this window.
-    #
-    # Important:
-    #   `local_indices` are indices into `eligible_canonical`, not into the
-    #   caller's original `canonical` array.
-    local_indices = find_closest_indices(eligible_canonical, active_grid)
-
-    # Map the subset-local indices back to indices into the ORIGINAL canonical
-    # array, so callers can use them to index sidecar arrays that share the
-    # same layout as `canonical`.
-    indices = eligible_indices[local_indices]
+    # The window bounds deliberately do not filter `canonical`. They say which
+    # reference timestamps belong to this batch, not which observations may serve
+    # them. Filtering here would make selection depend on stride_ns/duration_ns,
+    # which are a batching choice.
+    indices = find_closest_indices(canonical, active_grid)
 
     if policy.max_delta_ns is not None:
         deltas = np.abs(canonical[indices] - active_grid)

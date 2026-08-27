@@ -132,8 +132,8 @@ def test_image_sensor_sample_uses_closest_timestamp(tmp_path: pathlib.Path) -> N
     assert tuple(sampled.frames[1, 0, 0]) == (0, 255, 0)
 
 
-def test_image_sensor_sample_is_window_local(tmp_path: pathlib.Path) -> None:
-    """Sampling should ignore a globally closer image that lies outside the current window."""
+def test_image_sensor_sample_reaches_outside_the_window(tmp_path: pathlib.Path) -> None:
+    """Sampling should select the nearest image even when it lies outside the current window."""
     image_a = tmp_path / "a.png"
     image_b = tmp_path / "b.png"
     _write_image(image_a, (255, 0, 0))
@@ -150,9 +150,11 @@ def test_image_sensor_sample_is_window_local(tmp_path: pathlib.Path) -> None:
 
     sampled = next(sensor.sample(SamplingSpec(grid=grid), policy=NearestTimestampPolicy()))
 
-    assert sampled.align_timestamps_ns.shape == (0,)
-    assert sampled.sensor_timestamps_ns.shape == (0,)
-    assert sampled.frames.shape == (0, 3, 4, 3)
+    # 35 is 6 ns from the reference timestamp 29; 10 is 19 ns from it.
+    assert sampled.align_timestamps_ns.tolist() == [29]
+    assert sampled.sensor_timestamps_ns.tolist() == [35]
+    assert sampled.frames.shape == (1, 3, 4, 3)
+    assert tuple(sampled.frames[0, 0, 0]) == (0, 255, 0)
 
 
 def test_image_sensor_sample_returns_empty_for_empty_window(tmp_path: pathlib.Path) -> None:
