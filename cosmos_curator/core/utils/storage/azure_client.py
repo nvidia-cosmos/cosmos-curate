@@ -45,6 +45,7 @@ from cosmos_curator.core.utils.storage.storage_client import (
     BaseClientConfig,
     StorageClient,
     StoragePrefix,
+    StorageStat,
     is_storage_path,
 )
 
@@ -217,24 +218,44 @@ class AzureClient(StorageClient):
         """Get a blob client for the specified container and blob."""
         return self.service_client.get_blob_client(container_name, blob_name)
 
-    def object_exists(self, dest: StoragePrefix) -> bool:
-        """Check if an object exists at the specified Azure URI.
+    def stat(self, dest: StoragePrefix) -> StorageStat:
+        """Return what one ``get_blob_properties`` says about the blob at ``dest``.
+
+        This is the request ``object_exists`` has always issued and thrown away; the
+        response it already had is now returned, so a caller that needs the size gets
+        it for the round trip it was making anyway.
+
+        Deliberately not wrapped in ``do_with_retries`` -- see
+        :meth:`StorageClient.stat` for why absence must answer promptly.
 
         Args:
-            dest (AzurePrefix): The Azure prefix of the object to check.
+            dest (AzurePrefix): The Azure prefix of the object to describe.
 
         Returns:
-            bool: True if the object exists, False otherwise.
+            Size, last-modified and entity tag as the store reported them.
+
+        Raises:
+            FileNotFoundError: If no blob exists at ``dest``.
+            HttpResponseError: For any other store error. Only
+                ``ResourceNotFoundError`` is translated, so an authorization failure
+                keeps propagating rather than being reported as a missing blob.
 
         """
-        assert isinstance(dest, AzurePrefix)
+        if not isinstance(dest, AzurePrefix):
+            error_msg = f"AzureClient requires an AzurePrefix, got {type(dest).__name__}: {dest}"
+            raise TypeError(error_msg)
         blob_client = self._get_blob_client(dest.container, dest.blob)
         try:
-            blob_client.get_blob_properties()
-        except ResourceNotFoundError:
-            return False
-        else:
-            return True
+            props = blob_client.get_blob_properties()
+        except ResourceNotFoundError as e:
+            error_msg = f"Object does not exist: {dest.path}"
+            raise FileNotFoundError(error_msg) from e
+        return StorageStat(
+            size_bytes=int(props.size) if props.size is not None else None,
+            last_modified=props.last_modified,
+            # Unquoted to match the S3 side, so a recorded tag compares across backends.
+            etag=str(props.etag).strip('"') if props.etag is not None else None,
+        )
 
     def upload_bytes(self, dest: StoragePrefix, data: "bytes | npt.NDArray[np.uint8]") -> None:
         """Upload binary data to the specified Azure prefix.
@@ -321,6 +342,51 @@ class AzureClient(StorageClient):
         for obj in objects:
             path = f"az://{uri.container}/{obj['Name']}"
             results.append(AzurePrefix(path))
+        return results
+
+    def list_recursive_with_suffixes(
+        self,
+        uri: StoragePrefix,
+        suffixes: tuple[str, ...],
+        limit: int = 0,
+    ) -> list[StoragePrefix]:
+        """List blobs under ``uri`` matching ``suffixes``, stopping at ``limit`` matches.
+
+        ``list_blobs`` returns a lazily paged iterator, so abandoning it once ``limit``
+        matches are collected leaves the remaining pages unfetched. See
+        :meth:`StorageClient.list_recursive_with_suffixes` for why the cap counts
+        matches rather than listed blobs.
+
+        Unlike :meth:`list_recursive` this does not drop zero-byte entries. That filter
+        exists there to hide directory placeholders, whose names end in the delimiter
+        and so cannot match a file suffix anyway; a zero-byte blob that *does* match is
+        a truncated upload, which a caller filtering for media must be shown rather
+        than quietly denied.
+
+        Args:
+            uri (AzurePrefix): The Azure prefix to list under.
+            suffixes: Non-empty suffixes to match, compared case-insensitively.
+            limit: Maximum number of matches; ``0`` (the default) means unlimited.
+
+        Returns:
+            Azure prefixes for the matching blobs, in listing order.
+
+        Raises:
+            ValueError: If ``suffixes`` is empty.
+
+        """
+        if not isinstance(uri, AzurePrefix):
+            error_msg = f"AzureClient requires an AzurePrefix, got {type(uri).__name__}: {uri}"
+            raise TypeError(error_msg)
+        lowered = self._lowercased_suffixes(suffixes)
+        container_client = self._get_container_client(uri.container)
+        results: list[StoragePrefix] = []
+        for blob in container_client.list_blobs(name_starts_with=uri.blob):
+            if not blob.name.lower().endswith(lowered):
+                continue
+            results.append(AzurePrefix(f"az://{uri.container}/{blob.name}"))
+            if 0 < limit <= len(results):
+                return results
         return results
 
     def list_recursive(self, prefix: StoragePrefix, limit: int = 0) -> list[dict[str, Any]]:

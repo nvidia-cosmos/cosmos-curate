@@ -17,7 +17,12 @@
 
 import pytest
 
-from cosmos_curator.core.utils.storage.s3_client import S3Prefix, is_s3path
+from cosmos_curator.core.utils.storage.s3_client import (
+    MAX_S3_KEY_LENGTH_BYTES,
+    S3Prefix,
+    is_s3path,
+    validate_configured_s3_location,
+)
 
 
 def test_s3prefix_with_scheme() -> None:
@@ -89,12 +94,90 @@ def test_s3prefix_underscore_in_bucket_name() -> None:
 
 
 def test_s3prefix_key_length_limit() -> None:
-    """Ensure overly long object keys (exceeding 1024 characters) raise a ValueError."""
-    # Generate a key that exceeds 1024 characters
+    """Ensure overly long object keys (exceeding 1024 bytes) raise a ValueError."""
+    # Generate a key that exceeds 1024 bytes
     long_key = "a" * 1025
     uri = f"s3://validbucket/{long_key}"
     with pytest.raises(ValueError, match=r"Invalid S3 object key"):
         S3Prefix(uri)
+
+
+def test_s3prefix_accepts_a_key_at_the_length_limit() -> None:
+    """Ensure the limit is inclusive, so the longest legal key is not rejected."""
+    key = "a" * MAX_S3_KEY_LENGTH_BYTES
+    assert S3Prefix(f"s3://validbucket/{key}").prefix == key
+
+
+def test_s3prefix_measures_the_key_limit_in_utf8_bytes_not_characters() -> None:
+    """S3 spends its 1024-byte budget on the encoding, so multibyte keys run out sooner.
+
+    A character count would accept this key and leave the store to reject it on first
+    use, which is the failure this validation exists to move forward to config time.
+    ``é`` encodes to two bytes, so half the limit in characters is all of it in bytes.
+    """
+    at_limit = "é" * (MAX_S3_KEY_LENGTH_BYTES // 2)
+    assert S3Prefix(f"s3://validbucket/{at_limit}").prefix == at_limit
+
+    over_limit = "é" * (MAX_S3_KEY_LENGTH_BYTES // 2 + 1)
+    assert len(over_limit) < MAX_S3_KEY_LENGTH_BYTES
+
+    with pytest.raises(ValueError, match=r"exceeds 1024 bytes \(1026\)"):
+        S3Prefix(f"s3://validbucket/{over_limit}")
+
+
+def test_s3prefix_accepts_a_hive_style_partition_key() -> None:
+    """A ``key=value`` path segment is an ordinary S3 key and a common layout.
+
+    This is the case that motivated dropping the character allowlist: partitioned
+    drops are written as ``run=<date>/`` by convention, and rejecting them meant a
+    valid prefix could not be configured at all.
+    """
+    sp = S3Prefix("s3://bucket-name/run=2026-08-01/clip.mp4")
+    assert sp.prefix == "run=2026-08-01/clip.mp4"
+
+
+@pytest.mark.parametrize("key", ["a+b/clip.mp4", "ts:2026/clip.mp4", "user@host/clip.mp4", "take(1)/clip.mp4"])
+def test_s3prefix_accepts_other_legal_key_characters(key: str) -> None:
+    """Characters the old allowlist omitted are legal in S3 and must round-trip.
+
+    Parametrized rather than merged into one key so a future narrowing shows which
+    character it broke, and to make the point that patching the allowlist one
+    character at a time would not have finished the job.
+    """
+    assert S3Prefix(f"s3://bucket-name/{key}").prefix == key
+
+
+@pytest.mark.parametrize("key", ["a*foo", "recordings/*/raw", "clip?.mp4"])
+def test_s3prefix_represents_a_key_containing_a_literal_glob_character(key: str) -> None:
+    """``*`` and ``?`` are legal in a key, and objects using them really exist.
+
+    ``aws s3 ls`` will happily show an object named ``a*foo``. Both listing paths
+    wrap the keys the store returns in an ``S3Prefix``, so refusing one here would
+    abort an entire enumeration over a single object rather than reject a typo.
+    """
+    assert S3Prefix(f"s3://bucket-name/{key}").prefix == key
+
+
+@pytest.mark.parametrize("key", ["a*foo", "recordings/*/raw", "clip?.mp4"])
+def test_a_configured_location_rejects_glob_metacharacters(key: str) -> None:
+    """A glob a human typed into a config is a typo, and no read path expands it.
+
+    This is the other population: the run it would produce succeeds against S3 and
+    matches zero objects, so config time is the only place the mistake is visible.
+    """
+    with pytest.raises(ValueError, match=r"Invalid S3 object key"):
+        validate_configured_s3_location(f"s3://bucket-name/{key}")
+
+
+def test_a_configured_location_still_runs_the_ordinary_prefix_validation() -> None:
+    """The helper adds to ``S3Prefix``'s checks rather than replacing them."""
+    with pytest.raises(ValueError, match=r"Invalid S3 bucket name"):
+        validate_configured_s3_location("s3://UPPERCASE/key")
+
+
+def test_s3prefix_allows_an_empty_key() -> None:
+    """A bucket with a trailing slash and no key stays valid, as it was before."""
+    assert S3Prefix("s3://bucket-name/").prefix == ""
 
 
 def test_is_s3path_behaviour() -> None:

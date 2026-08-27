@@ -268,7 +268,12 @@ def test_an_invalid_s3_bucket_name_is_rejected_at_config_time(prefix: str) -> No
 
 
 def test_an_invalid_s3_object_key_is_rejected_at_config_time() -> None:
-    """``S3Prefix`` restricts key characters, and a run would otherwise hit that later."""
+    """A mistyped glob is caught here, which is the only place it is visible.
+
+    ``S3Prefix`` itself accepts ``*`` because listings return keys that contain one.
+    Config validation is stricter on purpose: a wildcard nobody expands makes the run
+    match zero objects and report success.
+    """
     with pytest.raises(ValidationError, match="Invalid S3 object key"):
         MultimodalSplitInputConfig(input_path_prefix="s3://example-bucket/recordings/*/raw")
 

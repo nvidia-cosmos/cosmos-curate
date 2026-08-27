@@ -85,8 +85,12 @@ class _FailingDeleteClient(storage_client.StorageClient):
     def __init__(self, objects: dict[str, bytes] | None = None) -> None:
         self.objects = dict(objects or {})
 
-    def object_exists(self, dest: storage_client.StoragePrefix) -> bool:
-        return str(dest) in self.objects
+    def stat(self, dest: storage_client.StoragePrefix) -> storage_client.StorageStat:
+        try:
+            data = self.objects[str(dest)]
+        except KeyError as exc:
+            raise FileNotFoundError(str(dest)) from exc
+        return storage_client.StorageStat(size_bytes=len(data))
 
     def upload_bytes(self, dest: storage_client.StoragePrefix, data: bytes) -> None:
         self.objects[str(dest)] = data
@@ -113,6 +117,14 @@ class _FailingDeleteClient(storage_client.StorageClient):
     def list_recursive(
         self, prefix: storage_client.StoragePrefix, limit: int = 0
     ) -> list[dict[str, object]]:  # pragma: no cover - unused
+        raise NotImplementedError
+
+    def list_recursive_with_suffixes(
+        self,
+        uri: storage_client.StoragePrefix,
+        suffixes: tuple[str, ...],
+        limit: int = 0,
+    ) -> list[storage_client.StoragePrefix]:  # pragma: no cover - unused
         raise NotImplementedError
 
     def upload_file(

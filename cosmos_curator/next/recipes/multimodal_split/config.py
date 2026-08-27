@@ -371,9 +371,11 @@ def _validate_s3_location(location: str) -> str:
     """Run the storage layer's own bucket and key validation at config time.
 
     ``S3Prefix`` is what discovery builds every S3 call from, and it rejects
-    invalid bucket names and keys. Constructing one here moves that failure from
-    the middle of a run to ``cosmos-curator pipeline validate``, where it costs
-    nothing.
+    invalid bucket names and keys. Checking here moves that failure from the
+    middle of a run to ``cosmos-curator pipeline validate``, where it costs
+    nothing. The helper adds the config-only rejection of ``*`` and ``?``, which
+    ``S3Prefix`` itself cannot apply because it also wraps keys returned by a
+    listing, where those characters are legal and an object using one is real.
 
     The import is deferred purely for cost: ``s3_client`` pulls in boto3, about
     90ms of the ~120ms it takes to import, and the CLI reaches this module on
@@ -382,9 +384,9 @@ def _validate_s3_location(location: str) -> str:
     is responsible for its own importability there, and this function runs on
     every ``s3://`` prefix regardless.
     """
-    from cosmos_curator.core.utils.storage.s3_client import S3Prefix  # noqa: PLC0415
+    from cosmos_curator.core.utils.storage.s3_client import validate_configured_s3_location  # noqa: PLC0415
 
-    S3Prefix(location)
+    validate_configured_s3_location(location)
     return location
 
 

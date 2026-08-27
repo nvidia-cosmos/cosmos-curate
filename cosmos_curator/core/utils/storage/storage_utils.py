@@ -1252,12 +1252,21 @@ class StorageWriter:
 
 
 def get_smart_open_client_params(client: StorageClient) -> dict[str, Any]:
-    """Return smart_open-compatible ``client_params`` for a ``StorageClient``.
+    """Return smart_open-compatible transport parameters for a ``StorageClient``.
 
-    The returned dict can be passed directly to
-    ``cosmos_curator.core.sensors.utils.io.open_data_source`` (or ``open_file``)
-    as ``client_params=``, bridging the storage-client abstraction to the
-    ``smart_open`` transport layer.
+    The returned mapping is ``{"transport_params": {"client": <backend SDK client>}}``,
+    so it is unpacked into ``smart_open.open`` rather than handed to a Curator API::
+
+        with smart_open.open(uri, "rb", **get_smart_open_client_params(client)) as stream:
+            index, metadata = make_index_and_metadata(stream)
+
+    Reusing the client the caller already built is what keeps the read on the same
+    credentials as the rest of the pipeline's storage access.
+
+    The sensor library is not part of this bridge and must not learn about it:
+    ``cosmos_curator.core.sensors.utils.io.open_data_source`` / ``open_file`` take
+    ``(src, mode)`` and accept an already-opened ``BinaryIO``, which is what the
+    stream above is.
     """
     if isinstance(client, s3_client.S3Client):
         return {"transport_params": {"client": client.s3}}
