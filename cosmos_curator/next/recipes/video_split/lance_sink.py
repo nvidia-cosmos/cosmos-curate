@@ -20,7 +20,6 @@ from typing import Any
 
 import lance
 import pyarrow as pa
-import pyarrow.compute as pc
 from lance.fragment import write_fragments
 from loguru import logger
 
@@ -263,10 +262,20 @@ def _candidate_presence(
         msg = f"Canonical Lance table disappeared while resolving an append: {uri}"
         raise RuntimeError(msg)
     validate_clip_table(dataset, uri=uri)
-    candidate_filter = pc.field("clip_id").isin(pa.array(clip_ids, type=pa.string()))
+    # Use Lance's SQL filter parser rather than a PyArrow Expression. Lance's
+    # Substrait bridge cannot currently lower a string Expression when the
+    # table also contains nullable struct enrichment fields (for example the
+    # video-caption metadata field), even though only clip_id is projected.
+    literals = ",".join(_sql_string_literal(clip_id) for clip_id in clip_ids)
+    candidate_filter = f"clip_id IN ({literals})"
     committed = dataset.to_table(columns=["clip_id"], filter=candidate_filter)
     committed_ids = [str(value) for value in committed["clip_id"].to_pylist()]
     if len(set(committed_ids)) != len(committed_ids):
         msg = "Canonical table contains duplicate candidate clip IDs"
         raise RuntimeError(msg)
     return dataset, set(committed_ids)
+
+
+def _sql_string_literal(value: str) -> str:
+    """Quote one candidate ID for Lance's SQL predicate parser."""
+    return "'" + value.replace("'", "''") + "'"

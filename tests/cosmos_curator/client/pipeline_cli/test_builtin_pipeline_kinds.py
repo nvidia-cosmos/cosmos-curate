@@ -18,6 +18,7 @@ def test_registered_kind_names_are_derived_from_concrete_objects() -> None:
         "data-integrity",
         "multimodal-split",
         "robot-action-split",
+        "video-caption",
         "video-split",
         "video_split",
     )

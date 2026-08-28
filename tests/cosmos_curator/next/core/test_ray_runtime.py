@@ -50,6 +50,21 @@ def test_stability_configuration_can_disable_expected_video_memory_warnings(
     assert high_memory_detector_config.detection_time_interval_s == -1
 
 
+def test_eager_actor_autoscaling_removes_conservative_growth_limits(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Model-loading actor pools can grow geometrically while resources and their own ceiling still cap them."""
+    autoscaling_config = SimpleNamespace(
+        actor_pool_util_upscaling_threshold=1.75,
+        actor_pool_max_upscaling_delta=1,
+    )
+    context = SimpleNamespace(autoscaling_config=autoscaling_config)
+    monkeypatch.setattr(ray_runtime.ray.data.DataContext, "get_current", lambda: context)
+
+    ray_runtime.configure_ray_data_eager_actor_autoscaling()
+
+    assert autoscaling_config.actor_pool_util_upscaling_threshold == 1.0
+    assert autoscaling_config.actor_pool_max_upscaling_delta is None
+
+
 def test_recipes_do_not_reach_into_the_deprecated_ray_data_package() -> None:
     """``next`` must stay importable once ``pipelines.ray_data`` is deleted."""
     probe = (

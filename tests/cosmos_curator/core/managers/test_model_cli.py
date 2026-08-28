@@ -46,13 +46,23 @@ MOCK_MODELS = {
         "version": None,
         "filelist": None,
     },
+    "qwen3_8_27b": {
+        "model_id": "Qwen/Qwen3.8-27B",
+        "version": "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0",
+        "filelist": None,
+    },
+    "qwen3_8_27b_fp8": {
+        "model_id": "Qwen/Qwen3.8-27B-FP8",
+        "version": "017b9c7af6b5689d5dd426a76e0bc077eb5ca20a",
+        "filelist": None,
+    },
     "aesthetic_scorer": {
         "model_id": "ttj/sac-logos-ava1-l14-linearMSE",
         "version": "1e77fa05081323d99725fc40a9bf9f88180490e7",
         "filelist": ["model.safetensors"],
     },
 }
-DEFAULT_EXCLUDED_MOCK_MODELS = {"sam3"}
+DEFAULT_EXCLUDED_MOCK_MODELS = {"qwen3_8_27b", "qwen3_8_27b_fp8", "sam3"}
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -99,6 +109,13 @@ class TestSetupParsers:
 
         assert "sam3" in MOCK_MODELS
         assert "sam3" not in default_models
+
+    def test_default_models_exclude_large_qwen3_8_models(self) -> None:
+        """Test that Qwen3.8 variants require explicit download selection."""
+        default_models = _get_default_models()
+
+        assert "qwen3_8_27b" not in default_models
+        assert "qwen3_8_27b_fp8" not in default_models
 
     def test_download_parser_accepts_custom_models(self) -> None:
         """Test that download parser accepts custom --models argument."""

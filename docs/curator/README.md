@@ -33,6 +33,8 @@ This directory collects documentation for Cosmos Curator. It is organized by the
   maintained reference recipes.
 - [Curator Next Video Split](design/curator-next-video-split.md) - fixed-stride CPU transcoding with S3 media and Lance
   metadata.
+- [Curator Next Video Captioning](design/curator-next-video-captioning.md) - checkpointed Qwen3.8 inference and
+  fragment-atomic Lance enrichment.
 - [Curator Next Incremental Curation](design/curator-next-incremental-curation.md) - a canonical Lance clip table that
   grows through split fragments and dynamically added curation columns.
 - [Captioning Approaches](design/captioning-approaches.md) - comparison of captioning architectures.

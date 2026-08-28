@@ -92,6 +92,20 @@ def configure_ray_data_stability(*, disable_high_memory_detector: bool = False) 
             high_memory_detector_config.detection_time_interval_s = -1
 
 
+def configure_ray_data_eager_actor_autoscaling() -> None:
+    """Make expensive actor pools claim newly available resources promptly.
+
+    Ray 2.58 defaults to a 1.75 utilization threshold and adds at most one actor
+    per autoscaling decision. That is intentionally conservative, but it
+    serializes much of the startup cost for model-loading GPU actors. A 1.0
+    threshold and an uncapped step let a saturated pool grow geometrically;
+    the operator's maximum size and Ray's resource budget still bound it.
+    """
+    ctx = ray.data.DataContext.get_current()
+    ctx.autoscaling_config.actor_pool_util_upscaling_threshold = 1.0
+    ctx.autoscaling_config.actor_pool_max_upscaling_delta = None
+
+
 def curator_io_slots_per_node() -> int:
     """Return the configured logical IO capacity for a Curator Ray node."""
     raw_value = os.environ.get(
