@@ -44,7 +44,8 @@ branch rather than in a lifecycle hook::
         |    +-- basis: build_action_fill -> fill_embedding_group
         |                                     -> check_action_outcome(reopened)
         v
-    EmbeddingRunResult(one ModalityResult per enabled modality, + the basis)
+    EmbeddingRunResult(one ModalityResult per enabled modality, the basis,
+                       and the widening's version when it added anything)
 
 The modality boundary is sequential on purpose: Ray Data already fans each modality
 across the cluster, and Lance treats same-fragment ``Update`` commits as conflicting
@@ -95,9 +96,12 @@ _GENERIC_FILL_BUILDERS: tuple[tuple[Modality, Callable[[EmbeddingPipelineConfig]
 )
 
 
-@attrs.frozen
+@attrs.frozen(kw_only=True)
 class EmbeddingRunResult:
-    """Verification summary for one run: per-modality counts and the action basis.
+    """Verification summary for one run: per-modality counts, the versions committed, and the action basis.
+
+    Keyword-only so that inserting a field cannot silently re-bind an existing
+    positional argument at a call site.
 
     Attributes:
         modalities: One result per enabled modality, in text -> image -> action
@@ -106,22 +110,35 @@ class EmbeddingRunResult:
             was not enabled or had nothing to embed. Carried here rather than on
             a ``ModalityResult`` because the fingerprint and the fit / reuse
             distinction are action-specific.
+        schema_commit_version: The version the schema widening committed, or
+            ``None`` when every enabled group was already present so nothing was
+            added. Always the run's FIRST commit, hence never later than a
+            modality's.
 
     """
 
     modalities: tuple[ModalityResult, ...]
     action: ActionPca | None
+    schema_commit_version: int | None
 
     @property
     def ending_version(self) -> int | None:
         """Return the version of this run's last commit, or ``None`` if it committed nothing.
 
-        Derived rather than stored: every modality writes the same table, so the
-        last non-``None`` ``committed_version`` IS the run's end state, and a
-        second recorded field could only disagree with it.
+        Projected from the commits already recorded rather than stored beside
+        them, so it cannot drift from them. The widening precedes every fill, so
+        the last fill's commit is the run's last whenever a fill committed, and
+        the widening's is when none did.
         """
         committed = [result.committed_version for result in self.modalities if result.committed_version is not None]
-        return committed[-1] if committed else None
+        return committed[-1] if committed else self.schema_commit_version
+
+    @property
+    def committed_only_the_widening(self) -> bool:
+        """Return whether the schema widening was this run's one and only commit."""
+        return self.schema_commit_version is not None and all(
+            result.committed_version is None for result in self.modalities
+        )
 
 
 def run_embedding_pipeline(config: EmbeddingPipelineConfig) -> EmbeddingRunResult:
@@ -145,7 +162,7 @@ def run_embedding_pipeline(config: EmbeddingPipelineConfig) -> EmbeddingRunResul
     logger.info(f"embedding clips at {config.clips_lance_uri}; modalities={list(config.modalities)}")
 
     dataset = _open_clips(config, storage_options=storage_options)
-    added = ensure_embedding_columns(dataset, _enabled_groups(fills, config))
+    added, schema_commit_version = ensure_embedding_columns(dataset, _enabled_groups(fills, config))
     logger.info(f"ensured embedding columns for {list(config.modalities)}: {added} field(s) added")
 
     # Before the first fill, because a fill starts Ray Data and download_models
@@ -157,7 +174,7 @@ def run_embedding_pipeline(config: EmbeddingPipelineConfig) -> EmbeddingRunResul
     if Modality.ACTION in config.modalities:
         action_result, action = _run_action_fill(config, storage_options=storage_options)
         results.append(action_result)
-    return EmbeddingRunResult(modalities=tuple(results), action=action)
+    return EmbeddingRunResult(modalities=tuple(results), action=action, schema_commit_version=schema_commit_version)
 
 
 def _generic_fills(config: EmbeddingPipelineConfig) -> tuple[ModalityFill, ...]:

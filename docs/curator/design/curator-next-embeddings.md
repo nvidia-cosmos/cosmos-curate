@@ -1574,7 +1574,12 @@ pre-step** below).
 - **Ensure schema** — `ensure_embedding_columns` adds the missing fields of only
 the enabled groups in one `add_columns` metadata commit. A group already present
 must match its own schema exactly; a partial or wrong group raises. A text-only
-run adds only the three text columns and never creates image/action columns.
+run adds only the three text columns and never creates image/action columns. That
+`add_columns` is a **commit**, so a first run advances the table's version even
+when every fill then finds nothing pending: the run reports that version and
+names the fill's absence, rather than reporting the table as unchanged. It is the
+run's *first* commit, so any fill that does commit supersedes it as the reported
+version (§11.3).
 - **Validate group state** — `validate_embedding_group` enforces that the group's
 complete rows carry at most one producer identity per provenance column, and —
 where the modality configures an expected producer — that it is that one. A stale
@@ -1644,7 +1649,10 @@ are untouched. New base rows appended after the pinned version stay NULL and are
 picked up next run.
 
 Replacing a group is therefore a separate **maintenance operation**, not a run
-mode. The runner's `--reset-group <modality>` flag calls
+mode. An ordinary run is config-driven (§9); a replacement instead goes through
+the reset-only
+[maintenance runner](../../../cosmos_curator/next/recipes/embeddings/examples/run_embedding_pipeline.py),
+whose `--reset-group <modality>` calls
 [`drop_embedding_group`](../../../cosmos_curator/next/recipes/embeddings/columns.py)
 for each named group, re-adds the columns empty, and exits without embedding
 anything; the next ordinary run refills the group from scratch. Making it a
@@ -1857,9 +1865,9 @@ one skipped, nothing owed. Refusing it is still right (an unreadable data file i
 a real fault, and a re-run either clears it or confirms it), but the message says
 only what is known and does not blame lost work. The cost is that an idempotent
 re-run is no longer *unconditionally* green: it is green unless a fragment faults,
-and under `--max-fragments N` a single fault is enough because `N` is the whole
-visited set. The alternative — having workers report "I had pending rows" so the
-guard fires only on a *known* loss — was rejected as strictly worse: an outage
+and under a `max_fragments: N` cap a single fault is enough because `N` is the
+whole visited set. The alternative — having workers report "I had pending rows"
+so the guard fires only on a *known* loss — was rejected as strictly worse: an outage
 that kills every fragment at open time reports no pending rows either, so the
 guard would go silent on the most severe case it exists for.
 
@@ -1887,9 +1895,10 @@ and **the two prognoses are carried by the message text, not by the type**. They
 genuinely differ — a contract violation means the run's own inputs are wrong and no
 retry can fix it, whereas an outage is usually the environment failing every
 fragment alike, where re-running is the first remedy — but that guidance only ever
-reached an operator through the message, since the CLI catches `ValueError` and
-nothing in the tree branched on the narrower type. A second type distinguishable
-only by reading the source was judged not to earn its place; the outage message
+reached an operator through the message, since the generic runtime reports every
+exception a run raises identically as a `runtime` failure (below) and nothing in
+the tree branched on the narrower type. A second type distinguishable only by
+reading the source was judged not to earn its place; the outage message
 therefore opens with "Re-run first", and the invariant messages name the input to
 fix. The cost of the collapse is accepted openly: a caller that one day needs to
 retry only outages would have to re-introduce the distinction rather than find it
@@ -1948,8 +1957,11 @@ exception rather than an exception-type filter:
 - **Excluding `ValueError` broadly from the skip** would make an ordinary
   *storage* `ValueError` fatal — defeating the skip policy exactly when it matters
   most, since transient object-store faults are the failures it exists for.
-- **Excluding nothing** would let a broken embedder skip every fragment, leave an
-  empty group, and exit 0 — a silent total failure.
+- **Excluding nothing** would let a broken embedder skip every fragment and leave
+  an empty group. The run would still fail — the outage guard below catches
+  "nothing written while fragments failed" — but it would be reported as a
+  transient outage whose advice is to re-run, when no re-run can help until the
+  embedder is fixed. The cost is misdiagnosis, not silence.
 
 **It travels back to the driver as a payload, not as an exception.** Ray Data
 replaces whatever a `map_batches` UDF raises with a `UserCodeException` wrapper and
@@ -1967,16 +1979,28 @@ rest itself, through an Arrow C data interface that carries an error *message* b
 the Python exception object — measured, not assumed: a `FillContractError` raised
 there re-emerges from `update_columns` as a bare `RuntimeError`. Unhandled, that would
 be read as an ordinary fault and the fragment would be SKIPPED, so a broken embedder
-would skip every fragment and exit 0 — but only on a table whose fragments exceed one
-scan batch, which is every production table and no small test fixture. The worker
+would skip every fragment and be misreported as a transient outage — but only on a
+table whose fragments exceed one scan batch, which is every production table and no
+small test fixture. The worker
 therefore records the violation as the exception leaves the batch generator and
 re-raises it on its own stack once `update_columns` returns, which is what keeps
 fatal-versus-skip a property of the violation rather than of the scan geometry.
 
-Being raised on the driver is what makes the type useful: it subclasses `ValueError`
-alongside the recipe's other pre-commit refusals (a stale group, a missing basis, a
-failed commit), so the CLI's existing `except ValueError -> exit(1)` handler prints
-one line rather than a traceback.
+Being raised on the driver is what makes the type useful: it stops the modality
+**before** any commit, so the previous version stays current and the failure is
+reported by the runtime rather than discovered later by a reader. It subclasses
+`ValueError` alongside the recipe's other pre-commit refusals (a stale group, a
+missing basis, a failed commit), which keeps the family one catchable type — but
+no exit code depends on that base any more. A run goes through the generic
+[`run-pipeline`](../../../cosmos_curator/client/pipeline_cli/pipeline_runtime.py)
+runtime, which catches every exception the run raises alike: with `--json` it
+prints `{"ok": false, "error": "runtime", "message": …}` and exits **2**, and
+without it the exception re-raises as an ordinary traceback. (A *config* fault is
+distinct: it surfaces from `prepare_run` before Ray starts, so it never reaches
+this code, and is reported as `error: "invalid"` — also exit **2**.) The one
+surviving
+`except ValueError -> exit 1` belongs to the reset-only maintenance runner, and a
+reset runs no fill, so it covers only a missing or unreadable clips table.
 
 ### Provenance and staleness
 
@@ -2095,6 +2119,8 @@ clustering / curation knobs.
 
 | Field                      | Default                                                 | Purpose                                                 |
 | -------------------------- | ------------------------------------------------------- | ------------------------------------------------------- |
+| `schema_version`           | *(required)*                                            | config schema generation (`1`); pinned rather than defaulted, so a file written against a later generation is refused instead of being read under this generation's field meanings |
+| `kind`                     | *(required)*                                            | `embeddings` — the discriminator the generic CLI routes on; it must match the registered kind name ("Running it", below) |
 | `clips_lance_uri`          | *(required)*                                            | the shared clips table — **both** the read source and the write target |
 | `storage_profile`          | `default`                                               | table / media / artifacts (one profile)                 |
 | `modalities`               | `(text, image, action)`                                | `Modality` `StrEnum`; de-duplicated, first-seen order recorded. Execution is a fixed `text -> image -> action` cascade, so the tuple only records which modalities are enabled, not the order they run |
@@ -2128,6 +2154,46 @@ PCA-artifact URI: the recipe reads and writes the one `clips.lance` and always
 derives the action-PCA directory (`clips.lance__action_pca/`) from it. There is
 also **no** `action_format` knob — production artifacts are ACT2 `.bin`; a legacy
 `.pickle` is rejected by the action reader without deserializing it on workers.
+
+### Running it
+
+A run is a config file plus the generic Curator Next runtime — there is no
+long-form flag surface for it. The recipe is registered as pipeline kind
+`embeddings`
+([`pipeline_kind.py`](../../../cosmos_curator/next/recipes/embeddings/pipeline_kind.py)),
+and one resolver
+([`resolve_config`](../../../cosmos_curator/next/recipes/embeddings/config.py))
+serves `validate`, `render`, `schema`, and the run, so the four surfaces cannot
+disagree about what a file means. The generic contract is
+[pipeline-configs.md](pipeline-configs.md).
+
+```bash
+# discover: an editable YAML template (--json adds required-field metadata),
+# then every field with its default
+cosmos-curator pipeline template embeddings
+cosmos-curator pipeline schema embeddings
+
+# host-side pre-flight: validate, and print the resolved config that will run
+cosmos-curator pipeline validate embeddings.yaml --set max_fragments=2
+cosmos-curator pipeline render embeddings.yaml
+
+# execute inside the runtime environment: bare, local Docker, managed Ray
+pixi run --as-is run-pipeline embeddings.yaml
+cosmos-curator local launch -- pixi run --as-is run-pipeline /config/embeddings.yaml
+cosmos-curator slurm ray submit CLUSTER_CONFIG -- pixi run --as-is run-pipeline RECIPE_CONFIG
+
+# maintenance only, never a run mode (§7): reset a group, then re-run to refill
+python -m cosmos_curator.next.recipes.embeddings.examples.run_embedding_pipeline \
+    --clips-lance-uri s3://bucket/run/clips.lance --reset-group text
+```
+
+`--set PATH=VALUE` is accepted by `validate`, `render`, and the run alike. An
+assignment is applied to the loaded mapping **before** validation, so an
+overridden value is checked by exactly the rules a written one is, and each value
+is parsed as YAML rather than kept as text — which this strict model needs: a
+quoted `"2"` is rejected for `max_fragments`. A config launched under Docker or
+managed Ray, and every path inside it, must be written as paths the runtime
+environment can see (`/config/...` for the default local mount).
 
 ---
 
@@ -2248,18 +2314,18 @@ deliberate invocations makes that cost impossible to pay by accident.
 
 The `rebuild` field's other behaviors do not need replacing. A reset already
 NULLs every row, so the "recompute rows that are no longer applicable" case
-collapses into the ordinary pending path, and `--reset-group` composes with
-`--max-fragments` (a capped refill simply leaves the rest pending) where `rebuild`
-had to forbid the combination.
+collapses into the ordinary pending path, and `--reset-group` composes with a
+`max_fragments` cap (a capped refill simply leaves the rest pending) where
+`rebuild` had to forbid the combination.
 
 ### 11.3 Failure taxonomy
 
 | Scope | Cause | Result | Reported as |
 |---|---|---|---|
-| one row | missing / undecodable media (image); unreadable / malformed / non-mecka artifact (action) | that row's whole group left **all-NULL**; retried next run | logged count; counted in `failed` |
-| one fragment | any exception inside a worker that is not a `FillContractError` — a transient object-store fault, an unreadable data file — **while at least one other fragment was written** | the fragment is **not written** and is excluded from the commit; its rows stay pending and the next run refills them | WARNING per fragment, plus `ModalityResult.skipped_fragments` (§7) |
-| one modality does nothing | nothing pending in the fragments the run visited, the table has no fragments, or no clip carries action data — **and no fragment failed** | no commit | `committed_version=None` (`-> v(none)` in the summary), `skipped_fragments=0` |
-| whole modality fails loudly (before commit) | a `FillContractError` — nothing written while at least one fragment failed; an embedder that changed a batch's row count or returned columns that do not cast to the stored schema; a fragment absent at the pinned version; plus a missing / renamed / mistyped source column; a stale or multi-producer group needing `--reset-group`; a missing referenced PCA basis; the same fragment reported twice; every action row failing with the group otherwise empty (per-row total outage); a commit that could not be rebased | raises on the driver; no commit; previous version stays current | exception (`ValueError`, or its `FillContractError` subclass) |
+| one row | missing / undecodable media (image); unreadable / malformed / non-mecka artifact (action) | that row's whole group left **all-NULL**; retried on the next run (the pending predicate still selects NULL rows). This does **not** make the run incomplete: the row was attempted and the NULL group was committed — contrast the skipped fragment below, which was never attempted | logged count; counted in `failed` |
+| one fragment | any exception inside a worker that is not a `FillContractError` — a transient object-store fault, an unreadable data file — **while at least one other fragment was written** | the fragment is **not written** and is excluded from the commit; its rows stay pending and the next run refills them. The commit stands, but the run then **raises**, so it is not reported as finished | WARNING per fragment, plus `ModalityResult.skipped_fragments`; the run ends in `IncompleteRunError` — a `RuntimeError`, deliberately outside the `FillContractError` family below, raised *after* the commit by the pipeline-kind adapter (§7, §15) |
+| one modality does nothing | nothing pending in the fragments the run visited, the table has no fragments, or no clip carries action data — **and no fragment failed** | no commit **from the fill**; on a modality's first run the schema widening (§7) has already committed | `committed_version=None`, `skipped_fragments=0`. The run-level `ending_version` is the widening's version when it added columns **and no other modality committed** — `clips.lance at v<N> (columns added, no fill committed)`; a sibling modality that did commit supersedes it, and `null` (`clips.lance unchanged`) is reported only when the run committed nothing at all |
+| whole modality fails loudly | a `FillContractError` — nothing written while at least one fragment failed; an embedder that changed a batch's row count or returned columns that do not cast to the stored schema; a fragment absent at the pinned version; plus a missing / renamed / mistyped source column; a stale or multi-producer group needing `--reset-group`; a missing referenced PCA basis; the same fragment reported twice; every action row failing with the group otherwise empty (per-row total outage); a commit that could not be rebased | raises on the driver; **no fill commits**, so no vectors land and the last data-bearing version stays current — though a first run's schema widening (§7) has already committed the empty columns, which a re-run then finds present and adds nothing to. One exception: the per-row action total outage is checked *after* its own commit, so that group's version stands | exception (`ValueError`, or its `FillContractError` subclass) |
 
 The **text modality never fails a row** — `task_name` / `subtask_name` are
 non-null and an empty string still embeds to a valid vector (§4.1).
@@ -2497,12 +2563,24 @@ unsupported, and Lance would collide on the same field ids anyway. A concurrent
 base-row *Append* is the one violation that is benign: `fields_modified` scopes
 the commit to the group's own field ids, so Lance rebases the update onto it and
 the appended rows simply read NULL until the next run.
-- **A partial fragment loss still exits 0.** Once *any* fragment is written the run
-is a success even if most of the others were skipped, by design (§7): the skipped
-rows stay pending and refill on the next run, and there is deliberately no
-skip-ratio threshold. Only a run that wrote nothing at all while fragments were
-failing raises (`FillContractError`, §7). To notice a large partial loss, alert on
-`skipped_fragments` in the run summary or on the per-fragment WARNING pattern.
+- **A partial fragment loss commits the survivors and then fails the run.** The
+commit itself stands, by design (§7): the fragments that were written are durable,
+the skipped rows stay pending, and the next run refills them. But the adapter
+([`recipes/embeddings/pipeline_kind.py`](../../../cosmos_curator/next/recipes/embeddings/pipeline_kind.py))
+raises `IncompleteRunError` instead of returning, so
+[`run-pipeline`](../../../cosmos_curator/client/pipeline_cli/pipeline_runtime.py)
+exits non-zero and a scheduled job cannot record the attempt as finished while work
+is still owed. There is deliberately no skip-ratio threshold — one skipped fragment
+is enough.
+The cost is the **structured summary**: a raise is reported as a fault (§7), so the
+payload is replaced rather than joined by it. The exception's message *is* the run's
+own summary line, so `ending_version`, the per-modality `filled/selected`, and the
+skip total survive as prose — but a caller that wanted them as fields has to parse
+that line, and the table URI and per-modality `committed_version`s are not in it.
+The raise also fires when the skipped fragments owed no rows at all, because a
+fragment can fault before its scan could say (§7) — the same unknowability that
+makes the total-outage guard claim no lost rows. Since the fill is idempotent, the
+remedy is the same cheap one either way: run it again.
 - **A faulting fragment on an already-complete table fails the run.** The outage
 guard cannot tell a fragment that failed *with* pending rows from one that failed
 before it could say, so a re-run over a fully embedded table raises instead of

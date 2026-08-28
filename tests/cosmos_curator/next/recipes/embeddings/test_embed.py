@@ -63,7 +63,7 @@ from cosmos_curator.next.recipes.embeddings.action_pca import (
     check_action_outcome,
     resolve_action_pca,
 )
-from cosmos_curator.next.recipes.embeddings.config import EmbeddingPipelineConfig, Modality
+from cosmos_curator.next.recipes.embeddings.config import Modality
 from cosmos_curator.next.recipes.embeddings.embed import (
     _enabled_groups,
     _generic_fills,
@@ -73,9 +73,12 @@ from cosmos_curator.next.recipes.embeddings.embed import (
 from cosmos_curator.next.recipes.embeddings.modalities import ModalityResult
 from cosmos_curator.next.utils.lance_utils import LANCE_DATA_STORAGE_VERSION
 
-from .conftest import CLIPS_BASE_SCHEMA, ClipsTableFactory, add_group_columns
-
-_CLIPS_URI = "s3://bucket/clips.lance"
+from .conftest import (
+    CLIPS_BASE_SCHEMA,
+    ClipsTableFactory,
+    EmbeddingsConfigFactory,
+    add_group_columns,
+)
 
 
 def _write_clips_table(
@@ -137,19 +140,23 @@ def _write_embedded_action_table(directory: pathlib.Path, *, descriptor_version:
     return uri
 
 
-def test_modalities_run_in_a_fixed_order_whatever_order_they_were_configured_in() -> None:
+def test_modalities_run_in_a_fixed_order_whatever_order_they_were_configured_in(
+    make_embeddings_config: EmbeddingsConfigFactory,
+) -> None:
     """The cascade is text -> image -> action; the configured tuple only records what is enabled.
 
     Text and image share one loop over their specs, so the loop's order IS the
     execution order. A run that embedded image before text would still be correct
     but would no longer match the order the summary and the logs report.
     """
-    config = EmbeddingPipelineConfig(clips_lance_uri=_CLIPS_URI, modalities=["image", "text"])
+    config = make_embeddings_config(modalities=["image", "text"])
 
     assert [fill.modality for fill in _generic_fills(config)] == [Modality.TEXT, Modality.IMAGE]
 
 
-def test_the_action_group_is_widened_even_though_action_has_no_fill_spec() -> None:
+def test_the_action_group_is_widened_even_though_action_has_no_fill_spec(
+    make_embeddings_config: EmbeddingsConfigFactory,
+) -> None:
     """Action's columns are added by name, because its spec cannot exist before a basis is bound.
 
     Resolving the basis reads the action group's own provenance columns, so those
@@ -157,12 +164,14 @@ def test_the_action_group_is_widened_even_though_action_has_no_fill_spec() -> No
     from the built specs alone would leave action's columns absent and the resolve
     reading a column the planner cannot find.
     """
-    config = EmbeddingPipelineConfig(clips_lance_uri=_CLIPS_URI, modalities=["action"])
+    config = make_embeddings_config(modalities=["action"])
 
     assert _enabled_groups(_generic_fills(config), config) == [ACTION_COLUMN_GROUP]
 
 
-def test_stage_weights_is_a_noop_for_action_only(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_stage_weights_is_a_noop_for_action_only(
+    monkeypatch: pytest.MonkeyPatch, make_embeddings_config: EmbeddingsConfigFactory
+) -> None:
     """Staging weights for an action-only run invokes no downloader (nothing to stage)."""
     called = False
 
@@ -171,21 +180,23 @@ def test_stage_weights_is_a_noop_for_action_only(monkeypatch: pytest.MonkeyPatch
         called = True
 
     monkeypatch.setattr(embed, "download_models", _fail)
-    config = EmbeddingPipelineConfig(clips_lance_uri=_CLIPS_URI, modalities=["action"])
+    config = make_embeddings_config(modalities=["action"])
 
     _stage_weights(_generic_fills(config), config)
     assert not called
 
 
-def test_missing_clips_table_fails(tmp_path: pathlib.Path) -> None:
+def test_missing_clips_table_fails(tmp_path: pathlib.Path, make_embeddings_config: EmbeddingsConfigFactory) -> None:
     """A clips URI resolving to no table fails before any modality runs."""
-    config = EmbeddingPipelineConfig(clips_lance_uri=str(tmp_path / "absent.lance"), modalities=["action"])
+    config = make_embeddings_config(clips_lance_uri=str(tmp_path / "absent.lance"), modalities=["action"])
 
     with pytest.raises(ValueError, match="not found"):
         run_embedding_pipeline(config)
 
 
-def test_action_run_widens_schema_with_only_the_action_group(tmp_path: pathlib.Path) -> None:
+def test_action_run_widens_schema_with_only_the_action_group(
+    tmp_path: pathlib.Path, make_embeddings_config: EmbeddingsConfigFactory
+) -> None:
     """Enabling only action adds ``embedding_action*`` and no text/image columns.
 
     Schema widening happens before any fill, so this holds even with zero
@@ -194,7 +205,7 @@ def test_action_run_widens_schema_with_only_the_action_group(tmp_path: pathlib.P
     """
     clips_uri = _write_clips_table(tmp_path, ["c0", "c1"], ["", ""], ["not_dexterous", "not_dexterous"])
 
-    run_embedding_pipeline(EmbeddingPipelineConfig(clips_lance_uri=clips_uri, modalities=["action"]))
+    run_embedding_pipeline(make_embeddings_config(clips_lance_uri=clips_uri, modalities=["action"]))
 
     names = set(lance.dataset(clips_uri).schema.names)
     assert "embedding_action" in names
@@ -205,6 +216,7 @@ def test_action_run_widens_schema_with_only_the_action_group(tmp_path: pathlib.P
 def test_driver_starts_no_worker_when_the_action_leg_has_nothing_to_embed(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
+    make_embeddings_config: EmbeddingsConfigFactory,
 ) -> None:
     """No clip carries an action artifact, so the driver never starts an actor pool.
 
@@ -222,17 +234,58 @@ def test_driver_starts_no_worker_when_the_action_leg_has_nothing_to_embed(
     monkeypatch.setattr(embed, "fill_embedding_group", _fail)
     clips_uri = _write_clips_table(tmp_path, ["c0", "c1"], ["", ""], ["not_dexterous", "not_dexterous"])
 
-    result = run_embedding_pipeline(EmbeddingPipelineConfig(clips_lance_uri=clips_uri, modalities=["action"]))
+    result = run_embedding_pipeline(make_embeddings_config(clips_lance_uri=clips_uri, modalities=["action"]))
 
     assert result.action is None
-    assert result.ending_version is None  # the widening commit is not a modality's commit
     # No fit ran, so no basis was persisted: the content-addressed PCA root
     # directory was never created.
     assert not pathlib.Path(action_pca_root_uri(clips_uri)).exists()
 
 
+def test_a_run_whose_only_commit_widened_the_schema_reports_that_version(
+    tmp_path: pathlib.Path, make_embeddings_config: EmbeddingsConfigFactory
+) -> None:
+    """The version reported is the table's, so a widening-only run names its own commit.
+
+    The widening is a real version that a consumer opening the table next will
+    read, and a first run of a modality with nothing pending makes it the run's
+    only commit. Reporting nothing there would describe a table that had moved as
+    unchanged, pointing whoever reads the summary at a version that no longer
+    holds the columns the run added.
+    """
+    clips_uri = _write_clips_table(tmp_path, ["c0", "c1"], ["", ""], ["not_dexterous", "not_dexterous"])
+
+    result = run_embedding_pipeline(make_embeddings_config(clips_lance_uri=clips_uri, modalities=["action"]))
+
+    # Pinned together: no modality committed, yet the run's version is the live
+    # table's -- which is the whole distinction the report has to carry.
+    assert [modality.committed_version for modality in result.modalities] == [None]
+    assert result.ending_version == lance.dataset(clips_uri).version
+
+
+def test_a_rerun_that_adds_no_column_reports_no_version_of_its_own(
+    tmp_path: pathlib.Path, make_embeddings_config: EmbeddingsConfigFactory
+) -> None:
+    """Only a commit this run made may be reported as this run's ending version.
+
+    The second run re-opens a table whose columns already exist, so
+    ``ensure_embedding_columns`` adds nothing and commits nothing -- but the
+    version the open dataset carries is the FIRST run's widening. Crediting this
+    run with it would report a commit that never happened.
+    """
+    clips_uri = _write_clips_table(tmp_path, ["c0", "c1"], ["", ""], ["not_dexterous", "not_dexterous"])
+    config = make_embeddings_config(clips_lance_uri=clips_uri, modalities=["action"])
+    first = run_embedding_pipeline(config)
+
+    second = run_embedding_pipeline(config)
+
+    assert first.ending_version is not None  # else the re-run's None proves nothing
+    assert second.ending_version is None
+
+
 def test_a_group_embedded_under_another_descriptor_version_refuses_to_load_its_basis(
     tmp_path: pathlib.Path,
+    make_embeddings_config: EmbeddingsConfigFactory,
 ) -> None:
     """Descriptors whose meaning has changed cannot be re-projected onto the old basis.
 
@@ -243,7 +296,7 @@ def test_a_group_embedded_under_another_descriptor_version_refuses_to_load_its_b
     clips_uri = _write_embedded_action_table(
         tmp_path, descriptor_version=f"not-{DESCRIPTOR_VERSION}", fingerprint="deadbeef"
     )
-    config = EmbeddingPipelineConfig(clips_lance_uri=clips_uri, modalities=["action"])
+    config = make_embeddings_config(clips_lance_uri=clips_uri, modalities=["action"])
 
     with pytest.raises(ValueError, match="descriptor version"):
         resolve_action_pca(lance.dataset(clips_uri), config, root_uri=str(tmp_path / "pca"))
@@ -288,6 +341,7 @@ def test_pca_candidate_extraction_dispatches_through_a_real_actor_pool(
     monkeypatch: pytest.MonkeyPatch,
     make_mecka_bin: Callable[..., str],
     tmp_path: pathlib.Path,
+    make_embeddings_config: EmbeddingsConfigFactory,
 ) -> None:
     """Candidate extraction returns one descriptor row per URI when dispatched to a real actor pool.
 
@@ -303,7 +357,7 @@ def test_pca_candidate_extraction_dispatches_through_a_real_actor_pool(
     """
     monkeypatch.setattr(action_pca, "ray_data_gpu_runtime_env", lambda _env_name: ray_data_gpu_runtime_env(""))
     uris = [make_mecka_bin(tmp_path / f"act{i}.bin", seed=i) for i in range(2)]
-    config = EmbeddingPipelineConfig(
+    config = make_embeddings_config(
         clips_lance_uri=str(tmp_path / "clips.lance"),
         modalities=["action"],
         # One URI per batch is what forces more than one dispatch; the read width
@@ -319,6 +373,7 @@ def test_pca_candidate_extraction_dispatches_through_a_real_actor_pool(
 
 def test_pca_candidate_extraction_carries_the_configured_read_width_to_the_extractor(
     monkeypatch: pytest.MonkeyPatch,
+    make_embeddings_config: EmbeddingsConfigFactory,
 ) -> None:
     """A non-default ``read_concurrency`` reaches the extractor the PCA pass constructs.
 
@@ -347,8 +402,7 @@ def test_pca_candidate_extraction_carries_the_configured_read_width_to_the_extra
             return iter(())
 
     monkeypatch.setattr(action_pca.ray.data, "from_items", lambda _items: _RecordingDataset())
-    config = EmbeddingPipelineConfig(
-        clips_lance_uri=_CLIPS_URI,
+    config = make_embeddings_config(
         modalities=["action"],
         action={"batch_size": 16, "read_concurrency": 7},
     )

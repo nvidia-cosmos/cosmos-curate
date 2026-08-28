@@ -32,7 +32,15 @@ import lance
 import pyarrow as pa
 import pytest
 
+from cosmos_curator.next.recipes.embeddings.config import EmbeddingPipelineConfig
 from cosmos_curator.next.utils.lance_utils import LANCE_DATA_STORAGE_VERSION
+
+# Placeholder clips URI for tests that never open a table. Tests that do open one
+# pass their own ``tmp_path``-based URI through the factory.
+DEFAULT_CLIPS_URI = "s3://bucket/clips.lance"
+
+# Factory that returns an EmbeddingPipelineConfig. Keyword-only; see ``make_embeddings_config``.
+EmbeddingsConfigFactory = Callable[..., EmbeddingPipelineConfig]
 
 # Base ``clips.lance`` schema used by the recipe tests: the exact columns the
 # embedding source projection reads (see EMBED_SOURCE_ROW). Mirrors the producer
@@ -57,6 +65,29 @@ ClipsTableFactory = Callable[..., str]
 def _sentinel_uri(row_index: int, kind: str) -> str:
     """Return a deterministic non-empty media/action URI for a row."""
     return f"{kind}{row_index}.bin"
+
+
+@pytest.fixture
+def make_embeddings_config() -> EmbeddingsConfigFactory:
+    """Return a builder for an ``EmbeddingPipelineConfig`` with the boilerplate filled in.
+
+    ``schema_version``, ``kind``, and ``clips_lance_uri`` are required by the
+    model but incidental to almost every test, so they are supplied here and any
+    of them can still be overridden by keyword. Every keyword is forwarded
+    unchanged, so a test can also pass an unknown key to exercise
+    ``extra="forbid"``.
+    """
+
+    def build(**overrides: object) -> EmbeddingPipelineConfig:
+        fields: dict[str, object] = {
+            "schema_version": 1,
+            "kind": "embeddings",
+            "clips_lance_uri": DEFAULT_CLIPS_URI,
+        }
+        fields.update(overrides)
+        return EmbeddingPipelineConfig(**fields)
+
+    return build
 
 
 def add_group_columns(uri: str, group_schema: pa.Schema) -> None:

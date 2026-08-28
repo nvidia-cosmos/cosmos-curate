@@ -133,10 +133,11 @@ def test_ensure_adds_only_enabled_group_in_one_version(make_clips_table: ClipsTa
     uri = make_clips_table()
     before = lance.dataset(uri).version
 
-    added = ensure_embedding_columns(lance.dataset(uri), [TEXT_COLUMN_GROUP])
+    added, commit_version = ensure_embedding_columns(lance.dataset(uri), [TEXT_COLUMN_GROUP])
 
     after = lance.dataset(uri)
     assert added == len(TEXT_COLUMN_GROUP.field_names)
+    assert commit_version == before + 1
     assert after.version == before + 1
     names = set(after.schema.names)
     assert set(TEXT_COLUMN_GROUP.field_names) <= names
@@ -158,9 +159,10 @@ def test_ensure_present_group_is_idempotent_noop(make_clips_table: ClipsTableFac
     add_group_columns(uri, TEXT_GROUP_SCHEMA)
     before = lance.dataset(uri).version
 
-    added = ensure_embedding_columns(lance.dataset(uri), [TEXT_COLUMN_GROUP])
+    added, commit_version = ensure_embedding_columns(lance.dataset(uri), [TEXT_COLUMN_GROUP])
 
     assert added == 0
+    assert commit_version is None
     assert lance.dataset(uri).version == before
 
 
@@ -169,7 +171,7 @@ def test_ensure_one_group_present_another_absent_is_valid(make_clips_table: Clip
     uri = make_clips_table()
     add_group_columns(uri, TEXT_GROUP_SCHEMA)
 
-    added = ensure_embedding_columns(lance.dataset(uri), [TEXT_COLUMN_GROUP, IMAGE_COLUMN_GROUP])
+    added, _ = ensure_embedding_columns(lance.dataset(uri), [TEXT_COLUMN_GROUP, IMAGE_COLUMN_GROUP])
 
     assert added == len(IMAGE_COLUMN_GROUP.field_names)
     names = set(lance.dataset(uri).schema.names)
@@ -252,7 +254,7 @@ def test_ensure_tolerates_unknown_future_group(make_clips_table: ClipsTableFacto
     )
     add_group_columns(uri, future)
 
-    added = ensure_embedding_columns(lance.dataset(uri), [TEXT_COLUMN_GROUP])
+    added, _ = ensure_embedding_columns(lance.dataset(uri), [TEXT_COLUMN_GROUP])
 
     names = set(lance.dataset(uri).schema.names)
     assert added == len(TEXT_COLUMN_GROUP.field_names)

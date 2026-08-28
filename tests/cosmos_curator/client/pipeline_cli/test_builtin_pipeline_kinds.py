@@ -16,6 +16,7 @@ def test_registered_kind_names_are_derived_from_concrete_objects() -> None:
     assert BUILTIN_PIPELINE_KINDS.names() == (
         "caption_judge",
         "data-integrity",
+        "embeddings",
         "multimodal-split",
         "robot-action-split",
         "video-caption",
@@ -26,12 +27,20 @@ def test_registered_kind_names_are_derived_from_concrete_objects() -> None:
 
 
 def test_importing_composition_root_defers_config_and_runtime_modules() -> None:
-    """CLI startup may import adapters, but not recipe models or execution dependencies."""
+    """CLI startup may import adapters, but not recipe models or execution dependencies.
+
+    The model and inference libraries are named explicitly because the embeddings
+    runtime is the first registered kind that reaches them: an adapter that
+    imported its recipe at module level would put every one of them on the path of
+    a bare ``--help``.
+    """
+    heavy = ("pydantic", "ray", "torch", "transformers", "sentence_transformers", "lance")
     probe = (
         "import sys;"
+        f"heavy = {heavy!r};"
         "from cosmos_curator.client.pipeline_cli.builtin_pipeline_kinds import BUILTIN_PIPELINE_KINDS;"
         "BUILTIN_PIPELINE_KINDS.names();"
-        "print([m for m in sys.modules if m == 'pydantic' or m == 'ray' or m.endswith('.config')])"
+        "print([m for m in sys.modules if m in heavy or m.endswith('.config')])"
     )
     result = subprocess.run(  # noqa: S603
         [sys.executable, "-c", probe],

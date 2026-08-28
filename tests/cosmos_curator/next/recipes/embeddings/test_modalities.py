@@ -45,7 +45,7 @@ from cosmos_curator.next.recipes.embeddings.modalities import (
     build_text_fill,
 )
 
-_CLIPS_URI = "s3://bucket/run/clips.lance"
+from .conftest import EmbeddingsConfigFactory
 
 
 def _synthetic_pca() -> PcaArtifact:
@@ -63,45 +63,53 @@ _FILL_BUILDERS: dict[str, Callable[[EmbeddingPipelineConfig], ModalityFill]] = {
 }
 
 
-def test_image_fill_carries_the_configured_read_width_to_the_worker() -> None:
+def test_image_fill_carries_the_configured_read_width_to_the_worker(
+    make_embeddings_config: EmbeddingsConfigFactory,
+) -> None:
     """The configured read concurrency arrives in the embedder's constructor arguments.
 
     The knob only has an effect inside the worker, so a value that never leaves the
     config would leave every run reading serially while reporting the tuned width.
     """
-    config = EmbeddingPipelineConfig(clips_lance_uri=_CLIPS_URI, image={"read_concurrency": 7})
+    config = make_embeddings_config(image={"read_concurrency": 7})
 
     assert build_image_fill(config).embedder_kwargs["read_concurrency"] == 7
 
 
-def test_action_fill_carries_the_configured_read_width_to_the_worker() -> None:
+def test_action_fill_carries_the_configured_read_width_to_the_worker(
+    make_embeddings_config: EmbeddingsConfigFactory,
+) -> None:
     """The configured read concurrency arrives in the action reader's constructor config.
 
     The width is consumed inside the worker's extract call, so a value that stops
     at the recipe config would leave every run fetching artifacts one at a time
     while reporting the tuned width.
     """
-    config = EmbeddingPipelineConfig(clips_lance_uri=_CLIPS_URI, action={"read_concurrency": 7})
+    config = make_embeddings_config(action={"read_concurrency": 7})
 
     fill = build_action_fill(config, _synthetic_pca())
 
     assert fill.embedder_kwargs["config"].read_concurrency == 7
 
 
-def test_image_fill_carries_the_configured_cpu_reservation_to_the_actor_shape() -> None:
+def test_image_fill_carries_the_configured_cpu_reservation_to_the_actor_shape(
+    make_embeddings_config: EmbeddingsConfigFactory,
+) -> None:
     """The configured CPU reservation arrives in the worker's resource request.
 
     Only a value that reaches ``WorkerResources`` is passed to Ray. Left in the
     config the actor would be scheduled with no CPU reservation at all, which is
     the oversubscription the field exists to prevent.
     """
-    config = EmbeddingPipelineConfig(clips_lance_uri=_CLIPS_URI, image={"num_cpus": 3.0})
+    config = make_embeddings_config(image={"num_cpus": 3.0})
 
     assert build_image_fill(config).resources.num_cpus == 3.0
 
 
 @pytest.mark.parametrize("modality", sorted(_FILL_BUILDERS))
-def test_fill_kwargs_satisfy_the_embedder_constructor(modality: str) -> None:
+def test_fill_kwargs_satisfy_the_embedder_constructor(
+    modality: str, make_embeddings_config: EmbeddingsConfigFactory
+) -> None:
     """Every kwarg a fill ships binds to a real parameter of the embedder it names.
 
     The worker calls ``embedder_cls(**embedder_kwargs)`` through untyped fields, so
@@ -109,6 +117,6 @@ def test_fill_kwargs_satisfy_the_embedder_constructor(modality: str) -> None:
     after loading its model. Binding the signature covers every kwarg the fill
     carries, including ones added later, rather than one name at a time.
     """
-    fill = _FILL_BUILDERS[modality](EmbeddingPipelineConfig(clips_lance_uri=_CLIPS_URI))
+    fill = _FILL_BUILDERS[modality](make_embeddings_config())
 
     inspect.signature(fill.embedder_cls).bind(**fill.embedder_kwargs)

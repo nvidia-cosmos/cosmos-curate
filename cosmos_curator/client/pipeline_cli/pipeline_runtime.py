@@ -13,7 +13,23 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Run-only entrypoint for config-backed pipelines inside runtime environments."""
+"""Run-only entrypoint for config-backed pipelines inside runtime environments.
+
+This module owns the process exit status and derives it entirely from whether
+preparation or the prepared run raised::
+
+    0  the run returned; its payload (--json) or message is on stdout
+    2  a config fault in either mode, and a run fault under --json. Reported on
+       stderr - as {"ok": false, "error": "invalid"|"runtime", "message": ...}
+       under --json, as one plain line without it
+    1  a run fault without --json, where the exception re-raises as an ordinary
+       traceback
+
+A kind that published its work but still owes more therefore reports it by
+raising, which costs the summary: under --json the error object REPLACES the
+payload rather than joining it, so stdout stays empty. The two cannot both be had
+without a third outcome here, which no caller has yet needed.
+"""
 
 import json
 from pathlib import Path

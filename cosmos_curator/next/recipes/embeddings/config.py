@@ -23,20 +23,35 @@ artifact directory from it. Validation is strict (unknown keys rejected, no sile
 coercion) so a malformed config fails at assembly on the driver rather than deep
 inside a Ray Data actor.
 
+``resolve_config`` is the single entry point every config-driven surface goes
+through - ``pipeline validate``, ``pipeline render``, and ``run-pipeline`` all
+resolve here - so one file plus its ``--set`` overrides can never mean two
+different things depending on which command read it.
+
 Every modality's ``batch_size`` is its WORKER'S FRAGMENT-SCAN batch size - how
 many rows of one Lance fragment reach the embedder per call. It is not a Ray Data
 work-item size: a work item is always exactly one fragment.
 """
 
 import enum
-from typing import Annotated, Self
+import json
+from collections.abc import Sequence
+from pathlib import Path
+from typing import Annotated, Any, Literal, Self
 
+import yaml
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator, model_validator
 
 from cosmos_curator.core.utils.environment import MODEL_WEIGHTS_PREFIX
+from cosmos_curator.next.core.config import apply_dotted_overrides
 from cosmos_curator.next.embeddings.schemas import ACTION_DIM
 
 _MODEL_CONFIG = ConfigDict(frozen=True, strict=True, extra="forbid")
+_YAML_SUFFIXES = frozenset({".yaml", ".yml"})
+_JSON_SUFFIXES = frozenset({".json"})
+
+SchemaVersion = Literal[1]
+EmbeddingsKind = Literal["embeddings"]
 
 
 class Modality(enum.StrEnum):
@@ -198,15 +213,23 @@ class ActionEmbeddingConfig(BaseModel):
 class EmbeddingPipelineConfig(BaseModel):
     """Fully resolved config for one embedding run.
 
-    The smallest valid config only needs ``clips_lance_uri``; everything else
-    defaults. Which modalities run is decided by ``modalities``, so a single
-    modality can be embedded on its own. There is deliberately no output-table,
-    side-table, or PCA-artifact URI: the recipe updates ``clips.lance`` in place
-    and always derives the action-PCA artifact directory from it.
+    Beyond the version gate and the discriminator, only ``clips_lance_uri`` is
+    required; everything else defaults. Which modalities run is decided by
+    ``modalities``, so a single modality can be embedded on its own. There is
+    deliberately no output-table, side-table, or PCA-artifact URI: the recipe
+    updates ``clips.lance`` in place and always derives the action-PCA artifact
+    directory from it.
     """
 
     model_config = _MODEL_CONFIG
 
+    schema_version: SchemaVersion = Field(
+        description="Config schema generation. Pinned rather than defaulted so a config written against a future "
+        "generation is rejected instead of being read under this one's field meanings.",
+    )
+    kind: EmbeddingsKind = Field(
+        description="Pipeline discriminator the generic CLI routes on; it must match the registered kind name.",
+    )
     clips_lance_uri: NonBlankStr = Field(
         description="URI of the shared clips Lance table. It is BOTH read source and write target: base rows are "
         "appended upstream by robot_action_split and every modality's embedding columns are updated in place here.",
@@ -270,3 +293,73 @@ class EmbeddingPipelineConfig(BaseModel):
             msg = "modalities must not be empty"
             raise ValueError(msg)
         return deduped
+
+
+def _load_config_data(config_path: Path) -> dict[str, Any]:
+    """Read one YAML or JSON config file into a mapping.
+
+    Args:
+        config_path: File to read; the suffix selects the parser.
+
+    Returns:
+        The file's top-level mapping, unvalidated.
+
+    Raises:
+        FileNotFoundError: If the path does not exist or is not a regular file
+            (for example a directory).
+        ValueError: If the suffix is neither a YAML nor a JSON extension.
+        TypeError: If the file's top level is not a mapping.
+
+    """
+    if not config_path.exists():
+        msg = f"Config file not found: {config_path}"
+        raise FileNotFoundError(msg)
+    if not config_path.is_file():
+        msg = f"Config path is not a regular file: {config_path}"
+        raise FileNotFoundError(msg)
+    suffix = config_path.suffix.lower()
+    if suffix not in _YAML_SUFFIXES and suffix not in _JSON_SUFFIXES:
+        supported = ", ".join(sorted(_YAML_SUFFIXES | _JSON_SUFFIXES))
+        msg = (
+            f"Unsupported config extension {config_path.suffix!r}: {config_path}. Supported extensions are: {supported}"
+        )
+        raise ValueError(msg)
+    with config_path.open(encoding="utf-8") as handle:
+        loaded: object = yaml.safe_load(handle) if suffix in _YAML_SUFFIXES else json.load(handle)
+    if not isinstance(loaded, dict):
+        msg = f"Config file must contain a mapping at the top level, got {type(loaded).__name__}: {config_path}"
+        raise TypeError(msg)
+    return loaded
+
+
+def resolve_config(
+    config_path: str | Path,
+    *,
+    overrides: Sequence[str] = (),
+) -> EmbeddingPipelineConfig:
+    """Load a config file, apply ``--set`` overrides, and validate the result.
+
+    Overrides are applied to the loaded mapping BEFORE validation, so an
+    overridden value is checked by the same rules as a written one. Each value is
+    parsed with ``yaml.safe_load``, which matters here because the model is
+    strict: a quoted ``"2"`` would be rejected for ``max_fragments``.
+
+    Args:
+        config_path: YAML or JSON config file.
+        overrides: ``PATH=VALUE`` assignments, e.g. ``["max_fragments=2"]``.
+
+    Returns:
+        The validated run configuration.
+
+    Raises:
+        FileNotFoundError: If the config file does not exist.
+        TypeError: If the file's top level is not a mapping, or an override path
+            passes through a non-mapping key.
+        ValueError: If the config extension is unsupported, an override is
+            malformed, or validation fails (``ValidationError`` is a
+            ``ValueError``).
+
+    """
+    data = _load_config_data(Path(config_path))
+    apply_dotted_overrides(data, overrides)
+    return EmbeddingPipelineConfig.model_validate(data)

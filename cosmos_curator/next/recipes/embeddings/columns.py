@@ -97,7 +97,9 @@ def _group_presence(schema_names: set[str], group: EmbeddingColumnGroup) -> str:
     return "partial"
 
 
-def ensure_embedding_columns(dataset: lance.LanceDataset, groups: Sequence[EmbeddingColumnGroup]) -> int:
+def ensure_embedding_columns(
+    dataset: lance.LanceDataset, groups: Sequence[EmbeddingColumnGroup]
+) -> tuple[int, int | None]:
     """Add the missing fields of only the given groups in one metadata commit.
 
     ``add_columns`` with an all-nullable schema is a METADATA-ONLY operation:
@@ -115,7 +117,9 @@ def ensure_embedding_columns(dataset: lance.LanceDataset, groups: Sequence[Embed
         groups: The enabled modalities' column groups.
 
     Returns:
-        The number of fields added (0 when every group was already present).
+        ``(fields_added, commit_version)``. ``commit_version`` is the widening
+        metadata commit's version, captured on the handle immediately after
+        ``add_columns``; ``None`` when every group was already present.
 
     Raises:
         ValueError: If a group is partially present, or a present group does not
@@ -141,7 +145,8 @@ def ensure_embedding_columns(dataset: lance.LanceDataset, groups: Sequence[Embed
             raise ValueError(msg)
     if fields_to_add:
         dataset.add_columns(pa.schema(fields_to_add))
-    return len(fields_to_add)
+        return len(fields_to_add), int(dataset.version)
+    return 0, None
 
 
 def drop_embedding_group(dataset: lance.LanceDataset, group: EmbeddingColumnGroup) -> int:
