@@ -122,6 +122,9 @@ def test_a_prepared_run_reports_its_findings_without_failing(
         "sessions": 2,
         "streams": 7,
         "unreadable": 1,
+        "unreachable": 0,
+        "unlisted_sessions": 0,
+        "empty_sessions": 0,
         "failed_metrics": 3,
         "store_root": "/data/di-store",
     }
@@ -132,3 +135,26 @@ def test_a_prepared_run_reports_its_findings_without_failing(
     assert output.json_payload == summary
     assert "run abc committed 7 stream(s)" in output.message
     assert "1 unreadable, 3 failed metric(s)" in output.message
+    assert "held no streams" not in output.message
+
+
+def test_a_prepared_run_mentions_sessions_that_held_nothing(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The quiet finding: a session that lists clean and empty is worth a line, not a failure."""
+    summary = {
+        "run_id": "abc",
+        "sessions": 2,
+        "streams": 7,
+        "unreadable": 0,
+        "unreachable": 0,
+        "unlisted_sessions": 0,
+        "empty_sessions": 1,
+        "failed_metrics": 0,
+        "store_root": "/data/di-store",
+    }
+    monkeypatch.setattr(pipeline, "run_config", lambda _config: summary)
+
+    output = DATA_INTEGRITY_KIND.prepare_run(_write_config(tmp_path), set_overrides=[])()
+
+    assert "1 session(s) held no streams" in output.message

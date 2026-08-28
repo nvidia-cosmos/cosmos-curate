@@ -17,6 +17,7 @@
 
 import io
 import pathlib
+import re
 import threading
 import time
 from collections.abc import Callable, Iterator
@@ -423,8 +424,14 @@ def _count_attempts(
     *,
     max_attempts: int,
     succeed_after: int = 0,
-) -> tuple[StreamResult, int]:
-    """Run one stream whose first attempts raise ``exc``, and count the attempts."""
+    raise_infrastructure_errors: bool = False,
+) -> tuple[StreamResult | None, int]:
+    """Run one stream whose first attempts raise ``exc``, and count the attempts.
+
+    A ``None`` result means the failure was classified as unreachable and left as an
+    ``InfrastructureError`` -- which only happens with ``raise_infrastructure_errors``,
+    and is what the pipeline sees instead of a verdict.
+    """
     attempts = 0
 
     def _flaky(*_a: object, **_k: object) -> tuple[object, object, object]:
@@ -438,16 +445,20 @@ def _count_attempts(
     monkeypatch.setattr(session_runner, "stream_result", lambda source, *_a, **_k: _canned(source, CheckStatus.PASS))
     monkeypatch.setattr(session_runner.time, "sleep", lambda _s: None)
 
-    result = session_runner.run_one_stream(
-        "s3://b/k.mp4",
-        expected_hz=None,
-        thresholds=DEFAULT_THRESHOLDS,
-        batch_size=0,
-        s3_profile_name=None,
-        azure_profile_name="default",
-        endpoint_url=None,
-        max_attempts=max_attempts,
-    )
+    try:
+        result = session_runner.run_one_stream(
+            "s3://b/k.mp4",
+            expected_hz=None,
+            thresholds=DEFAULT_THRESHOLDS,
+            batch_size=0,
+            s3_profile_name=None,
+            azure_profile_name="default",
+            endpoint_url=None,
+            max_attempts=max_attempts,
+            raise_infrastructure_errors=raise_infrastructure_errors,
+        )
+    except session_runner.InfrastructureError:
+        return None, attempts
     return result, attempts
 
 
@@ -540,6 +551,123 @@ def test_an_interrupt_during_the_backoff_is_not_held_for_the_whole_wait(monkeypa
 
     assert attempts == 1, "an interrupt bought the aborted read another attempt"
     assert elapsed < backoff_s / 2, f"waited out the backoff before noticing the interrupt ({elapsed:.1f}s)"
+
+
+class NoCredentialsError(Exception):
+    """Stands in for botocore's, which the classifier matches by class name.
+
+    The spelling is therefore load-bearing: this is why it is not prefixed like the
+    other helpers here.
+    """
+
+    def __init__(self) -> None:
+        """Carry botocore's own wording, so a message assertion means something."""
+        super().__init__("Unable to locate credentials")
+
+
+class _ClientError(Exception):
+    """Stands in for botocore's ``ClientError``, whose ``response`` carries the verdict.
+
+    Deliberately not named after botocore's class: ``ClientError`` is the base of every
+    AWS HTTP response, 4xx included, so the classifier has to reach the error code and
+    the status rather than the class name -- which is what this exercises.
+    """
+
+    def __init__(self, code: str, status: int) -> None:
+        super().__init__(f"An error occurred ({code}) when calling the GetObject operation")
+        self.response = {"Error": {"Code": code}, "ResponseMetadata": {"HTTPStatusCode": status}}
+
+
+def _raise(exc: BaseException) -> Callable[..., tuple[object, object, object]]:
+    """Build a ``run_checks`` stand-in that always fails with ``exc``."""
+
+    def _always(*_a: object, **_k: object) -> tuple[object, object, object]:
+        raise exc
+
+    return _always
+
+
+@pytest.mark.parametrize(
+    ("exc", "why"),
+    [
+        (NoCredentialsError(), "a dropped profile"),
+        (_ClientError("ExpiredToken", 400), "a session token that expired mid-run"),
+        (_ClientError("AccessDenied", 403), "a prefix we were never allowed to read"),
+        (_ClientError("ServiceUnavailable", 503), "the service having a bad minute"),
+    ],
+)
+def test_an_unreachable_stream_is_not_given_a_verdict(
+    monkeypatch: pytest.MonkeyPatch, exc: BaseException, why: str
+) -> None:
+    """None of these say anything about the data, so none may be recorded as if they did.
+
+    A row here would outlive the run that manufactured it: readers resolve to the newest
+    row per ``stream_id``, so it would supersede a healthy measurement.
+    """
+    result, attempts = _count_attempts(monkeypatch, exc, max_attempts=1, raise_infrastructure_errors=True)
+
+    assert result is None, f"{why} was recorded as this stream's verdict"
+    assert attempts == 1
+
+
+@pytest.mark.parametrize(
+    ("exc", "message"),
+    [
+        (_ClientError("NoSuchKey", 404), "NoSuchKey"),
+        (FileNotFoundError("no such object"), "no such object"),
+        (ValueError("Invalid data found when processing input"), "Invalid data"),
+    ],
+)
+def test_a_stream_that_is_genuinely_gone_or_broken_still_gets_one(
+    monkeypatch: pytest.MonkeyPatch, exc: BaseException, message: str
+) -> None:
+    """An object that is missing or malformed is a fact about the dataset, and belongs in a row."""
+    result, _ = _count_attempts(monkeypatch, exc, max_attempts=1, raise_infrastructure_errors=True)
+
+    assert result is not None
+    assert result.error is not None
+    assert message in result.error
+
+
+def test_the_same_failure_stays_a_verdict_for_a_single_session(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``di-session`` is unchanged: its operator is watching, and wants the line in the report."""
+    result, _ = _count_attempts(monkeypatch, NoCredentialsError(), max_attempts=1)
+
+    assert result is not None
+    assert result.error == "Unable to locate credentials"
+
+
+def test_an_exhausted_transport_budget_is_not_a_verdict_either(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The retry exists because a timeout is not evidence about the file; exhausting it does not make it one."""
+    result, attempts = _count_attempts(
+        monkeypatch,
+        TimeoutError("read timed out"),
+        max_attempts=3,
+        raise_infrastructure_errors=True,
+    )
+
+    assert attempts == 3
+    assert result is None
+
+
+def test_an_unreachable_stream_names_itself_and_keeps_its_cause(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The message reaches an operator through the run's summary, so it has to say which stream."""
+    cause = NoCredentialsError()
+    monkeypatch.setattr(session_runner, "run_checks", _raise(cause))
+
+    with pytest.raises(session_runner.InfrastructureError, match=re.escape("s3://b/k.mp4")) as raised:
+        session_runner.run_one_stream(
+            "s3://b/k.mp4",
+            expected_hz=None,
+            thresholds=DEFAULT_THRESHOLDS,
+            batch_size=0,
+            s3_profile_name=None,
+            azure_profile_name="default",
+            endpoint_url=None,
+            raise_infrastructure_errors=True,
+        )
+
+    assert raised.value.__cause__ is cause
 
 
 def test_a_nonpositive_attempt_budget_is_rejected() -> None:

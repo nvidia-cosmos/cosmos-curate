@@ -24,9 +24,11 @@ as a per-stream ``ERROR``, and aggregates the results into a
 :class:`SessionReport`.
 
 :func:`run_one_stream` is the per-stream unit :func:`run_session` is built from --
-open one source, measure it, and turn any failure into that stream's ``ERROR`` rather
+open one source, measure it, and turn a failure into that stream's ``ERROR`` rather
 than the run's. It is public because the Ray Data pipeline distributes exactly that
-unit and must not grow a second copy of the failure contract.
+unit and must not grow a second copy of the failure contract. The one thing the two
+callers disagree about is which failures are the stream's at all: see
+``raise_infrastructure_errors`` and :class:`InfrastructureError`.
 
 :func:`run_stream` is a thin convenience over
 :func:`~cosmos_curator.core.sensors.data_integrity.engine.run_metrics` for an
@@ -35,7 +37,7 @@ already-open sensor, packaging its output as a :class:`StreamResult`.
 
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from typing import BinaryIO
 
@@ -126,6 +128,103 @@ def _is_transient_transport_error(exc: BaseException) -> bool:
     return any(cls.__name__ in _TRANSIENT_TRANSPORT_ERRORS for cls in type(exc).__mro__)
 
 
+class InfrastructureError(RuntimeError):
+    """A stream could not be reached, so nothing was learned about it.
+
+    Distinct from a stream that *was* read and found wanting. An expired token or a
+    503 says nothing about the data, so recording it as that stream's ``error``
+    publishes a data-quality claim the environment manufactured -- and, because
+    readers resolve to the newest row per ``stream_id``, one that supersedes a
+    healthy measurement from an earlier run.
+    """
+
+
+#: Exception class names, matched anywhere in the raised exception's class hierarchy,
+#: that mean "we could not reach the data" rather than "the data is bad". Named rather
+#: than imported for the same reason as :data:`_TRANSIENT_TRANSPORT_ERRORS`.
+#:
+#: ``CloudCliError`` is ours, and broad in general -- but on this path it can only come
+#: from :func:`~cosmos_curator.core.sensors.scripts._cli_cloud.make_s3_client` or
+#: ``make_azure_client`` failing to build a credentialled client, since the source was
+#: already established to be a cloud URI before either was called.
+_INFRASTRUCTURE_ERRORS = frozenset(
+    {
+        "NoCredentialsError",
+        "PartialCredentialsError",
+        "CredentialRetrievalError",
+        "TokenRetrievalError",
+        "UnauthorizedSSOTokenError",
+        "ProfileNotFound",
+        "ClientAuthenticationError",
+        "PermissionError",
+        "CloudCliError",
+    }
+)
+
+#: S3 error codes that describe our access rather than the object. ``NoSuchKey`` and the
+#: rest of the 404 family are deliberately absent: an object that is gone is a fact
+#: about the dataset, and belongs in a row.
+_INFRASTRUCTURE_S3_CODES = frozenset(
+    {
+        "AccessDenied",
+        "AccessDeniedException",
+        "ExpiredToken",
+        "ExpiredTokenException",
+        "InvalidAccessKeyId",
+        "InvalidToken",
+        "RequestTimeTooSkewed",
+        "SignatureDoesNotMatch",
+        "TokenRefreshRequired",
+    }
+)
+_UNAUTHORIZED_STATUSES = frozenset({401, 403})
+_SERVER_ERROR_STATUS = 500
+
+
+def _error_code(exc: BaseException) -> str | None:
+    """Read the backend's error code off an exception shaped like ``botocore``'s ``ClientError``."""
+    response = getattr(exc, "response", None)
+    if not isinstance(response, Mapping):
+        return None
+    error = response.get("Error")
+    if not isinstance(error, Mapping):
+        return None
+    code = error.get("Code")
+    return code if isinstance(code, str) else None
+
+
+def _http_status(exc: BaseException) -> int | None:
+    """Read the HTTP status of a failed cloud call, from either SDK's shape for it."""
+    response = getattr(exc, "response", None)
+    if isinstance(response, Mapping):
+        metadata = response.get("ResponseMetadata")
+        if isinstance(metadata, Mapping):
+            status = metadata.get("HTTPStatusCode")
+            if isinstance(status, int):
+                return status
+    # azure.core.exceptions.HttpResponseError carries it directly.
+    status = getattr(exc, "status_code", None)
+    return status if isinstance(status, int) else None
+
+
+def is_infrastructure_error(exc: BaseException) -> bool:
+    """Report whether ``exc`` means the data was unreachable rather than bad.
+
+    Three signals, in order: the class hierarchy, the backend's error code, and the
+    HTTP status. The last two are read defensively off whatever attributes the
+    exception happens to carry, because the alternative is importing botocore and
+    azure.core here to name two exception types.
+    """
+    if any(cls.__name__ in _INFRASTRUCTURE_ERRORS for cls in type(exc).__mro__):
+        return True
+    if _error_code(exc) in _INFRASTRUCTURE_S3_CODES:
+        return True
+    status = _http_status(exc)
+    if status is None:
+        return False
+    return status in _UNAUTHORIZED_STATUSES or status >= _SERVER_ERROR_STATUS
+
+
 def run_one_stream(  # noqa: PLR0913
     source: str,
     *,
@@ -138,6 +237,7 @@ def run_one_stream(  # noqa: PLR0913
     stream_wrapper: Callable[[BinaryIO], BinaryIO] | None = None,
     cancel: threading.Event | None = None,
     max_attempts: int = 1,
+    raise_infrastructure_errors: bool = False,
 ) -> StreamResult:
     """Open a single stream and run the integrity metrics, capturing failures as ERROR.
 
@@ -159,6 +259,14 @@ def run_one_stream(  # noqa: PLR0913
             an unreadable input -- a data-quality finding manufactured by the network.
             Only the errors in :data:`_TRANSIENT_TRANSPORT_ERRORS` are retried; a
             malformed file fails on its first attempt as it always did.
+        raise_infrastructure_errors: whether a failure that means the stream was
+            unreachable -- expired credentials, a 403, a 503, an exhausted transport
+            retry -- should leave as an :class:`InfrastructureError` instead of
+            becoming this stream's ``error``. ``False`` (default) keeps the single
+            session's contract, where every failure is one line of a report an
+            operator is watching. A run over thousands of streams wants ``True``: at
+            that scale an environment failure would otherwise be persisted as a
+            finding about the data, and outlive the run that manufactured it.
 
     Returns:
         The stream's result, carrying ``error`` when it could not be measured.
@@ -166,6 +274,8 @@ def run_one_stream(  # noqa: PLR0913
     Raises:
         KeyboardInterrupt: If *cancel* was set, rather than reporting the aborted read
             as this stream's verdict.
+        InfrastructureError: If the stream was unreachable and
+            ``raise_infrastructure_errors`` is set.
         ValueError: If ``max_attempts`` is not positive.
 
     """
@@ -188,7 +298,7 @@ def run_one_stream(  # noqa: PLR0913
         # raise is too broad to enumerate safely. So the catch stays wide and the stream
         # is reported as ERROR. The traceback is logged at DEBUG so a genuine bug in the
         # engine is still diagnosable rather than flattened into a one-line message.
-        except Exception as exc:  # noqa: BLE001 - see above; per-stream isolation is the contract
+        except Exception as exc:
             # An abort is a casualty, not a diagnosis: cancelling makes the reader report EOF,
             # which libav raises as a decode error, so every stream still in flight would log
             # an annotated traceback and bury the interrupt message that follows. Ahead of the
@@ -214,6 +324,12 @@ def run_one_stream(  # noqa: PLR0913
                 raise_if_interrupted(cancel)
                 continue
             logger.opt(exception=True).debug("data-integrity run failed for {}", source)
+            # An exhausted transport retry counts as unreachable too: the retry exists
+            # because a read timeout is not evidence about the file, and exhausting it
+            # does not make it one.
+            if raise_infrastructure_errors and (is_infrastructure_error(exc) or _is_transient_transport_error(exc)):
+                msg = f"could not reach {source}: {exc}"
+                raise InfrastructureError(msg) from exc
             return StreamResult(
                 source=source,
                 codec_name=None,

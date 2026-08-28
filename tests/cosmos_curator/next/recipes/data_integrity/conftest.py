@@ -25,6 +25,7 @@ Exposed as fixtures because the test tree is not a package (pytest runs with
 """
 
 import io
+import os
 import pathlib
 from collections.abc import Callable, Iterator
 from fractions import Fraction
@@ -224,3 +225,24 @@ def h264_video() -> Callable[..., bytes]:
         return buffer.getvalue()
 
     return _make
+
+
+@pytest.fixture
+def unreachable_video(h264_video: Callable[..., bytes]) -> Callable[[pathlib.Path], pathlib.Path]:
+    """Write a real video that cannot be read, the local stand-in for an expired token.
+
+    A mode-000 file lists like any other and then fails on open with ``PermissionError``,
+    which ``session_runner`` classifies as unreachable rather than unreadable. That makes
+    "the listing worked and the read did not" reachable without patching anything --
+    which matters most for the pipeline tests, where the read happens in a Ray worker
+    that a driver-side monkeypatch would never touch.
+    """
+    if os.geteuid() == 0:
+        pytest.skip("root reads a mode-000 file regardless, so the stream would be reachable")
+
+    def _write(path: pathlib.Path) -> pathlib.Path:
+        path.write_bytes(h264_video())
+        path.chmod(0o000)
+        return path
+
+    return _write

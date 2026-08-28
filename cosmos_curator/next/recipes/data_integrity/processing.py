@@ -24,30 +24,35 @@ judges one stream on its own, but the cross-sensor checks this store is heading 
 does the camera timeline agree with the IMU's -- have no per-stream task to run in, and
 a whole session in one worker is what they need.
 
-Inside one session the two failure kinds are treated differently, and the split is
-the same one the two former stages drew:
+Nothing here raises. Every failure is classified by what it says, and the split is
+between the two things a failure can be evidence *of*:
 
-* Listing raises. A session whose listing failed has produced nothing to record, and
-  Ray's map retry is the right place to handle it -- nothing measured is lost, since
-  listing comes first.
-* Measurement does not. Every per-stream failure becomes that stream's ``error`` row,
-  which is what keeps one unreadable video from failing a run over thousands of them.
-  Transient transport failures are retried inside :func:`~.session_runner.run_one_stream`
-  first, so a read timeout is not persisted as a data-quality finding manufactured by
-  the network.
+* **The data is bad.** An unreadable or undecodable stream becomes that stream's
+  ``error`` row, which is what keeps one corrupt video from failing a run over
+  thousands of them.
+* **We could not reach the data.** An unlistable session and an unreachable stream are
+  both recorded as counts on the session's record rather than as rows, because neither
+  learned anything to write down (see
+  :class:`~.session_runner.InfrastructureError`). The driver commits what *was*
+  measured and then fails the run, so the answer is durable and the gap is still
+  reported.
+
+Transient transport failures are retried inside
+:func:`~.session_runner.run_one_stream` before either verdict is reached.
 """
 
 import datetime
 import pickle
 
 import pyarrow as pa  # type: ignore[import-untyped]
+from loguru import logger
 
 from cosmos_curator.core.sensors.data_integrity.instruments import instrument
 from cosmos_curator.core.sensors.data_integrity.results import CheckStatus, StreamResult
 from cosmos_curator.next.recipes.data_integrity import store, store_schema
 from cosmos_curator.next.recipes.data_integrity.config import ResolvedDataIntegrityConfig
 from cosmos_curator.next.recipes.data_integrity.discovery import discover_streams
-from cosmos_curator.next.recipes.data_integrity.session_runner import run_one_stream
+from cosmos_curator.next.recipes.data_integrity.session_runner import InfrastructureError, run_one_stream
 
 STREAM_DATASET = store_schema.STREAM_DATASET
 EVALUATION_DATASET = store_schema.EVALUATION_DATASET
@@ -177,8 +182,9 @@ def check_session(
 ) -> dict[str, object]:
     """List one session and measure every stream in it, in one task.
 
-    Raises only if the listing fails. Once listing succeeds the session always
-    produces a result, however many of its streams could not be read.
+    Never raises: a session always produces a record, whether it could not be listed
+    at all or held streams that could not be reached or read. What separates those
+    outcomes is which columns the record comes back with.
 
     Args:
         record: ``{"session_path": ...}``, as the driver seeded it.
@@ -188,31 +194,51 @@ def check_session(
 
     Returns:
         The session's flat columns -- its path, how many streams it held, how many
-        were unreadable, and how many metric verdicts failed -- plus ``rows``, the
-        pickled dataset-name-to-rows mapping for the whole session. ``rows`` is
-        opaque because the store keeps one Lance dataset per metric, each with its
-        own schema, so the rows do not share an Arrow type and cannot travel as
-        typed columns. Nothing reads it but the driver's append step; the flat
-        columns carry what logging and the run summary need.
+        were unreadable, how many were unreachable, how many metric verdicts failed,
+        and the listing error if there was one -- plus ``rows``, the pickled
+        dataset-name-to-rows mapping for the whole session. ``rows`` is opaque
+        because the store keeps one Lance dataset per metric, each with its own
+        schema, so the rows do not share an Arrow type and cannot travel as typed
+        columns. Nothing reads it but the driver's append step; the flat columns
+        carry what logging, the run summary and the exit status need.
 
     """
     session_path = record["session_path"]
-    sources = discover_session(session_path, config=config)
+    try:
+        sources = discover_session(session_path, config=config)
+    # Wide on purpose. A listing fails as a stale path, a missing bucket, a denied
+    # prefix or an expired token, and here they all mean one thing: this session went
+    # unmeasured. Raising instead would abort the whole dataset -- Ray's
+    # max_errored_blocks is 0 by default, and a block holds several sessions -- and
+    # since the run commits last, that discards every session already measured.
+    except Exception as exc:  # noqa: BLE001 - see above
+        logger.opt(exception=True).debug("data-integrity listing failed for {}", session_path)
+        logger.warning("session {} could not be listed: {}", session_path, exc)
+        return _session_record(session_path, streams=0, listing_error=str(exc), rows={})
 
     rows: dict[str, list[dict[str, object]]] = {}
     unreadable = 0
     failed_metrics = 0
+    unreachable = 0
     for source in sources:
-        result = run_one_stream(
-            source,
-            expected_hz=config.checks.expected_hz,
-            thresholds=config.checks.thresholds.to_thresholds(),
-            batch_size=config.checks.batch_size,
-            s3_profile_name=config.execution.s3_profile_name,
-            azure_profile_name=config.execution.azure_profile_name,
-            endpoint_url=config.execution.endpoint_url,
-            max_attempts=config.execution.stream_attempts,
-        )
+        try:
+            result = run_one_stream(
+                source,
+                expected_hz=config.checks.expected_hz,
+                thresholds=config.checks.thresholds.to_thresholds(),
+                batch_size=config.checks.batch_size,
+                s3_profile_name=config.execution.s3_profile_name,
+                azure_profile_name=config.execution.azure_profile_name,
+                endpoint_url=config.execution.endpoint_url,
+                max_attempts=config.execution.stream_attempts,
+                raise_infrastructure_errors=True,
+            )
+        except InfrastructureError as exc:
+            # Counted, not recorded: see InfrastructureError for why a row here would
+            # be worse than none.
+            logger.warning("{}", exc)
+            unreachable += 1
+            continue
         if result.error is not None:
             unreadable += 1
         failed_metrics += sum(1 for check in result.metrics if check.status is CheckStatus.FAIL)
@@ -225,10 +251,39 @@ def check_session(
         ).items():
             rows.setdefault(dataset, []).extend(dataset_rows)
 
+    return _session_record(
+        session_path,
+        streams=len(sources),
+        unreadable=unreadable,
+        failed_metrics=failed_metrics,
+        unreachable=unreachable,
+        rows=rows,
+    )
+
+
+def _session_record(  # noqa: PLR0913 -- one argument per column, all independent
+    session_path: str,
+    *,
+    streams: int,
+    unreadable: int = 0,
+    failed_metrics: int = 0,
+    unreachable: int = 0,
+    listing_error: str = "",
+    rows: dict[str, list[dict[str, object]]],
+) -> dict[str, object]:
+    """Build the record :func:`check_session` returns, with every column always present.
+
+    One constructor because every column has to hold one Arrow type across every block:
+    the driver's ``iter_batches`` concatenates blocks, and a column that is null in one
+    and a string in another has no common type to concatenate under. Hence
+    ``listing_error`` defaulting to ``""`` rather than to ``None``.
+    """
     return {
         "session_path": session_path,
-        "streams": len(sources),
+        "streams": streams,
         "unreadable": unreadable,
         "failed_metrics": failed_metrics,
+        "unreachable": unreachable,
+        "listing_error": listing_error,
         "rows": pickle.dumps(rows),
     }

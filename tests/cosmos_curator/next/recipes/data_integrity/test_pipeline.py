@@ -94,6 +94,10 @@ def test_the_run_summarizes_what_it_covered(summary: dict[str, object]) -> None:
     assert summary["sessions"] == NUM_SESSIONS
     assert summary["streams"] == NUM_STREAMS
     assert summary["unreadable"] == 1
+    # Nothing went unmeasured here, which is what lets this run exit 0.
+    assert summary["unreachable"] == 0
+    assert summary["unlisted_sessions"] == 0
+    assert summary["empty_sessions"] == 0
 
 
 def test_the_whole_invocation_commits_exactly_once(summary: dict[str, object], tmp_path: pathlib.Path) -> None:
@@ -202,6 +206,157 @@ def test_a_config_override_reaches_the_run(dataset: pathlib.Path, tmp_path: path
     assert pipeline.main([str(config_path), "--set", "input.limit=1"]) == 0
     # One stream from each of the two surviving sessions.
     assert len(store.read_streams(str(tmp_path / "di-store"))) == NUM_SESSIONS
+
+
+def test_a_stale_session_path_costs_the_run_its_exit_status_but_not_its_rows(
+    dataset: pathlib.Path, tmp_path: pathlib.Path
+) -> None:
+    """The measurements survive the failure, which is the whole point of failing after the commit.
+
+    One stale entry in a long input is close to inevitable, and aborting would discard
+    every session already measured -- for a session that was never going to contribute
+    a row anyway.
+    """
+    store_root = tmp_path / "di-store"
+    config = _config_data(dataset, store_root)
+    stale = str(dataset / "gone")
+    config["input"]["sessions"].append(stale)
+
+    with pytest.raises(pipeline.IncompleteRunError, match="could not be listed") as raised:
+        pipeline.run_config(resolve_config_data(config))
+
+    assert stale in str(raised.value)
+    runs = store.read_runs(str(store_root))
+    assert len(runs) == 1, "the run committed, so its rows are readable"
+    assert len(store.read_streams(str(store_root))) == NUM_STREAMS
+
+
+def test_an_unreachable_stream_costs_the_run_its_exit_status_but_adds_no_row(
+    dataset: pathlib.Path,
+    tmp_path: pathlib.Path,
+    unreachable_video: Callable[[pathlib.Path], pathlib.Path],
+) -> None:
+    """Adding a stream nobody can read must leave the store exactly as it was.
+
+    Every session here lists cleanly, so this is the other half of the coverage
+    contract: a run can fall short without a single stale path, and the streams it could
+    not reach have to be missing from the store rather than present as findings.
+    """
+    locked = unreachable_video(dataset / "a" / "locked.mp4")
+    store_root = tmp_path / "di-store"
+
+    with pytest.raises(pipeline.IncompleteRunError, match="could not be reached"):
+        pipeline.run_config(resolve_config_data(_config_data(dataset, store_root)))
+
+    runs = store.read_runs(str(store_root))
+    rows = store.read_streams(str(store_root))
+    assert len(runs) == 1, "the run committed, so what it did measure is readable"
+    # Rows written, not streams found: the run row is a claim about what is in the store.
+    assert runs[0]["num_streams"] == NUM_STREAMS
+    assert len(rows) == NUM_STREAMS
+    assert str(locked) not in {row["source"] for row in rows}
+
+
+def test_a_run_that_could_list_nothing_at_all_commits_nothing(tmp_path: pathlib.Path) -> None:
+    """With no measurement to preserve there is nothing to commit, so this fails the old way."""
+    store_root = tmp_path / "di-store"
+
+    with pytest.raises(ValueError, match="could not be listed"):
+        pipeline.run_config(
+            resolve_config_data(
+                {
+                    "schema_version": 1,
+                    "kind": "data-integrity",
+                    "input": {"sessions": [str(tmp_path / "absent-one"), str(tmp_path / "absent-two")]},
+                    "output": {"store_root": str(store_root)},
+                }
+            )
+        )
+
+    assert not store_root.exists()
+
+
+def test_a_run_that_measured_nothing_names_every_reason_it_did_not(tmp_path: pathlib.Path) -> None:
+    """One unlistable session and one empty one call for different fixes, so both are named.
+
+    Reporting whichever came first would send an operator after the wrong thing: a
+    missing path is not an empty session, and ``input.limit`` has nothing to do with
+    either of them.
+    """
+    empty = tmp_path / "clips" / "empty"
+    empty.mkdir(parents=True)
+    absent = tmp_path / "clips" / "absent"
+    store_root = tmp_path / "di-store"
+
+    with pytest.raises(ValueError, match="nothing measured across 2 session") as raised:
+        pipeline.run_config(
+            resolve_config_data(
+                {
+                    "schema_version": 1,
+                    "kind": "data-integrity",
+                    "input": {"sessions": [str(empty), str(absent)]},
+                    "output": {"store_root": str(store_root)},
+                }
+            )
+        )
+
+    message = str(raised.value)
+    assert "1 session(s) could not be listed" in message
+    assert "1 session(s) held no video streams" in message
+    assert not store_root.exists()
+
+
+#: The three clauses a zero-row run can carry, one per cause.
+_UNLISTED_CLAUSE = "session(s) could not be listed"
+_UNREACHED_CLAUSE = "stream(s) could not be reached"
+_EMPTY_CLAUSE = "session(s) held no video streams"
+_ALL_CLAUSES = (_UNLISTED_CLAUSE, _UNREACHED_CLAUSE, _EMPTY_CLAUSE)
+
+
+@pytest.mark.parametrize(
+    ("unlisted", "unreachable", "empty", "expected"),
+    [
+        (3, 0, 0, {_UNLISTED_CLAUSE}),
+        (0, 0, 3, {_EMPTY_CLAUSE}),
+        (1, 0, 2, {_UNLISTED_CLAUSE, _EMPTY_CLAUSE}),
+        (1, 4, 0, {_UNLISTED_CLAUSE, _UNREACHED_CLAUSE}),
+        (0, 2, 1, {_UNREACHED_CLAUSE, _EMPTY_CLAUSE}),
+        (1, 2, 1, set(_ALL_CLAUSES)),
+    ],
+)
+def test_every_way_to_measure_nothing_reads_as_itself(
+    unlisted: int, unreachable: int, empty: int, expected: set[str]
+) -> None:
+    """Every combination of causes, at the message rather than through a run.
+
+    Each combination is reachable by a run -- a mode-000 file is a read that fails under
+    a listing that does not -- but that would be a fixture per row for a function whose
+    whole job is arithmetic on three counters. The counters themselves are covered by
+    the runs above; what is left to pin is that the message spends all of them.
+    """
+    message = pipeline._nothing_measured(3, unreachable=unreachable, unlisted=unlisted, empty=empty)
+
+    for clause in _ALL_CLAUSES:
+        named = clause in message
+        assert named is (clause in expected), f"{clause!r} {'named' if named else 'missing'} in {message!r}"
+
+
+def test_a_session_that_holds_no_streams_is_reported_without_failing_the_run(
+    dataset: pathlib.Path, tmp_path: pathlib.Path
+) -> None:
+    """The quiet case: a cloud prefix that no longer holds videos lists clean and empty.
+
+    Nothing distinguishes it from a session genuinely without video, so it is counted
+    and reported rather than treated as a failure.
+    """
+    (dataset / "c").mkdir()
+    config = _config_data(dataset, tmp_path / "di-store")
+    config["input"]["sessions"].append(str(dataset / "c"))
+
+    summary = pipeline.run_config(resolve_config_data(config))
+
+    assert summary["empty_sessions"] == 1
+    assert summary["streams"] == NUM_STREAMS
 
 
 def test_sessions_holding_no_streams_fail_without_committing(tmp_path: pathlib.Path) -> None:

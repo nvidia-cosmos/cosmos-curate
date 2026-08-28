@@ -234,8 +234,9 @@ class DataIntegrityExecutionConfig(BaseModel):
         description="Concurrent session-measurement tasks.",
     )
     # Attempts per stream when the failure looks like a transport hiccup. Retried in the
-    # worker rather than by Ray, because a stream failure becomes a row and so never
-    # raises for Ray's map retry to see.
+    # worker rather than by Ray: nothing escapes the map function, so Ray's own map retry
+    # never sees a failure here. Exhausting these attempts makes the stream unreachable
+    # rather than unreadable -- see session_runner.InfrastructureError.
     stream_attempts: int = Field(default=3, ge=1)
     # Sessions per driver-side append. Bounds how much row payload the driver holds at
     # once, and how many Lance fragments a run leaves behind.

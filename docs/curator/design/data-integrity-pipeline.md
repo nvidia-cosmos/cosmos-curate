@@ -47,10 +47,11 @@ without touching the kernel:
 - Every session processed by one invocation lands in one store root.
 - Preserve the store's append, commit, identity, measurement, evaluation and
   re-evaluation compatibility semantics.
-- A completed and persisted run exits 0 regardless of data-quality findings. A nonzero exit
-  means the pipeline could not meet its operational contract — invalid config, Ray failure,
-  or a failed write.
+- A run that covered its input exits 0 regardless of data-quality findings. A nonzero exit
+  means the pipeline could not meet its operational contract — invalid config, Ray failure, a
+  failed write — or could not cover everything it was asked to.
 - Data-quality failures and unreadable inputs are persisted as findings; the run continues.
+- A failure to *reach* data is not a finding about it, and is never persisted as one.
 - Consume the recipe's library APIs, not the internals of its CLIs.
 - The recipe package must not import Ray at import time, so
   `python -m cosmos_curator.next.recipes.data_integrity.cli --help` stays fast and
@@ -138,7 +139,10 @@ becomes `typer.Exit(2)` — and because `prepare_run` resolves the config before
 callable, a bad config fails there rather than after Ray has started. An exception from the
 run itself propagates (or becomes `_fail("runtime", ...)` under `--json`), nonzero either
 way. A completed run echoes its message or payload and exits 0. `caption_judge` is the
-precedent for findings — it returns `passed: False` in its payload and still exits 0.
+precedent for findings — it returns `passed: False` in its payload and still exits 0. There is
+no third status between those two, which is why a run that committed its rows but covered less
+than its input has to say so by raising: see [Failure Isolation and Exit
+Status](#failure-isolation-and-exit-status).
 Execution is `pixi run run-pipeline`; there is deliberately no `cosmos-curator pipeline run`
 subcommand, and `test_pipeline_run_is_not_host_cli_command` pins that.
 
@@ -343,15 +347,24 @@ every record shares one Arrow schema:
 # after map(check_session): one record per session
 {
     "session_path": str,
-    "streams": int,         # streams the session held
-    "unreadable": int,      # of those, how many could not be read
+    "streams": int,         # streams the session held; 0 if it could not be listed
+    "unreadable": int,      # of those, how many were read and found unreadable
+    "unreachable": int,     # of those, how many could not be reached at all
     "failed_metrics": int,
+    "listing_error": str,   # "" unless the session could not be listed
     "rows": bytes,          # serialized {dataset_name: [store row, ...]}, the whole session
 }
 ```
 
-The counters are what the run summary is built from: the driver cannot count streams before
-the run, since listing now happens inside the tasks, so it sums them as batches arrive.
+Every column is present on every record, whatever happened to the session, and one
+constructor builds them all for that reason. `iter_batches` concatenates blocks, and a
+column that is a string in one block and null in another has no common Arrow type to
+concatenate under — which is why `listing_error` is `""` rather than null when there was no
+error, and why an unlistable session still reports zeroed counters rather than omitting them.
+
+The counters are what the run summary is built from, and — for the last two — the exit
+status: the driver cannot count streams before the run, since listing now happens inside the
+tasks, so it sums them as batches arrive.
 
 Workers build the store rows rather than handing the `StreamResult` back for the driver to
 convert, for two reasons. The first is the per-stream `content_identity` HEAD: `write_run`
@@ -396,17 +409,19 @@ pipeline.run(config)
   ├─ ray.data.from_items([{"session_path": p} for p in sessions])
   │      .map(check_session)                → one record per session, carrying its rows
   │           lists the session, then measures each stream in sequence
-  │           a failed listing raises, for Ray's map retry
-  │           a failed stream becomes a stream row carrying `error`
+  │           never raises: a failed listing comes back as `listing_error`
+  │           an unreadable stream becomes a stream row carrying `error`
+  │           an unreachable stream becomes a count, and no row
   │      .iter_batches()                    → finished sessions arrive on the driver
   │
   ├─ per batch, on the driver:
   │      sum the counters, then
   │      append_rows(...) → stream.lance, measurements/<metric>.lance (x5), evaluation.lance
   │
-  ├─ zero streams across every session      → config error, before the commit
+  ├─ zero rows across every session         → error, before the commit; nothing visible
   ├─ commit_run(root, run_id=run_id, ...)   → run.lance; everything above becomes visible
   ├─ write_manifest(root, run_id=run_id, ...)  → manifest.json
+  ├─ any session unlisted or stream unreachable → IncompleteRunError, after the commit
   └─ return summary dict                    → PipelineRunOutput; runtime echoes it; exit 0
 ```
 
@@ -426,41 +441,64 @@ engine decodes one stream at a time.
 
 The cost of one stage is that the run's stream count is not known until every session has
 been listed. Two things follow. The summary counts are summed from the batch counters as they
-arrive rather than known up front, and the "no streams anywhere" error can only be raised
-after the append loop — which leaves rows written but uncommitted, and therefore invisible,
-exactly as any other run that does not reach its commit.
+arrive rather than known up front, and the "nothing measured anywhere" error can only be
+raised after the append loop — which leaves rows written but uncommitted, and therefore
+invisible, exactly as any other run that does not reach its commit. That error names *every*
+way it got there, not the first one it found, because they ask different things of an
+operator: sessions that could not be listed (the paths or the credentials), streams that
+could not be reached (the credentials or the endpoint), and sessions that genuinely hold no
+video (the paths or `input.limit`). A run can arrive by several of those roads at once — one
+stale path beside two empty sessions is a mix, not a single cause — and naming one would send
+an operator after the wrong thing, with no summary and no readable row behind it to correct
+the impression.
 
 De-duplicating sources is no longer possible mid-run, and does not need to be: since no
 session is nested inside another (see [One source reached twice in one
 run](#one-source-reached-twice-in-one-run)), no source is reachable from two of them.
 
-Measurement retries happen inside the worker, not around it.
+Retries happen inside the worker, not around it, because nothing escapes the worker at all.
 `configure_ray_data_stability` (`next/core/ray_runtime.py`) sets
 `DataContext.max_map_retries = 3` with `retried_map_errors` limited to transient transport
 failures — `OSError`, `ConnectionError`, `TimeoutError`, `EndpointConnectionError`,
 `ReadTimeoutError`, `IncompleteRead` — which is the class of error a long S3 `GET` hits. That
-machinery only sees exceptions that *escape* the map function, and the measurement half of
-`check_session` never lets one out, so for that half it would never fire — the helper's own
-docstring says as much of any recipe that turns IO errors into per-item rows. Rather than give
-up the never-raise contract to reach it, the retry lives where the exception is already
-caught: `run_one_stream` takes `max_attempts`, and `check_session` passes
-`execution.stream_attempts`. Per-stream isolation is unchanged — a stream that fails every
-attempt is still one row rather than a failed session — and a read timeout stops being
+machinery only sees exceptions that *escape* the map function, and `check_session` never lets
+one out, so it never fires here; the helper's own docstring says as much of any recipe that
+turns IO errors into per-item outcomes. The call stays because it is the shared default for a
+`next/` Ray Data driver and would still cover a genuine bug escaping the UDF, but no failure
+this design reasons about reaches it.
+
+Two things about that machinery are worth stating, because reaching for it was the earlier
+plan. Its patterns are matched as substrings of the formatted `"ClassName: message"`, so the
+`OSError` entry only ever matches an exception literally *named* `OSError` — a
+`FileNotFoundError` from a stale session path never qualified. And a map error that exhausts
+its retries aborts the dataset, since `max_errored_blocks` is 0 by default and a block holds
+several sessions, so the run that dies takes every session already measured with it.
+
+The retry that does fire is `run_one_stream`'s `max_attempts`, which `check_session` passes
+from `execution.stream_attempts`. Per-stream isolation is unchanged — a stream that fails
+every attempt is still one row rather than a failed session — and a read timeout stops being
 recorded as a data-quality finding manufactured by the network. `max_attempts` defaults to 1,
 so `di-session` retries nothing and behaves exactly as before.
 
-Calling `configure_ray_data_stability` still earns its place, because the listing half does
-raise. A transport error there escapes and the map-level retry covers it, and retrying costs
-nothing: listing is the first thing the task does, so no measurement is repeated.
+Listing has no retry, which is a real cost of catching it here rather than letting it escape:
+a transient blip while listing costs that session its measurement for this run, where the
+map-level retry would have given it two more attempts. Accepted rather than overlooked. The
+retry only ever applied to a listing failure that had already put the whole block at risk,
+the run now names the unlisted session and exits nonzero rather than quietly covering less,
+and a bounded retry around the listing itself — the shape `run_one_stream` already has — is
+additive if blips prove common in practice.
 
 Which failures count as transient is decided by a short list of exception class names beside
 `run_one_stream`, matched against the raised exception's MRO — a third copy of Ray's own list
 in principle, but not in practice: the two existing copies (`_MAP_RETRY_PATTERNS` in
 `next/core/ray_runtime.py` and its twin in the legacy `_runtime.py`) are private, and
-`next/AGENTS.md` forbids `next/` importing the legacy tree at all. Matching the hierarchy
-rather than a formatted string is also what lets this list be shorter: bare `OSError` is
+`next/AGENTS.md` forbids `next/` importing the legacy tree at all. Matching the hierarchy,
+which Ray's string match cannot do, is also what lets this list be shorter: bare `OSError` is
 deliberately absent, because here it would drag in `FileNotFoundError` and `PermissionError`
-and spend the whole budget re-confirming that a path is still missing.
+and spend the whole budget re-confirming that a path is still missing. A second list beside it
+answers the different question of which failures mean the data was *unreachable* rather than
+retryable — see [Failure Isolation and Exit
+Status](#failure-isolation-and-exit-status).
 
 ---
 
@@ -484,10 +522,12 @@ the profile and endpoint themselves instead:
    (`store_schema.metric_dataset_path`, one per entry in `INSTRUMENTS`), and
    `evaluation.lance`.
 2. `commit_run(...)` once, appending the single `run.lance` row that makes everything above
-   visible. Its `num_streams` is every stream the invocation attempted across all sessions,
-   errored ones included, which is how `write_run` counts them and what makes that row
-   describe the invocation; `reevaluate` is the only caller passing null there, because a
-   re-judge touches no stream.
+   visible. Its `num_streams` is every stream the invocation *recorded* across all sessions,
+   unreadable ones included, since those are rows too — but not the unreachable ones, which
+   produced none. `write_run` counts every stream it attempted, and for a single session
+   those are the same number; here they are not, and the run row is a claim about what is in
+   the store. `reevaluate` is the only caller passing null there, because a re-judge touches
+   no stream.
 3. `write_manifest(...)`, overwriting the store's single `manifest.json` to describe the
    most recent run.
 
@@ -582,20 +622,63 @@ block configures the run rather than individual sessions.
 
 ## Failure Isolation and Exit Status
 
-No stream failure propagates out of `check_session`. A failed open or decode becomes
-`StreamResult(error=str(exc), metrics=[])`, which the store already persists as a stream row
-with no measurement or evaluation rows, and the session's other streams are measured
-regardless. That is not merely the same *representation* `session_runner` produces today — it
-is the same logic, so `check_session` calls it rather than restating it: `_run_one_stream` is
-promoted to `run_one_stream`, unchanged for its existing caller apart from the new
-`max_attempts`. Data-quality FAILs are ordinary evaluation rows. Neither reaches the exit
-status. Transient transport failures are retried inside the worker before they are recorded
-that way, as [Pipeline Execution](#pipeline-execution) describes.
+Nothing propagates out of `check_session`. What varies is what a failure is taken as evidence
+*of*, and there are three answers rather than two.
 
-A failed *listing* is the one failure that does escape, and Ray's map retry covers it. Should
-it exhaust the retries, the run fails rather than silently covering fewer sessions than it
-was asked to — which is the right outcome for an error that means a whole session went
-unmeasured.
+**The data is bad.** A failed open or decode becomes `StreamResult(error=str(exc),
+metrics=[])`, which the store already persists as a stream row with no measurement or
+evaluation rows, and the session's other streams are measured regardless. That is not merely
+the same *representation* `session_runner` produces today — it is the same logic, so
+`check_session` calls it rather than restating it: `_run_one_stream` is promoted to
+`run_one_stream`. Data-quality FAILs are ordinary evaluation rows. Neither reaches the exit
+status.
+
+**We could not reach the data.** An expired token, a 403, a 503 or a transport error that
+exhausts `max_attempts` says nothing about the stream, so it is counted and no row is written.
+Recording it as that stream's `error` would publish a data-quality claim the environment
+manufactured — and because readers resolve to the newest row per `stream_id`, that claim
+supersedes a healthy measurement from an earlier run, so a token that expires halfway through
+a fleet run leaves every stream after it reading back as broken. Writing nothing leaves the
+last real answer standing. `run_one_stream` raises `InfrastructureError` for these, under an
+opt-in `raise_infrastructure_errors` flag: `di-session` keeps the old contract, where the
+operator is watching and every failure is one line of a report, and only a run over thousands
+of streams needs the distinction.
+
+Classification is `is_infrastructure_error`, reading three signals in order — the exception's
+class hierarchy (`NoCredentialsError`, `ProfileNotFound`, our own `CloudCliError`, which on
+this path can only be a failure to build a credentialled client), the backend's error code
+(`ExpiredToken`, `AccessDenied`, `SignatureDoesNotMatch`), and the HTTP status (401, 403, and
+anything 5xx). The last two are read defensively off whatever attributes the exception
+carries, because the alternative is importing botocore and azure.core to name two types. The
+404 family is deliberately absent: an object that is gone is a fact about the dataset, and
+belongs in a row.
+
+**We could not reach the session.** A listing failure — a stale path, a moved bucket, a
+denied prefix, an expired token — comes back as `listing_error` on that session's record.
+Symmetric with an unreachable stream: nothing was learned, so nothing is written. There is
+also nowhere to write it if we wanted to. `stream_id` and `source` are `nullable=False` on
+both the measurement and evaluation schemas, so a session-grain row has no home in today's
+schema; that is [CVC-1244][cvc1244]'s work, not this recipe's.
+
+The last two are why a run has a third outcome: **completed, but did not cover its input.**
+The driver commits everything it measured, writes the manifest, and only *then* raises
+`IncompleteRunError`. Ordering is the whole point — the measurements are durable and readable,
+and the nonzero exit says only that the coverage is short. A stale entry in a manifest of
+thousands of session paths is close to inevitable, and it should cost the run its exit status,
+not its rows. A raising run is reported by its exception's text and nothing else —
+`{"ok": false, "error": "runtime", "message": ...}` under `--json`, the propagated traceback
+otherwise — so that message has to stand alone: it names the run id, the store root, the
+counts, and up to five unlisted paths before summarising the rest.
+
+Closing the gap means re-running, which re-measures the sessions that already succeeded as
+well: the store dedups on `stream_id` and keeps the newest row, so the result is correct
+rather than cheap. Covering only what was missed is incremental restart, which stays a
+[non-goal](#non-goals).
+
+A session that lists cleanly and holds nothing is not a failure — an empty session is a
+legitimate finding about the input — but it is counted and reported, because a stale S3 prefix
+lists clean and empty too, and the count is the only thing that separates "the prefix moved"
+from "this session has no video in it".
 
 | Situation | Persisted as | Exit |
 | --- | --- | --- |
@@ -603,16 +686,22 @@ unmeasured.
 | Unreadable or undecodable input | stream row with `error` | 0 |
 | Metric ran but was undefined on too little data | measurement row with `is_defined` false, plus a `SKIPPED` evaluation row | 0 |
 | Metric never ran, with no usable rate | measurement row with `is_defined` null, plus a `SKIPPED` evaluation row | 0 |
+| Session listed cleanly and held no streams | nothing; counted in the summary | 0 |
+| Stream unreachable: expired token, 403, 5xx, or an exhausted transport budget | nothing; counted, and reported by the failure | nonzero, after the commit |
+| Session that could not be listed | nothing; counted and named by the failure | nonzero, after the commit |
 | Invalid config, or an input set expanding to zero sessions | nothing | nonzero |
+| Nothing measured anywhere | rows may exist, uncommitted and unread | nonzero |
 | Ray execution failure | rows may exist, uncommitted and unread | nonzero |
 | Store write or commit failure | nothing visible to a reader | nonzero |
 | Interrupted with Ctrl-C | rows may exist, uncommitted and unread | nonzero |
 
-`run()` returns `{"run_id", "sessions", "streams", "unreadable", "failed_metrics",
-"store_root"}`, which the kind's `prepare_run` wraps in a `PipelineRunOutput` — the dict as
-`json_payload`, plus a one-line `message` naming the run id, the stream count and the
-findings. Findings are counted there, never encoded in the exit status. Per-session progress
-is logged at INFO.
+A run that covered its input returns `{"run_id", "sessions", "streams", "unreadable",
+"unreachable", "unlisted_sessions", "empty_sessions", "failed_metrics", "store_root"}`, which
+the kind's `prepare_run` wraps in a `PipelineRunOutput` — the dict as `json_payload`, plus a
+one-line `message` naming the run id, the stream count and the findings. Findings are counted
+there, never encoded in the exit status. `unreachable` and `unlisted_sessions` are always zero
+in that payload, since a run reaching it has none; when they are not, the same counts arrive
+in the exception's message instead. Per-session progress is logged at INFO.
 
 ---
 
@@ -624,12 +713,13 @@ New, under `cosmos_curator/next/recipes/data_integrity/`:
 | --- | --- |
 | `config.py` | Pydantic models (frozen, strict, `extra="forbid"`), `kind: data-integrity`, `load_config` / `resolve_config` with dotted overrides |
 | `sessions.py` | `expand_sessions(input_config, *, execution)` for the three input forms, over the shared child-prefix listers |
-| `processing.py` | `check_session(record, *, config, run_id, created_at) -> dict`, the Ray UDF, over `discover_session(session_path, *, config) -> list[str]`; only the listing can raise |
-| `pipeline.py` | driver `run_config(config) -> dict` plus an argparse `main()`; the only module that imports Ray |
+| `processing.py` | `check_session(record, *, config, run_id, created_at) -> dict`, the Ray UDF, over `discover_session(session_path, *, config) -> list[str]`; nothing raises, and every outcome is a column |
+| `pipeline.py` | driver `run_config(config) -> dict` plus an argparse `main()`, and `IncompleteRunError`; the only module that imports Ray |
 | `pipeline_kind.py` | `DATA_INTEGRITY_KIND = PipelineKind(name="data-integrity", ...)`, all seven callables, `list_presets` returning `[]`; every import deferred into its callable (`noqa: PLC0415`) and `_prepare_run` resolving the config before returning the closure, mirroring `video_split/pipeline_kind.py` |
 
 Modified: `store.py` (the two renames above), `session_runner.py` (`_run_one_stream` promoted
-to `run_one_stream`, plus `max_attempts`), `store_schema.py` (the `tool` comment at `:155`,
+to `run_one_stream`, plus `max_attempts`, `raise_infrastructure_errors`, `InfrastructureError`
+and `is_infrastructure_error`), `store_schema.py` (the `tool` comment at `:155`,
 one word), `core/utils/storage/s3_client.py` and `storage_utils.py` (the two hoisted listers),
 `next/recipes/multimodal_split/discovery.py` (repointed at them), and
 `client/pipeline_cli/builtin_pipeline_kinds.py` (one import, one tuple entry). The two
@@ -647,11 +737,15 @@ composition-root tests that pin the registered names —
 | Entry point | argparse CLI | argparse CLI | config file + `pipeline_runtime` |
 | Metric kernel | shared | shared | shared |
 | Store write | `write_run` | `write_run` | `append_rows` then `commit_run` |
-| Exit status | `PASS` / `FAIL` / `ERROR` as 0 / 1 / 2 | same | 0 on completion, nonzero only on operational failure |
+| Exit status | `PASS` / `FAIL` / `ERROR` as 0 / 1 / 2 | same | 0 on full coverage, nonzero on operational failure or short coverage |
+| Unreachable input | that stream's `ERROR`, in the report | same | counted, not recorded, and the run exits nonzero |
 
-Exit status is the only row where this recipe deliberately behaves differently rather than
-simply doing more. A nonzero code on FAIL is useful in an interactive CLI; a pipeline over
-thousands of sessions must not report a data-quality finding as a job failure.
+The last two rows are the only ones where this recipe deliberately behaves *differently*
+rather than simply doing more, and both follow from scale. A nonzero code on FAIL is useful in
+an interactive CLI; a pipeline over thousands of sessions must not report a data-quality
+finding as a job failure. Likewise, for one session an unreachable stream is a line in a
+report the operator is already reading, while for a fleet run it is a row that would outlive
+the run that wrote it.
 
 ---
 
@@ -689,6 +783,30 @@ instead, which is the part that is shared. Its `max_workers` pool is the shape a
 intra-session concurrency knob would take if one is ever wanted — deferred, not rejected,
 and until then there is only one knob because the pool's default is a single worker.
 
+**An unreachable stream recorded as a stream row, like an unreadable one.** The cheapest
+thing, and what the first implementation did. Rejected because the row is a lie that outlives
+the run: `error` reads as a claim about the data, readers resolve to the newest row per
+`stream_id`, and so an expired token retroactively marks healthy streams broken. A row that
+said "unreachable" in a column of its own would fix the ambiguity but not the supersession,
+and it needs a schema change to say it.
+
+**Fail the whole run the moment a stream turns out to be unreachable.** Honest, and it stops
+the pollution at the first stream rather than the last. Rejected because a single 503 in a
+fleet run would then discard every session already measured, which is the same trade the
+listing failure used to make and the reason it is being undone. Committing first and failing
+after keeps both halves: the measurements stand, and the run still says it fell short.
+
+**A per-session error row for an unlistable session.** The symmetric shape, and the one a
+reader could query. Deferred, not rejected: `stream_id` and `source` are `nullable=False` on
+the measurement and evaluation schemas, so there is no session-grain row to write today, which
+is [CVC-1244][cvc1244]. Until then the exception's message is where an unlisted path is named.
+
+**Validate the whole manifest up front, before Ray starts.** Attractive because it makes a
+stale path cheap to find. Rejected as the primary answer: proving a path listable is proving
+it listable *now*, so it is one more round trip per session against the same failure modes,
+and a token that expires mid-run is untouched by it. It is additive later as a fast-fail
+convenience, not as the contract.
+
 **A bespoke argparse entry point reusing `di-session`'s exit codes.** Rejected: that returns
 1 on a data-quality FAIL. `pipeline.py` keeps an argparse `main()` for local iteration, but
 it mirrors the runtime's contract.
@@ -719,11 +837,11 @@ Under `tests/cosmos_curator/next/recipes/data_integrity/`:
 | --- | --- |
 | `test_config.py` | resolution, dotted overrides, template completeness, and the rejections: an empty input block, an `az://` or bucketless store root, a deeper `session_depth`, the underscored kind |
 | `test_sessions.py` | all three input forms, S3 roots against a fake lister; empty expansion raises; overlapping roots and repeated entries collapse to distinct sessions; a nested session is dropped while a session merely sharing a name prefix is not |
-| `test_processing.py` | a session yields a row per stream it holds, plus five measurement and five evaluation rows for each readable one; an unreadable stream yields a stream row carrying `error` without costing its siblings; an empty session yields counters and no rows; a failed listing escapes for Ray's retry while a failed measurement never does |
-| `test_pipeline.py` | local Ray over two sessions with one corrupt file: exit 0, exactly one committed `run_id`, each session's `session_path` present on its own rows, findings persisted; a third session path nested inside one of them is measured once, under the session enclosing it; sessions holding no streams fail without committing; an unwritable store root fails the run |
+| `test_processing.py` | a session yields a row per stream it holds, plus five measurement and five evaluation rows for each readable one; an unreadable stream yields a stream row carrying `error` without costing its siblings; an empty session yields counters and no rows; an unlistable session is reported as `listing_error` rather than raised; a mode-`000` video -- a real read failure under a listing that succeeds, not an injected exception -- is counted and leaves no row; every record carries every column, at one type |
+| `test_pipeline.py` | local Ray over two sessions with one corrupt file: exit 0, exactly one committed `run_id`, each session's `session_path` present on its own rows, findings persisted, and the coverage counters zero; a third session path nested inside one of them is measured once, under the session enclosing it; a stale session path alongside good ones raises `IncompleteRunError` *after* the good sessions are committed and readable; a run where nothing could be listed commits nothing; an unreachable stream under sessions that all list cleanly raises `IncompleteRunError` while leaving the store's row count and the run row's `num_streams` unchanged; a session holding no streams is counted without failing the run; a run that measured nothing names every cause it had rather than the first, over both a mixed run and the message itself; an unwritable store root fails the run |
 | `test_pipeline_kind.py` | the kind's seven callables, and a subprocess guard that registering it imports neither Ray nor Lance |
 | `test_store.py` (extend) | a caller can assemble a run from the public builders, `append_rows` and `commit_run` |
-| `test_session_runner.py` (extend) | `max_attempts` defaults to one attempt, retries a transport error, and never retries a malformed file or a missing path |
+| `test_session_runner.py` (extend) | `max_attempts` defaults to one attempt, retries a transport error, and never retries a malformed file or a missing path; an interrupt cuts the backoff short instead of waiting it out; and, under `raise_infrastructure_errors`, an unreachable stream raises with its source and cause while a genuinely missing or corrupt one still gets a verdict |
 
 Plus the registered-name tuples in `test_builtin_pipeline_kinds.py` and `test_pipeline_app.py`,
 which spell the same list into an error message. Upstream,
@@ -774,6 +892,10 @@ The first implementation is complete when:
   carrying `error`
 - invalid config, a Ray execution failure, and a failed store write each exit nonzero, and
   no data-quality finding produces a nonzero exit
+- a run whose input includes a session that cannot be listed still commits every session it
+  did measure, exits nonzero, and names the unlisted path in what it reports
+- a stream that could not be reached leaves no row at all, so an earlier run's measurement of
+  that stream is still the newest row a reader resolves to
 - an input set that expands to zero sessions is rejected as a configuration error
 - a session path nested inside another configured session is measured once, under the session
   enclosing it, so no two rows in a run collide on `stream_id`
@@ -799,3 +921,4 @@ The first implementation is complete when:
   schema itself (the `tool` comment aside)
 
 [mr1104]: https://gitlab-master.nvidia.com/aidot/cosmos-curator-public/cosmos-curator/-/merge_requests/1104
+[cvc1244]: https://jirasw.nvidia.com/browse/CVC-1244

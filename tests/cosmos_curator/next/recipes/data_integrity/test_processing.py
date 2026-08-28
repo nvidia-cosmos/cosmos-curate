@@ -96,17 +96,72 @@ def test_listing_honours_the_per_session_stream_cap(session: pathlib.Path) -> No
     assert processing.discover_session(str(session), config=config) == [str(session / "front.mp4")]
 
 
-def test_a_failed_listing_escapes_for_rays_retry(tmp_path: pathlib.Path) -> None:
-    """Nothing has been measured yet, so the error belongs to Ray, not to a row."""
+def test_a_session_that_cannot_be_listed_is_reported_rather_than_raised(tmp_path: pathlib.Path) -> None:
+    """Raising would abort the dataset and discard every session already measured.
+
+    Ray's ``max_errored_blocks`` is 0 by default and a block holds several sessions, so
+    one stale path in a long input would cost the whole run its commit.
+    """
     missing = tmp_path / "absent"
 
-    with pytest.raises(OSError, match="absent"):
-        processing.check_session(
-            {"session_path": str(missing)},
-            config=_config(missing),
-            run_id=RUN_ID,
-            created_at=CREATED_AT,
-        )
+    record = processing.check_session(
+        {"session_path": str(missing)},
+        config=_config(missing),
+        run_id=RUN_ID,
+        created_at=CREATED_AT,
+    )
+
+    assert "absent" in str(record["listing_error"])
+    assert record["streams"] == 0
+    assert _rows(record) == {}
+
+
+def test_an_unreachable_stream_leaves_no_row_and_does_not_cost_its_siblings(
+    tmp_path: pathlib.Path,
+    h264_video: Callable[..., bytes],
+    unreachable_video: Callable[[pathlib.Path], pathlib.Path],
+) -> None:
+    """Counted, never recorded: a row here would supersede a healthy earlier measurement.
+
+    Readers resolve to the newest row per ``stream_id``, so persisting "we could not
+    reach this" would read back later as "this stream is broken".
+
+    The failure is a real unreadable file rather than an injected exception, because the
+    thing most worth pinning is the one line that asks for this treatment: with
+    ``raise_infrastructure_errors`` dropped from the call below, the real runner hands
+    back an error row and every assertion here fails.
+    """
+    path = tmp_path / "clips" / "locked"
+    path.mkdir(parents=True)
+    (path / "front.mp4").write_bytes(h264_video())
+    unreachable_video(path / "rear.mp4")
+
+    record = _check(path)
+    stream_rows = _rows(record)[store_schema.STREAM_DATASET]
+
+    assert record["unreachable"] == 1
+    assert record["unreadable"] == 0
+    assert record["streams"] == 2, "the count of streams found is unchanged by one being unreachable"
+    assert [row["source"] for row in stream_rows] == [str(path / "front.mp4")]
+
+
+def test_every_record_carries_every_column(session: pathlib.Path, tmp_path: pathlib.Path) -> None:
+    """One Arrow type per column across blocks, which is why the listing error is "" and not None.
+
+    The driver's ``iter_batches`` concatenates blocks, and a column that is null in one
+    and a string in another has no common type to concatenate under.
+    """
+    measured = _check(session)
+    unlistable = processing.check_session(
+        {"session_path": str(tmp_path / "absent")},
+        config=_config(tmp_path / "absent"),
+        run_id=RUN_ID,
+        created_at=CREATED_AT,
+    )
+
+    assert set(measured) == set(unlistable)
+    assert {type(value) for value in (measured["listing_error"], unlistable["listing_error"])} == {str}
+    assert measured["listing_error"] == ""
 
 
 def test_a_session_yields_the_rows_of_every_stream_it_holds(session: pathlib.Path) -> None:

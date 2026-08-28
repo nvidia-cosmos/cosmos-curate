@@ -81,14 +81,17 @@ def _prepare_run(
         summary = run_config(resolved)
         # Findings are reported, never encoded in the exit status: a completed run
         # exits 0 however many streams failed their thresholds.
-        return PipelineRunOutput(
-            json_payload=summary,
-            message=(
-                f"data-integrity: run {summary['run_id']} committed {summary['streams']} stream(s) "
-                f"from {summary['sessions']} session(s); {summary['unreadable']} unreadable, "
-                f"{summary['failed_metrics']} failed metric(s)"
-            ),
+        message = (
+            f"data-integrity: run {summary['run_id']} committed {summary['streams']} stream(s) "
+            f"from {summary['sessions']} session(s); {summary['unreadable']} unreadable, "
+            f"{summary['failed_metrics']} failed metric(s)"
         )
+        # Only mentioned when there are any, unlike the counts above, which an operator
+        # reads on every run. The unreachable and unlisted counts have no such branch:
+        # a run that reaches this line has none, or it would have raised.
+        if summary["empty_sessions"]:
+            message += f"; {summary['empty_sessions']} session(s) held no streams"
+        return PipelineRunOutput(json_payload=summary, message=message)
 
     return run
 
