@@ -31,10 +31,10 @@ sensor  CameraSensor-based: divides the video into non-overlapping segments and
         execution.  Validates that every VideoIndex timestamp is decoded exactly once.
 
 Run:
-    python -m cosmos_curator.core.sensors.scripts.camera_sensor_benchmark sol --source video.mp4
-    python -m cosmos_curator.core.sensors.scripts.camera_sensor_benchmark kf-chunked --source video.mp4
-    python -m cosmos_curator.core.sensors.scripts.camera_sensor_benchmark sensor --source video.mp4
-    python -m cosmos_curator.core.sensors.scripts.camera_sensor_benchmark sensor \
+    python -m benchmarks.sensors.camera_sensor_benchmark sol --source video.mp4
+    python -m benchmarks.sensors.camera_sensor_benchmark kf-chunked --source video.mp4
+    python -m benchmarks.sensors.camera_sensor_benchmark sensor --source video.mp4
+    python -m benchmarks.sensors.camera_sensor_benchmark sensor \
         --source video.mp4 --segment-duration 30
 """
 

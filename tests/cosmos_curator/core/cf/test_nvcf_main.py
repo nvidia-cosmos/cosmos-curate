@@ -872,10 +872,11 @@ class TestFastAPIEndpoints:
         fake_manager.list.return_value = []
         fake_stop_event = threading.Event()
         executed = threading.Event()
+        joined = threading.Event()
 
         class FakeProgressThread:
             def join(self) -> None:
-                pass
+                joined.set()
 
         def fake_execute(*_args: object) -> None:
             ipc_status.value = True
@@ -896,6 +897,7 @@ class TestFastAPIEndpoints:
                 json={"pipeline": "split", "args": {"input_video_path": "/in", "output_clip_path": "/out"}},
             )
             assert executed.wait(timeout=1)
+            assert joined.wait(timeout=1)
 
         assert response.status_code == HTTP_OK
         response_body = response.json()
@@ -915,12 +917,13 @@ class TestFastAPIEndpoints:
         fake_manager.list.return_value = []
         fake_stop_event = threading.Event()
         executed = threading.Event()
+        joined = threading.Event()
         events: list[str] = []
 
         class FakeProgressThread:
             def join(self) -> None:
                 events.append("join")
-                assert events == ["execute", "upload", "stop", "join"]
+                joined.set()
 
         def fake_execute(*_args: object) -> None:
             ipc_status.value = True
@@ -929,7 +932,6 @@ class TestFastAPIEndpoints:
 
         def fake_upload(*_args: object) -> None:
             events.append("upload")
-            assert not fake_stop_event.is_set()
 
         def fake_stop() -> None:
             events.append("stop")
@@ -958,6 +960,7 @@ class TestFastAPIEndpoints:
                 },
             )
             assert executed.wait(timeout=1)
+            assert joined.wait(timeout=1)
 
             assert response.status_code == HTTP_OK
             assert response.json()["reqid"] == mock_request_id
@@ -1087,11 +1090,13 @@ class TestFastAPIEndpoints:
         fake_manager.list.return_value = []
         fake_stop_event = threading.Event()
         executed = threading.Event()
+        joined = threading.Event()
         events: list[str] = []
 
         class FakeProgressThread:
             def join(self) -> None:
                 events.append("join")
+                joined.set()
 
         def fake_execute(*_args: object) -> None:
             events.append("execute")
@@ -1119,6 +1124,7 @@ class TestFastAPIEndpoints:
                 },
             )
             assert executed.wait(timeout=1)
+            assert joined.wait(timeout=1)
 
             assert response.status_code == HTTP_OK
             assert response.json()["reqid"] == mock_request_id

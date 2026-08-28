@@ -35,9 +35,9 @@ from cosmos_curator.core.sensors.scripts._cli_cloud import (
 )
 from cosmos_curator.core.sensors.types.types import DataSource, VideoIndexCreationMethod
 from cosmos_curator.core.sensors.utils.video import (
-    _HeaderIndexUnavailableError,
-    _resolve_auto_index_method_for_source,
+    HeaderIndexUnavailableError,
     make_index_and_metadata,
+    resolve_auto_index_method_for_source,
 )
 
 PASS_EXIT_CODE = 0
@@ -235,7 +235,7 @@ def _check_video_index(  # noqa: PLR0913
     # false positive.
     with _open() as src:
         data = src if isinstance(src, pathlib.Path) else _as_data_source(src)
-        resolved = _resolve_auto_index_method_for_source(data, stream_idx, video_format)
+        resolved = resolve_auto_index_method_for_source(data, stream_idx, video_format)
 
     full_index = _index(VideoIndexCreationMethod.FULL_DEMUX)
 
@@ -251,7 +251,7 @@ def _check_video_index(  # noqa: PLR0913
     # is a genuine inconsistency.
     try:
         header_index = _index(VideoIndexCreationMethod.FROM_HEADER, allow_header_fallback=False)
-    except _HeaderIndexUnavailableError as e:
+    except HeaderIndexUnavailableError as e:
         return IndexVerdict.PROBLEM, [
             f"Header index could not be read from the file: {e}.",
             f"Full demux found {len(full_index)} packets.",

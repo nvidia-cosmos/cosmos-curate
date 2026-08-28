@@ -180,22 +180,36 @@ def store_root(tmp_path: pathlib.Path) -> str:
     return str(tmp_path / "di-store")
 
 
+# B-frame test files are NOT encoded on the fly. The ffmpeg we ship is the LGPL
+# build, whose only H.264 encoder is openh264 -- and openh264 CANNOT emit
+# B-frames; the encoder that can, libx264, is GPL and deliberately not bundled.
+# So a ``bf=N`` encode option is silently ignored and yields a B-frame-free
+# stream. Instead we read a small clip pre-encoded with libx264 + B-frames and
+# checked into the repo -- decoding B-frames works in any ffmpeg build; only
+# *encoding* them needs libx264.
+_BFRAME_CLIP = (
+    pathlib.Path(__file__).resolve().parents[3] / "pipelines" / "video" / "data" / "test_clip_10s_bframes.mp4"
+)
+
+
 @pytest.fixture
 def h264_video() -> Callable[..., bytes]:
-    """Return a factory for a tiny H.264 MP4 without B-frames.
+    """Return a factory for an H.264 MP4 with (``bframes`` > 0) or without B-frames.
 
-    A narrower copy of the sensor tests' fixture of the same name, which is no longer
-    an ancestor conftest now that these tests live under ``next``. Kept as a copy
-    rather than hoisted to a shared ancestor because that conftest would import ``av``
-    for every collection under ``tests/cosmos_curator``, and rather than moved into
-    ``tests/utils`` because only the B-frame-free branch is needed here: ``bframes > 0``
-    reads a checked-in libx264 clip that only the sensor tests assert against.
+    A copy of the sensor tests' fixture of the same name, which is not an ancestor
+    conftest for these tests. Kept as a copy rather than hoisted to a shared ancestor
+    because that conftest would import ``av`` for every collection under
+    ``tests/cosmos_curator``.
+
+    For ``bframes > 0`` it returns the checked-in libx264 B-frame clip (the bundled
+    openh264 encoder can't make B-frames here -- see ``_BFRAME_CLIP``); the exact count
+    is not significant, only that the stream has B-frames. For ``bframes == 0`` it
+    encodes a tiny clip live (any H.264 encoder handles that).
     """
 
     def _make(*, bframes: int = 0) -> bytes:
         if bframes > 0:
-            msg = "only B-frame-free clips are built here; see tests/cosmos_curator/core/sensors/conftest.py"
-            raise NotImplementedError(msg)
+            return _BFRAME_CLIP.read_bytes()
         buffer = io.BytesIO()
         with av.open(buffer, mode="w", format="mp4") as container:
             stream = container.add_stream("h264", rate=30)

@@ -461,7 +461,7 @@ class GpuVideoDecoder:
         raise NotImplementedError(msg)
 
 
-class _HeaderIndexUnavailableError(ValueError):
+class HeaderIndexUnavailableError(ValueError):
     """Header-based packet indexing is unavailable for this stream."""
 
 
@@ -580,7 +580,7 @@ def _get_video_index_from_header(
     """Build packet lists from header index entries (``VideoIndexCreationMethod.FROM_HEADER``).
 
     Raises:
-        _HeaderIndexUnavailableError: If the stream exposes no usable
+        HeaderIndexUnavailableError: If the stream exposes no usable
             ``index_entries`` and callers should retry with full demux.
 
     """
@@ -596,7 +596,7 @@ def _get_video_index_from_header(
     index_entries = getattr(stream_index, "index_entries", None)
     if index_entries is None:
         msg = "stream does not expose header index entries; retry with FULL_DEMUX"
-        raise _HeaderIndexUnavailableError(msg)
+        raise HeaderIndexUnavailableError(msg)
 
     for entry in index_entries:
         pts.append(entry.timestamp)
@@ -607,7 +607,7 @@ def _get_video_index_from_header(
 
     if len(pts) == 0:
         msg = "stream header index is empty; retry with FULL_DEMUX"
-        raise _HeaderIndexUnavailableError(msg)
+        raise HeaderIndexUnavailableError(msg)
 
     return offset, size, pts, is_keyframe, is_discard
 
@@ -701,7 +701,7 @@ def _resolve_auto_index_method(
     return VideoIndexCreationMethod.FROM_HEADER, True
 
 
-def _resolve_auto_index_method_for_source(
+def resolve_auto_index_method_for_source(
     data: DataSource,
     stream_idx: int = 0,
     video_format: str | None = None,
@@ -799,7 +799,7 @@ def make_index_and_metadata(
                 return _build_index_and_metadata(
                     container, video_stream, stream_idx, resolved, allow_header_fallback=False
                 )
-            except _HeaderIndexUnavailableError as e:
+            except HeaderIndexUnavailableError as e:
                 if not allow_header_fallback:
                     raise
                 logger.warning(
@@ -858,7 +858,7 @@ def _build_index_and_metadata(
         case VideoIndexCreationMethod.FROM_HEADER:
             try:
                 offset, size, pts, is_keyframe, is_discard = _get_video_index_from_header(video_stream)
-            except _HeaderIndexUnavailableError as e:
+            except HeaderIndexUnavailableError as e:
                 if not allow_header_fallback:
                     raise
                 logger.warning(

@@ -36,9 +36,9 @@ from cosmos_curator.core.sensors.utils.video import (
     CpuVideoDecoder,
     GpuVideoDecodeConfig,
     GpuVideoDecoder,
+    HeaderIndexUnavailableError,
     _get_video_index_from_header,
     _has_composition_offset,
-    _HeaderIndexUnavailableError,
     _resolve_auto_index_method,
     make_decode_plan,
     make_index_and_metadata,
@@ -371,7 +371,7 @@ def test_make_index_and_metadata_from_header_falls_back_to_full_demux() -> None:
         ),
         patch(
             "cosmos_curator.core.sensors.utils.video._get_video_index_from_header",
-            side_effect=_HeaderIndexUnavailableError("retry with FULL_DEMUX"),
+            side_effect=HeaderIndexUnavailableError("retry with FULL_DEMUX"),
         ),
         patch(
             "cosmos_curator.core.sensors.utils.video._get_video_index_full_demux",
@@ -406,10 +406,10 @@ def test_make_index_and_metadata_from_header_can_disable_fallback() -> None:
         ),
         patch(
             "cosmos_curator.core.sensors.utils.video._get_video_index_from_header",
-            side_effect=_HeaderIndexUnavailableError("retry with FULL_DEMUX"),
+            side_effect=HeaderIndexUnavailableError("retry with FULL_DEMUX"),
         ),
         patch("cosmos_curator.core.sensors.utils.video._get_video_index_full_demux") as full_demux,
-        pytest.raises(_HeaderIndexUnavailableError, match="retry with FULL_DEMUX"),
+        pytest.raises(HeaderIndexUnavailableError, match="retry with FULL_DEMUX"),
     ):
         make_index_and_metadata(
             b"",
@@ -1763,7 +1763,7 @@ def test_make_index_and_metadata_falls_back_to_full_demux_when_header_index_unav
     with (
         patch(
             "cosmos_curator.core.sensors.utils.video._get_video_index_from_header",
-            side_effect=_HeaderIndexUnavailableError(
+            side_effect=HeaderIndexUnavailableError(
                 "stream does not expose header index entries; retry with FULL_DEMUX"
             ),
         ),
@@ -1902,7 +1902,7 @@ def test_resolve_auto_reports_consumed_packets_for_clean_streams(h264_video: Cal
 def _raise_header_unavailable(*_args: object, **_kwargs: object) -> None:
     """Stand in for ``_get_video_index_from_header`` on a stream with no usable header index."""
     msg = "forced for test"
-    raise _HeaderIndexUnavailableError(msg)
+    raise HeaderIndexUnavailableError(msg)
 
 
 def _patch_counting_container_open(monkeypatch: pytest.MonkeyPatch) -> Callable[[], int]:
@@ -1983,7 +1983,7 @@ def test_make_index_and_metadata_auto_propagates_header_error_without_fallback(
         _raise_header_unavailable,
     )
 
-    with pytest.raises(_HeaderIndexUnavailableError, match="forced for test"):
+    with pytest.raises(HeaderIndexUnavailableError, match="forced for test"):
         make_index_and_metadata(
             h264_video(bframes=0),
             index_method=VideoIndexCreationMethod.AUTO,

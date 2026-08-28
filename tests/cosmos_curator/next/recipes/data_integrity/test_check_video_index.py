@@ -20,7 +20,7 @@ from collections.abc import Callable
 
 import pytest
 
-from cosmos_curator.core.sensors.scripts.check_video_index import (
+from cosmos_curator.next.recipes.data_integrity.check_video_index import (
     PASS_EXIT_CODE,
     IndexVerdict,
     _check_video_index,

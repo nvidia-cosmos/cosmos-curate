@@ -36,11 +36,11 @@ field-by-field equality of the resulting ``VideoIndex`` (and pixel-level
 equality of decoded frames for ``sample``) against the local reference.
 
 Run:
-    python -m cosmos_curator.core.sensors.scripts.cloud_io_benchmark index \
+    python -m benchmarks.sensors.cloud_io_benchmark index \
         --source s3://bucket/clip.mp4 --s3-profile-name myprof \
         --reference-source /local/clip.mp4
 
-    python -m cosmos_curator.core.sensors.scripts.cloud_io_benchmark sample \
+    python -m benchmarks.sensors.cloud_io_benchmark sample \
         --source az://container/clip.mp4 --azure-profile-name myprof \
         --target-fps 1 --duration-s 10 \
         --reference-source /local/clip.mp4
@@ -308,7 +308,7 @@ def cmd_index(args: argparse.Namespace) -> None:
 
     for method in methods:
         # `allow_header_fallback=False` for FROM_HEADER so we surface
-        # _HeaderIndexUnavailableError rather than silently scanning the file.
+        # HeaderIndexUnavailableError rather than silently scanning the file.
         allow_fallback = method != VideoIndexCreationMethod.FROM_HEADER
         print(f"\n=== {method.name} ===")
         stats = IOStats()
