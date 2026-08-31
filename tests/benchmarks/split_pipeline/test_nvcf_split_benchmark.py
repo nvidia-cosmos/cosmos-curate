@@ -21,6 +21,9 @@ import pytest
 from benchmarks.secrets import KratosSecrets
 from benchmarks.split_pipeline.nvcf_split_benchmark import (
     _caption_quality_threshold_values,
+    _configure_otlp_observability,
+    _json_str_map,
+    _merge_observability_labels,
     _parse_args,
     _read_optional_json,
     _run_benchmark_attempt,
@@ -172,6 +175,48 @@ def test_parse_args_rejects_invalid_caption_quality_thresholds(
     assert "length_ceiling_words" in capsys.readouterr().err
 
 
+def test_parse_args_validates_observability_labels(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Malformed observability labels should use argparse's normal error path."""
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "nvcf_split_benchmark.py",
+            *_REQUIRED_NVCF_CLI_ARGS,
+            "--enable-otlp-logs",
+            "--observability-labels-json",
+            '{"customer": 42}',
+        ],
+    )
+
+    with pytest.raises(SystemExit):
+        _parse_args()
+
+    assert "observability labels must be a JSON object with non-empty string keys and values" in capsys.readouterr().err
+
+
+def test_parse_args_parses_observability_labels(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Validated observability labels should be available to the benchmark caller."""
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "nvcf_split_benchmark.py",
+            *_REQUIRED_NVCF_CLI_ARGS,
+            "--enable-otlp-traces",
+            "--observability-labels-json",
+            '{"customer": "test"}',
+        ],
+    )
+
+    args = _parse_args()
+
+    assert args.observability_labels == {"customer": "test"}
+
+
 def test_caption_quality_threshold_values_uses_split_config_keys() -> None:
     """Serialize threshold values with the split JSON/API key spellings."""
     thresholds = CaptionQualityThresholdConfig(
@@ -187,6 +232,109 @@ def test_caption_quality_threshold_values_uses_split_config_keys() -> None:
         "caption_quality_repeated_trigram_min_count": 3,
         "caption_quality_near_duplicate_jaccard_threshold": 0.75,
     }
+
+
+def test_configure_otlp_observability_enables_only_requested_signals() -> None:
+    """Benchmark OTLP controls should preserve independent chart signal gates."""
+    deploy_data: dict[str, Any] = {
+        "configuration": {
+            "metrics": {
+                "remoteWrite": {"endpoint": "https://prom.example"},
+                "otlp": {"timeout": "20s"},
+            },
+        }
+    }
+
+    _configure_otlp_observability(
+        deploy_data,
+        "https://otlp.example",
+        {"customer": "test-customer"},
+        enable_metrics=True,
+        enable_traces=False,
+        enable_logs=False,
+        nvcf_mtls=False,
+    )
+
+    configuration = deploy_data["configuration"]
+    assert configuration["metrics"]["remoteWrite"]["endpoint"] == "https://prom.example"
+    assert configuration["metrics"]["otlp"] == {"enabled": True, "timeout": "20s"}
+    assert "enabled" not in configuration["metrics"]
+    assert configuration["metrics"]["extraExternalLabels"] == {"customer": "test-customer"}
+    assert "logging" not in configuration
+    assert "tracing" not in configuration
+    assert configuration["otlp"] == {"endpoint": "https://otlp.example"}
+
+
+def test_configure_otlp_observability_keeps_nvcf_mtls_explicit_and_uses_chart_defaults() -> None:
+    """The NVCF mTLS profile should be independent and avoid restating chart defaults."""
+    deploy_data: dict[str, Any] = {
+        "configuration": {
+            "otlp": {"nvcfSecrets": {"secretName": "custom-secrets"}},
+        }
+    }
+
+    _configure_otlp_observability(
+        deploy_data,
+        "https://otlp.example",
+        {},
+        enable_metrics=False,
+        enable_traces=False,
+        enable_logs=True,
+        nvcf_mtls=True,
+    )
+
+    configuration = deploy_data["configuration"]
+    assert configuration["logging"] == {"otlp": {"enabled": True}}
+    assert "metrics" not in configuration
+    assert "tracing" not in configuration
+    assert configuration["otlp"] == {
+        "endpoint": "https://otlp.example",
+        "extractNVCFSecrets": True,
+        "tls": {"caPath": "/etc/curator-otlp/certs/ca.crt"},
+        "nvcfSecrets": {"secretName": "custom-secrets"},
+    }
+
+
+def test_merge_observability_labels_operator_values_override_template_defaults() -> None:
+    """Operator labels should override static defaults while preserving unrelated defaults."""
+    configuration: dict[str, Any] = {
+        "metrics": {
+            "extraExternalLabels": {
+                "customer": "template-customer",
+                "environment": "staging",
+            }
+        }
+    }
+
+    _merge_observability_labels(
+        configuration,
+        {
+            "customer": "operator-customer",
+            "benchmark": "split-pipeline",
+        },
+    )
+
+    assert configuration["metrics"]["extraExternalLabels"] == {
+        "customer": "operator-customer",
+        "environment": "staging",
+        "benchmark": "split-pipeline",
+    }
+
+
+def test_merge_observability_labels_rejects_non_object_template_labels() -> None:
+    """Malformed template labels should fail with the same clear contract as NVCF deployment."""
+    configuration: dict[str, Any] = {"metrics": {"extraExternalLabels": ["invalid"]}}
+
+    with pytest.raises(TypeError) as exc_info:
+        _merge_observability_labels(configuration, {"customer": "operator-customer"})
+    assert str(exc_info.value) == "configuration.metrics.extraExternalLabels must be an object"
+
+
+@pytest.mark.parametrize("raw_value", ['{"customer": 42}', '{"": "value"}', '["customer"]'])
+def test_json_str_map_rejects_invalid_observability_labels(raw_value: str) -> None:
+    """Observability labels should fail visibly instead of disappearing from the deploy payload."""
+    with pytest.raises((TypeError, ValueError)):
+        _json_str_map(raw_value)
 
 
 def test_run_benchmark_attempt_skips_status_logs(tmp_path: Path) -> None:

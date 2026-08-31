@@ -150,6 +150,30 @@ variables:
     options:
       - "FRAGMENTATION_BASED"
       - "SATURATION_AWARE"
+  NVCF_SPLIT_BENCHMARK_OTLP_METRICS_ENABLED:
+    description: "Enable additive OTLP metrics export for nvcf_split_benchmark deployments"
+    value: "False"
+    options:
+      - "True"
+      - "False"
+  NVCF_SPLIT_BENCHMARK_OTLP_TRACES_ENABLED:
+    description: "Enable OTLP traces for nvcf_split_benchmark deployments"
+    value: "False"
+    options:
+      - "True"
+      - "False"
+  NVCF_SPLIT_BENCHMARK_OTLP_LOGS_ENABLED:
+    description: "Enable OTLP log collection for nvcf_split_benchmark deployments"
+    value: "False"
+    options:
+      - "True"
+      - "False"
+  NVCF_SPLIT_BENCHMARK_OTLP_NVCF_MTLS_ENABLED:
+    description: "Use NVCF-extracted mTLS credentials for enabled OTLP signals"
+    value: "True"
+    options:
+      - "True"
+      - "False"
   HELM_DEBUG_KEEP_FAILED_DEPLOYMENTS:
     description: "On failure, do not delete the deployment"
     value: "False"
@@ -1262,6 +1286,8 @@ resolve_nvcf_staging_tag:
   rules:
     - if: '$CI_PIPELINE_SOURCE == "web" && $RUN_BENCHMARK == "True" && $NVCF_SPLIT_BENCHMARK_SOURCE_REF != ""'
       when: never
+    - if: '$CI_PIPELINE_SOURCE == "schedule" && $RUN_BENCHMARK == "True" && $NVCF_SPLIT_BENCHMARK_SOURCE_REF != "" && $RUN_PROMOTE_TO_PROD != "True"'
+      when: never
     - if: '$CI_PIPELINE_SOURCE == "schedule" && $RUN_PROMOTE_TO_PROD == "True"'
     - if: '($CI_PIPELINE_SOURCE == "schedule" || $CI_PIPELINE_SOURCE == "web") && $RUN_BENCHMARK == "True"'
     - when: never
@@ -1333,8 +1359,6 @@ nvcf_split_benchmark:
       artifacts: true
       optional: true
   rules:
-    - if: '$CI_PIPELINE_SOURCE == "schedule" && $NVCF_SPLIT_BENCHMARK_SOURCE_REF != ""'
-      when: never
     - if: '($CI_PIPELINE_SOURCE == "schedule" || $CI_PIPELINE_SOURCE == "web") && $RUN_BENCHMARK == "True"'
     - when: never   # fallback: never run otherwise
   id_tokens:

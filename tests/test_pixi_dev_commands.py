@@ -520,6 +520,12 @@ def test_nvcf_split_benchmark_runs_as_package_module() -> None:
     assert 'MAX_ATTEMPTS="${NVCF_SPLIT_BENCHMARK_MAX_ATTEMPTS:-4}"' in script
     assert '--max-attempts "${MAX_ATTEMPTS}"' in script
     assert ci_config["variables"]["NVCF_SPLIT_BENCHMARK_MAX_ATTEMPTS"]["value"] == "4"
+    assert "NVCF_SPLIT_BENCHMARK_OTLP_ENABLED" not in ci_config["variables"]
+    for signal in ("METRICS", "TRACES", "LOGS"):
+        variable = f"NVCF_SPLIT_BENCHMARK_OTLP_{signal}_ENABLED"
+        assert ci_config["variables"][variable]["value"] == "False"
+        assert variable in script
+    assert ci_config["variables"]["NVCF_SPLIT_BENCHMARK_OTLP_NVCF_MTLS_ENABLED"]["value"] == "True"
 
 
 def test_nvcf_helm_deploy_invokes_without_status_logs() -> None:
