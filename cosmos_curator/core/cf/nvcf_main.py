@@ -86,6 +86,37 @@ _RAY_JOB_ENTRYPOINT_FAILURE_MESSAGE = "Ray job entrypoint failed"
 # using get-request-status
 using_nvcf_status: dict[str, bool] = {"get_req_sts": False}
 
+# Only needed for debugging; reject for remote invokes.
+_NVCF_REJECTED_ARG_NAMES = frozenset(
+    {
+        "stage_save",
+        "stage_save_sample_rate",
+        "stage_replay",
+        "stage_compare",
+        "stage_compare_path",
+        "stage_compare_atol",
+        "stage_compare_pass_threshold",
+        "stage_compare_backend",
+    },
+)
+
+
+def _validate_no_debug_pipeline_args(args: dict[str, Any]) -> None:
+    """Reject NVCF invoke args that are only meant for trusted CLI debugging.
+
+    Args:
+        args: The raw ``args`` mapping from the invoke JSON payload, before it is
+            spread into an ``argparse.Namespace``.
+
+    Raises:
+        ValueError: If any rejected debug/replay arg name is present.
+
+    """
+    rejected = _NVCF_REJECTED_ARG_NAMES & args.keys()
+    if rejected:
+        error_msg = f"Unsupported NVCF invoke args: {', '.join(sorted(rejected))}"
+        raise ValueError(error_msg)
+
 
 class RayJobLoggedError(RuntimeError):
     """Raised when a failed Ray CLI command already emitted captured diagnostics."""
@@ -928,7 +959,12 @@ async def curate_video(request: Request) -> JSONResponse:  # noqa: C901, PLR0912
 
         invoke_args = await request.json()
         pipeline_type = invoke_args.get("pipeline", "unknown")
-        pipeline_args = argparse.Namespace(**(invoke_args.get("args", {})))
+        raw_args = invoke_args.get("args", {})
+        try:
+            _validate_no_debug_pipeline_args(raw_args)
+        except ValueError as e:
+            return JSONResponse(status_code=400, content={"error": str(e)})
+        pipeline_args = argparse.Namespace(**raw_args)
         _apply_observability_env_defaults(pipeline_args)
 
         def prepare_and_run_pipeline() -> None:  # noqa: C901, PLR0912

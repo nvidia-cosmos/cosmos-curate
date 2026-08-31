@@ -36,6 +36,7 @@ from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
 
 from cosmos_curator.core.cf import nvcf_main
+from cosmos_curator.core.utils.misc.stage_replay import add_stage_replay_args
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -820,6 +821,52 @@ class TestFastAPIEndpoints:
             assert response.status_code == HTTP_OK
             assert response.json()["message"] == "Pipeline executed successfully"
             mock_run.assert_called_once()
+
+    def test_run_pipeline_rejects_debug_pipeline_args(
+        self,
+        test_client: TestClient,
+        mock_request_id: str,
+    ) -> None:
+        """--stage-replay and friends are only needed for debugging; reject for remote invokes."""
+        debug_arg_name = "stage_replay"
+        fake_manager = MagicMock()
+        fake_manager.Value.return_value = SimpleNamespace(value=False)
+        fake_manager.Queue.return_value = queue.Queue()
+        fake_manager.list.return_value = []
+        fake_thread = MagicMock()
+        fake_stop_event = threading.Event()
+
+        with (
+            patch("cosmos_curator.core.cf.nvcf_main.Manager", return_value=fake_manager),
+            patch("cosmos_curator.core.cf.nvcf_main._setup_request", return_value=(fake_thread, fake_stop_event)),
+            patch("cosmos_curator.core.cf.nvcf_main.execute_pipeline") as mock_run,
+            patch("cosmos_curator.core.cf.nvcf_main.gather_and_upload_outputs") as mock_upload,
+        ):
+            response = test_client.post(
+                "/v1/run_pipeline",
+                headers={"NVCF-REQID": mock_request_id},
+                json={
+                    "pipeline": "split",
+                    "args": {
+                        "input_video_path": "/in",
+                        "output_clip_path": "/out",
+                        debug_arg_name: ["SomeStage"],
+                    },
+                },
+            )
+
+            assert response.status_code == HTTP_BAD_REQUEST
+            assert debug_arg_name in response.json()["error"]
+            mock_run.assert_not_called()
+            mock_upload.assert_not_called()
+
+    def test_rejected_debug_pipeline_args_cover_every_stage_replay_flag(self) -> None:
+        """The blocklist must track stage_replay.py's real args, not a hand-copied list."""
+        parser = argparse.ArgumentParser()
+        add_stage_replay_args(parser)
+        all_dests = {action.dest for action in parser._actions if action.dest != "help"}
+
+        assert all_dests == nvcf_main._NVCF_REJECTED_ARG_NAMES
 
     def test_run_pipeline_pexec_ray_job_failure_is_logged_once_without_traceback(
         self, test_client: TestClient, mock_request_id: str
