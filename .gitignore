@@ -28,3 +28,6 @@ ci_secrets.env
 /run-benchmark.sh
 /cosmos-cookbook/
 
+# Coverage databases, written by any local pytest run
+.coverage
+.coverage.*
