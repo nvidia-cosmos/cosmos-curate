@@ -42,6 +42,10 @@ variables:
   CI_BUILDER_IMAGE_REPO: ${CI_REGISTRY_IMAGE}/ci-builder
   CI_BUILDER_IMAGE: ${CI_BUILDER_IMAGE_REPO}:latest
   BUILDX_BUILDER_NAME: ci-cosmos-builder
+  # BuildKit v0.32 defaults attestations to OCI artifacts, which the current
+  # GitLab registry rejects. Keep provenance but use its legacy storage format.
+  # Remove after https://github.com/moby/buildkit/issues/7007 is resolved.
+  BUILDX_NO_DEFAULT_OCI_ARTIFACT: "1"
 
   # Pytest configuration
   PYTEST_XDIST_WORKERS: 4
