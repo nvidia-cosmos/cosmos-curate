@@ -30,10 +30,8 @@ runner, not part of discovery.
 import pathlib
 
 from cosmos_curator.core.sensors.data_integrity.engine import validate_non_negative_int
-from cosmos_curator.core.sensors.scripts._cli_cloud import (
-    is_cloud_uri,
-    list_cloud_objects,
-)
+from cosmos_curator.core.utils.storage.storage_utils import is_remote_path
+from cosmos_curator.core.utils.storage_cli import list_storage_objects
 
 # Container suffixes CameraSensor can open (MP4 family + MKV). Lowercased for
 # case-insensitive matching. MPEG-TS is intentionally excluded (rejected by the
@@ -65,12 +63,12 @@ def discover_streams(
         s3_profile_name: Optional AWS profile for ``s3://`` sources.
         azure_profile_name: Azure profile for ``az://`` sources.
         endpoint_url: Optional S3 endpoint override for S3-compatible stores
-            (see ``_cli_cloud.resolve_s3_endpoint_url``).
+            (see ``s3_client.resolve_s3_endpoint_url``).
 
     Returns:
         Fully-qualified stream paths/URIs in sorted (discovery) order. Cloud URIs
-        can be handed straight to ``open_cloud_source``; local paths are absolute
-        filesystem paths.
+        can be handed straight to ``storage_cli.open_storage_source``; local paths
+        are absolute filesystem paths.
 
     Raises:
         FileNotFoundError: If a local ``session_path`` does not exist.
@@ -78,8 +76,8 @@ def discover_streams(
 
     """
     limit = validate_non_negative_int("limit", limit)
-    if is_cloud_uri(session_path):
-        streams = list_cloud_objects(
+    if is_remote_path(session_path):
+        streams = list_storage_objects(
             session_path,
             s3_profile_name=s3_profile_name,
             azure_profile_name=azure_profile_name,

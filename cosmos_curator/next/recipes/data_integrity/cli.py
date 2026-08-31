@@ -55,10 +55,10 @@ from cosmos_curator.core.sensors.data_integrity.results import (
     overall_status,
     stream_result,
 )
-from cosmos_curator.core.sensors.scripts._cli_cloud import (
-    CloudCliError,
-    add_cloud_credential_args,
-    resolve_s3_endpoint_url,
+from cosmos_curator.core.utils.storage.s3_client import resolve_s3_endpoint_url
+from cosmos_curator.core.utils.storage_cli import (
+    StorageCliError,
+    add_storage_credential_args,
     validate_source,
 )
 from cosmos_curator.next.recipes.data_integrity.cli_support import (
@@ -210,7 +210,7 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     )
     add_threshold_args(parser)
     add_store_args(parser)
-    add_cloud_credential_args(parser)
+    add_storage_credential_args(parser)
     return parser.parse_args(argv)
 
 
@@ -300,7 +300,7 @@ def _run(args: argparse.Namespace, stats: dict[str, float] | None, interrupted: 
             except Exception as e:  # noqa: BLE001 - the store can fail in as many ways as its backend
                 return report_error(f"checked {args.source!r} but could not write the store: {e}")
         return FAIL_EXIT_CODE if overall_status(results) is CheckStatus.FAIL else PASS_EXIT_CODE
-    except CloudCliError as e:
+    except StorageCliError as e:
         return report_error(str(e))
     except Exception as e:  # noqa: BLE001
         # A Ctrl-C inside a libav read arrives here as a decode error rather than a

@@ -39,8 +39,15 @@ _KERNEL_ROOT = Path(__file__).parents[5] / "cosmos_curator" / "core" / "sensors"
 #: concern. Matched on the top-level name, so ``pyarrow.compute`` is caught too.
 _FORBIDDEN_TOP_LEVEL = frozenset({"argparse", "boto3", "botocore", "lance", "pyarrow", "smart_open"})
 
-#: The cloud helpers the recipe uses. Importable from here under the sensors-package
-#: rule, which is exactly why it needs saying: the kernel must not reach for them.
+#: The operator-facing scripts. Every one of them parses arguments, opens files by path
+#: and reaches a codec or a wire format, and all of that is a workflow's business. They
+#: live inside the sensors package, so the self-containment rule permits importing them
+#: and this is the only thing that forbids it.
+#:
+#: Nothing needs saying here about ``cosmos_curator.core.utils.storage``: it is outside
+#: the sensors package, so ``test_import_boundary.py`` already forbids the whole package
+#: from importing it, kernel included. Restating it here would imply the general rule
+#: were narrower than it is.
 _FORBIDDEN_PREFIX = "cosmos_curator.core.sensors.scripts"
 
 
@@ -55,10 +62,10 @@ def _absolute_target(node: ast.ImportFrom, package: str) -> str:
     """Resolve what an ``ImportFrom`` names to an absolute dotted path.
 
     A relative import has to be resolved against the importing module's own package
-    before it can be matched: ``from ..scripts._cli_cloud import ...`` carries the
-    module as ``scripts._cli_cloud``, which matches no absolute rule here and would
-    otherwise slip past. One level means the package itself, each further level
-    strips a trailing component.
+    before it can be matched: ``from ..scripts.make_mcap_from_mp4 import ...`` carries
+    the module as ``scripts.make_mcap_from_mp4``, which matches no absolute rule here
+    and would otherwise slip past. One level means the package itself, each further
+    level strips a trailing component.
     """
     if not node.level:
         return node.module or ""

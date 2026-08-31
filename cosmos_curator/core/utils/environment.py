@@ -59,7 +59,11 @@ MODEL_WEIGHTS_PREFIX = "s3://your_bucket_name/model_weights/"
 
 # S3 & Azure credentials
 S3_PROFILE_PATH = pathlib.Path(os.getenv("COSMOS_S3_PROFILE_PATH", "/dev/shm/s3_creds_file"))  # noqa: S108
-AZURE_PROFILE_PATH = pathlib.Path(os.getenv("COSMOS_AZURE_PROFILE_PATH", "/dev/shm/azure_creds_file"))  # noqa: S108
+# Named separately from the resolved path so that a caller re-reading
+# COSMOS_AZURE_PROFILE_PATH at runtime has a default to fall back to that is not itself
+# an import-time reading of that variable.
+DEFAULT_AZURE_PROFILE_PATH = pathlib.Path("/dev/shm/azure_creds_file")  # noqa: S108
+AZURE_PROFILE_PATH = pathlib.Path(os.getenv("COSMOS_AZURE_PROFILE_PATH", str(DEFAULT_AZURE_PROFILE_PATH)))
 
 # Local S3 credentials file path.
 LOCAL_AWS_CREDENTIALS_FILE = pathlib.Path("~/.aws/credentials").expanduser()

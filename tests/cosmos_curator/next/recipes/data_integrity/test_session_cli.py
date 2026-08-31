@@ -31,7 +31,8 @@ from cosmos_curator.core.sensors.data_integrity.results import (
     SessionReport,
     StreamResult,
 )
-from cosmos_curator.core.sensors.scripts._cli_cloud import CloudCliError, CloudObjectStat
+from cosmos_curator.core.utils.storage.storage_client import StorageStat
+from cosmos_curator.core.utils.storage_cli import StorageCliError
 from cosmos_curator.next.recipes.data_integrity import session_cli
 from cosmos_curator.next.recipes.data_integrity.cli_support import (
     DEFAULT_THRESHOLDS,
@@ -43,9 +44,9 @@ from cosmos_curator.next.recipes.data_integrity.cli_support import (
 )
 
 
-def _boom_stat(_source: str) -> CloudObjectStat:
+def _boom_stat(_source: str) -> StorageStat:
     msg = "HEAD denied"
-    raise CloudCliError(msg)
+    raise StorageCliError(msg)
 
 
 def _stream(source: str, status: CheckStatus, *, error: str | None = None) -> StreamResult:
@@ -320,7 +321,7 @@ def test_counting_reader_counts_and_delegates() -> None:
 
 def test_progress_shows_total_and_percent_when_size_known(capsys: pytest.CaptureFixture[str]) -> None:
     """When a size lookup resolves, the counter renders read/total (pct%)."""
-    progress = session_cli._Progress(stat_lookup=lambda _s: CloudObjectStat(size_bytes=100))
+    progress = session_cli._Progress(stat_lookup=lambda _s: StorageStat(size_bytes=100))
     wrapper = progress.make_wrapper(1, 1, "s3://bucket/clip.mp4")
     stream = wrapper(io.BytesIO(b"x" * 50))
     stream.read()  # 50 of 100 bytes -> 50%
@@ -342,7 +343,7 @@ def test_progress_drops_live_counter_when_streams_overlap(capsys: pytest.Capture
     The byte total still has to reach the finish line, and nothing may emit a carriage
     return that would stomp another stream's output.
     """
-    progress = session_cli._Progress(stat_lookup=lambda _s: CloudObjectStat(size_bytes=100), live_byte_counter=False)
+    progress = session_cli._Progress(stat_lookup=lambda _s: StorageStat(size_bytes=100), live_byte_counter=False)
     wrapper = progress.make_wrapper(1, 2, "s3://bucket/clip.mp4")
     stream = wrapper(io.BytesIO(b"x" * 50))
     stream.read()
@@ -364,9 +365,9 @@ def test_progress_skips_the_size_lookup_without_the_live_counter() -> None:
     """
     looked_up: list[str] = []
 
-    def _record(source: str) -> CloudObjectStat:
+    def _record(source: str) -> StorageStat:
         looked_up.append(source)
-        return CloudObjectStat(size_bytes=100)
+        return StorageStat(size_bytes=100)
 
     progress = session_cli._Progress(stat_lookup=_record, live_byte_counter=False)
     progress.make_wrapper(1, 2, "s3://bucket/clip.mp4")(io.BytesIO(b"x" * 50)).read()
@@ -385,11 +386,11 @@ def test_progress_skips_the_size_lookup_without_the_live_counter() -> None:
     assert storing.stats["s3://bucket/other.mp4"].size_bytes == 100
 
 
-@pytest.mark.parametrize("lookup", [lambda _s: CloudObjectStat(), _boom_stat])
+@pytest.mark.parametrize("lookup", [lambda _s: None, _boom_stat])
 def test_a_lookup_that_learned_nothing_is_not_cached_for_the_store(
-    lookup: Callable[[str], CloudObjectStat],
+    lookup: Callable[[str], StorageStat | None],
 ) -> None:
-    """An empty stat is a failed HEAD, and the store must be free to retry it itself.
+    """``None`` is a HEAD that learned nothing, and the store must be free to retry it.
 
     Caching it would satisfy the store's "reuse the caller's stat" path and persist a
     null ETag and size for an object that is perfectly readable.
@@ -425,8 +426,13 @@ def test_progress_writes_whole_lines_under_concurrent_hooks() -> None:
 
 
 def test_progress_falls_back_to_read_only_when_size_unknown(capsys: pytest.CaptureFixture[str]) -> None:
-    """With no resolvable size, the counter shows a bare 'MB read' figure."""
-    progress = session_cli._Progress(stat_lookup=lambda _s: CloudObjectStat())
+    """With no resolvable size, the counter shows a bare 'MB read' figure.
+
+    A stat carrying an ETag but no size, rather than an empty one: ``object_stat``
+    collapses a lookup that learned nothing at all to ``None``, so an all-fields-empty
+    stat is not an input the progress display can actually receive.
+    """
+    progress = session_cli._Progress(stat_lookup=lambda _s: StorageStat(etag="abc"))
     wrapper = progress.make_wrapper(1, 1, "s3://bucket/clip.mp4")
     stream = wrapper(io.BytesIO(b"x" * 50))
     stream.read()

@@ -56,13 +56,6 @@ from cosmos_curator.core.sensors.data.camera_data import CameraData
 from cosmos_curator.core.sensors.sampling.grid import SamplingGrid
 from cosmos_curator.core.sensors.sampling.policy import NearestTimestampPolicy
 from cosmos_curator.core.sensors.sampling.spec import SamplingSpec
-from cosmos_curator.core.sensors.scripts._cli_cloud import (
-    CloudCliError,
-    add_cloud_credential_args,
-    is_cloud_uri,
-    open_cloud_source,
-    validate_source,
-)
 from cosmos_curator.core.sensors.sensors.camera_sensor import CameraSensor
 from cosmos_curator.core.sensors.types.types import DataSource, VideoIndexCreationMethod
 from cosmos_curator.core.sensors.utils.io import open_data_source
@@ -71,6 +64,13 @@ from cosmos_curator.core.sensors.utils.video import (
     make_decode_plan,
     make_index_and_metadata,
     open_video_container,
+)
+from cosmos_curator.core.utils.storage.storage_utils import is_remote_path
+from cosmos_curator.core.utils.storage_cli import (
+    StorageCliError,
+    add_storage_credential_args,
+    open_storage_source,
+    validate_source,
 )
 
 # A factory that produces a fresh ``DataSource`` context per call. Used so each
@@ -92,7 +92,7 @@ def _add_source_args(parser: argparse.ArgumentParser) -> None:
         action="store_true",
         help="Build VideoIndex via full demux instead of container header (slower, for validation).",
     )
-    add_cloud_credential_args(parser)
+    add_storage_credential_args(parser)
 
 
 def _resolve_source(args: argparse.Namespace) -> tuple[str, SourceFactory]:
@@ -100,24 +100,24 @@ def _resolve_source(args: argparse.Namespace) -> tuple[str, SourceFactory]:
 
     The factory is a thunk returning a context manager that yields a fresh
     :class:`DataSource` each time: a :class:`Path` for local files, a fresh
-    seekable :class:`BinaryIO` for cloud URIs. Exits with status 1 on invalid
+    seekable :class:`BinaryIO` for remote URIs. Exits with status 1 on invalid
     source / credential errors.
     """
     source_str: str = args.source
     try:
         validate_source(source_str)
-    except CloudCliError as e:
+    except StorageCliError as e:
         sys.stderr.write(f"error: {e}\n")
         sys.exit(1)
 
-    if is_cloud_uri(source_str):
+    if is_remote_path(source_str):
         s3_profile_name = args.s3_profile_name
         azure_profile_name = args.azure_profile_name
         endpoint_url = args.endpoint_url
 
         @contextmanager
         def factory() -> Generator[DataSource]:
-            with open_cloud_source(
+            with open_storage_source(
                 source_str,
                 s3_profile_name=s3_profile_name,
                 azure_profile_name=azure_profile_name,

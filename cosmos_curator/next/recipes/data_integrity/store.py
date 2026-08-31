@@ -66,16 +66,11 @@ from cosmos_curator.core.sensors.data_integrity.results import (
     OverallStatus,
     StreamResult,
 )
-from cosmos_curator.core.sensors.scripts._cli_cloud import (
-    CloudObjectStat,
-    get_cloud_object_stat,
-    get_cloud_text,
-    get_lance_storage_options,
-    is_cloud_uri,
-    is_s3_uri,
-    put_cloud_text,
-)
-from cosmos_curator.next.recipes.data_integrity import store_schema
+from cosmos_curator.core.utils.storage.s3_client import is_s3path
+from cosmos_curator.core.utils.storage.storage_client import StorageStat
+from cosmos_curator.core.utils.storage.storage_utils import is_remote_path
+from cosmos_curator.core.utils.storage_cli import get_lance_storage_options
+from cosmos_curator.next.recipes.data_integrity import storage_io, store_schema
 
 #: Newest-first ordering applied before de-duplication. ``run_id`` is a UUID so its
 #: descending order is arbitrary -- but it is deterministic, which is the point: two
@@ -88,7 +83,8 @@ class ContentIdentity:
     """What the bytes behind a source looked like when we measured them.
 
     The staleness signal neither ``instrument_version`` nor the dataset schema can
-    see: unchanged code, replaced data. See :class:`CloudObjectStat` for why the
+    see: unchanged code, replaced data. See
+    :class:`~cosmos_curator.core.utils.storage.storage_client.StorageStat` for why the
     ETag is a change token rather than a checksum.
     """
 
@@ -130,7 +126,7 @@ def _utc_now() -> datetime.datetime:
 def content_identity(
     source: str,
     *,
-    stat: CloudObjectStat | None = None,
+    stat: StorageStat | None = None,
     s3_profile_name: str | None = None,
     azure_profile_name: str = "default",
     endpoint_url: str | None = None,
@@ -141,22 +137,24 @@ def content_identity(
     issues; local files through one ``stat``. Anything unreadable yields an empty
     identity rather than raising -- a store write must not fail over provenance.
 
-    ``stat`` short-circuits the cloud lookup with a response the caller already has,
-    which is how the session CLI keeps the total at one ``HEAD`` per stream. An empty
-    stat is not such a response -- it is what a failed lookup returns -- so it falls
-    through to a fresh attempt rather than being recorded as fact.
+    ``stat`` short-circuits the remote lookup with a response the caller already has,
+    which is how the session CLI keeps the total at one ``HEAD`` per stream. ``None``
+    is not such a response -- it is what a failed lookup returns -- so it falls through
+    to a fresh attempt rather than being recorded as fact.
     """
-    if is_cloud_uri(source):
+    if is_remote_path(source):
         resolved = (
             stat
-            if stat is not None and not stat.is_empty
-            else get_cloud_object_stat(
+            if stat is not None
+            else storage_io.object_stat(
                 source,
                 s3_profile_name=s3_profile_name,
                 azure_profile_name=azure_profile_name,
                 endpoint_url=endpoint_url,
             )
         )
+        if resolved is None:
+            return ContentIdentity()
         return ContentIdentity(etag=resolved.etag, size_bytes=resolved.size_bytes, last_modified=resolved.last_modified)
     try:
         info = pathlib.Path(source).stat()
@@ -296,8 +294,8 @@ def build_evaluation_row(  # noqa: PLR0913 -- a verdict row is many independent 
 
 
 def _ensure_local_parent(uri: str) -> None:
-    """Create the parent directory of a local dataset path; a no-op for cloud URIs."""
-    if not is_cloud_uri(uri):
+    """Create the parent directory of a local dataset path; a no-op for remote URIs."""
+    if not is_remote_path(uri):
         pathlib.Path(uri).parent.mkdir(parents=True, exist_ok=True)
 
 
@@ -391,7 +389,7 @@ def write_run(  # noqa: PLR0913 -- a run's provenance is genuinely many independ
     tool: str,
     run_id: str | None = None,
     created_at: datetime.datetime | None = None,
-    cloud_stats: Mapping[str, CloudObjectStat] | None = None,
+    storage_stats: Mapping[str, StorageStat] | None = None,
     s3_profile_name: str | None = None,
     azure_profile_name: str = "default",
     endpoint_url: str | None = None,
@@ -415,7 +413,7 @@ def write_run(  # noqa: PLR0913 -- a run's provenance is genuinely many independ
         tool: which CLI wrote this run, recorded in the manifest.
         run_id: id shared by every row written here; minted when omitted.
         created_at: timestamp shared by every row; now (UTC) when omitted.
-        cloud_stats: ``HEAD`` responses the caller already has, by source. The
+        storage_stats: ``HEAD`` responses the caller already has, by source. The
             session CLI collects these for its progress display, so passing them
             keeps the run at one ``HEAD`` per stream; anything absent is resolved
             here.
@@ -432,7 +430,7 @@ def write_run(  # noqa: PLR0913 -- a run's provenance is genuinely many independ
     run_id = run_id or new_run_id()
     created_at = created_at or _utc_now()
     storage_options = get_lance_storage_options(root, s3_profile_name=s3_profile_name, endpoint_url=endpoint_url)
-    known = dict(cloud_stats or {})
+    known = dict(storage_stats or {})
 
     stream_rows: list[dict[str, object]] = []
     measurement_rows: dict[str, list[dict[str, object]]] = {spec.name: [] for spec in INSTRUMENTS}
@@ -567,8 +565,8 @@ def write_manifest(  # noqa: PLR0913 -- a manifest records many provenance field
     }
     uri = join(root, store_schema.MANIFEST_NAME)
     payload = json.dumps(manifest, indent=2, sort_keys=True)
-    if is_s3_uri(uri):
-        put_cloud_text(uri, payload, s3_profile_name=s3_profile_name, endpoint_url=endpoint_url)
+    if is_s3path(uri):
+        storage_io.write_text(uri, payload, s3_profile_name=s3_profile_name, endpoint_url=endpoint_url)
     else:
         path = pathlib.Path(uri)
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -584,8 +582,8 @@ def read_manifest(
 ) -> dict[str, object]:
     """Read ``manifest.json`` from the store at ``root``."""
     uri = join(root, store_schema.MANIFEST_NAME)
-    if is_s3_uri(uri):
-        payload = get_cloud_text(uri, s3_profile_name=s3_profile_name, endpoint_url=endpoint_url)
+    if is_s3path(uri):
+        payload = storage_io.read_text(uri, s3_profile_name=s3_profile_name, endpoint_url=endpoint_url)
     else:
         payload = pathlib.Path(uri).read_text()
     loaded: dict[str, object] = json.loads(payload)

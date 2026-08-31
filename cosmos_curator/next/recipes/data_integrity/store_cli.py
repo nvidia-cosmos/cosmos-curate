@@ -27,7 +27,9 @@ from collections.abc import Mapping
 
 from cosmos_curator.core.sensors.data_integrity.instruments import Thresholds
 from cosmos_curator.core.sensors.data_integrity.results import StreamResult
-from cosmos_curator.core.sensors.scripts._cli_cloud import CloudObjectStat, is_azure_uri, is_s3_uri
+from cosmos_curator.core.utils.storage.azure_client import is_azure_path
+from cosmos_curator.core.utils.storage.s3_client import is_s3path
+from cosmos_curator.core.utils.storage.storage_client import StorageStat
 
 
 def validate_store_path(value: str) -> str:
@@ -46,10 +48,10 @@ def validate_store_path(value: str) -> str:
     if not value.strip():
         msg = "store path is empty; give a local directory or an s3:// prefix"
         raise argparse.ArgumentTypeError(msg)
-    if is_azure_uri(value):
+    if is_azure_path(value):
         msg = f"the data-integrity store does not support az:// yet: {value!r}; use a local path or an s3:// prefix"
         raise argparse.ArgumentTypeError(msg)
-    if is_s3_uri(value):
+    if is_s3path(value):
         # A bucket is the least an S3 store needs. Without this, "s3://" is accepted
         # here and fails far deeper, where the message belongs to Lance rather than us.
         if not value.removeprefix("s3://").strip(" /"):
@@ -90,7 +92,7 @@ def persist_run(  # noqa: PLR0913 -- provenance plus credentials, all independen
     session_path: str | None,
     thresholds: Thresholds,
     tool: str,
-    cloud_stats: Mapping[str, CloudObjectStat] | None = None,
+    storage_stats: Mapping[str, StorageStat] | None = None,
     s3_profile_name: str | None = None,
     azure_profile_name: str = "default",
     endpoint_url: str | None = None,
@@ -111,7 +113,7 @@ def persist_run(  # noqa: PLR0913 -- provenance plus credentials, all independen
         session_path=session_path,
         thresholds=thresholds,
         tool=tool,
-        cloud_stats=cloud_stats,
+        storage_stats=storage_stats,
         s3_profile_name=s3_profile_name,
         azure_profile_name=azure_profile_name,
         endpoint_url=endpoint_url,

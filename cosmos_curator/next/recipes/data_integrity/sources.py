@@ -36,9 +36,10 @@ from typing import BinaryIO, cast
 from cosmos_curator.core.sensors.data_integrity.engine import run_metrics
 from cosmos_curator.core.sensors.data_integrity.instruments import DEFAULT_THRESHOLDS, Thresholds
 from cosmos_curator.core.sensors.data_integrity.results import CheckResult, ResolvedConfig, VideoInfo
-from cosmos_curator.core.sensors.scripts._cli_cloud import is_cloud_uri, open_cloud_source
 from cosmos_curator.core.sensors.sensors.camera_sensor import CameraSensor
 from cosmos_curator.core.sensors.types.types import DataSource
+from cosmos_curator.core.utils.storage.storage_utils import is_remote_path
+from cosmos_curator.core.utils.storage_cli import open_storage_source
 
 
 def _as_data_source(stream: BinaryIO) -> DataSource:
@@ -74,14 +75,14 @@ def open_source(
     stateful handle instead of being able to re-open the file, which matches what every
     cloud source has always given it.
     """
-    if is_cloud_uri(source):
-        with open_cloud_source(
+    if is_remote_path(source):
+        with open_storage_source(
             source,
             s3_profile_name=s3_profile_name,
             azure_profile_name=azure_profile_name,
             endpoint_url=endpoint_url,
-        ) as cloud_stream:
-            yield stream_wrapper(cloud_stream) if stream_wrapper is not None else cloud_stream
+        ) as remote_stream:
+            yield stream_wrapper(remote_stream) if stream_wrapper is not None else remote_stream
     else:
         with pathlib.Path(source).open("rb") as local_stream:
             yield stream_wrapper(local_stream) if stream_wrapper is not None else local_stream
@@ -114,8 +115,8 @@ def run_checks(  # noqa: PLR0913
         thresholds: pass/fail policy (see :class:`Thresholds`).
         stream_idx: which video stream to open (default 0).
         batch_size: timestamps per metric update; 0 feeds the whole array at once.
-        s3_profile_name: optional AWS profile forwarded to ``open_cloud_source``.
-        azure_profile_name: Azure profile forwarded to ``open_cloud_source``.
+        s3_profile_name: optional AWS profile forwarded to ``open_storage_source``.
+        azure_profile_name: Azure profile forwarded to ``open_storage_source``.
         endpoint_url: optional S3 endpoint override for S3-compatible stores.
         stats: optional out-parameter; ``sensor_init_ms`` is recorded here in
             addition to the ``stream_ms`` / ``evaluate_ms`` from ``run_metrics``.

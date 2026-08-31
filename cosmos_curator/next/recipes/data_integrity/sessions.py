@@ -32,14 +32,11 @@ from pathlib import Path
 from loguru import logger
 
 from cosmos_curator.core.sensors.data_integrity import identity
-from cosmos_curator.core.sensors.scripts._cli_cloud import (
-    get_cloud_text,
-    is_azure_uri,
-    is_s3_uri,
-    make_s3_client,
-)
-from cosmos_curator.core.utils.storage.s3_client import S3Prefix, list_child_prefixes
+from cosmos_curator.core.utils.storage.azure_client import is_azure_path
+from cosmos_curator.core.utils.storage.s3_client import S3Prefix, is_s3path
 from cosmos_curator.core.utils.storage.storage_utils import list_child_directories
+from cosmos_curator.core.utils.storage_cli import make_s3_client
+from cosmos_curator.next.recipes.data_integrity import storage_io
 from cosmos_curator.next.recipes.data_integrity.config import (
     DataIntegrityExecutionConfig,
     DataIntegrityInputConfig,
@@ -72,8 +69,8 @@ def read_session_list(uri: str, *, s3_profile_name: str | None = None, endpoint_
             JSON but not an array of strings.
 
     """
-    if is_s3_uri(uri):
-        payload = get_cloud_text(uri, s3_profile_name=s3_profile_name, endpoint_url=endpoint_url)
+    if is_s3path(uri):
+        payload = storage_io.read_text(uri, s3_profile_name=s3_profile_name, endpoint_url=endpoint_url)
     elif "://" in uri:
         msg = f"session_list_uri must be a local path or an s3:// object, got {uri!r}"
         raise ValueError(msg)
@@ -105,10 +102,11 @@ def list_sessions_under_root(
     storage-level listers, which ``multimodal-split`` also uses, so the two recipes
     cannot disagree about what a child prefix is.
 
-    The S3 client is built here with :func:`make_s3_client` rather than left to the
-    lister, so enumeration uses the same AWS profile and endpoint override as the
-    reads that follow. The ``S3Client`` credential chain is a different one, and a run
-    that enumerated a bucket it could not read would fail one stream at a time.
+    The S3 client is built here with :func:`~cosmos_curator.core.utils.storage_cli.make_s3_client`
+    rather than left to the lister, so enumeration uses the same AWS profile and
+    endpoint override as the reads that follow: the credential chain
+    ``storage_utils.get_storage_client`` would pick is a different one, and a run that
+    enumerated a bucket it could not read would fail one stream at a time.
 
     Args:
         root: local directory or ``s3://`` prefix holding sessions.
@@ -125,13 +123,12 @@ def list_sessions_under_root(
         FileNotFoundError: if the root does not exist or holds nothing.
 
     """
-    if is_s3_uri(root):
+    if is_s3path(root):
         prefix = S3Prefix(root)
-        client = make_s3_client(root, s3_profile_name, endpoint_url)
-        children = list_child_prefixes(client, bucket=prefix.bucket, prefix=prefix.prefix)
+        children = make_s3_client(root, s3_profile_name, endpoint_url).list_child_prefixes(prefix)
         base = f"s3://{prefix.bucket}/{prefix.prefix}"
         return [_join(base, child) for child in children]
-    if is_azure_uri(root):
+    if is_azure_path(root):
         msg = f"session_roots cannot be expanded on az:// yet: {root!r}; list the sessions explicitly instead"
         raise ValueError(msg)
     if "://" in root:

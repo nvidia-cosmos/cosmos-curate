@@ -79,7 +79,7 @@ def test_missing_local_path_raises(tmp_path: pathlib.Path) -> None:
 
 @pytest.mark.parametrize("scheme", ["s3", "az"])
 def test_cloud_prefix_delegates_to_listing_with_video_suffixes(monkeypatch: pytest.MonkeyPatch, scheme: str) -> None:
-    """Both cloud schemes reach list_cloud_objects with the video suffix filter and limit, sorted."""
+    """Both cloud schemes reach list_storage_objects with the video suffix filter and limit, sorted."""
     captured: dict[str, object] = {}
     prefix = f"{scheme}://b/clips/u/"
 
@@ -88,7 +88,7 @@ def test_cloud_prefix_delegates_to_listing_with_video_suffixes(monkeypatch: pyte
         captured.update(kwargs)
         return [f"{prefix}recorder-01/b.mp4", f"{prefix}recorder-00/a.mp4"]
 
-    monkeypatch.setattr(discovery, "list_cloud_objects", _fake_list)
+    monkeypatch.setattr(discovery, "list_storage_objects", _fake_list)
 
     found = discover_streams(prefix, limit=5, s3_profile_name="maglev", endpoint_url="https://endpoint.io")
 

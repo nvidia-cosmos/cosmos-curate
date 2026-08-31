@@ -20,6 +20,7 @@ import pathlib
 
 import pytest
 
+from cosmos_curator.core.utils.storage.s3_client import S3Prefix
 from cosmos_curator.next.recipes.data_integrity import sessions
 from cosmos_curator.next.recipes.data_integrity.config import (
     DataIntegrityExecutionConfig,
@@ -35,15 +36,18 @@ def _expand(**input_fields: object) -> tuple[str, ...]:
 
 
 def _stub_s3_listing(monkeypatch: pytest.MonkeyPatch, children_by_prefix: dict[str, list[str]]) -> list[str]:
-    """Answer S3 listings from a fake, recording which prefixes were enumerated."""
+    """Answer S3 listings from a fake client, recording which prefixes were enumerated."""
     seen: list[str] = []
 
-    def _list(_client: object, *, bucket: str, prefix: str) -> list[str]:
-        seen.append(f"s3://{bucket}/{prefix}")
-        return children_by_prefix[prefix]
+    class _FakeS3Client:
+        """Stands in for the ``S3Client`` the expansion builds, listing only."""
 
-    monkeypatch.setattr(sessions, "make_s3_client", lambda *_a, **_k: object())
-    monkeypatch.setattr(sessions, "list_child_prefixes", _list)
+        @staticmethod
+        def list_child_prefixes(uri: S3Prefix) -> list[str]:
+            seen.append(f"s3://{uri.bucket}/{uri.prefix}")
+            return children_by_prefix[uri.prefix]
+
+    monkeypatch.setattr(sessions, "make_s3_client", lambda *_a, **_k: _FakeS3Client())
     return seen
 
 

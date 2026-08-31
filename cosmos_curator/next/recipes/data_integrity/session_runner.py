@@ -143,10 +143,14 @@ class InfrastructureError(RuntimeError):
 #: that mean "we could not reach the data" rather than "the data is bad". Named rather
 #: than imported for the same reason as :data:`_TRANSIENT_TRANSPORT_ERRORS`.
 #:
-#: ``CloudCliError`` is ours, and broad in general -- but on this path it can only come
-#: from :func:`~cosmos_curator.core.sensors.scripts._cli_cloud.make_s3_client` or
-#: ``make_azure_client`` failing to build a credentialled client, since the source was
-#: already established to be a cloud URI before either was called.
+#: ``StorageCliError`` is ours, and broad in general -- but on this path it can only come
+#: from :func:`~cosmos_curator.core.utils.storage_cli.make_s3_client` or
+#: :func:`~cosmos_curator.core.utils.storage_cli.make_azure_client` failing to build a
+#: credentialled client, since the source was already established to be a remote URI
+#: before either was called.
+#:
+#: Matching by name means a rename of one of these classes silently drops it from the
+#: set, so the ones we own are pinned by a test that raises the real exception.
 _INFRASTRUCTURE_ERRORS = frozenset(
     {
         "NoCredentialsError",
@@ -157,7 +161,7 @@ _INFRASTRUCTURE_ERRORS = frozenset(
         "ProfileNotFound",
         "ClientAuthenticationError",
         "PermissionError",
-        "CloudCliError",
+        "StorageCliError",
     }
 )
 

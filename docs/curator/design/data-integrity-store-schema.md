@@ -180,7 +180,7 @@ One row per stream a run touched, **including ones that failed to open**.
 
 The three `content_*` columns cost **zero extra requests**. The progress display already issues one `HEAD` (S3) /
 `get_blob_properties` (Azure) per stream, and that response carries `ETag` and `LastModified` right next to the
-`ContentLength` it wants — so `get_cloud_object_stat` returns all three and the size-only caller keeps a thin wrapper
+`ContentLength` it wants — so `storage_io.object_stat` returns all three and the size-only caller keeps a thin wrapper
 over it. Local files get size and mtime from a `stat()`; `content_etag` stays `null`.
 
 Recording them means re-evaluation can ask *"did the bytes change?"* instead of trusting that a path still points at
@@ -432,11 +432,15 @@ applies to it: what stays behind is the reusable half (the metrics, their policy
 per-stream engine), which a second CI test keeps free of `lance` / `pyarrow` so a plain in-memory check never pays
 for a columnar format.
 
-One consequence of the original placement outlives it. Cloud access still goes through
-`core/sensors/scripts/_cli_cloud.py` rather than `storage_utils.get_lance_storage_options`, because three sensor
-scripts share that helper and cannot import outside `core/sensors/`. Consolidating onto `core.utils.storage` is now
-legal for the store but is a separate change, since the two resolve credentials and endpoints differently. Local +
-S3 today; Azure is still a follow-up.
+Cloud access has since been consolidated onto `core.utils.storage`. It used to go through a private helper module
+under `core/sensors/scripts/`, because sensor scripts shared it and cannot import outside `core/sensors/`; that
+module is gone and its callers now use `core/utils/storage_cli.py`, which sits above the storage clients and
+supplies the CLI half — argument flags, actionable errors, and credentials resolved from the standard AWS profile
+namespace rather than Curator's own. `storage_utils.get_lance_storage_options` is still not what the store calls,
+and that is deliberate: it resolves credentials through `get_s3_client_config`, a different namespace, and pulls in
+`ray`. `storage_cli.get_lance_storage_options` builds the same option names from the profile the CLI was given.
+Local + S3 today; Azure is still a follow-up, and `get_lance_storage_options` refuses `az://` explicitly rather
+than writing a store it cannot authenticate.
 
 Sharing a directory with the CLIs doesn't mean depending on them. The types a result is expressed in (`CheckResult`,
 `StreamResult`, the verdict enums) live in a leaf module, `results.py`, which imports only the metric kernel and

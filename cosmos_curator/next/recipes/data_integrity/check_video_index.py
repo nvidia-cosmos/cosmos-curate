@@ -26,18 +26,18 @@ import numpy as np
 import numpy.typing as npt
 
 from cosmos_curator.core.sensors.data.video import VideoIndex
-from cosmos_curator.core.sensors.scripts._cli_cloud import (
-    CloudCliError,
-    add_cloud_credential_args,
-    is_cloud_uri,
-    open_cloud_source,
-    validate_source,
-)
 from cosmos_curator.core.sensors.types.types import DataSource, VideoIndexCreationMethod
 from cosmos_curator.core.sensors.utils.video import (
     HeaderIndexUnavailableError,
     make_index_and_metadata,
     resolve_auto_index_method_for_source,
+)
+from cosmos_curator.core.utils.storage.storage_utils import is_remote_path
+from cosmos_curator.core.utils.storage_cli import (
+    StorageCliError,
+    add_storage_credential_args,
+    open_storage_source,
+    validate_source,
 )
 
 PASS_EXIT_CODE = 0
@@ -69,11 +69,6 @@ VIDEO_REQUIREMENTS_DOCS_URL = (
     "https://github.com/nvidia-cosmos/cosmos-curate/blob/main/docs/curator/design/"
     "sensor-library-efficient-video-decode.md#from_header-vs-full_demux"
 )
-
-
-# Re-exported for backwards compatibility with existing callers/tests that import
-# CliError from this module.
-CliError = CloudCliError
 
 
 def _format_scalar(value: object) -> str:
@@ -187,8 +182,8 @@ def _open_source(
     Used per phase (FROM_HEADER then FULL_DEMUX) so each phase gets its own
     cloud stream, matching the previous smart_open-per-call behaviour.
     """
-    if is_cloud_uri(source):
-        with open_cloud_source(
+    if is_remote_path(source):
+        with open_storage_source(
             source,
             s3_profile_name=s3_profile_name,
             azure_profile_name=azure_profile_name,
@@ -265,7 +260,7 @@ def _check_video_index(  # noqa: PLR0913
 
 
 def _as_data_source(stream: BinaryIO) -> DataSource:
-    """Cast a ``BinaryIO`` produced by ``open_cloud_source`` to a ``DataSource``.
+    """Cast a ``BinaryIO`` produced by ``open_storage_source`` to a ``DataSource``.
 
     ``smart_open``'s S3 / Azure readers expose seekable binary streams that
     inherit from :class:`io.BufferedIOBase`, so they satisfy the
@@ -289,7 +284,7 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument(
         "--video-format", default=None, help="Optional container format hint passed to the video loader."
     )
-    add_cloud_credential_args(parser)
+    add_storage_credential_args(parser)
     return parser.parse_args(argv)
 
 
@@ -307,7 +302,7 @@ def main(argv: list[str] | None = None) -> int:
             azure_profile_name=args.azure_profile_name,
             endpoint_url=args.endpoint_url,
         )
-    except CloudCliError as e:
+    except StorageCliError as e:
         sys.stderr.write(f"error: {e}\n")
         return ERROR_EXIT_CODE
     except Exception as e:  # noqa: BLE001

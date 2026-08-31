@@ -63,20 +63,19 @@ from cosmos_curator.core.sensors.data.video import VideoIndex
 from cosmos_curator.core.sensors.sampling.grid import SamplingGrid
 from cosmos_curator.core.sensors.sampling.policy import NearestTimestampPolicy
 from cosmos_curator.core.sensors.sampling.spec import SamplingSpec
-from cosmos_curator.core.sensors.scripts._cli_cloud import (
-    CloudCliError,
-    add_cloud_credential_args,
-    is_azure_uri,
-    is_cloud_uri,
-    is_s3_uri,
-    make_azure_client,
-    make_s3_client,
-    open_cloud_source,
-    validate_source,
-)
 from cosmos_curator.core.sensors.sensors.camera_sensor import CameraSensor
 from cosmos_curator.core.sensors.types.types import DataSource, VideoIndexCreationMethod
 from cosmos_curator.core.sensors.utils.video import make_index_and_metadata
+from cosmos_curator.core.utils.storage.azure_client import is_azure_path
+from cosmos_curator.core.utils.storage.s3_client import is_s3path
+from cosmos_curator.core.utils.storage_cli import (
+    StorageCliError,
+    add_storage_credential_args,
+    make_azure_client,
+    make_s3_client,
+    open_storage_source,
+    validate_source,
+)
 
 # ---------------------------------------------------------------------------
 # Byte-counting file-like proxy
@@ -222,12 +221,13 @@ def _uninstall_s3_hook(s3_client: Any, hook: Any) -> None:  # noqa: ANN401
 def _open_measured_source(args: argparse.Namespace, stats: IOStats) -> Generator[DataSource]:
     """Open ``args.source`` for measurement and yield a counting ``DataSource``.
 
-    For ``s3://`` sources: builds a boto3 S3 client, attaches the
-    ``before-send.s3.GetObject`` hook to it, then hands the client into
-    :func:`open_cloud_source` so smart_open reuses the same instrumented client.
+    For ``s3://`` sources: builds an ``S3Client``, attaches the
+    ``before-send.s3.GetObject`` hook to its boto3 client, then hands the whole
+    client into :func:`open_storage_source` so smart_open reuses the same
+    instrumented client.
 
-    For ``az://`` sources: builds an Azure ``BlobServiceClient`` and hands it
-    into :func:`open_cloud_source` (no HTTP-level hook is installed; bytes_read
+    For ``az://`` sources: builds an ``AzureClient`` and hands it into
+    :func:`open_storage_source` (no HTTP-level hook is installed; bytes_read
     remains the source of truth for bytes on the wire).
 
     For local sources: opens the file directly.
@@ -239,17 +239,16 @@ def _open_measured_source(args: argparse.Namespace, stats: IOStats) -> Generator
     """
     source_str: str = args.source
 
-    if is_s3_uri(source_str):
-        s3_client = make_s3_client(source_str, args.s3_profile_name, args.endpoint_url)
-        hook = _install_s3_hook(s3_client, stats)
+    if is_s3path(source_str):
+        client = make_s3_client(source_str, args.s3_profile_name, args.endpoint_url)
+        hook = _install_s3_hook(client.s3, stats)
         try:
-            with open_cloud_source(source_str, s3_client=s3_client) as raw:
+            with open_storage_source(source_str, client=client) as raw:
                 yield cast("DataSource", _CountingBinaryStream(raw, stats))
         finally:
-            _uninstall_s3_hook(s3_client, hook)
-    elif is_azure_uri(source_str):
-        azure_client = make_azure_client(source_str, args.azure_profile_name)
-        with open_cloud_source(source_str, azure_client=azure_client) as raw:
+            _uninstall_s3_hook(client.s3, hook)
+    elif is_azure_path(source_str):
+        with open_storage_source(source_str, client=make_azure_client(source_str, args.azure_profile_name)) as raw:
             yield cast("DataSource", _CountingBinaryStream(raw, stats))
     else:
         with Path(source_str).open("rb") as raw:
@@ -264,7 +263,7 @@ def _open_measured_source(args: argparse.Namespace, stats: IOStats) -> Generator
 def _load_reference_index(reference_source: Path) -> VideoIndex:
     if not reference_source.is_file():
         msg = f"--reference-source is not a file: {reference_source}"
-        raise CloudCliError(msg)
+        raise StorageCliError(msg)
     index, _ = make_index_and_metadata(reference_source)
     return index
 
@@ -388,7 +387,7 @@ def cmd_sample(args: argparse.Namespace) -> None:
         ref_path = Path(args.reference_source)
         if not ref_path.is_file():
             msg = f"--reference-source is not a file: {ref_path}"
-            raise CloudCliError(msg)
+            raise StorageCliError(msg)
         print(f"reference (local): {ref_path}")
         ref_sensor = CameraSensor(ref_path)
         ref_grid = _build_sampling_grid(ref_sensor.video_index, target_fps=args.target_fps, duration_s=args.duration_s)
@@ -447,11 +446,7 @@ def _validate_source_arg(args: argparse.Namespace) -> None:
     """Validate ``args.source`` and exit cleanly on credential / path errors."""
     try:
         validate_source(args.source)
-        # Pre-flight credential resolution so failures surface before measurement.
-        if is_cloud_uri(args.source) and not is_s3_uri(args.source) and not is_azure_uri(args.source):
-            msg = f"unsupported cloud URI: {args.source!r}"
-            raise CloudCliError(msg)  # noqa: TRY301
-    except CloudCliError as e:
+    except StorageCliError as e:
         sys.stderr.write(f"error: {e}\n")
         sys.exit(2)
 
@@ -472,7 +467,7 @@ def _add_common_source_args(parser: argparse.ArgumentParser) -> None:
         default=None,
         help="Optional local file used as a golden reference for parity checks.",
     )
-    add_cloud_credential_args(parser)
+    add_storage_credential_args(parser)
 
 
 def main(argv: list[str] | None = None) -> int:

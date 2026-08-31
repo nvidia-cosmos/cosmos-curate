@@ -189,6 +189,40 @@ def validate_configured_s3_location(location: str) -> None:
         raise ValueError(error_msg)
 
 
+def make_s3_session(config: S3ClientConfig) -> boto3.Session:
+    """Build the boto3 session ``config`` describes, without an S3 service client.
+
+    Split out of :class:`S3Client` for callers that need credential and region
+    resolution but issue no request. ``storage_cli.get_lance_storage_options`` is the
+    one in tree: it freezes the chain's answer into options for Lance's own object
+    store, so a service client built for it is measurable work with no user.
+
+    Args:
+        config: Credentials, profile and region to resolve from. ``endpoint_url`` is
+            not read here -- it applies to a service client, not to a session.
+
+    Returns:
+        A session whose credentials stay refreshable, rather than frozen keys: a
+        long-running job outlives the SSO or instance credentials it started with.
+
+    """
+    if config.aws_access_key_id is not None:
+        # region_name must be passed explicitly: supplying credentials bypasses
+        # boto3's profile lookup, so the profile's `region` is otherwise ignored
+        # and botocore falls back to us-east-1. None keeps boto3's own resolution.
+        return boto3.Session(
+            aws_access_key_id=config.aws_access_key_id,
+            aws_secret_access_key=config.aws_secret_access_key,
+            aws_session_token=config.aws_session_token,
+            region_name=config.region,
+        )
+    # ``profile_name=None`` is exactly what a bare ``boto3.Session()`` does, so one call
+    # covers both a named AWS profile and no profile at all, and the chain
+    # (``~/.aws/credentials``, ``AWS_PROFILE``, the environment, SSO, an instance role)
+    # resolves it. ``region_name=None`` likewise defers to the profile and environment.
+    return boto3.Session(profile_name=config.profile_name, region_name=config.region)
+
+
 class S3Client(StorageClient):
     """S3 client for interacting with S3-compatible object storage systems.
 
@@ -216,32 +250,8 @@ class S3Client(StorageClient):
             connect_timeout=config.operation_timeout_s,
             read_timeout=config.operation_timeout_s,
         )
-        # If creds are set, specify them
-        if config.aws_access_key_id is not None:
-            # region_name must be passed explicitly: supplying credentials bypasses
-            # boto3's profile lookup, so the profile's `region` is otherwise ignored
-            # and botocore falls back to us-east-1. None keeps boto3's own resolution.
-            self.session = boto3.Session(
-                aws_access_key_id=config.aws_access_key_id,
-                aws_secret_access_key=config.aws_secret_access_key,
-                aws_session_token=config.aws_session_token,
-                region_name=config.region,
-            )
-            self.s3 = self.session.client("s3", endpoint_url=config.endpoint_url, config=boto_config)
-        # If omitted, let boto3's own credential chain supply them
-        else:
-            # ``profile_name=None`` is exactly what a bare ``boto3.Session()`` does, so
-            # one call covers both a named AWS profile and no profile at all, and the
-            # chain (``~/.aws/credentials``, ``AWS_PROFILE``, the environment, SSO, an
-            # instance role) resolves it. ``region_name=None`` likewise defers to the
-            # profile and the environment.
-            #
-            # The session is retained rather than resolved into frozen keys so that
-            # whatever the chain produced stays refreshable: freezing here would make a
-            # long-running job die when the original SSO or instance credentials expire.
-            self.session = boto3.Session(profile_name=config.profile_name, region_name=config.region)
-            self.s3 = self.session.client("s3", endpoint_url=config.endpoint_url, config=boto_config)
-
+        self.session = make_s3_session(config)
+        self.s3 = self.session.client("s3", endpoint_url=config.endpoint_url, config=boto_config)
         self.can_overwrite = config.can_overwrite
         self.can_delete = config.can_delete
 
@@ -441,8 +451,7 @@ class S3Client(StorageClient):
         """List the immediate child prefix names under ``uri``, without descending.
 
         Convenience wrapper over :func:`list_child_prefixes` for callers that
-        already hold an ``S3Client``. Callers that build their own boto3 client
-        from a different credential source should use that function directly.
+        already hold an ``S3Client``, which is every in-tree caller.
 
         Args:
             uri: The S3 prefix whose children to list.
@@ -704,11 +713,11 @@ def list_child_prefixes(s3_client: BaseClient, *, bucket: str, prefix: str) -> l
     loose objects sitting directly under the prefix in ``Contents``, where they
     are correctly ignored.
 
-    The boto3 client is supplied by the caller rather than built here, because
-    credentials come from different places depending on the caller: Curator's
-    own profile store via :func:`get_s3_client_config`, or an AWS named profile
-    plus an endpoint override. Listing must use the same credentials as the
-    reads that follow it.
+    The boto3 client is supplied by the caller rather than built here, so that
+    listing uses the same credentials as the reads that follow it. Every in-tree
+    caller now holds an ``S3Client`` and reaches this through
+    :meth:`S3Client.list_child_prefixes`; the free function stays for a caller
+    that holds a boto3 client and no ``S3Client`` around it.
 
     No limit is accepted. A caller that caps its selection should do so after
     deduplicating and sorting, since stopping the listing early would change

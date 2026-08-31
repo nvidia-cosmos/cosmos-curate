@@ -33,8 +33,9 @@ from cosmos_curator.core.sensors.data_integrity.instruments import (
     instrument,
 )
 from cosmos_curator.core.sensors.data_integrity.results import StreamResult
-from cosmos_curator.core.sensors.scripts._cli_cloud import CloudCliError, CloudObjectStat
-from cosmos_curator.next.recipes.data_integrity import store, store_schema
+from cosmos_curator.core.utils.storage.storage_client import StorageStat
+from cosmos_curator.core.utils.storage_cli import StorageCliError
+from cosmos_curator.next.recipes.data_integrity import storage_io, store, store_schema
 
 #: The zero-numerator sentinel for "the container declares no rate", which is what
 #: makes rate / gap / jitter never run at all.
@@ -51,7 +52,7 @@ def _write(  # noqa: PLR0913 -- one optional argument per fact a test may want t
     session_path: str | None = SESSION,
     thresholds: Thresholds = DEFAULT_THRESHOLDS,
     created_at: datetime.datetime | None = None,
-    cloud_stats: dict[str, CloudObjectStat] | None = None,
+    storage_stats: dict[str, StorageStat] | None = None,
 ) -> str:
     """Write one session run with the defaults most of these tests want."""
     return store.write_run(
@@ -61,7 +62,7 @@ def _write(  # noqa: PLR0913 -- one optional argument per fact a test may want t
         thresholds=thresholds,
         tool="di-session",
         created_at=created_at,
-        cloud_stats=cloud_stats,
+        storage_stats=storage_stats,
     )
 
 
@@ -484,7 +485,7 @@ def test_content_identity_of_a_missing_file_is_empty(tmp_path: pathlib.Path) -> 
     assert store.content_identity(str(tmp_path / "gone.mp4")) == store.ContentIdentity()
 
 
-def test_cloud_stats_are_reused_rather_than_refetched(
+def test_storage_stats_are_reused_rather_than_refetched(
     store_root: str, make_stream: Callable[..., StreamResult], perfect: Callable[..., list[int]]
 ) -> None:
     """The session CLI already issued the HEAD, so the store must not issue a second one.
@@ -493,7 +494,7 @@ def test_cloud_stats_are_reused_rather_than_refetched(
     S3 -- which is precisely what makes the assertion meaningful.
     """
     source = "s3://bucket/session/front.mp4"
-    stat = CloudObjectStat(
+    stat = StorageStat(
         size_bytes=4096,
         etag="d41d8cd98f00b204e9800998ecf8427e",
         last_modified=datetime.datetime(2026, 3, 1, tzinfo=datetime.UTC),
@@ -502,7 +503,7 @@ def test_cloud_stats_are_reused_rather_than_refetched(
         store_root,
         [make_stream(source, perfect())],
         session_path="s3://bucket/session",
-        cloud_stats={source: stat},
+        storage_stats={source: stat},
     )
     (row,) = store.read_streams(store_root)
     assert row["content_etag"] == stat.etag
@@ -510,17 +511,22 @@ def test_cloud_stats_are_reused_rather_than_refetched(
     assert row["content_last_modified"] == stat.last_modified
 
 
-def test_an_empty_stat_is_not_mistaken_for_a_response(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A failed HEAD upstream must not be recorded as "this object has no ETag"."""
+def test_a_lookup_that_learned_nothing_is_not_mistaken_for_a_response(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A failed HEAD upstream must not be recorded as "this object has no ETag".
+
+    ``storage_io.object_stat`` reports a lookup that learned nothing as ``None``, and
+    the caller passes that on, so ``None`` has to mean "look again" rather than "there
+    is nothing to know".
+    """
     fetched: list[str] = []
 
-    def _stat(source: str, **_kwargs: object) -> CloudObjectStat:
+    def _stat(source: str, **_kwargs: object) -> StorageStat:
         fetched.append(source)
-        return CloudObjectStat(size_bytes=7, etag="abc")
+        return StorageStat(size_bytes=7, etag="abc")
 
-    monkeypatch.setattr(store, "get_cloud_object_stat", _stat)
+    monkeypatch.setattr(storage_io, "object_stat", _stat)
     source = "s3://bucket/session/front.mp4"
-    content = store.content_identity(source, stat=CloudObjectStat())
+    content = store.content_identity(source, stat=None)
     assert fetched == [source]
     assert content.etag == "abc"
 
@@ -573,5 +579,5 @@ def test_unknown_metric_is_rejected_before_any_io(store_root: str) -> None:
 
 def test_azure_store_is_rejected_explicitly() -> None:
     """Lance's Azure options are a different set of keys; guessing would fail opaquely later."""
-    with pytest.raises(CloudCliError, match="az://"):
+    with pytest.raises(StorageCliError, match="az://"):
         store.read_streams("az://container/store")

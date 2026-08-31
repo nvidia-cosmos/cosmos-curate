@@ -37,8 +37,13 @@ from cosmos_curator.core.sensors.data_integrity.results import (
     OverallStatus,
     StreamResult,
 )
+from cosmos_curator.core.utils.storage_cli import StorageCliError
 from cosmos_curator.next.recipes.data_integrity import session_runner
-from cosmos_curator.next.recipes.data_integrity.session_runner import run_session, run_stream
+from cosmos_curator.next.recipes.data_integrity.session_runner import (
+    is_infrastructure_error,
+    run_session,
+    run_stream,
+)
 
 HZ_100_PERIOD_NS = 10_000_000  # one sample every 10 ms at 100 Hz
 
@@ -699,3 +704,14 @@ def test_run_session_serial_does_not_use_worker_threads(monkeypatch: pytest.Monk
     run_session("sess")
 
     assert threads == [threading.current_thread().name]
+
+
+def test_our_own_credential_error_is_classified_as_infrastructure() -> None:
+    """Raise the real class, because the classifier matches class names as strings.
+
+    ``_INFRASTRUCTURE_ERRORS`` holds names rather than types, so renaming the exception
+    drops it from the set with nothing failing to say so -- and a credential failure
+    demoted to a finding about the data is the failure this classification exists to
+    prevent: one expired token would record every stream after it as broken.
+    """
+    assert is_infrastructure_error(StorageCliError("could not configure S3 access")) is True

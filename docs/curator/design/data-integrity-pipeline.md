@@ -82,7 +82,7 @@ All paths are under `cosmos_curator/next/recipes/data_integrity/` unless noted. 
 imports nothing from `cli.py` or `session_cli.py`.
 
 `discover_streams` expands exactly one session path — local directories via a recursive
-`rglob`, cloud prefixes via `_cli_cloud.list_cloud_objects` — filtered to
+`rglob`, cloud prefixes via `storage_cli.list_storage_objects` — filtered to
 `VIDEO_SUFFIXES = (".mp4", ".mov", ".m4v", ".mkv")` and returned sorted. Its `limit` caps
 streams per session, where 0 means no cap.
 
@@ -95,8 +95,8 @@ directory (or cloud prefix) holding one video per camera", and its usage block g
 
 ### Nothing enumerates sessions
 
-`_cli_cloud.list_cloud_objects` (`cosmos_curator/core/sensors/scripts/_cli_cloud.py:374`)
-lists **objects**, with no `Delimiter` / `CommonPrefixes` support, so asking which sessions
+`storage_cli.list_storage_objects` (`cosmos_curator/core/utils/storage_cli.py`) lists
+**objects**, with no `Delimiter` / `CommonPrefixes` support, so asking which sessions
 exist under a dataset root means paging every object beneath it. Session enumeration is the
 one capability this recipe needs that the DI code does not have — but it is not unwritten:
 `multimodal-split` has the same listing, and the [Input Contract](#input-contract) hoists and
@@ -256,8 +256,8 @@ to an input selection that realizes nothing.
 
 Root expansion needs a delimiter listing, `list_objects_v2(Delimiter="/")`, and nothing
 shared offered one: `S3Client.list_recursive_directory` in
-`core/utils/storage/s3_client.py` pages every object beneath a prefix, and `_cli_cloud` does
-the same. [MR 1104][mr1104] added exactly the listing this recipe needs, for
+`core/utils/storage/s3_client.py` pages every object beneath a prefix, and so does the
+CLI listing wrapped around it. [MR 1104][mr1104] added exactly the listing this recipe needs, for
 `multimodal-split`, but private to that recipe: `_list_child_session_ids` in
 `next/recipes/multimodal_split/discovery.py`, S3 through a paginated delimited list and local
 through a `scandir` of immediate children. The primitive is storage-level rather than
@@ -274,15 +274,16 @@ here:
 `multimodal_split._list_child_session_ids` keeps its own scheme dispatch and now calls both;
 its tests pass untouched, which is what makes the hoist observably behavior-preserving.
 
-**The hoisted S3 helper takes a client rather than building one.** `S3Client` gets
-credentials from `get_s3_client_config`, which reads Curator's own creds file at
-`S3_PROFILE_PATH` and falls back to the NVCF secret store, raising when neither exists. Every
-other cloud read in this recipe goes through
-`_cli_cloud.make_s3_client(source, s3_profile_name, endpoint_url)` — an AWS named profile
-plus an explicit endpoint override, with boto3's default credential chain behind it. Those
-are two different credential sources, so a helper that constructed its own client would let a
-run measure a bucket it cannot enumerate. Sharing the paging loop and leaving client
-construction to the caller avoids that and costs nothing in reuse.
+**The hoisted S3 helper takes a client rather than building one**, and this recipe hands it
+one built the same way as every other cloud read here:
+`storage_cli.make_s3_client(source, s3_profile_name, endpoint_url)` — an AWS named profile
+plus an explicit endpoint override, with boto3's default credential chain behind it. What it
+must *not* do is build its own through `get_s3_client_config`, which reads Curator's own
+creds file at `S3_PROFILE_PATH` and falls back to the NVCF secret store, raising when neither
+exists. Those are two different credential namespaces, and a lister on the second one would
+let a run measure a bucket it cannot enumerate. Since the client is now always an `S3Client`,
+`sessions.py` calls the bound `S3Client.list_child_prefixes(prefix)` rather than the
+module-level function.
 
 `session_roots` on `az://` is rejected rather than expanded: neither shared lister offers a
 delimited listing there. Sessions themselves may still live on `az://`; only expanding a root
@@ -368,7 +369,7 @@ tasks, so it sums them as batches arrive.
 
 Workers build the store rows rather than handing the `StreamResult` back for the driver to
 convert, for two reasons. The first is the per-stream `content_identity` HEAD: `write_run`
-avoids issuing those serially only because the session CLI hands it `cloud_stats` gathered
+avoids issuing those serially only because the session CLI hands it `storage_stats` gathered
 for its progress display, and a Ray driver has no such collection, so building rows
 centrally would mean one blocking HEAD per stream inside that loop. Doing it in the worker
 puts the request where the stream is already being opened. The second is that rows arrive
@@ -513,7 +514,7 @@ only how many sessions precede it.
 The driver's whole sequence is already public API, and not a novel use of it: `reevaluate`
 already writes this way, calling `append_rows` and then `commit_run` directly rather than going
 through `write_run`. `storage_options` is built once with
-`get_lance_storage_options(root, ...)` — the `_cli_cloud` helper that `store.py` and every
+`get_lance_storage_options(root, ...)` — the `storage_cli` helper that `store.py` and every
 `read_*` already use — and passed to the appends and the commit below; `write_manifest` takes
 the profile and endpoint themselves instead:
 
@@ -645,7 +646,7 @@ operator is watching and every failure is one line of a report, and only a run o
 of streams needs the distinction.
 
 Classification is `is_infrastructure_error`, reading three signals in order — the exception's
-class hierarchy (`NoCredentialsError`, `ProfileNotFound`, our own `CloudCliError`, which on
+class hierarchy (`NoCredentialsError`, `ProfileNotFound`, our own `StorageCliError`, which on
 this path can only be a failure to build a credentialled client), the backend's error code
 (`ExpiredToken`, `AccessDenied`, `SignatureDoesNotMatch`), and the HTTP status (401, 403, and
 anything 5xx). The last two are read defensively off whatever attributes the exception
@@ -917,8 +918,8 @@ The first implementation is complete when:
 - new metrics or new modalities
 - distributed re-evaluation from stored measurements
 - restarts after failure, and idempotent re-runs
-- any change to `_cli_cloud.py`, to `di-check` / `di-session` behavior, or to the Lance
-  schema itself (the `tool` comment aside)
+- any change to the shared storage CLI helpers, to `di-check` / `di-session` behavior, or to
+  the Lance schema itself (the `tool` comment aside)
 
 [mr1104]: https://gitlab-master.nvidia.com/aidot/cosmos-curator-public/cosmos-curator/-/merge_requests/1104
 [cvc1244]: https://jirasw.nvidia.com/browse/CVC-1244

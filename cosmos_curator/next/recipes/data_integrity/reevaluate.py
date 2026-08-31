@@ -38,7 +38,7 @@ from cosmos_curator.core.sensors.data_integrity.instruments import (
     evaluate_metric,
 )
 from cosmos_curator.core.sensors.data_integrity.results import CheckResult, CheckStatus
-from cosmos_curator.core.sensors.scripts._cli_cloud import get_lance_storage_options
+from cosmos_curator.core.utils.storage_cli import get_lance_storage_options
 from cosmos_curator.next.recipes.data_integrity import store, store_schema
 
 # Mirrors the reason the CLIs attach to a rate-dependent metric that never ran. Held

@@ -125,11 +125,13 @@ def test_a_cloud_source_still_takes_the_cloud_branch(monkeypatch: pytest.MonkeyP
     opened: list[str] = []
 
     @contextlib.contextmanager
-    def _fake_open_cloud_source(source: str, **_kwargs: object) -> "object":
+    def _fake_open_storage_source(source: str, **_kwargs: object) -> "object":
         opened.append(source)
         yield io.BytesIO(b"cloud bytes")
 
-    monkeypatch.setattr("cosmos_curator.next.recipes.data_integrity.sources.open_cloud_source", _fake_open_cloud_source)
+    monkeypatch.setattr(
+        "cosmos_curator.next.recipes.data_integrity.sources.open_storage_source", _fake_open_storage_source
+    )
 
     with open_source("s3://bucket/key.mp4", s3_profile_name=None, azure_profile_name="default") as stream:
         assert stream.read() == b"cloud bytes"

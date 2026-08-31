@@ -48,14 +48,11 @@ from collections.abc import Callable
 from typing import BinaryIO, cast
 
 from cosmos_curator.core.sensors.data_integrity.results import OverallStatus, StreamResult
-from cosmos_curator.core.sensors.scripts._cli_cloud import (
-    CloudCliError,
-    CloudObjectStat,
-    add_cloud_credential_args,
-    get_cloud_object_stat,
-    is_cloud_uri,
-    resolve_s3_endpoint_url,
-)
+from cosmos_curator.core.utils.storage.s3_client import resolve_s3_endpoint_url
+from cosmos_curator.core.utils.storage.storage_client import StorageStat
+from cosmos_curator.core.utils.storage.storage_utils import is_remote_path
+from cosmos_curator.core.utils.storage_cli import StorageCliError, add_storage_credential_args
+from cosmos_curator.next.recipes.data_integrity import storage_io
 from cosmos_curator.next.recipes.data_integrity.cli_support import (
     ERROR_EXIT_CODE,
     FAIL_EXIT_CODE,
@@ -151,7 +148,7 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     )
     add_threshold_args(parser)
     add_store_args(parser)
-    add_cloud_credential_args(parser)
+    add_storage_credential_args(parser)
     return parser.parse_args(argv)
 
 
@@ -164,7 +161,7 @@ class _CountingReader(io.BufferedIOBase):
     Every ``read`` is forwarded to the wrapped stream and the running total is
     handed to ``on_bytes``. ``readinto`` / ``read1`` route through ``read`` so the
     count is captured whichever access pattern PyAV uses. ``close`` is a no-op: the
-    underlying cloud stream is owned by ``open_cloud_source``'s context manager, so
+    underlying remote stream is owned by ``open_storage_source``'s context manager, so
     the sensor closing this wrapper must not close it out from under that manager.
     """
 
@@ -222,7 +219,7 @@ class _Progress:
 
     def __init__(
         self,
-        stat_lookup: Callable[[str], CloudObjectStat] | None = None,
+        stat_lookup: Callable[[str], StorageStat | None] | None = None,
         *,
         live_byte_counter: bool = True,
         collect_stats: bool = False,
@@ -235,7 +232,7 @@ class _Progress:
         self._lock = threading.Lock()
         #: Every ``HEAD`` response this run made, by source. Handed to the store so a
         #: run that persists still issues exactly one per stream.
-        self.stats: dict[str, CloudObjectStat] = {}
+        self.stats: dict[str, StorageStat] = {}
 
     def _write(self, text: str) -> None:
         with self._lock:
@@ -252,25 +249,25 @@ class _Progress:
         # exception-safe -- a cosmetic byte count must never abandon the streams behind it.
         #
         # Skipped outright when nothing will read the result, because the lookup is not
-        # free: on a cloud source it builds a fresh client per stream, and that parsing
+        # free: on a remote source it builds a fresh client per stream, and that parsing
         # holds the interpreter lock, so a dozen concurrent streams serialise behind it.
         # Two things read it -- the live counter (the finish line reports bytes actually
         # read, so it needs no total) and the store, which records the same response as
         # content identity rather than issuing a second HEAD of its own.
-        stat = CloudObjectStat()
+        stat: StorageStat | None = None
         if self._stat_lookup is not None and (self._live_byte_counter or self._collect_stats):
             try:
                 stat = self._stat_lookup(source)
             except Exception:  # noqa: BLE001 - advisory only; unknown size is fine
-                stat = CloudObjectStat()
-            # Only a lookup that learned something is worth handing on. Caching an
-            # empty one would satisfy the store's "use the caller's stat" path and
-            # persist a null ETag and size for an object whose HEAD merely failed
-            # here; leaving it out lets the store try again for itself.
-            if not stat.is_empty:
+                stat = None
+            # Only a lookup that answered is worth handing on. Caching a failed one
+            # would satisfy the store's "use the caller's stat" path and persist a null
+            # ETag and size for an object whose HEAD merely failed here; leaving it out
+            # lets the store try again for itself.
+            if stat is not None:
                 with self._lock:
                     self.stats[source] = stat
-        total_bytes = stat.size_bytes
+        total_bytes = stat.size_bytes if stat is not None else None
 
         def _wrap(stream: BinaryIO) -> BinaryIO:
             def _on_bytes(count: int) -> None:
@@ -305,10 +302,10 @@ def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
     endpoint_url = resolve_s3_endpoint_url(args.endpoint_url)
 
-    def _stat_lookup(source: str) -> CloudObjectStat:
-        if not is_cloud_uri(source):
-            return CloudObjectStat()
-        return get_cloud_object_stat(
+    def _stat_lookup(source: str) -> StorageStat | None:
+        if not is_remote_path(source):
+            return None
+        return storage_io.object_stat(
             source,
             s3_profile_name=args.s3_profile_name,
             azure_profile_name=args.azure_profile_name,
@@ -381,7 +378,7 @@ def _run(
                     session_path=report.session_path,
                     thresholds=thresholds,
                     tool="di-session",
-                    cloud_stats=progress.stats if progress is not None else None,
+                    storage_stats=progress.stats if progress is not None else None,
                     s3_profile_name=args.s3_profile_name,
                     azure_profile_name=args.azure_profile_name,
                     endpoint_url=endpoint_url,
@@ -389,7 +386,7 @@ def _run(
             except Exception as e:  # noqa: BLE001 - the store can fail in as many ways as its backend
                 return report_error(f"checked session {args.session_path!r} but could not write the store: {e}")
         return _EXIT_CODES[report.status]
-    except (CloudCliError, FileNotFoundError) as e:
+    except (StorageCliError, FileNotFoundError) as e:
         return report_error(str(e))
     except Exception as e:  # noqa: BLE001
         # A Ctrl-C inside a libav read arrives here as a decode error rather than a

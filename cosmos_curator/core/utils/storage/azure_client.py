@@ -54,12 +54,22 @@ from cosmos_curator.core.utils.storage.storage_client import (
 class AzureClientConfig(BaseClientConfig):
     """Configuration class for Azure client.
 
+    ``AzureClient`` picks exactly one credential mode, checking them in this order:
+    connection string, then managed identity, then account name plus key. Whichever wins
+    is used alone -- populating a later field does not supplement an earlier one, and
+    populating an earlier one makes the later ones dead configuration.
+
     Attributes:
-        connection_string (str): Azure storage connection string. Optional if managed identity is used.
-        account_url (str): Azure storage account URL. Used if connection_string is not provided.
-        account_name (str): Azure storage account name. Used with account key if connection_string is not provided.
-        account_key (str): Azure storage account key. Used with account name if connection_string is not provided.
-        use_managed_identity (bool): Whether to use Azure managed identity for authentication. Default: False.
+        connection_string (str): Azure storage connection string. Outranks every other
+            field; ``account_url`` is ignored with it, since the string carries its own.
+        account_url (str): Azure storage account URL. Required with ``use_managed_identity``
+            (its absence is an assertion failure); optional with an account key, where it
+            defaults to ``https://<account_name>.blob.core.windows.net``.
+        account_name (str): Azure storage account name. Used with the account key, and only
+            when neither of the two modes above is configured.
+        account_key (str): Azure storage account key. Used with the account name.
+        use_managed_identity (bool): Whether to authenticate with a managed identity
+            (``DefaultAzureCredential``). Outranks an account name and key. Default: False.
 
     """
 
@@ -568,7 +578,7 @@ class AzureClient(StorageClient):
         blob_client.delete_blob()
 
 
-def _make_azure_client_config(
+def make_azure_client_config(
     profile_path: pathlib.Path,
     profile_name: str = "default",
     *,
@@ -576,6 +586,12 @@ def _make_azure_client_config(
     can_delete: bool = False,
 ) -> AzureClientConfig:
     """Create and return an Azure client configuration from a profile file.
+
+    Public because it is the only ray-free way to build an Azure config:
+    ``get_azure_client_config`` imports ``nvcf_utils`` (and therefore ``ray``)
+    before it even checks whether ``AZURE_PROFILE_PATH`` exists. The
+    data-integrity CLIs must not pull in ray, which is also why they construct
+    ``S3ClientConfig`` directly rather than calling ``get_s3_client_config``.
 
     Args:
         profile_path (pathlib.Path): Path to the Azure profile file.
@@ -655,7 +671,7 @@ def get_azure_client_config(
 
     if AZURE_PROFILE_PATH.exists():
         # first try azure profile
-        return _make_azure_client_config(
+        return make_azure_client_config(
             AZURE_PROFILE_PATH,
             profile_name,
             can_overwrite=can_overwrite,

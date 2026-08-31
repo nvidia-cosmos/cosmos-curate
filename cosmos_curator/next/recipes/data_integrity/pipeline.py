@@ -47,7 +47,7 @@ from ray.data import TaskPoolStrategy
 if TYPE_CHECKING:
     import pyarrow as pa
 
-from cosmos_curator.core.sensors.scripts._cli_cloud import get_lance_storage_options
+from cosmos_curator.core.utils.storage_cli import get_lance_storage_options
 from cosmos_curator.next.core.ray_runtime import (
     configure_ray_data_progress,
     configure_ray_data_stability,
