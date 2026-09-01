@@ -23,6 +23,7 @@ import numpy.typing as npt
 
 from cosmos_curator.core.sensors.data.aligned_frame import AlignedFrame
 from cosmos_curator.core.sensors.data.sensor_data import SensorData
+from cosmos_curator.core.sensors.exceptions import AlignmentError, AlignmentFailureReason
 from cosmos_curator.core.sensors.sampling.spec import SamplingSpec
 
 # Canonical error for sensors that expose no full-fidelity timeline read. Shared
@@ -81,6 +82,54 @@ class Sensor(Protocol):  # pragma: no cover
         ...
 
 
+def _advance_one_sensor(
+    sensor_id: str,
+    generator: Generator[SensorData],
+    align_timestamps_ns: npt.NDArray[np.int64],
+) -> SensorData:
+    """Advance one sensor by a window and return its payload, or raise the window's failure.
+
+    Kept separate from the frame loop so that a failure raises before the next
+    sensor's generator is touched. That is what makes "first configured failure"
+    deterministic rather than a race between sensors.
+
+    Only an empty batch is judged here, because it is the one failure the group
+    can see and ``AlignedFrame`` cannot distinguish: an empty payload would reach
+    its validator as a length mismatch, indistinguishable from a broken sensor.
+    Every other structural defect is left to ``AlignedFrame``, whose ``ValueError``
+    is the right outcome for a sensor that returned something no recording could
+    produce.
+    """
+    try:
+        data = next(generator)
+    except AlignmentError as error:
+        # Attribute the failure to the configured id unconditionally, so
+        # sensor_id is always a key into the group's sensors rather than
+        # sometimes a key and sometimes a label. Re-raise the same object to keep
+        # the original traceback.
+        error.sensor_id = sensor_id
+        # The timeline is different: sample_window_indices does supply one, and
+        # what a sensor was actually asked for is more truthful than what the
+        # group is currently iterating. Only fill it in when nothing set it.
+        if error.align_timestamps_ns is None:
+            error.align_timestamps_ns = align_timestamps_ns
+        raise
+
+    returned_ns = data.align_timestamps_ns
+    if len(returned_ns) == 0 and len(align_timestamps_ns) > 0:
+        # Unbind the payload before raising. This frame lands in the error's
+        # traceback, and a caller holding the error would otherwise keep a
+        # decoded batch alive with it.
+        del data
+        raise AlignmentError(
+            AlignmentFailureReason.EMPTY_BATCH,
+            f"no rows for the {len(align_timestamps_ns)} timestamps this window requested",
+            sensor_id=sensor_id,
+            align_timestamps_ns=align_timestamps_ns,
+        )
+    return data
+
+
 class SensorGroup:
     """Top-level coordinator for aligned multi-sensor sampling.
 
@@ -88,18 +137,49 @@ class SensorGroup:
     ``start_ns`` / ``end_ns`` bounds, and drives all sensor generators in
     lockstep through a single ``.sample(spec, policies=...)`` entry point.
 
-    Partial coverage:
-        When a sensor has no data for a window it yields empty
-        ``SensorData`` (``len(align_timestamps_ns) == 0``). Such sensors are
-        omitted from that window's ``AlignedFrame.sensor_data``.  Windows
-        where *every* sensor has no data produce an ``AlignedFrame`` with an
-        empty ``sensor_data`` mapping.
+    Required-sensor atomicity:
+        Every configured sensor is required for every window. A window produces
+        a complete ``AlignedFrame`` — every configured sensor present, one
+        logical row per requested timestamp, ``align_timestamps_ns`` exactly
+        equal to ``window.timestamps_ns`` — or it fails. No sensor is silently
+        omitted and no partial frame is yielded.
+
+        A window that carries no reference timestamps at all is a real window
+        with nothing to sample, not a failure: every sensor yields a zero-row
+        payload and the frame is empty.
+
+    How a window fails:
+        ``AlignmentError`` means the recording could not serve the request: a
+        sensor covered none of the window, or its nearest observation was
+        further away than the policy allows. Nothing is broken, and the caller's
+        job is to drop that input. Callers place one ``try/except
+        AlignmentError`` around iteration and own the disposition.
+
+        Anything else keeps its own exception type. A payload with the wrong row
+        count or a timeline that was never requested is a defect in the sensor,
+        and ``AlignedFrame`` rejects it with ``ValueError`` — which should reach
+        someone who can fix the code rather than be quarantined as bad data.
+
+        Not everything outside ``AlignmentError`` is a defect, though. Corrupt
+        media and unreadable sources are bad data that no code fix repairs; they
+        keep their own types only because this contract does not classify them.
+        A caller wanting to drop bad inputs needs a bucket for those too.
+
+    Ordering:
+        Sensors are advanced one at a time in configured order and each is
+        checked before the next is touched, so the first configured
+        ``AlignmentError`` is raised deterministically and later sensors are
+        never advanced for that window. Iteration is not resumable: a failed
+        window ends the generator, so that window and every later window produce
+        no frame.
 
     Policy enforcement:
         ``sample()`` requires one concrete policy per sensor id. The mapping is
-        validated completely before any sensor sampling iterator is created or
-        advanced. A ``ValueError`` raised by any sensor or policy check
-        propagates to the caller unchanged.
+        validated completely before any sensor is advanced, so a bad mapping
+        opens no sources and decodes nothing. (Creating a generator is not
+        advancing one: ``sample()`` is a generator function, so its body — and
+        any resource it acquires — waits for the first advance.) A ``ValueError``
+        raised by any sensor or policy check propagates to the caller unchanged.
     """
 
     def __init__(self, sensors: dict[str, Sensor]) -> None:
@@ -163,9 +243,9 @@ class SensorGroup:
 
         All sensor generators are started with the same ``spec`` and the
         matching concrete policy, then advanced in lockstep — one step per
-        window. Each yielded frame carries
-        ``align_timestamps_ns == window.timestamps_ns`` and a ``sensor_data``
-        mapping that includes only sensors with data for that window.
+        window, one sensor at a time in configured order. Each yielded frame
+        carries ``align_timestamps_ns == window.timestamps_ns`` and a
+        ``sensor_data`` mapping containing every configured sensor.
 
         Args:
             spec: sampling specification; the same grid request is passed to
@@ -180,18 +260,58 @@ class SensorGroup:
             ValueError: if the policy mapping is incomplete, contains unknown
                 ids, contains ``None``, contains an unsupported policy type, or
                 if any sensor's policy check fails.
+            AlignmentError: at the first window the recording cannot serve — a
+                configured sensor covered none of it, or its nearest observation
+                was outside the policy's tolerance. Iteration stops there.
+            ValueError: if a sensor returns a payload no recording could
+                produce, such as the wrong row count or a timeline that was
+                never requested. Raised by ``AlignedFrame``, and a defect in
+                that sensor rather than a property of the data.
+            Exception: whatever a sensor raises while being torn down, if
+                iteration was otherwise clean. Every sensor is still closed
+                first, and a teardown failure never replaces an error already
+                in flight.
 
         """
         policies_by_id = self._validate_policies(policies)
+        # ``sample()`` is a generator function, so this acquires nothing and cannot
+        # fail — the bodies do not run until the first advance below.
         generators = {name: sensor.sample(spec, policy=policies_by_id[name]) for name, sensor in self._sensors.items()}
-        for window in spec.grid:
-            sensor_data: dict[str, SensorData] = {}
-            for name, gen in generators.items():
-                data = next(gen)
-                if len(data.align_timestamps_ns) > 0:
-                    sensor_data[name] = data
-            frame = AlignedFrame(
-                align_timestamps_ns=window.timestamps_ns,
-                sensor_data=sensor_data,
-            )
-            yield frame
+        drained = False
+        try:
+            for window in spec.grid:
+                # Built inline rather than through a named local. A raised
+                # AlignmentError keeps this frame alive through its traceback, and
+                # a local here would pin the previous window's decoded payloads —
+                # a whole window of frame buffers per retained error.
+                yield AlignedFrame(
+                    align_timestamps_ns=window.timestamps_ns,
+                    sensor_data={
+                        name: _advance_one_sensor(name, gen, window.timestamps_ns) for name, gen in generators.items()
+                    },
+                )
+            drained = True
+        finally:
+            # Sensors suspend inside their own `with` blocks, holding decoders and
+            # MCAP readers. A failed window leaves every generator parked there,
+            # and a caller that keeps the AlignmentError keeps this frame — and so
+            # these generators — reachable, so refcounting never releases them.
+            # Close them here rather than at some later finalization.
+            #
+            # Teardown can itself fail — a decoder rejecting a stream on flush,
+            # say. Every sensor still gets a close attempt, and a teardown error
+            # never replaces whatever we were already unwinding: that would
+            # silence the AlignmentError callers were told to catch and turn a
+            # droppable recording into a dead stage. Only when this iteration
+            # ran to completion is there nothing to protect, so the teardown
+            # error surfaces then. That is tracked here rather than read from
+            # interpreter state, which would also see an exception the caller
+            # happened to be handling around the loop.
+            teardown_errors: list[Exception] = []
+            for generator in generators.values():
+                try:
+                    generator.close()
+                except Exception as error:  # noqa: BLE001
+                    teardown_errors.append(error)
+            if drained and teardown_errors:
+                raise teardown_errors[0]

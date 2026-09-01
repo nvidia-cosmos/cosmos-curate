@@ -33,10 +33,12 @@ from mcap.records import Channel, Message, Schema
 from mcap.writer import CompressionType, Writer
 
 from cosmos_curator.core.sensors.data.video import VideoMetadata
+from cosmos_curator.core.sensors.exceptions import AlignmentError, AlignmentFailureReason
 from cosmos_curator.core.sensors.sampling.grid import SamplingWindow
 from cosmos_curator.core.sensors.sampling.policy import NearestTimestampPolicy, NoSamplingPolicy
 from cosmos_curator.core.sensors.sampling.spec import SamplingSpec
 from cosmos_curator.core.sensors.sensors import mcap_camera_sensor
+from cosmos_curator.core.sensors.sensors.group import SensorGroup
 from cosmos_curator.core.sensors.sensors.mcap_camera_sensor import (
     McapCameraSensor,
     _compressed_video_payload,
@@ -447,6 +449,34 @@ def test_empty_window_yields_empty_camera_data(tmp_path: Path) -> None:
     assert batch.pts_stream.shape == (0,)
     assert batch.frames.shape == (0, batch.metadata.height, batch.metadata.width, 3)
     assert batch.metadata.avg_frame_rate == Fraction(1_000_000_000, _NS_PER_FRAME_30FPS)
+
+
+def test_a_window_with_no_decoded_frames_raises_empty_batch(tmp_path: Path) -> None:
+    """A real sensor with nothing to decode in a window is what ``empty_batch`` is for.
+
+    The window carries reference timestamps but the recording has no frames
+    there, so the sensor yields zero rows and ``SensorGroup`` fails the window
+    rather than handing back a frame missing a modality. This is the forward-only
+    decode path, which serves each window only from its own decoded frames.
+    """
+    packets = _annex_b_packets_from_mp4(_TEST_CLIP, packet_limit=2)
+    path = tmp_path / "no-frames-in-window.mcap"
+    _write_compressed_video_mcap(path, packets, message_encoding="json")
+    spec = SamplingSpec(
+        grid=make_sampling_grid(
+            timestamps_ns=np.array([100 * _NS_PER_FRAME_30FPS, 101 * _NS_PER_FRAME_30FPS], dtype=np.int64),
+            stride_ns=_NS_PER_FRAME_30FPS,
+            duration_ns=_NS_PER_FRAME_30FPS,
+        )
+    )
+    sensor = McapCameraSensor(_file_like_source(path), topic=_TOPIC)
+    group = SensorGroup({"front": sensor})
+
+    with pytest.raises(AlignmentError) as caught:
+        list(group.sample(spec, policies={"front": _policy()}))
+
+    assert caught.value.reason is AlignmentFailureReason.EMPTY_BATCH
+    assert caught.value.sensor_id == "front"
 
 
 def test_first_delta_packet_fails_before_decode() -> None:

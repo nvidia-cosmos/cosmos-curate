@@ -17,6 +17,7 @@
 import numpy as np
 import numpy.typing as npt
 
+from cosmos_curator.core.sensors.exceptions import AlignmentError, AlignmentFailureReason
 from cosmos_curator.core.sensors.sampling.grid import SamplingWindow
 from cosmos_curator.core.sensors.sampling.policy import NearestTimestampPolicy
 from cosmos_curator.core.sensors.utils.validation import require_strictly_increasing
@@ -135,8 +136,9 @@ def sample_window_indices(
         ValueError: If ``canonical`` is not strictly increasing.
         ValueError: If ``window.timestamps_ns`` is not strictly increasing.
         TypeError: If ``policy`` is not a ``NearestTimestampPolicy``.
-        ValueError: If ``policy.max_delta_ns`` is not ``None`` and any matched
-            canonical timestamp exceeds it from its reference timestamp.
+        AlignmentError: With reason ``TOLERANCE_EXCEEDED`` if ``policy.max_delta_ns``
+            is not ``None`` and any matched canonical timestamp exceeds it from its
+            reference timestamp.
 
     """
     if not isinstance(policy, NearestTimestampPolicy):
@@ -173,7 +175,15 @@ def sample_window_indices(
                 f"max_delta_ns={policy.max_delta_ns} exceeded: "
                 f"max delta was {max_delta} ns for grid={grid_ts}, canonical={canonical_ts}"
             )
-            raise ValueError(msg)
+            # No sensor id is available here; SensorGroup stamps its configured one.
+            raise AlignmentError(
+                AlignmentFailureReason.TOLERANCE_EXCEEDED,
+                msg,
+                align_timestamps_ns=active_grid,
+                sensor_timestamps_ns=canonical[indices],
+                delta_ns=max_delta,
+                max_delta_ns=policy.max_delta_ns,
+            )
 
     if dedup:
         # Collapse repeated matches of the same canonical timestamp. The counts

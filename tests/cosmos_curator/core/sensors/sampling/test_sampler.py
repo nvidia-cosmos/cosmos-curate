@@ -18,6 +18,7 @@ import numpy as np
 import numpy.typing as npt
 import pytest
 
+from cosmos_curator.core.sensors.exceptions import AlignmentError, AlignmentFailureReason
 from cosmos_curator.core.sensors.sampling.grid import SamplingGrid, SamplingWindow
 from cosmos_curator.core.sensors.sampling.policy import NearestTimestampPolicy, NoSamplingPolicy
 from cosmos_curator.core.sensors.sampling.sampler import (
@@ -494,7 +495,9 @@ def test_sample_window_indices_zero_max_delta_requires_exact_match() -> None:
     grid = np.array([100, 201, 300], dtype=np.int64)
     window = _window_from_grid(grid)
 
-    with pytest.raises(ValueError, match=r"max_delta_ns=0 exceeded: max delta was 1 ns for grid=201, canonical=200"):
+    with pytest.raises(
+        AlignmentError, match=r"max_delta_ns=0 exceeded: max delta was 1 ns for grid=201, canonical=200"
+    ):
         sample_window_indices(canonical=canonical, window=window, policy=NearestTimestampPolicy(max_delta_ns=0))
 
 
@@ -514,8 +517,41 @@ def test_sample_window_indices_max_delta_raises_with_offending_pair() -> None:
     window = _window_from_grid(grid)
     policy = NearestTimestampPolicy(max_delta_ns=30)
 
-    with pytest.raises(ValueError, match=r"max_delta_ns=30 exceeded: max delta was 50 ns for grid=150, canonical=100"):
+    with pytest.raises(
+        AlignmentError, match=r"max_delta_ns=30 exceeded: max delta was 50 ns for grid=150, canonical=100"
+    ):
         sample_window_indices(canonical=canonical, window=window, policy=policy)
+
+
+def test_sample_window_indices_max_delta_failure_carries_structured_fields() -> None:
+    """A tolerance failure is diagnosable from the exception without re-deriving the selection."""
+    canonical = np.array([100, 200, 300], dtype=np.int64)
+    grid = np.array([150, 260, 350], dtype=np.int64)
+    window = _window_from_grid(grid)
+
+    with pytest.raises(AlignmentError) as caught:
+        sample_window_indices(
+            canonical=canonical,
+            window=window,
+            policy=NearestTimestampPolicy(max_delta_ns=30),
+        )
+
+    error = caught.value
+    assert error.reason is AlignmentFailureReason.TOLERANCE_EXCEEDED
+    assert error.max_delta_ns == 30
+    # The sampler has no sensor id to give; SensorGroup supplies its configured one.
+    assert error.sensor_id is None
+    np.testing.assert_array_equal(error.align_timestamps_ns, window.timestamps_ns)
+
+    # One selected timestamp per reference timestamp, so a caller can see which
+    # pairing broke the tolerance and re-derive the delta from the fields alone.
+    # Asserted as a relationship rather than fixed values: which observation is
+    # nearest is the selection rule's business, not this contract's.
+    assert error.sensor_timestamps_ns is not None
+    assert len(error.sensor_timestamps_ns) == len(window.timestamps_ns)
+    worst = int(np.abs(error.sensor_timestamps_ns - error.align_timestamps_ns).max())
+    assert error.delta_ns == worst
+    assert error.delta_ns > error.max_delta_ns
 
 
 @pytest.mark.parametrize(
@@ -781,7 +817,7 @@ def test_sample_window_indices_max_delta_raises_when_nothing_is_within_tolerance
         timestamps_ns=np.array([4000, 5000], dtype=np.int64),
     )
 
-    with pytest.raises(ValueError, match="max_delta_ns=500 exceeded"):
+    with pytest.raises(AlignmentError, match="max_delta_ns=500 exceeded"):
         sample_window_indices(
             canonical=canonical,
             window=window,

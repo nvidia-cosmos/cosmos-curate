@@ -34,6 +34,7 @@ from cosmos_curator.core.sensors.data.camera_data import MotionVectorData, Motio
 from cosmos_curator.core.sensors.data.extrinsics import SensorExtrinsics
 from cosmos_curator.core.sensors.data.intrinsics import CameraIntrinsics
 from cosmos_curator.core.sensors.data.video import VideoIndex, VideoMetadata
+from cosmos_curator.core.sensors.exceptions import AlignmentError, AlignmentFailureReason
 from cosmos_curator.core.sensors.sampling.grid import SamplingWindow
 from cosmos_curator.core.sensors.sampling.policy import NearestTimestampPolicy, NoSamplingPolicy
 from cosmos_curator.core.sensors.sampling.spec import SamplingSpec
@@ -1186,8 +1187,12 @@ def test_camera_sensor_propagates_sampling_policy_failures(
     ) -> tuple[npt.NDArray[np.int64], npt.NDArray[np.int64]]:
         del canonical, grid, dedup
         assert isinstance(policy, NearestTimestampPolicy)
-        msg = "max_delta_ns=5 exceeded: max delta was 10 ns for grid=200, canonical=190"
-        raise ValueError(msg)
+        raise AlignmentError(
+            AlignmentFailureReason.TOLERANCE_EXCEEDED,
+            "max_delta_ns=5 exceeded: max delta was 10 ns for grid=200, canonical=190",
+            delta_ns=10,
+            max_delta_ns=5,
+        )
 
     patch_camera_sensor_dependencies(
         make_index_and_metadata_fn=fake_make_index_and_metadata,
@@ -1204,8 +1209,37 @@ def test_camera_sensor_propagates_sampling_policy_failures(
         ),
     )
 
-    with pytest.raises(ValueError, match="max_delta_ns=5 exceeded"):
+    # The decoder context manager must not swallow or re-wrap what the sampler raised.
+    # This says nothing about the tolerance rule itself — the fake supplied the
+    # error. See test_camera_sensor_real_tolerance_failure_raises_alignment_error.
+    with pytest.raises(AlignmentError, match="max_delta_ns=5 exceeded"):
         next(sensor.sample(spec, policy=NearestTimestampPolicy(max_delta_ns=5)))
+
+
+def test_camera_sensor_real_tolerance_failure_raises_alignment_error(synthetic_video: io.BytesIO) -> None:
+    """Drive a real decode through a genuine tolerance failure, with nothing patched.
+
+    The fixture's frames land on 0, 33_333_333, 66_666_666 ns. The reference
+    timestamp sits halfway between the first two, so whichever neighbour is
+    selected is ~16.7 ms away — far outside a 1 ms tolerance. The window is wide
+    enough to keep a neighbour eligible, so the failure is a genuine tolerance
+    rejection rather than an empty batch.
+    """
+    sensor = CameraSensor(synthetic_video.getvalue())
+    between_frames_ns = 16_666_666
+    grid = make_sampling_grid(
+        timestamps_ns=np.array([between_frames_ns, 50_000_000], dtype=np.int64),
+        stride_ns=50_000_000,
+        duration_ns=50_000_000,
+    )
+
+    with pytest.raises(AlignmentError) as caught:
+        next(sensor.sample(SamplingSpec(grid=grid), policy=NearestTimestampPolicy(max_delta_ns=1_000_000)))
+
+    assert caught.value.reason is AlignmentFailureReason.TOLERANCE_EXCEEDED
+    assert caught.value.max_delta_ns == 1_000_000
+    assert caught.value.delta_ns is not None
+    assert caught.value.delta_ns > 1_000_000
 
 
 def test_camera_sensor_uses_display_pts_stream_sidecar_alignment(
