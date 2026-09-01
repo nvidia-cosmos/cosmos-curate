@@ -811,16 +811,20 @@ class TestFastAPIEndpoints:
             patch("cosmos_curator.core.cf.nvcf_main._setup_request", return_value=(fake_thread, fake_stop_event)),
             patch("cosmos_curator.core.cf.nvcf_main.execute_pipeline") as mock_run,
             patch("cosmos_curator.core.cf.nvcf_main.gather_and_upload_outputs"),
+            patch("cosmos_curator.core.cf.nvcf_main.cleanup_server_input_workspace") as mock_input_cleanup,
         ):
             response = test_client.post(
                 "/v1/run_pipeline",
                 headers={"NVCF-REQID": mock_request_id},
-                json={"pipeline": "split", "args": {"input_video_path": "/in", "output_clip_path": "/out"}},
+                json={"pipeline": "split", "args": {"input_video_path": "s3://bucket/in", "output_clip_path": "/out"}},
             )
 
             assert response.status_code == HTTP_OK
             assert response.json()["message"] == "Pipeline executed successfully"
             mock_run.assert_called_once()
+            # Input-workspace cleanup must run unconditionally, success included --
+            # nothing gates it on ipc_status the way output cleanup/upload is gated.
+            mock_input_cleanup.assert_called_once()
 
     def test_run_pipeline_rejects_debug_pipeline_args(
         self,
@@ -848,7 +852,7 @@ class TestFastAPIEndpoints:
                 json={
                     "pipeline": "split",
                     "args": {
-                        "input_video_path": "/in",
+                        "input_video_path": "s3://bucket/in",
                         "output_clip_path": "/out",
                         debug_arg_name: ["SomeStage"],
                     },
@@ -897,7 +901,7 @@ class TestFastAPIEndpoints:
             response = test_client.post(
                 "/v1/run_pipeline",
                 headers={"NVCF-REQID": mock_request_id},
-                json={"pipeline": "split", "args": {"input_video_path": "/in", "output_clip_path": "/out"}},
+                json={"pipeline": "split", "args": {"input_video_path": "s3://bucket/in", "output_clip_path": "/out"}},
             )
 
         assert response.status_code == HTTP_INTERNAL_SERVER_ERROR
@@ -907,6 +911,72 @@ class TestFastAPIEndpoints:
         assert "logs: driver traceback was logged\n" in error_details
         assert "traceback:" not in error_details
         mock_error.assert_called_once_with(f"Pipeline failed for request {mock_request_id}; details in Ray job log")
+
+    def test_run_pipeline_pexec_failure_does_not_upload_outputs(
+        self, test_client: TestClient, mock_request_id: str
+    ) -> None:
+        """A synchronous failure must not trigger an upload, even with the optimistic ipc_status default."""
+        fake_manager = MagicMock()
+        # Mirrors _setup_request's real "assume success at start" default; that
+        # default is what must not survive a failed run.
+        fake_ipc_status = SimpleNamespace(value=True)
+        fake_manager.Value.return_value = fake_ipc_status
+        fake_manager.Queue.return_value = queue.Queue()
+        fake_manager.list.return_value = []
+        fake_thread = MagicMock()
+        fake_stop_event = threading.Event()
+
+        with (
+            patch("cosmos_curator.core.cf.nvcf_main.Manager", return_value=fake_manager),
+            patch("cosmos_curator.core.cf.nvcf_main._setup_request", return_value=(fake_thread, fake_stop_event)),
+            patch(
+                "cosmos_curator.core.cf.nvcf_main.execute_pipeline",
+                side_effect=RuntimeError("boom"),
+            ),
+            patch("cosmos_curator.core.cf.nvcf_main.gather_and_upload_outputs") as mock_upload,
+            patch("cosmos_curator.core.cf.nvcf_main.cleanup_server_output_workspace") as mock_cleanup,
+            patch("cosmos_curator.core.cf.nvcf_main.cleanup_server_input_workspace") as mock_input_cleanup,
+            patch.dict(nvcf_main.using_nvcf_status, {"get_req_sts": False}),
+        ):
+            response = test_client.post(
+                "/v1/run_pipeline",
+                headers={"NVCF-REQID": mock_request_id},
+                json={"pipeline": "split", "args": {"input_video_path": "s3://bucket/in", "output_clip_path": "/out"}},
+            )
+
+        assert response.status_code == HTTP_INTERNAL_SERVER_ERROR
+        assert fake_ipc_status.value is False
+        mock_upload.assert_not_called()
+        mock_cleanup.assert_called_once()
+        assert mock_cleanup.call_args.args[0] == "split"
+        # Input-workspace cleanup must also run on failure -- it isn't gated on
+        # ipc_status at all, unlike the output-side upload/cleanup choice above.
+        mock_input_cleanup.assert_called_once()
+
+    def test_run_pipeline_rejects_local_input_video_path(self, test_client: TestClient, mock_request_id: str) -> None:
+        """A caller-supplied local input_video_path must be rejected before dispatch."""
+        fake_manager = MagicMock()
+        fake_manager.Value.return_value = SimpleNamespace(value=True)
+        fake_manager.Queue.return_value = queue.Queue()
+        fake_manager.list.return_value = []
+        fake_thread = MagicMock()
+        fake_stop_event = threading.Event()
+
+        with (
+            patch("cosmos_curator.core.cf.nvcf_main.Manager", return_value=fake_manager),
+            patch("cosmos_curator.core.cf.nvcf_main._setup_request", return_value=(fake_thread, fake_stop_event)),
+            patch("cosmos_curator.core.cf.nvcf_main.execute_pipeline") as mock_run,
+            patch.dict(nvcf_main.using_nvcf_status, {"get_req_sts": False}),
+        ):
+            response = test_client.post(
+                "/v1/run_pipeline",
+                headers={"NVCF-REQID": mock_request_id},
+                json={"pipeline": "split", "args": {"input_video_path": "/var/secrets", "output_clip_path": "/out"}},
+            )
+
+        assert response.status_code == HTTP_INTERNAL_SERVER_ERROR
+        assert "input_video_path" in response.json()["error"]
+        mock_run.assert_not_called()
 
     def test_run_pipeline_direct_request_without_nvcf_request_id_uses_generated_fallback(
         self, test_client: TestClient
@@ -941,7 +1011,7 @@ class TestFastAPIEndpoints:
             response = test_client.post(
                 "/v1/run_pipeline",
                 headers={"CURATOR-DIRECT-MODE": "true"},
-                json={"pipeline": "split", "args": {"input_video_path": "/in", "output_clip_path": "/out"}},
+                json={"pipeline": "split", "args": {"input_video_path": "s3://bucket/in", "output_clip_path": "/out"}},
             )
             assert executed.wait(timeout=1)
             assert joined.wait(timeout=1)
@@ -1000,7 +1070,7 @@ class TestFastAPIEndpoints:
                 json={
                     "pipeline": "split",
                     "args": {
-                        "input_video_path": "/in",
+                        "input_video_path": "s3://bucket/in",
                         "output_clip_path": "/out",
                         "output_presigned_s3_url": "https://example.test/output.zip",
                     },
@@ -1067,7 +1137,7 @@ class TestFastAPIEndpoints:
                 json={
                     "pipeline": "split",
                     "args": {
-                        "input_video_path": "/in",
+                        "input_video_path": "s3://bucket/in",
                         "output_clip_path": "/out",
                         "output_presigned_s3_url": "https://example.test/output.zip",
                     },
@@ -1116,7 +1186,7 @@ class TestFastAPIEndpoints:
             response = test_client.post(
                 "/v1/run_pipeline",
                 headers={"CURATOR-DIRECT-MODE": "true", "NVCF-REQID": mock_request_id},
-                json={"pipeline": "split", "args": {"input_video_path": "/in", "output_clip_path": "/out"}},
+                json={"pipeline": "split", "args": {"input_video_path": "s3://bucket/in", "output_clip_path": "/out"}},
             )
             assert executed.wait(timeout=1)
             assert joined.wait(timeout=1)
@@ -1167,7 +1237,7 @@ class TestFastAPIEndpoints:
                 headers={"CURATOR-DIRECT-MODE": "true", "NVCF-REQID": mock_request_id},
                 json={
                     "pipeline": "split",
-                    "args": {"input_video_path": "/in", "output_clip_path": "/out"},
+                    "args": {"input_video_path": "s3://bucket/in", "output_clip_path": "/out"},
                 },
             )
             assert executed.wait(timeout=1)
@@ -1247,7 +1317,7 @@ class TestFastAPIEndpoints:
                 json={
                     "pipeline": "annotate",
                     "args": {
-                        "input_image_path": str(tmp_path / "in"),
+                        "input_image_path": "s3://bucket/in",
                         "output_path": str(tmp_path / "out"),
                         "limit": 1,
                     },
@@ -1258,7 +1328,7 @@ class TestFastAPIEndpoints:
         assert captured["request_id"] == mock_request_id
         pipeline_args = captured["pipeline_args"]
         assert isinstance(pipeline_args, argparse.Namespace)
-        assert pipeline_args.input_image_path == str(tmp_path / "in")
+        assert pipeline_args.input_image_path == "s3://bucket/in"
         assert pipeline_args.output_path == str(tmp_path / "out")
         assert pipeline_args.limit == 1
         assert fake_stop_event.is_set()

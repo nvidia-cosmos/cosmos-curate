@@ -52,6 +52,7 @@ from cosmos_curator.core.utils.infra import ray_cluster_utils
 from cosmos_curator.core.utils.storage.storage_utils import (
     get_files_relative,
     get_storage_client,
+    is_remote_path,
 )
 from cosmos_curator.core.utils.storage.zip_utils import safe_extract_zip
 from cosmos_curator.pipelines.video.read_write.summary_writers import (
@@ -59,10 +60,13 @@ from cosmos_curator.pipelines.video.read_write.summary_writers import (
 )
 
 __all__ = [
+    "cleanup_server_input_workspace",
+    "cleanup_server_output_workspace",
     "download_and_extract_zip",
     "gather_and_upload_outputs",
     "gather_outputs_from_all_nodes",
     "handle_presigned_urls",
+    "validate_local_input_paths",
     "zip_and_upload_directory",
     "zip_and_upload_directory_multipart",
 ]
@@ -485,14 +489,34 @@ def download_and_extract_zip(presigned_url: str) -> str:
         return fut.result()
 
 
-def handle_presigned_urls(  # noqa: C901, PLR0912
-    pipeline_type: str, pipeline_args: argparse.Namespace
-) -> argparse.Namespace:
+_SERVER_INPUT_WORKSPACE_ATTR = "_curator_server_input_workspace"
+
+
+def cleanup_server_input_workspace(args: argparse.Namespace) -> None:
+    """Remove this request's presigned-input extract dir, if one was created.
+
+    Unlike the output workspace, this is safe -- and necessary -- to call
+    unconditionally once the pipeline function has returned, success or failure:
+    nothing reads from the extracted directory after that point, so there is no
+    "still need it" case to gate on the way output cleanup gates on upload having
+    happened. Left uncleaned, every presigned-input request leaks one directory,
+    win or lose.
+    """
+    workspace = getattr(args, _SERVER_INPUT_WORKSPACE_ATTR, None)
+    if workspace is not None:
+        with contextlib.suppress(OSError):
+            shutil.rmtree(workspace)
+
+
+def handle_presigned_urls(pipeline_type: str, pipeline_args: argparse.Namespace) -> argparse.Namespace:
     """Update *pipeline_args* in-place based on any presigned URLs present."""
     if getattr(pipeline_args, "input_presigned_s3_url", None):
         logger.info("Input presigned URL detected - downloading …")
         extracted_path = download_and_extract_zip(pipeline_args.input_presigned_s3_url)
         logger.info(f"Extracted to temporary directory: {extracted_path}")
+        # Recorded so validate_local_input_paths can recognize this specific
+        # extract dir as legitimate without trusting any local path a caller claims.
+        setattr(pipeline_args, _SERVER_INPUT_WORKSPACE_ATTR, extracted_path)
         if pipeline_type == "split":
             pipeline_args.input_video_path = extracted_path
         elif pipeline_type == "semantic-dedup":
@@ -508,27 +532,100 @@ def handle_presigned_urls(  # noqa: C901, PLR0912
 
     if has_single_output or has_multipart_output:
         if pipeline_type == "split":
-            if not getattr(pipeline_args, "output_clip_path", None):
-                pipeline_args.output_clip_path = tempfile.mkdtemp(prefix="output_split_")
-                logger.warning(
-                    f"No output_clip_path provided; using temporary directory {pipeline_args.output_clip_path}",
-                )
+            _use_server_output_workspace(pipeline_args, "output_clip_path", "output_split_")
         elif pipeline_type == "semantic-dedup":
-            if not getattr(pipeline_args, "output_path", None):
-                pipeline_args.output_path = tempfile.mkdtemp(prefix="output_dedup_")
-                logger.warning(
-                    f"No output_path provided; using temporary directory {pipeline_args.output_path}",
-                )
+            _use_server_output_workspace(pipeline_args, "output_path", "output_dedup_")
         elif pipeline_type == "annotate":
-            if not getattr(pipeline_args, "output_path", None):
-                pipeline_args.output_path = tempfile.mkdtemp(prefix="output_annotate_")
-                logger.warning(
-                    f"No output_path provided; using temporary directory {pipeline_args.output_path}",
-                )
+            _use_server_output_workspace(pipeline_args, "output_path", "output_annotate_")
         else:
             logger.warning(f"Unsupported pipeline type '{pipeline_type}' for presigned output URL.")
 
     return pipeline_args
+
+
+_LOCAL_INPUT_PATH_ARGS = (
+    "input_video_path",
+    "input_image_path",
+    "input_embeddings_path",
+    "input_video_list_json_path",
+    # shard pipeline: handle_presigned_urls has no case for "shard" at all, so
+    # these never get a server-controlled extract dir the way split/annotate do --
+    # a local value here is never legitimate over NVCF, same as the others.
+    "input_clip_path",
+    "input_semantic_dedup_path",
+)
+
+
+def validate_local_input_paths(pipeline_args: argparse.Namespace) -> None:
+    """Reject a caller-supplied input path arg that is a local path this request doesn't own.
+
+    Unlike output, the input path is a product feature -- BYO media in the caller's
+    own bucket is the point -- so it cannot be silently replaced with a server temp
+    dir the way output is. This rejects instead.
+
+    A remote path (``s3://``, ``az://``) is always allowed: it is read directly
+    from the caller's own store, never proxied through this process. A local path is
+    only legitimate if it is the directory this same request's
+    ``input_presigned_s3_url`` was extracted into by :func:`handle_presigned_urls`
+    (recorded on :data:`_SERVER_INPUT_WORKSPACE_ATTR`); call this *after*
+    :func:`handle_presigned_urls` has run. Any other local path -- an attacker's, or
+    simply a caller who fat-fingered one -- would otherwise let this process read an
+    arbitrary local file and, via the pipeline's own output, hand its contents back
+    to the caller.
+
+    Must be called for every pipeline type: none of ``input_video_path`` /
+    ``input_image_path`` / ``input_embeddings_path`` / ``input_video_list_json_path``
+    is pipeline-specific to check, since at most one is ever populated for a given
+    invoke and the rest are simply absent.
+
+    Raises:
+        ValueError: If a supplied input path arg is a local path outside this
+            request's own extract dir.
+
+    """
+    allowed_root = getattr(pipeline_args, _SERVER_INPUT_WORKSPACE_ATTR, None)
+    allowed_root_resolved = Path(allowed_root).resolve() if allowed_root is not None else None
+    for attr_name in _LOCAL_INPUT_PATH_ARGS:
+        value = getattr(pipeline_args, attr_name, None)
+        if not value:
+            continue
+        if is_remote_path(str(value)):
+            continue
+        if allowed_root_resolved is not None:
+            try:
+                Path(str(value)).resolve().relative_to(allowed_root_resolved)
+                continue
+            except ValueError:
+                pass
+        error_msg = (
+            f"Invalid {attr_name}: local paths are not allowed; supply a remote "
+            "s3:// or az:// path, or use input_presigned_s3_url"
+        )
+        raise ValueError(error_msg)
+
+
+_SERVER_OUTPUT_WORKSPACE_ATTR = "_curator_server_output_workspace"
+
+
+def _use_server_output_workspace(pipeline_args: argparse.Namespace, attr_name: str, prefix: str) -> None:
+    """Point *attr_name* at a fresh server-owned temp dir, discarding any caller value.
+
+    A presigned output URL means whatever ends up under this path gets zipped and
+    handed back to the caller, so the caller does not get to choose the path.
+
+    The created path is also stashed on a dedicated attribute so later containment
+    checks can require it be *this* request's workspace specifically -- ``/tmp`` is
+    shared by every concurrent request, so checking only that a path sits somewhere
+    under it would still accept another request's directory.
+    """
+    caller_value = getattr(pipeline_args, attr_name, None)
+    workspace = tempfile.mkdtemp(prefix=prefix)
+    setattr(pipeline_args, attr_name, workspace)
+    setattr(pipeline_args, _SERVER_OUTPUT_WORKSPACE_ATTR, workspace)
+    if caller_value:
+        logger.warning(f"Ignoring caller-supplied {attr_name}={caller_value!r}; using {workspace}")
+    else:
+        logger.info(f"No {attr_name} provided; using temporary directory {workspace}")
 
 
 @ray.remote(num_cpus=_OUTPUT_GATHERER_CPU_REQUEST)
@@ -603,19 +700,42 @@ def _get_output_path(pipeline_type: str, args: argparse.Namespace) -> str | None
         if getattr(args, "output_clip_path", None) is None:
             logger.warning("output_clip_path for split pipeline is not set?")
             return None
-        return str(args.output_clip_path)
+        return _require_server_workspace(str(args.output_clip_path), args)
     if pipeline_type == "semantic-dedup":
         if getattr(args, "output_path", None) is None:
             logger.warning("output_path for semantic-dedup pipeline is not set?")
             return None
-        return str(args.output_path)
+        return _require_server_workspace(str(args.output_path), args)
     if pipeline_type == "annotate":
         if getattr(args, "output_path", None) is None:
             logger.warning("output_path for annotate pipeline is not set?")
             return None
-        return str(args.output_path)
+        return _require_server_workspace(str(args.output_path), args)
     logger.warning(f"Unsupported pipeline type '{pipeline_type}' for presigned output URL.")
     return None
+
+
+def _require_server_workspace(path: str, args: argparse.Namespace) -> str | None:
+    """Confirm *path* is this request's own server-created workspace before it is zipped.
+
+    ``/tmp`` is shared by every concurrent request, so checking only that a path sits
+    somewhere under it would still accept another request's directory, or leftover
+    files, if one reached here without going through :func:`handle_presigned_urls`.
+    This instead requires *path* be the exact workspace
+    :func:`_use_server_output_workspace` created and recorded for *this* request.
+    """
+    expected = getattr(args, _SERVER_OUTPUT_WORKSPACE_ATTR, None)
+    if expected is None:
+        logger.error(f"Refusing to zip/upload {path}: no server-created output workspace recorded for this request")
+        return None
+    workspace_root = Path(expected).resolve()
+    resolved = Path(path).resolve()
+    try:
+        resolved.relative_to(workspace_root)
+    except ValueError:
+        logger.error(f"Refusing to zip/upload output outside this request's workspace ({workspace_root}): {path}")
+        return None
+    return str(resolved)
 
 
 def _write_split_metadata(args: argparse.Namespace, output_path: str) -> None:
@@ -646,6 +766,11 @@ def gather_and_upload_outputs(pipeline_type: str, args: argparse.Namespace) -> N
 
     output_path = _get_output_path(pipeline_type, args)
     if output_path is None:
+        # _get_output_path can reject even though handle_presigned_urls did create a
+        # workspace for this request (e.g. output_clip_path no longer matches what
+        # was recorded); fall back to removing that recorded workspace directly so
+        # the divergence doesn't leave the real directory on disk.
+        _cleanup_recorded_server_output_workspace(args)
         return
 
     try:
@@ -667,6 +792,51 @@ def gather_and_upload_outputs(pipeline_type: str, args: argparse.Namespace) -> N
         logger.exception(f"Failed to gather/upload outputs: {exc}")
         raise
     finally:
-        if "output_split_" in output_path or "output_dedup_" in output_path or "output_annotate_" in output_path:
-            with contextlib.suppress(OSError):
-                shutil.rmtree(output_path)
+        _remove_if_server_output_workspace(output_path)
+
+
+_SERVER_OUTPUT_WORKSPACE_PREFIXES = ("output_split_", "output_dedup_", "output_annotate_")
+
+
+def _remove_if_server_output_workspace(path: str) -> None:
+    """Remove *path* if its name matches a server-created output temp dir."""
+    if any(prefix in path for prefix in _SERVER_OUTPUT_WORKSPACE_PREFIXES):
+        with contextlib.suppress(OSError):
+            shutil.rmtree(path)
+
+
+def _cleanup_recorded_server_output_workspace(args: argparse.Namespace) -> None:
+    """Remove this request's recorded server output workspace directly.
+
+    Fallback for when :func:`_get_output_path` returns ``None`` even though
+    :func:`handle_presigned_urls` did create a workspace for this request -- e.g.
+    the current ``output_clip_path``/``output_path`` no longer matches what was
+    recorded on ``_SERVER_OUTPUT_WORKSPACE_ATTR``. Removes the recorded directory
+    directly rather than leaving it on disk because the field that normally points
+    to it diverged.
+    """
+    recorded_workspace = getattr(args, _SERVER_OUTPUT_WORKSPACE_ATTR, None)
+    if recorded_workspace is not None:
+        _remove_if_server_output_workspace(recorded_workspace)
+
+
+def cleanup_server_output_workspace(pipeline_type: str, args: argparse.Namespace) -> None:
+    """Remove a server-created output temp dir left behind by a run that never uploaded.
+
+    ``gather_and_upload_outputs`` only runs -- and only cleans up after itself -- on
+    a run that actually reaches the upload step. A run that fails before that (e.g.
+    input validation) still had a temp dir created for it by
+    :func:`handle_presigned_urls`, which this removes instead of leaving it to
+    accumulate. Safe to call unconditionally: does nothing if no presigned output
+    URL was supplied, since only that path ever gets a server-owned directory.
+    """
+    if (
+        getattr(args, "output_presigned_s3_url", None) is None
+        and getattr(args, "output_presigned_multipart", None) is None
+    ):
+        return
+    output_path = _get_output_path(pipeline_type, args)
+    if output_path is not None:
+        _remove_if_server_output_workspace(output_path)
+    else:
+        _cleanup_recorded_server_output_workspace(args)

@@ -61,8 +61,11 @@ from cosmos_curator.core.cf.nvcf_utils import (
 from cosmos_curator.core.utils.environment import CONTAINER_PATHS_CODE_DIR
 from cosmos_curator.core.utils.misc.file_lock import file_lock
 from cosmos_curator.core.utils.storage.presigned_s3_zip import (
+    cleanup_server_input_workspace,
+    cleanup_server_output_workspace,
     gather_and_upload_outputs,
     handle_presigned_urls,
+    validate_local_input_paths,
 )
 from cosmos_curator.pipelines.image.annotate_pipeline import nvcf_run_annotate
 from cosmos_curator.pipelines.video.dedup_pipeline import nvcf_run_semdedup
@@ -113,6 +116,36 @@ def _validate_no_debug_pipeline_args(args: dict[str, Any]) -> None:
 
     """
     rejected = _NVCF_REJECTED_ARG_NAMES & args.keys()
+    if rejected:
+        error_msg = f"Unsupported NVCF invoke args: {', '.join(sorted(rejected))}"
+        raise ValueError(error_msg)
+
+
+def _validate_no_internal_marker_args(args: dict[str, Any]) -> None:
+    """Reject NVCF invoke args that collide with server-internal bookkeeping attrs.
+
+    ``argparse.Namespace(**args)`` spreads the raw invoke JSON onto the Namespace
+    with no allowlist, so any key the caller supplies becomes a real attribute --
+    including ones this codebase later reads back and trusts as if only server code
+    could have set them (e.g. ``_curator_server_output_workspace``, which gates
+    whether a path gets zipped and uploaded to a caller-supplied URL). A caller who
+    supplies that exact key can set both sides of that check to the same value and
+    defeat it entirely.
+
+    No legitimate CLI-derived arg name starts with ``_`` (argparse turns
+    ``--foo-bar`` into ``foo_bar``, never a leading underscore), so rejecting the
+    whole shape closes this off structurally instead of naming each internal
+    marker attr as it's added.
+
+    Args:
+        args: The raw ``args`` mapping from the invoke JSON payload, before it is
+            spread into an ``argparse.Namespace``.
+
+    Raises:
+        ValueError: If any key starts with an underscore.
+
+    """
+    rejected = {key for key in args if key.startswith("_")}
     if rejected:
         error_msg = f"Unsupported NVCF invoke args: {', '.join(sorted(rejected))}"
         raise ValueError(error_msg)
@@ -962,6 +995,7 @@ async def curate_video(request: Request) -> JSONResponse:  # noqa: C901, PLR0912
         raw_args = invoke_args.get("args", {})
         try:
             _validate_no_debug_pipeline_args(raw_args)
+            _validate_no_internal_marker_args(raw_args)
         except ValueError as e:
             return JSONResponse(status_code=400, content={"error": str(e)})
         pipeline_args = argparse.Namespace(**raw_args)
@@ -979,6 +1013,8 @@ async def curate_video(request: Request) -> JSONResponse:  # noqa: C901, PLR0912
             # At this point `pipeline_args` **must** be a populated Namespace object.
             # Add an explicit runtime assertion so static type-checkers understand this.
             assert isinstance(pipeline_args, argparse.Namespace)
+
+            validate_local_input_paths(pipeline_args)
 
             if hasattr(pipeline_args, "s3_config"):
                 did_init_s3_profile = create_s3_profile(pipeline_args.s3_config)
@@ -1057,12 +1093,22 @@ async def curate_video(request: Request) -> JSONResponse:  # noqa: C901, PLR0912
                     ipc_status.value = False
                 finally:
                     logger.info("Cleaning up after finishing the invoke")
-                    if ipc_status.value and pipeline_args is not None:
-                        try:
-                            gather_and_upload_outputs(pipeline_type, pipeline_args)
-                        except Exception as e:  # noqa: BLE001
-                            logger.exception(f"Error uploading pipeline outputs for request {request_id}: {e}")
-                            ipc_status.value = False
+                    if pipeline_args is not None:
+                        if ipc_status.value:
+                            try:
+                                gather_and_upload_outputs(pipeline_type, pipeline_args)
+                            except Exception as e:  # noqa: BLE001
+                                logger.exception(f"Error uploading pipeline outputs for request {request_id}: {e}")
+                                ipc_status.value = False
+                        else:
+                            # The run failed before ever reaching gather_and_upload_outputs,
+                            # so its usual cleanup never ran; remove any server-created
+                            # output temp dir directly instead of leaving it behind.
+                            cleanup_server_output_workspace(pipeline_type, pipeline_args)
+                        # Nothing reads the presigned-input extract dir after the
+                        # pipeline function has returned, win or lose -- unlike output,
+                        # this isn't gated on success.
+                        cleanup_server_input_workspace(pipeline_args)
                     if stop_event and not stop_event.is_set():
                         stop_event.set()
                     if progress_thread:
@@ -1094,6 +1140,10 @@ async def curate_video(request: Request) -> JSONResponse:  # noqa: C901, PLR0912
         )
 
     except Exception as e:  # noqa: BLE001
+        # A failure here means the pipeline did not produce output; do not let the
+        # optimistic default in ipc_status trigger an upload in the finally block.
+        if ipc_status is not None:
+            ipc_status.value = False
         ray_job_logged_error = isinstance(e, RayJobLoggedError)
         if ray_job_logged_error:
             logger.error(f"Pipeline failed for request {request_id}; details in Ray job log")
@@ -1126,12 +1176,22 @@ async def curate_video(request: Request) -> JSONResponse:  # noqa: C901, PLR0912
     finally:
         if should_cleanup:
             logger.info("Cleaning up after finishing the invoke")
-            if ipc_status is not None and ipc_status.value and pipeline_args is not None:
-                try:
-                    gather_and_upload_outputs(pipeline_type, pipeline_args)
-                except Exception as e:  # noqa: BLE001
-                    logger.exception(f"Error uploading pipeline outputs for request {request_id}: {e}")
-                    ipc_status.value = False
+            if pipeline_args is not None:
+                if ipc_status is not None and ipc_status.value:
+                    try:
+                        gather_and_upload_outputs(pipeline_type, pipeline_args)
+                    except Exception as e:  # noqa: BLE001
+                        logger.exception(f"Error uploading pipeline outputs for request {request_id}: {e}")
+                        ipc_status.value = False
+                else:
+                    # The run failed before ever reaching gather_and_upload_outputs, so
+                    # its usual cleanup never ran; remove any server-created output temp
+                    # dir directly instead of leaving it behind.
+                    cleanup_server_output_workspace(pipeline_type, pipeline_args)
+                # Nothing reads the presigned-input extract dir after the pipeline
+                # function has returned, win or lose -- unlike output, this isn't
+                # gated on success.
+                cleanup_server_input_workspace(pipeline_args)
             if stop_event and not stop_event.is_set():
                 stop_event.set()
             if progress_thread:

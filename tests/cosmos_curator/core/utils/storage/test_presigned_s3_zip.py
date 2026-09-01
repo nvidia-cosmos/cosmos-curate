@@ -30,17 +30,35 @@ from typing import ClassVar
 import pytest
 
 from cosmos_curator.core.utils.storage.presigned_s3_zip import (
+    _SERVER_INPUT_WORKSPACE_ATTR,
+    _SERVER_OUTPUT_WORKSPACE_ATTR,
     _create_zip_archive,
     _download_and_extract_zip_single_node,
     _get_output_path,
     _validate_archive_size,
     _validate_upload_completion,
     _write_split_metadata,
+    cleanup_server_input_workspace,
+    cleanup_server_output_workspace,
     gather_and_upload_outputs,
     handle_presigned_urls,
+    validate_local_input_paths,
     zip_and_upload_directory,
     zip_and_upload_directory_multipart,
 )
+
+
+def _server_owned_args(**kwargs: str) -> argparse.Namespace:
+    """Build args as if handle_presigned_urls had created and recorded this workspace.
+
+    ``kwargs`` must include exactly one of ``output_clip_path``/``output_path``; that
+    same value is recorded as this request's server-owned workspace, matching what
+    ``_use_server_output_workspace`` does for a real request.
+    """
+    workspace = kwargs.get("output_clip_path") or kwargs.get("output_path")
+    args = argparse.Namespace(**kwargs)
+    setattr(args, _SERVER_OUTPUT_WORKSPACE_ATTR, workspace)
+    return args
 
 
 class _ThreadedHTTPServer(socketserver.ThreadingMixIn, HTTPServer):
@@ -248,6 +266,44 @@ def test_handle_presigned_urls_maps_annotate_input(monkeypatch: pytest.MonkeyPat
     assert args.input_image_path == extracted_path
 
 
+def test_handle_presigned_urls_records_input_workspace(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """The extract dir must be recorded so validate_local_input_paths can recognize it."""
+    extracted_path = str(tmp_path / "extracted_videos")
+    monkeypatch.setattr(
+        "cosmos_curator.core.utils.storage.presigned_s3_zip.download_and_extract_zip",
+        lambda _url: extracted_path,
+    )
+
+    args = argparse.Namespace(input_presigned_s3_url="https://example.test/input.zip")
+    handle_presigned_urls("split", args)
+
+    assert getattr(args, _SERVER_INPUT_WORKSPACE_ATTR) == extracted_path
+
+
+def test_cleanup_server_input_workspace_removes_extract_dir(tmp_path: Path) -> None:
+    """The presigned-input extract dir must be removed once the pipeline is done with it."""
+    extract_dir = tmp_path / "input_videos_abc"
+    extract_dir.mkdir()
+    (extract_dir / "video1.mp4").write_bytes(b"")
+
+    args = argparse.Namespace()
+    setattr(args, _SERVER_INPUT_WORKSPACE_ATTR, str(extract_dir))
+
+    cleanup_server_input_workspace(args)
+
+    assert not extract_dir.exists()
+
+
+def test_cleanup_server_input_workspace_is_a_noop_without_presigned_input(tmp_path: Path) -> None:
+    """A request that never used input_presigned_s3_url has nothing to clean up."""
+    unrelated_dir = tmp_path / "some_other_dir"
+    unrelated_dir.mkdir()
+
+    cleanup_server_input_workspace(argparse.Namespace(input_video_path=str(unrelated_dir)))
+
+    assert unrelated_dir.exists()
+
+
 def test_handle_presigned_urls_creates_annotate_output_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Annotate presigned outputs should use a temporary output_path when omitted."""
     output_path = str(tmp_path / "output_annotate_abc")
@@ -268,12 +324,132 @@ def test_handle_presigned_urls_creates_annotate_output_path(monkeypatch: pytest.
     assert args.output_path == output_path
 
 
+def test_handle_presigned_urls_ignores_caller_supplied_output_path(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A caller-supplied output_clip_path must not survive when a presigned URL is set."""
+    workspace = str(tmp_path / "output_split_abc")
+
+    monkeypatch.setattr(
+        "cosmos_curator.core.utils.storage.presigned_s3_zip.tempfile.mkdtemp",
+        lambda *, prefix: workspace,  # noqa: ARG005
+    )
+    args = argparse.Namespace(
+        output_clip_path="/var/secrets",
+        output_presigned_s3_url="https://example.test/output.zip",
+    )
+
+    result = handle_presigned_urls("split", args)
+
+    assert result is args
+    assert args.output_clip_path == workspace
+    assert args.output_clip_path != "/var/secrets"
+
+
 def test_get_output_path_supports_annotate(tmp_path: Path) -> None:
     """Annotate presigned uploads should read output_path like semantic-dedup."""
     output_path = str(tmp_path / "annotate-output")
-    args = argparse.Namespace(output_path=output_path)
+    args = _server_owned_args(output_path=output_path)
 
     assert _get_output_path("annotate", args) == output_path
+
+
+def test_get_output_path_rejects_path_outside_server_workspace() -> None:
+    """A path outside the server temp dir must not be returned for zipping/uploading."""
+    args = argparse.Namespace(output_clip_path="/var/secrets")
+
+    assert _get_output_path("split", args) is None
+
+
+def test_get_output_path_rejects_a_different_requests_workspace(tmp_path: Path) -> None:
+    """A path under the shared system temp dir, but not *this* request's, must be rejected.
+
+    ``/tmp`` is shared by every concurrent request; checking only "is this under the
+    system temp dir" would accept another request's leftover directory just as
+    readily as an attacker-chosen one.
+    """
+    another_requests_workspace = tmp_path / "output_split_someone_else"
+    another_requests_workspace.mkdir()
+    args = argparse.Namespace(output_clip_path=str(another_requests_workspace))
+    # No _SERVER_OUTPUT_WORKSPACE_ATTR recorded for *this* request at all.
+
+    assert _get_output_path("split", args) is None
+
+
+def test_get_output_path_rejects_mismatch_between_recorded_and_current_path(tmp_path: Path) -> None:
+    """A request's own recorded workspace does not authorize a *different* real dir.
+
+    Even if output_clip_path is reassigned after handle_presigned_urls ran -- to
+    another real, existing temp dir, not an attacker fantasy path -- it must not be
+    accepted just because *some* legitimate workspace was recorded for this request.
+    """
+    this_requests_workspace = tmp_path / "output_split_mine"
+    this_requests_workspace.mkdir()
+    a_different_real_dir = tmp_path / "output_split_not_mine"
+    a_different_real_dir.mkdir()
+
+    args = argparse.Namespace(output_clip_path=str(a_different_real_dir))
+    setattr(args, _SERVER_OUTPUT_WORKSPACE_ATTR, str(this_requests_workspace))
+
+    assert _get_output_path("split", args) is None
+
+
+def test_gather_and_upload_outputs_skips_upload_for_path_outside_workspace(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """/var/secrets must never reach gather/zip/upload, even if it somehow ends up in args."""
+    called: dict[str, str] = {}
+    monkeypatch.setattr(
+        "cosmos_curator.core.utils.storage.presigned_s3_zip.gather_outputs_from_all_nodes",
+        lambda path: called.setdefault("gather", path),
+    )
+    monkeypatch.setattr(
+        "cosmos_curator.core.utils.storage.presigned_s3_zip.zip_and_upload_directory",
+        lambda path, url: called.setdefault("upload", f"{path}|{url}"),
+    )
+
+    gather_and_upload_outputs(
+        "split",
+        argparse.Namespace(
+            output_clip_path="/var/secrets",
+            output_presigned_s3_url="https://example.test/output.zip",
+        ),
+    )
+
+    assert called == {}
+
+
+def test_gather_and_upload_outputs_cleans_up_recorded_workspace_on_mismatch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A recorded workspace that no longer matches output_clip_path must still be removed.
+
+    _get_output_path() rejects the mismatch and returns None -- which used to mean
+    gather_and_upload_outputs returned before its cleanup ever ran, leaking the real
+    on-disk directory that handle_presigned_urls actually created.
+    """
+    recorded_workspace = tmp_path / "output_split_recorded"
+    recorded_workspace.mkdir()
+    (recorded_workspace / "partial.mp4").write_bytes(b"")
+    diverged_path = tmp_path / "output_split_diverged"
+    diverged_path.mkdir()
+
+    called: dict[str, str] = {}
+    monkeypatch.setattr(
+        "cosmos_curator.core.utils.storage.presigned_s3_zip.gather_outputs_from_all_nodes",
+        lambda path: called.setdefault("gather", path),
+    )
+
+    args = argparse.Namespace(
+        output_clip_path=str(diverged_path),
+        output_presigned_s3_url="https://example.test/output.zip",
+    )
+    setattr(args, _SERVER_OUTPUT_WORKSPACE_ATTR, str(recorded_workspace))
+
+    gather_and_upload_outputs("split", args)
+
+    assert called == {}  # never reached gather/zip/upload
+    assert not recorded_workspace.exists()  # but the real workspace is still cleaned up
 
 
 def test_gather_and_upload_outputs_cleans_annotate_temp_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -294,7 +470,7 @@ def test_gather_and_upload_outputs_cleans_annotate_temp_dir(tmp_path: Path, monk
 
     gather_and_upload_outputs(
         "annotate",
-        argparse.Namespace(
+        _server_owned_args(
             output_path=str(output_path),
             output_presigned_s3_url="https://example.test/output.zip",
         ),
@@ -330,13 +506,61 @@ def test_gather_and_upload_outputs_raises_upload_failure_and_cleans_temp_dir(
     with pytest.raises(RuntimeError, match="upload failed"):
         gather_and_upload_outputs(
             "annotate",
-            argparse.Namespace(
+            _server_owned_args(
                 output_path=str(output_path),
                 output_presigned_s3_url="https://example.test/output.zip",
             ),
         )
 
     assert not output_path.exists()
+
+
+def test_cleanup_server_output_workspace_removes_orphaned_temp_dir(tmp_path: Path) -> None:
+    """A request that never reached gather_and_upload_outputs must not leak its temp dir."""
+    workspace = tmp_path / "output_split_abc"
+    workspace.mkdir()
+    (workspace / "partial.mp4").write_bytes(b"")
+
+    cleanup_server_output_workspace(
+        "split",
+        _server_owned_args(
+            output_clip_path=str(workspace),
+            output_presigned_s3_url="https://example.test/output.zip",
+        ),
+    )
+
+    assert not workspace.exists()
+
+
+def test_cleanup_server_output_workspace_falls_back_to_recorded_workspace_on_mismatch(
+    tmp_path: Path,
+) -> None:
+    """A recorded workspace that no longer matches output_clip_path must still be removed."""
+    recorded_workspace = tmp_path / "output_split_recorded"
+    recorded_workspace.mkdir()
+    diverged_path = tmp_path / "output_split_diverged"
+    diverged_path.mkdir()
+
+    args = argparse.Namespace(
+        output_clip_path=str(diverged_path),
+        output_presigned_s3_url="https://example.test/output.zip",
+    )
+    setattr(args, _SERVER_OUTPUT_WORKSPACE_ATTR, str(recorded_workspace))
+
+    cleanup_server_output_workspace("split", args)
+
+    assert not recorded_workspace.exists()
+    assert diverged_path.exists()  # not this request's workspace; must be left alone
+
+
+def test_cleanup_server_output_workspace_ignores_requests_without_presigned_url(tmp_path: Path) -> None:
+    """A request that never asked for a presigned output has nothing server-owned to clean up."""
+    workspace = tmp_path / "output_split_abc"
+    workspace.mkdir()
+
+    cleanup_server_output_workspace("split", argparse.Namespace(output_clip_path=str(workspace)))
+
+    assert workspace.exists()
 
 
 def test_zip_and_upload_directory_multipart(tmp_path: Path) -> None:
@@ -395,3 +619,54 @@ def test_validate_upload_completion_detects_mismatch() -> None:
     """Detect unfinished uploads when bytes uploaded do not match."""
     with pytest.raises(ValueError, match="Upload size mismatch"):
         _validate_upload_completion(bytes_uploaded=99, archive_size=100)
+
+
+def test_validate_local_input_paths_rejects_local_path_with_no_extract_dir() -> None:
+    """A local path is rejected outright when this request never used input_presigned_s3_url."""
+    with pytest.raises(ValueError, match="input_video_path"):
+        validate_local_input_paths(argparse.Namespace(input_video_path="/var/secrets"))
+
+
+@pytest.mark.parametrize("uri", ["s3://bucket/prefix", "az://container/prefix"])
+def test_validate_local_input_paths_accepts_remote_paths(uri: str) -> None:
+    """BYO media in the caller's own bucket is always allowed, extract dir or not."""
+    validate_local_input_paths(argparse.Namespace(input_video_path=uri))
+
+
+def test_validate_local_input_paths_accepts_this_requests_extract_dir(tmp_path: Path) -> None:
+    """The exact directory this request's own presigned input was extracted into is allowed."""
+    extract_dir = tmp_path / "input_videos_abc"
+    extract_dir.mkdir()
+    args = argparse.Namespace(input_video_path=str(extract_dir))
+    setattr(args, _SERVER_INPUT_WORKSPACE_ATTR, str(extract_dir))
+
+    validate_local_input_paths(args)  # must not raise
+
+
+def test_validate_local_input_paths_rejects_a_different_requests_extract_dir(tmp_path: Path) -> None:
+    """Having *an* extract dir recorded does not authorize a different real local path."""
+    my_extract_dir = tmp_path / "input_videos_mine"
+    my_extract_dir.mkdir()
+    someone_elses_dir = tmp_path / "input_videos_not_mine"
+    someone_elses_dir.mkdir()
+
+    args = argparse.Namespace(input_video_path=str(someone_elses_dir))
+    setattr(args, _SERVER_INPUT_WORKSPACE_ATTR, str(my_extract_dir))
+
+    with pytest.raises(ValueError, match="input_video_path"):
+        validate_local_input_paths(args)
+
+
+def test_validate_local_input_paths_covers_input_video_list_json_path() -> None:
+    """input_video_list_json_path gets the same treatment: local rejected, remote allowed."""
+    with pytest.raises(ValueError, match="input_video_list_json_path"):
+        validate_local_input_paths(argparse.Namespace(input_video_list_json_path="/etc/passwd"))
+
+    validate_local_input_paths(  # must not raise
+        argparse.Namespace(input_video_list_json_path="s3://bucket/manifest.json"),
+    )
+
+
+def test_validate_local_input_paths_ignores_absent_args() -> None:
+    """A request with none of the input path args set is trivially fine."""
+    validate_local_input_paths(argparse.Namespace())  # must not raise
