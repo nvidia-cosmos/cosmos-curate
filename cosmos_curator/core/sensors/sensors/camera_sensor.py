@@ -73,7 +73,7 @@ class CameraSensor:
         index_method: VideoIndexCreationMethod = VideoIndexCreationMethod.AUTO,
         intrinsics: CameraIntrinsics | None = None,
         extrinsics: SensorExtrinsics | None = None,
-        timestamp_offset_ns: int = 0,
+        origin_ns: int | None = None,
     ) -> None:
         """Initialize the camera sensor.
 
@@ -98,12 +98,18 @@ class CameraSensor:
                 before constructing ``CameraSensor``.
             extrinsics: Optional pre-parsed rigid transform from the camera frame
                 to a caller-defined reference frame.
-            timestamp_offset_ns: Fixed signed-nanosecond offset applied to the
-                camera's nanosecond timeline. Stream-native PTS values remain
-                unchanged for decode planning and seeking.
+            origin_ns: Where the first displayed frame sits on the caller's
+                clock, in nanoseconds, or ``None`` to keep the container's own
+                timeline. A recording that carries a capture timeline beside it
+                knows when it started but not what PTS the container gave that
+                instant, so the sensor subtracts its own first PTS rather than
+                asking the caller to. Stream-native PTS values remain unchanged
+                for decode planning and seeking.
 
         """
-        timestamp_offset_ns = validate_timestamp_offset_ns(timestamp_offset_ns)
+        # Before indexing, so an unusable origin costs nothing to reject.
+        if origin_ns is not None:
+            origin_ns = validate_timestamp_offset_ns(origin_ns, name="origin_ns")
         self._source = source
         self._stream_idx = stream_idx
         self._decode_config = decode_config
@@ -112,10 +118,13 @@ class CameraSensor:
         self._video_index, self._video_metadata = make_index_and_metadata(
             self._source, self._stream_idx, index_method=index_method
         )
-        self._video_index = self._video_index.with_timestamp_offset(timestamp_offset_ns)
         if len(self._video_index.display_pts_ns) == 0:
             msg = "video stream contains no displayable frames"
             raise ValueError(msg)
+        if origin_ns is not None:
+            self._video_index = self._video_index.with_timestamp_offset(
+                origin_ns - int(self._video_index.display_pts_ns[0])
+            )
         self._empty_camera_data: CameraData | None = None
 
     @property

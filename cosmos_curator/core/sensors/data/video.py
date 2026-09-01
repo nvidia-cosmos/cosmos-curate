@@ -34,15 +34,19 @@ from cosmos_curator.core.sensors.utils.validation import (
 VIDEO_METADATA_VERSION = "2"
 
 
-def validate_timestamp_offset_ns(value: object) -> int:
-    """Validate and normalize one ``timestamp_offset_ns`` value."""
+def validate_timestamp_offset_ns(value: object, *, name: str = "timestamp_offset_ns") -> int:
+    """Validate and normalize one signed-nanosecond quantity.
+
+    ``name`` appears in the error, so a caller validating an origin rather than an
+    offset reports the argument the caller actually passed.
+    """
     if isinstance(value, (bool, np.bool_)) or not isinstance(value, (int, np.integer)):
-        msg = f"timestamp_offset_ns must be an integer, got {type(value).__name__}"
+        msg = f"{name} must be an integer, got {type(value).__name__}"
         raise ValueError(msg)  # noqa: TRY004
 
     normalized_value = int(value)
     if not INT64_MIN <= normalized_value <= INT64_MAX:
-        msg = f"timestamp_offset_ns must fit signed int64, got {normalized_value}"
+        msg = f"{name} must fit signed int64, got {normalized_value}"
         raise ValueError(msg)
     return normalized_value
 

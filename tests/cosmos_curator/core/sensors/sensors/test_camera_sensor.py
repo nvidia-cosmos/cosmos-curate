@@ -270,12 +270,20 @@ def test_sample_boundary_timestamp_belongs_to_next_window(synthetic_video: io.By
     np.testing.assert_array_equal(batches[1].sensor_timestamps_ns, pts[3:6])
 
 
-@pytest.mark.parametrize("timestamp_offset_ns", [1_000, -1_000, np.int32(1_000), np.uint64(1_000)])
-def test_camera_sensor_timestamp_offset_shifts_sampling_and_reported_ns_timeline(
-    timestamp_offset_ns: int,
+@pytest.mark.parametrize("origin_ns", [1_000, -1_000, np.int32(1_000), np.uint64(1_000)])
+def test_camera_sensor_origin_pins_the_first_frame_and_carries_the_rest_with_it(
+    origin_ns: int,
     patch_camera_sensor_dependencies: Callable[..., None],
 ) -> None:
-    """Camera offsets align sampling and reported ns values without changing stream PTS."""
+    """``origin_ns`` states where the first frame lands, not how far to shift it.
+
+    This index starts at 100 ns rather than zero, which is what separates the two
+    readings: adding ``origin_ns`` would report the first frame at
+    ``origin_ns + 100``. A caller holding a capture timeline knows when recording
+    started, not what the container chose to call that instant, so the sensor
+    subtracts its own first PTS. Stream-native PTS are untouched, because decode
+    planning and seeking still speak the container's timeline.
+    """
     index, metadata = _make_video_index_and_metadata(
         pts_ns=[100, 200, 300],
         pts_stream=[100, 200, 300],
@@ -313,15 +321,18 @@ def test_camera_sensor_timestamp_offset_shifts_sampling_and_reported_ns_timeline
         decoder_open_fn=fake_decoder_open,
     )
 
-    normalized_timestamp_offset_ns = int(timestamp_offset_ns)
-    sensor = CameraSensor(b"not-used", timestamp_offset_ns=timestamp_offset_ns)
-    shifted_pts_ns = np.array([100, 200, 300], dtype=np.int64) + normalized_timestamp_offset_ns
+    normalized_origin_ns = int(origin_ns)
+    sensor = CameraSensor(b"not-used", origin_ns=origin_ns)
+    shifted_pts_ns = np.array([0, 100, 200], dtype=np.int64) + normalized_origin_ns
     grid_timestamps_ns = np.append(shifted_pts_ns, shifted_pts_ns[-1] + 1)
     grid = make_sampling_grid(grid_timestamps_ns, stride_ns=1_000, duration_ns=1_000)
 
     batch = next(sensor.sample(SamplingSpec(grid=grid), policy=NearestTimestampPolicy(max_delta_ns=0)))
 
-    assert sensor.timestamp_offset_ns == normalized_timestamp_offset_ns
+    assert sensor.start_ns == normalized_origin_ns
+    # The offset the origin resolved to, which is the origin less the container's
+    # own first PTS of 100 -- not the origin itself.
+    assert sensor.timestamp_offset_ns == normalized_origin_ns - 100
     assert type(sensor.timestamp_offset_ns) is int
     np.testing.assert_array_equal(sensor.video_index.pts_ns, shifted_pts_ns)
     np.testing.assert_array_equal(sensor.video_index.kf_pts_ns, shifted_pts_ns[:1])
@@ -338,7 +349,7 @@ def test_camera_sensor_timestamp_offset_shifts_sampling_and_reported_ns_timeline
 
 
 @pytest.mark.parametrize(
-    "timestamp_offset_ns",
+    "origin_ns",
     [
         True,
         np.bool_(True),  # noqa: FBT003
@@ -348,22 +359,22 @@ def test_camera_sensor_timestamp_offset_shifts_sampling_and_reported_ns_timeline
         np.uint64(np.iinfo(np.int64).max + 1),
     ],
 )
-def test_camera_sensor_rejects_invalid_timestamp_offset_before_indexing(
-    timestamp_offset_ns: object,
+def test_camera_sensor_rejects_an_invalid_origin_before_indexing(
+    origin_ns: object,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Invalid offset configuration must fail before indexing the video source."""
+    """An unusable origin must fail before the video source is indexed."""
 
     def fail_to_index(*_args: object, **_kwargs: object) -> tuple[VideoIndex, VideoMetadata]:
-        pytest.fail("CameraSensor must validate timestamp_offset_ns before indexing")
+        pytest.fail("CameraSensor must validate origin_ns before indexing")
 
     monkeypatch.setattr(
         "cosmos_curator.core.sensors.sensors.camera_sensor.make_index_and_metadata",
         fail_to_index,
     )
 
-    with pytest.raises(ValueError, match="timestamp_offset_ns"):
-        CameraSensor(b"not-used", timestamp_offset_ns=timestamp_offset_ns)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="origin_ns"):
+        CameraSensor(b"not-used", origin_ns=origin_ns)  # type: ignore[arg-type]
 
 
 def test_sample_singleton_window_is_boundary_only() -> None:

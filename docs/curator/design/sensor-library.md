@@ -135,20 +135,23 @@ not:
 - “these are all source samples that happened to occur during this
   wall-clock interval”
 
-### Camera fixed timestamp offset
+### Camera timeline origin
 
-`CameraSensor(timestamp_offset_ns=...)` accepts a Python integer or NumPy
-integer scalar fixed signed-nanosecond offset, normalizes it to a Python `int`,
-and applies it to its MP4 PTS-derived nanosecond timeline. This lets a camera's
-frames and reported bounds use the same timeline as an alignment grid without
-changing the MP4 values required for decoding. Boolean values and values outside
-the signed-`int64` range are rejected. CameraSensor applies the offset once to
-the native MP4 index during construction.
+`CameraSensor(origin_ns=...)` accepts a Python integer or NumPy integer scalar
+signed-nanosecond origin -- where the first displayed frame sits on the
+caller's clock -- or `None` to keep the container's own timeline. A recording
+that carries a capture timeline beside it knows when it started but not what
+PTS the container gave that instant, so the sensor computes the offset itself
+rather than asking the caller to supply one directly: it anchors the first
+displayed frame to `origin_ns` and derives the shift from there. Boolean
+values and values outside the signed-`int64` range are rejected. CameraSensor
+applies the resulting offset once to the native MP4 index during construction.
 
-For a configured `timestamp_offset_ns`, the index satisfies:
+For a configured `origin_ns`, the index satisfies:
 
 ```text
-pts_ns = pts_to_ns(pts_stream, time_base) + timestamp_offset_ns
+offset_ns = origin_ns - pts_to_ns(first_display_pts_stream, time_base)
+pts_ns = pts_to_ns(pts_stream, time_base) + offset_ns
 ```
 
 The offset shifts `VideoIndex.pts_ns`, `kf_pts_ns`, and derived

@@ -1055,3 +1055,49 @@ def make_decode_plan(
         plan.append((int(kf), group))
 
     return plan
+
+
+def iter_video_frames(
+    source: DataSource,
+    stream_idx: int = 0,
+    config: CpuVideoDecodeConfig = DEFAULT_VIDEO_DECODE_CONFIG,
+) -> Generator[tuple[int, npt.NDArray[np.uint8]]]:
+    """Decode ``source`` from the beginning, yielding ``(pts_ns, frame)`` in presentation order.
+
+    Walks the container once instead of seeking to planned targets, so a caller
+    reading every frame decodes each of them exactly once and holds one at a
+    time. PyAV emits frames in presentation order even when the stream is coded
+    out of order, so B-frame video needs no special handling here.
+
+    Args:
+        source: Video data source. See
+            :data:`cosmos_curator.core.sensors.types.types.DataSource`. The
+            library accepts no URIs; callers open their own stream.
+        stream_idx: PyAV index of the video stream to decode, usually 0.
+        config: Decoder backend configuration. Threading matters most: a
+            single-threaded walk of 4K footage measured 10.5s against 2.8s at the
+            default four threads.
+
+    Yields:
+        ``(pts_ns, frame)``, where ``pts_ns`` is the frame's presentation
+        timestamp in nanoseconds and ``frame`` is RGB ``uint8`` of shape
+        ``(H, W, 3)``.
+
+    Raises:
+        ValueError: If the selected video stream has no ``time_base``.
+
+    """
+    with (
+        open_data_source(source, mode="rb") as stream,
+        open_video_container(stream, stream_idx=stream_idx) as (container, video_stream),
+    ):
+        if video_stream.time_base is None:
+            msg = "Time base is None for the opened video stream"
+            raise ValueError(msg)
+        video_stream.thread_type = config.thread_type
+        video_stream.thread_count = config.thread_count
+        time_base = video_stream.time_base
+        for frame in container.decode(video_stream):
+            if frame.pts is None:
+                continue
+            yield pts_to_ns(frame.pts, time_base), cast("npt.NDArray[np.uint8]", frame.to_ndarray(format="rgb24"))

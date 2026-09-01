@@ -40,6 +40,7 @@ from cosmos_curator.core.sensors.utils.video import (
     _get_video_index_from_header,
     _has_composition_offset,
     _resolve_auto_index_method,
+    iter_video_frames,
     make_decode_plan,
     make_index_and_metadata,
     open_video_container,
@@ -2141,3 +2142,68 @@ def test_cpu_video_decoder_all_keyframes_exact_targets(
     assert motion_vectors is None
     for i, pts in enumerate(target_pts_stream):
         np.testing.assert_array_equal(frames[i], expected_by_pts[int(pts)])
+
+
+_DATA = Path(__file__).resolve().parents[3] / "pipelines" / "video" / "data"
+_CLIP = _DATA / "test_clip_10s.mp4"
+_BFRAME_CLIP = _DATA / "test_clip_10s_bframes.mp4"
+
+_FRAME_COUNT = 240
+_HEIGHT = 480
+_WIDTH = 854
+
+
+@pytest.mark.parametrize("clip", [_CLIP, _BFRAME_CLIP], ids=["no_bframes", "bframes"])
+def test_decodes_every_frame_in_ascending_presentation_order(clip: Path) -> None:
+    """A forward-only walk sees every frame, in presentation order, with no index built.
+
+    The B-frame clip is the interesting case: decode order differs from
+    presentation order there, and PyAV reorders for us.
+    """
+    pts_ns = []
+    shapes = set()
+    dtypes = set()
+    for frame_pts_ns, frame in iter_video_frames(clip):
+        pts_ns.append(frame_pts_ns)
+        shapes.add(frame.shape)
+        dtypes.add(frame.dtype)
+
+    assert len(pts_ns) == _FRAME_COUNT
+    assert pts_ns == sorted(pts_ns)
+    assert len(set(pts_ns)) == _FRAME_COUNT
+    assert shapes == {(_HEIGHT, _WIDTH, 3)}
+    assert dtypes == {np.dtype(np.uint8)}
+
+
+def test_accepts_a_caller_owned_stream() -> None:
+    """The decoder takes any ``DataSource``, so callers open their own bytes."""
+    with _CLIP.open("rb") as stream:
+        first_pts_ns, first_frame = next(iter(iter_video_frames(stream)))
+
+    assert first_pts_ns == 0
+    assert first_frame.shape == (_HEIGHT, _WIDTH, 3)
+
+
+def test_a_forward_walk_decodes_with_the_threads_it_was_configured_for() -> None:
+    """Threading is the difference between 2.8s and 10.5s on 4K, so it is not left to default.
+
+    CpuVideoDecoder applies the same two settings; a walk that skipped them
+    decoded single-threaded while the indexed path used four.
+    """
+    seen = {}
+    opened = open_video_container
+
+    @contextmanager
+    def spy(stream: object, *, stream_idx: int = 0) -> Iterator[Any]:
+        with opened(stream, stream_idx=stream_idx) as (container, video_stream):
+            seen["stream"] = video_stream
+            yield container, video_stream
+
+    with patch("cosmos_curator.core.sensors.utils.video.open_video_container", spy):
+        # Held open rather than drained: the settings are read off the live
+        # stream, which a finished walk would have closed.
+        walk = iter_video_frames(_CLIP, 0, CpuVideoDecodeConfig(thread_type="SLICE", thread_count=3))
+        next(iter(walk))
+
+        assert str(seen["stream"].thread_type) == "ThreadType.SLICE"
+        assert seen["stream"].thread_count == 3

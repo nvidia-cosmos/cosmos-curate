@@ -36,7 +36,7 @@ _QUATERNION_NORM_TOLERANCE = 1e-6
 _COVARIANCE_TOLERANCE = 1e-9
 
 
-def _require_1d(name: str, values: npt.NDArray[Any], dtype: npt.DTypeLike) -> None:
+def require_1d(name: str, values: npt.NDArray[Any], dtype: npt.DTypeLike) -> None:
     """Raise if *values* is not a 1-D array with the expected dtype."""
     expected = np.dtype(dtype)
     if values.ndim != 1:
@@ -55,7 +55,7 @@ def dtype_array(dtype: npt.DTypeLike) -> AttrsValidator:
         attribute: AttrsAttribute,
         value: npt.NDArray[Any],
     ) -> None:
-        _require_1d(attribute.name, value, dtype)
+        require_1d(attribute.name, value, dtype)
 
     return _validator
 
@@ -217,7 +217,7 @@ def strictly_increasing_int64_array(
     value: npt.NDArray[np.int64],
 ) -> None:
     """Attrs validator for a 1-D strictly increasing ``int64`` array."""
-    _require_1d(attribute.name, value, np.int64)
+    require_1d(attribute.name, value, np.int64)
     require_strictly_increasing(attribute.name, value)
 
 
@@ -227,7 +227,7 @@ def nondecreasing_int64_array(
     value: npt.NDArray[np.int64],
 ) -> None:
     """Attrs validator for a 1-D nondecreasing ``int64`` array."""
-    _require_1d(attribute.name, value, np.int64)
+    require_1d(attribute.name, value, np.int64)
     require_nondecreasing(attribute.name, value)
 
 
@@ -246,7 +246,7 @@ def finite_float32_vector(
     value: npt.NDArray[np.float32],
 ) -> None:
     """Attrs validator for a finite 1-D ``float32`` array."""
-    _require_1d(attribute.name, value, np.float32)
+    require_1d(attribute.name, value, np.float32)
     require_finite_float32_array(attribute.name, value)
 
 
@@ -272,7 +272,7 @@ def optional_finite_float32_vector(
     """Attrs validator for an optional finite 1-D ``float32`` array."""
     if value is None:
         return
-    _require_1d(attribute.name, value, np.float32)
+    require_1d(attribute.name, value, np.float32)
     require_finite_float32_array(attribute.name, value)
 
 
