@@ -840,3 +840,17 @@ def test_sample_window_indices_max_delta_ignores_window_size() -> None:
             if len(window) == 0:
                 continue
             sample_window_indices(canonical=_INVARIANCE_CANONICAL, window=window, policy=policy)
+
+
+def test_closest_index_is_not_fooled_by_a_wrapping_distance() -> None:
+    """Distances are compared as integers, not as int64 arithmetic that wraps.
+
+    A subtraction that overflows makes the furthest candidate look adjacent, so
+    the sampler selects the wrong source observation and reports no error.
+    """
+    limits = np.iinfo(np.int64)
+    canonical = np.array([limits.min, 0], dtype=np.int64)
+
+    closest = find_closest_indices(canonical, np.array([limits.max - 1], dtype=np.int64))
+
+    assert int(closest[0]) == 1
