@@ -312,6 +312,7 @@ def test_distributable_pixi_manifest_is_generated_runtime_subset() -> None:
     assert media_feature["pypi-dependencies"] == {
         "av": "==17.0.0",
         "opencv-python-headless": "*",
+        "cython": "<3.3",
     }
 
 

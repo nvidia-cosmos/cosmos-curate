@@ -177,6 +177,7 @@ channels = ["conda-forge"]
 [feature.media.pypi-dependencies]
 av = "==17.0.0"
 opencv-python-headless = "*"
+cython = "<3.3"
 
 [feature.legacy-transformers.dependencies]
 einops = "*"

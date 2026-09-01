@@ -48,6 +48,13 @@ MEDIA_CONDA_PACKAGES = {"av", "ffmpeg", "libopencv", "opencv", "py-opencv"}
 MEDIA_PYPI_PACKAGES = {
     "av": "==17.0.0",
     "opencv-python-headless": "*",
+    # av==17.0.0 builds from source here (no prebuilt wheel for this target), with
+    # --no-build-isolation, so it compiles against whatever Cython is already resolved
+    # in this environment. Cython >=3.3 got stricter about redeclaring a Cython-typed
+    # local inside a conditional (av/container/pyio.py:40), which av 17.0.0 hits and
+    # fails to build. Cap below that until av's fix lands in a release compatible with
+    # this pin.
+    "cython": "<3.3",
 }
 TERMINAL_TABLE_NAMES = {
     "dependencies",
