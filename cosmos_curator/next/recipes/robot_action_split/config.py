@@ -160,6 +160,15 @@ class RobotActionSplitExecutionConfig(BaseModel):
     )
     cut_attempts: int = Field(default=3, ge=1)
     media_write_attempts: int = Field(default=3, ge=1)
+    storage_attempts: int = Field(default=3, ge=1, description="Retries for an idempotent Lance fragment append.")
+    clips_per_publish_batch: int = Field(
+        default=8_000,
+        ge=1,
+        description=(
+            "Successful clip rows buffered before staging and committing one Lance fragment. "
+            "Bounds recomputation on a crash and sizes fragments for downstream Ray Data parallelism."
+        ),
+    )
     progress: bool = False
     tmp_dir: str | None = Field(
         default=None,

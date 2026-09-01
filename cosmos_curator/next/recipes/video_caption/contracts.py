@@ -13,7 +13,7 @@ import pyarrow as pa
 
 from cosmos_curator.core.utils import environment
 from cosmos_curator.next.recipes.video_caption.config import ModelVariant
-from cosmos_curator.next.recipes.video_split.identities import canonical_digest
+from cosmos_curator.next.utils.identity import canonical_digest
 
 CAPTION_SCHEMA_VERSION: Final = 1
 CHECKPOINT_ADAPTER_VERSION: Final = 1

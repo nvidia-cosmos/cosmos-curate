@@ -209,6 +209,8 @@ execution:             # all fields optional; shown with defaults
   storage_profile: default
   discovery_workers: 4
   max_segments_per_batch: 50
+  clips_per_publish_batch: 8000   # commit a Lance fragment every N successful clip rows
+  storage_attempts: 3             # retries for the idempotent Lance fragment commit
 ```
 
 ---
@@ -380,10 +382,20 @@ The `output.action_format` config field controls serialization:
 
 ## Lance Schema
 
-The v1 schema is defined by `lance_sink.OUTCOME_SCHEMA`:
+`records.py` publishes successful outcomes to the canonical, append-only `CLIP_SCHEMA` table and
+projects failed outcomes separately to a replaced-each-run `errors.json` report — never to
+Lance. Keeping failures out of the canonical table (rather than a mixed success/failure schema)
+is what makes the append-once-per-`clip_id` recovery invariant below hold: a retried failure never
+collides with an already-committed row, because a failed attempt never gets a canonical row to
+retry against in the first place. This mirrors `video-split`'s `CLIP_SCHEMA`/`errors.json` split
+exactly (`curator-next-video-split.md`, "Outputs" and "Cross-Run Recovery").
+
+`CLIP_SCHEMA`:
 
 | Column | Arrow type | Non-null | Meaning |
 |--------|-----------|---------|---------|
+| `record_schema_version` | `int32` | yes | `CLIP_RECORD_SCHEMA_VERSION` at write time |
+| `media_contract_version` | `int32` | yes | `MEDIA_CONTRACT_VERSION` at write time |
 | `clip_id` | `string` | yes | Stable per-view clip identifier |
 | `span_group_id` | `string` | yes | Stable id shared across all views of this span |
 | `view_name` | `string` | yes | Camera view (e.g. `observation.images.wrist_image`) |
@@ -401,11 +413,13 @@ The v1 schema is defined by `lance_sink.OUTCOME_SCHEMA`:
 | `end_ns` | `int64` | yes | Span end (exclusive) as nanoseconds within the chunk MP4 |
 | `native_fps` | `float64` | yes | Source video frame rate |
 | `episode_from_timestamp` | `float64` | yes | Episode start offset within the chunk MP4 (seconds) |
-| `clip_uri` | `large_string` | no | Written clip MP4 URI (null on failure) |
-| `action_data_uri` | `large_string` | no | Written action `.bin` URI (null on failure) |
-| `status` | `string` | yes | `"success"` or `"failed"` |
-| `error_stage` | `string` | no | Stage name on failure |
-| `error_message` | `large_string` | no | Diagnostic on failure |
+| `clip_uri` | `large_string` | yes | Written clip MP4 URI |
+| `action_data_uri` | `large_string` | yes | Written action `.bin`/`.pickle` URI |
+| `camera_motion_annotation` | `large_string` | no | Computed motion description, when available |
+
+The `errors.json` report carries the same identity/geometry columns as `CLIP_SCHEMA` plus
+non-null `error_stage` and `error_message`; it has no `clip_uri`/`action_data_uri`/
+`camera_motion_annotation`, and it is never diffed for dedup — a rerun simply replaces it.
 
 `clip_id` and `span_group_id` are SHA-256 digests. `span_group_id` hashes
 `(source_id, episode_id, subtask_index, frame_start)`. `clip_id` always hashes
@@ -418,26 +432,80 @@ multi-view sources. `action_data_uri` is keyed by `action_id`, which hashes
 of this table (`clip_id`, `task_name`, `subtask_name`, `clip_uri`,
 `action_data_uri`, `source_dataset`) and adds its vectors as additive, nullable
 per-modality column groups (`embedding_<modality>_*`) written directly onto
-`clips.lance`, plus a fitted action-PCA basis.
+`clips.lance`, plus a fitted action-PCA basis. `CLIP_SCHEMA` declares all six of those
+columns non-null, which the embed leg's read contract (`EMBED_SOURCE_ROW`) already expects.
 
 ---
 
+## Cross-Run Recovery
+
+The recovery protocol follows [Curator Next Incremental Curation](curator-next-incremental-curation.md) and
+mirrors `video-split`'s (`curator-next-video-split.md`, "Cross-Run Recovery") — a canonical Lance table that
+is both published output and cross-run checkpoint, deterministic identities, idempotent fragment-scoped
+commits, and driver-side reconciliation before any expensive work starts.
+
+**Recovery unit.** `source_id` here hashes the *whole dataset root*, which can span many shards, chunk MP4s,
+and thousands of spans — too coarse a unit to check "is this already done" against. The natural recovery unit
+is `ChunkSpanBatch`'s key, `(chunk_mp4_uri, data_parquet_uri)`: the same unit `_iter_sequential` downloads
+once and reuses, and the unit Ray Data parallelizes over. Reconciliation (`recovery.reconcile_batches`)
+operates at `clip_id` granularity within each batch: a batch whose every `(span, view)` `clip_id` is already
+committed is dropped before any chunk MP4 download; a partially-committed batch is still downloaded and cut,
+but only for its still-missing `SpanWorkItem`s.
+
+**Why no known-source replan shortcut.** Unlike `video-split`, span discovery here (`discover_spans`) is cheap,
+pure parquet/JSON metadata reading — no video decode, no probing (see "Span Provider" above: *"No source media
+is touched during discovery"*). `video-split`'s reconciliation goes to real effort reconstructing a known
+source's expected clip geometry from stored Lance fields specifically to avoid re-probing, since probing costs
+an object read. That shortcut isn't needed here: rerunning `discover_spans` in full is itself the cheap,
+always-correct way to recompute "what should exist," so reconciliation is a direct diff against freshly
+discovered `clip_id`s rather than a replan from stored metadata.
+
+**Idempotent commits.** Successful clip rows are buffered and staged/committed as one Lance fragment every
+`clips_per_publish_batch` rows (buffer-to-threshold, plus one final smaller flush at run end — the same shape
+`video-split` uses), via the shared `cosmos_curator.next.utils.lance_fragment_recovery` primitives: before each
+commit, the candidate fragment's `clip_id`s are checked against the latest table — all present means the
+fragment already landed (skip), none present means it's safe to append, and partial presence is a protocol
+violation (raised, never silently resolved). The same check resolves an ambiguous commit response before retry.
+
+**Action sidecar and multi-view rows.** Unlike `video-split`'s one-row-per-unit-of-work, multiple `CLIP_SCHEMA`
+rows (one per view) share one action `.bin` file. Reconciliation and commit still operate at `clip_id` (per-row)
+granularity — a partially-committed span (one view's clip committed, another's still missing) is a normal,
+independently-retryable state, not a violation. The action `.bin` write inherits the same
+durable-payload-before-metadata-commit property as clip media: `action_id` and its destination path are
+deterministic, so a redundant write (from a retry, or from each view's independent write attempt at the same
+shared path) is safe to blindly repeat.
+
+**Ordering under `input.limit`.** `limit` caps the number of distinct chunk MP4s discovery processes. Because
+reconciliation only ever diffs against the current run's freshly discovered batch set — never a wider stored
+expectation — a `limit`-capped smoke run can't be misread as "this shard is fully processed." This does require
+chunk selection order to be deterministic across runs (e.g. sorted by URI), so two `limit`-capped runs over the
+same input see the same missing-work set rather than a shifting window.
+
+**Known gap.** Commit granularity is row-count-based (buffer-to-`clips_per_publish_batch`), not chunk-based —
+a crash mid-buffer loses that buffer's uncommitted work, same as `video-split`. A `robot-action-split` run
+smaller than one publish batch (well under the 8,000-row default) gets no more incremental checkpointing
+benefit than a single-shot writer would; only large-scale runs see the crash-safety improvement. Lowering
+`clips_per_publish_batch` trades checkpoint frequency for fragment count / downstream Ray Data parallelism.
+
+---
 
 ## Pipeline Execution
 
-The current implementation runs sequentially (`pipeline.run`). Each `ChunkSpanBatch`
-is processed in order by `process_batch`; Lance is written once at the end of a
-successful run. Ray Data `flat_map` parallelism is planned for a follow-up commit.
+`pipeline.run` reconciles freshly discovered spans against the canonical clip table
+before processing, then processes only missing work — sequentially (`_iter_sequential`)
+or in parallel via Ray Data `flat_map` (`_iter_ray_data`, the default). Successful clip
+rows are buffered and committed as a Lance fragment every `clips_per_publish_batch`
+rows, not only once at the end of the run.
 
 ```text
 pipeline.run(config)
   │
-  ├─ discover_spans(config)           → list[ChunkSpanBatch]
+  ├─ discover_spans(config)                          → list[ChunkSpanBatch]
+  ├─ open_or_create_clip_table(lance_uri)
+  ├─ reconcile_batches(batches, dataset)              → drop committed spans, keep the rest
   │
-  ├─ for each ChunkSpanBatch:
-  │     process_batch(batch, config)  → list[outcome dicts]
-  │
-  ├─ write_outcomes_to_lance(outcomes, lance_uri, attempt_id)
+  ├─ for each remaining outcome (sequential or Ray Data flat_map):
+  │     buffer successful rows; flush a Lance fragment every clips_per_publish_batch
   │
   └─ write run_summary.json (local media_root only)
 ```
@@ -489,5 +557,7 @@ In addition to the `video-split` validation criteria, the first
   attempts and batch configurations
 - `span_group_id` is identical across per-view rows for the same span
 - action `.bin` files contain the expected per-frame fields in the registered spec
-- the `video-split` clip-only Lance publication shape is exercised; recovery is
-  qualified separately once the shared receipt protocol exists
+- cross-run recovery is implemented per "Cross-Run Recovery" above: freshly discovered
+  spans are reconciled against the canonical clip table before any chunk MP4 is
+  downloaded, and successful clip rows commit incrementally as bounded, idempotent
+  Lance fragments

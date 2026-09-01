@@ -24,6 +24,14 @@ MEDIA_CONTRACT_VERSION = 1
 # field reordering, or dtype change).
 ACTION_CONTRACT_VERSION = 1
 
-OUTCOME_RECORD_SCHEMA_VERSION = 2
+# Bump when CLIP_SCHEMA's field set or meaning changes. v3 renamed the former
+# OUTCOME_SCHEMA to CLIP_SCHEMA, matching video_split's successes-only shape:
+# dropped status/error_stage/error_message (failures now go to a separate
+# errors.json report, never to Lance), tightened clip_uri/action_data_uri to
+# non-nullable, and added record_schema_version/media_contract_version columns
+# for cross-run reconciliation integrity checks. The embed leg only reads
+# clip_id/task_name/subtask_name/clip_uri/action_data_uri/source_dataset by
+# name (see docs/curator/design/curator-next-embeddings.md), all unaffected.
+CLIP_RECORD_SCHEMA_VERSION = 3
 RECEIPT_SCHEMA_VERSION = 1
 MANIFEST_SCHEMA_VERSION = 1

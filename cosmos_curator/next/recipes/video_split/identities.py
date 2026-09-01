@@ -15,19 +15,10 @@
 
 """Canonical SHA-256 identities for ``video-split`` sources and clips."""
 
-import hashlib
-import json
-from typing import Any
-
 from cosmos_curator.next.media.spans import Span
 from cosmos_curator.next.recipes.video_split.config import TranscodeConfig
 from cosmos_curator.next.recipes.video_split.contracts import MEDIA_CONTRACT_VERSION
-
-
-def canonical_digest(value: Any) -> str:  # noqa: ANN401
-    """Hash sorted compact UTF-8 JSON with non-finite values forbidden."""
-    payload = json.dumps(value, allow_nan=False, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+from cosmos_curator.next.utils.identity import canonical_digest
 
 
 def make_source_id(source_uri: str) -> str:

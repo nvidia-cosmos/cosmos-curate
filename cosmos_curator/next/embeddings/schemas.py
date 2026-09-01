@@ -256,7 +256,7 @@ DESCRIPTOR_ROW: pa.Schema = pa.schema(
     ]
 )
 
-# The canonical typed source contract projected from the clips OUTCOME_SCHEMA.
+# The canonical typed source contract projected from the clips CLIP_SCHEMA.
 # clip_id is the join key every leg's write needs; task/subtask feed text;
 # clip_uri feeds image; action_data_uri feeds action; source_dataset resolves the
 # ACT2 spec for the header-less pickle path. task_name / subtask_name /

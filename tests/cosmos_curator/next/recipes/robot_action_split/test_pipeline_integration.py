@@ -58,12 +58,33 @@ import pyarrow.parquet as pq
 import pytest
 import yaml
 
-import cosmos_curator.next.recipes.robot_action_split.lance_sink as lance_sink_mod
 from cosmos_curator.next.recipes.robot_action_split.config import ResolvedRobotActionSplitConfig
+from cosmos_curator.next.recipes.robot_action_split.contracts import (
+    CLIP_RECORD_SCHEMA_VERSION,
+    MEDIA_CONTRACT_VERSION,
+)
 from cosmos_curator.next.recipes.robot_action_split.discovery import discover_spans
-from cosmos_curator.next.recipes.robot_action_split.lance_sink import write_outcomes_to_lance
-from cosmos_curator.next.recipes.robot_action_split.pipeline import run
+from cosmos_curator.next.recipes.robot_action_split.lance_sink import (
+    append_clip_fragment,
+    open_or_create_clip_table,
+    write_clip_fragment,
+)
+from cosmos_curator.next.recipes.robot_action_split.pipeline import _publish_outcomes, run
 from cosmos_curator.next.recipes.robot_action_split.processing import process_batch
+from cosmos_curator.next.recipes.robot_action_split.records import clip_table
+
+
+def _write_outcomes(outcomes: list[dict], *, lance_uri: str) -> int:
+    """Bootstrap, stage, and commit one fragment of successful outcome rows."""
+    open_or_create_clip_table(uri=lance_uri, storage_profile="default")
+    table = clip_table(
+        outcomes,
+        record_schema_version=CLIP_RECORD_SCHEMA_VERSION,
+        media_contract_version=MEDIA_CONTRACT_VERSION,
+    )
+    candidate = write_clip_fragment(table, uri=lance_uri, storage_profile="default")
+    assert candidate is not None
+    return append_clip_fragment(candidate, uri=lance_uri, storage_profile="default", attempts=1)
 
 
 def _make_all_intra_mp4(output: Path) -> None:
@@ -401,7 +422,7 @@ def test_lance_write_produces_correct_rows(dataset: Path, output_path: Path) -> 
     outcomes = process_batch(batches[0], config=config)
 
     lance_uri = str(output_path / "clips.lance")
-    version = write_outcomes_to_lance(outcomes, lance_uri=lance_uri)
+    version = _write_outcomes(outcomes, lance_uri=lance_uri)
 
     assert version >= 1
 
@@ -417,32 +438,36 @@ def test_lance_write_produces_correct_rows(dataset: Path, output_path: Path) -> 
     subtask_names = set(table.column("subtask_name").to_pylist())
     assert subtask_names == {"pick up coffee pod", "open machine lid"}
 
-    # The transaction identifies the producing recipe and snapshot.
+    # The transaction identifies the producing recipe and operation.
     txn = ds.read_transaction(version)
     assert txn is not None
-    assert txn.transaction_properties == {"kind": "robot-action-split", "snapshot": "clips"}
+    assert txn.transaction_properties == {"kind": "robot-action-split", "operation": "append-clips"}
 
 
-@pytest.mark.usefixtures("ray_local")
-def test_lance_write_produces_multiple_fragments(
-    dataset: Path, output_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """write_outcomes_to_lance writes one fragment per _ROWS_PER_FRAGMENT rows."""
-    monkeypatch.setattr(lance_sink_mod, "_ROWS_PER_FRAGMENT", 1)
+def test_lance_write_produces_multiple_fragments(dataset: Path, output_path: Path) -> None:
+    """A publish batch smaller than the successful row count commits one fragment per batch.
 
+    Pure Lance I/O (``process_batch`` and ``_publish_outcomes`` called directly,
+    not through Ray Data), so this does not need the ``ray_local`` fixture other
+    Ray-Data-path tests in this module require.
+    """
     config = _make_config(dataset, output_path)
+    config = config.model_copy(update={"execution": config.execution.model_copy(update={"clips_per_publish_batch": 1})})
     batches = discover_spans(config)
     outcomes = process_batch(batches[0], config=config)
     success = [o for o in outcomes if o["status"] == "success"]
 
     lance_uri = str(output_path / "clips_frags.lance")
-    lance_sink_mod.write_outcomes_to_lance(outcomes, lance_uri=lance_uri)
+    open_or_create_clip_table(uri=lance_uri, storage_profile="default")
+    config = config.model_copy(update={"output": config.output.model_copy(update={"lance_uri": lance_uri})})
+    _publish_outcomes(outcomes, config=config, initial_clips_version=1)
 
     ds = lance.dataset(lance_uri)
     assert ds.count_rows() == len(success)
     assert len(ds.get_fragments()) == len(success)
 
 
+@pytest.mark.usefixtures("ray_local")
 def test_full_pipeline_run(dataset: Path, output_path: Path) -> None:
     """Full pipeline over the default Ray Data path: run() reports correct counts.
 
@@ -500,12 +525,12 @@ def test_sequential_pipeline_run(dataset: Path, output_path: Path, monkeypatch: 
     """Explicit sequential path (ray_data=false) produces same counts as the Ray Data path."""
     import cosmos_curator.next.recipes.robot_action_split.pipeline as _pipeline_mod  # noqa: PLC0415
 
-    _msg = "_run_ray_data must not be called when ray_data=False"
+    _msg = "_iter_ray_data must not be called when ray_data=False"
 
     def _should_not_be_called(*_a: object, **_kw: object) -> object:
         raise AssertionError(_msg)
 
-    monkeypatch.setattr(_pipeline_mod, "_run_ray_data", _should_not_be_called)
+    monkeypatch.setattr(_pipeline_mod, "_iter_ray_data", _should_not_be_called)
     config_path = output_path / "config.yaml"
     config_path.write_text(
         yaml.safe_dump(

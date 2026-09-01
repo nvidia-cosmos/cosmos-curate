@@ -14,6 +14,7 @@ import pytest
 from cosmos_curator.next.recipes.video_split import lance_sink
 from cosmos_curator.next.recipes.video_split.identities import make_source_id
 from cosmos_curator.next.recipes.video_split.records import CLIP_SCHEMA, clip_table
+from cosmos_curator.next.utils import lance_fragment_recovery
 
 _SOURCE_URI = "s3://example-bucket/raw/source.mp4"
 _UNKNOWN_FRAME_COUNT = -1
@@ -126,7 +127,7 @@ def test_existing_table_must_contain_compatible_splitting_fields(tmp_path: Path)
         data_storage_version="2.2",
     )
 
-    with pytest.raises(ValueError, match=r"missing splitting-owned field.*clip_id"):
+    with pytest.raises(ValueError, match=r"missing producer-owned field.*clip_id"):
         _bootstrap(uri)
 
 
@@ -141,7 +142,7 @@ def test_existing_curation_fields_must_be_nullable(tmp_path: Path) -> None:
         data_storage_version="2.2",
     )
 
-    with pytest.raises(ValueError, match=r"non-nullable curation field.*caption__test_v1"):
+    with pytest.raises(ValueError, match=r"non-nullable extension field.*caption__test_v1"):
         _bootstrap(uri)
 
 
@@ -168,15 +169,15 @@ def test_staging_and_committing_emit_fragment_lifecycle_logs(
     uri = str(tmp_path / "clips.lance")
     _bootstrap(uri)
     fake_logger = Mock()
-    monkeypatch.setattr(lance_sink, "logger", fake_logger)
+    monkeypatch.setattr(lance_fragment_recovery, "logger", fake_logger)
 
     _append(uri, _stage(uri, "a", "b"))
 
     templates = [str(call.args[0]) for call in fake_logger.info.call_args_list]
     assert templates == [
-        "Staged Lance fragment with {} clip row(s) for {}: data_files={}",
-        "Committing staged Lance fragment with {} clip row(s) to {} from version {} (attempt {}/{}): data_files={}",
-        "Committed staged Lance fragment with {} clip row(s) to {} at version {}: data_files={}",
+        "Staged Lance fragment with {} row(s) for {}: data_files={}",
+        "Committing staged Lance fragment with {} row(s) to {} from version {} (attempt {}/{}): data_files={}",
+        "Committed staged Lance fragment with {} row(s) to {} at version {}: data_files={}",
     ]
 
 
@@ -240,6 +241,7 @@ def test_definite_failed_append_retries_the_same_fragment(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """No candidate presence permits the already staged fragment to retry."""
+    monkeypatch.setattr(lance_fragment_recovery.time, "sleep", Mock())  # skip the real backoff wait
     uri = str(tmp_path / "clips.lance")
     _bootstrap(uri)
     candidate = _stage(uri, "a")
@@ -275,7 +277,7 @@ def test_partial_candidate_presence_fails_instead_of_appending_duplicates(
     commit = Mock(side_effect=AssertionError("partial candidate unexpectedly reached commit"))
     monkeypatch.setattr(lance.LanceDataset, "commit", commit)
 
-    with pytest.raises(RuntimeError, match="1 of 2 candidate clip IDs"):
+    with pytest.raises(RuntimeError, match="1 of 2 candidate clip_id values"):
         _append(uri, candidate, attempts=2)
 
     commit.assert_not_called()
@@ -284,7 +286,7 @@ def test_partial_candidate_presence_fails_instead_of_appending_duplicates(
 
 def test_fragment_writer_requires_the_canonical_schema(tmp_path: Path) -> None:
     """Internal work records cannot leak into the canonical table."""
-    with pytest.raises(ValueError, match="canonical clip schema"):
+    with pytest.raises(ValueError, match="canonical schema"):
         lance_sink.write_clip_fragment(
             pa.table({"clip_id": ["a"]}),
             uri=str(tmp_path / "clips.lance"),

@@ -12,9 +12,9 @@ import lance
 from lance.fragment import FragmentMetadata, LanceFragment
 
 from cosmos_curator.next.recipes.video_caption.contracts import CaptionModelSpec, validate_terminal_value
-from cosmos_curator.next.recipes.video_split.identities import canonical_digest
 from cosmos_curator.next.recipes.video_split.lance_sink import validate_clip_table
 from cosmos_curator.next.recipes.video_split.records import CLIP_SCHEMA
+from cosmos_curator.next.utils.identity import canonical_digest
 
 _OWNED_FIELD_COUNT = 2
 

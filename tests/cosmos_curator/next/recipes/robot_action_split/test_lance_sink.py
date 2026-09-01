@@ -16,15 +16,26 @@
 """Append-after-evolution regression tests for the robot-action-split Lance sink.
 
 The embeddings recipe widens the shared ``clips.lance`` table with nullable
-``embedding_*`` column groups. The producer's append path
-(:func:`write_outcomes_to_lance`) must stay narrow: it writes only its
-``OUTCOME_SCHEMA`` columns and never imports the embeddings package, and Lance
-schema evolution must supply typed NULLs for the omitted embedding fields on the
-newly appended rows. These tests pin that contract against the *production*
-writer (not a raw ``lance.write_dataset``), so a regression in the sink - or in
-the Lance version's narrow-append-into-widened-table behaviour - is caught here.
+``embedding_*`` column groups. The producer's append path must stay narrow: it
+writes only its ``CLIP_SCHEMA`` columns and never imports the embeddings
+package, and Lance schema evolution must supply typed NULLs for the omitted
+embedding fields on the newly appended rows. These tests pin that contract
+against the *production* writer (``open_or_create_clip_table`` +
+``write_clip_fragment`` + ``append_clip_fragment``, not a raw
+``lance.write_dataset``), so a regression in the sink - or in the Lance
+version's narrow-append-into-widened-table behaviour - is caught here.
 
-All tests are pure Lance (no Ray): ``write_outcomes_to_lance`` uses only
+``CLIP_SCHEMA`` is successes-only (see
+``docs/curator/design/curator-next-robot-action-split.md``, "Cross-Run Recovery"): unlike
+the former ``OUTCOME_SCHEMA``, ``clip_uri``/``action_data_uri`` are non-null,
+so every row built here needs real values. The 6-column read contract embed
+depends on (``EMBED_SOURCE_ROW`` in ``cosmos_curator/next/embeddings/schemas.py``)
+is unaffected: ``clip_id``/``task_name``/``subtask_name``/``source_dataset``
+were already non-null and stay that way, and ``clip_uri``/``action_data_uri``
+were never actually written as null in practice even before this change (the
+former writer already filtered to ``status == "success"`` rows only).
+
+All tests are pure Lance (no Ray): the production writer uses only
 ``write_fragments`` + ``LanceDataset.commit``. The schema widening and the
 one-off fill of an existing row use the embeddings package the way the recipe
 would, which is allowed in a test even though the sink itself must not.
@@ -39,15 +50,23 @@ import pyarrow as pa
 
 from cosmos_curator.next.embeddings.schemas import IMAGE_COLUMN_GROUP, IMAGE_DIM, TEXT_COLUMN_GROUP
 from cosmos_curator.next.recipes.embeddings.columns import ensure_embedding_columns
-from cosmos_curator.next.recipes.robot_action_split.lance_sink import write_outcomes_to_lance
+from cosmos_curator.next.recipes.robot_action_split.contracts import CLIP_RECORD_SCHEMA_VERSION, MEDIA_CONTRACT_VERSION
+from cosmos_curator.next.recipes.robot_action_split.lance_sink import (
+    append_clip_fragment,
+    open_or_create_clip_table,
+    write_clip_fragment,
+)
+from cosmos_curator.next.recipes.robot_action_split.records import clip_table
 
 
 def _make_outcome(clip_id: str, *, clip_uri: str | None = None, action_data_uri: str | None = None) -> dict[str, Any]:
-    """Build one minimal successful outcome dict conforming to ``OUTCOME_SCHEMA``.
+    """Build one minimal successful outcome dict conforming to ``CLIP_SCHEMA``.
 
     Only ``clip_id`` and the two optional URIs vary between rows; every other
-    required field gets a deterministic placeholder. ``status`` is ``success`` so
-    the sink writes the row (it drops non-success rows).
+    required field gets a deterministic placeholder. ``status`` is ``success``
+    so ``clip_table`` writes the row (it drops non-success rows) — every clip
+    row is successful in practice, so ``clip_uri``/``action_data_uri`` default
+    to deterministic placeholders rather than ``None``.
     """
     return {
         "clip_id": clip_id,
@@ -67,12 +86,24 @@ def _make_outcome(clip_id: str, *, clip_uri: str | None = None, action_data_uri:
         "end_ns": 1_000_000,
         "native_fps": 24.0,
         "episode_from_timestamp": 0.0,
-        "clip_uri": clip_uri,
-        "action_data_uri": action_data_uri,
+        "clip_uri": clip_uri if clip_uri is not None else f"{clip_id}.mp4",
+        "action_data_uri": action_data_uri if action_data_uri is not None else f"{clip_id}.bin",
+        "camera_motion_annotation": None,
         "status": "success",
-        "error_stage": None,
-        "error_message": None,
     }
+
+
+def _write_outcomes(outcomes: list[dict[str, Any]], *, lance_uri: str) -> int:
+    """Bootstrap, stage, and commit one fragment of successful outcome rows."""
+    open_or_create_clip_table(uri=lance_uri, storage_profile="default")
+    table = clip_table(
+        outcomes,
+        record_schema_version=CLIP_RECORD_SCHEMA_VERSION,
+        media_contract_version=MEDIA_CONTRACT_VERSION,
+    )
+    candidate = write_clip_fragment(table, uri=lance_uri, storage_profile="default")
+    assert candidate is not None
+    return append_clip_fragment(candidate, uri=lance_uri, storage_profile="default", attempts=1)
 
 
 def _fill_image_group(uri: str) -> dict[str, list[float]]:
@@ -133,8 +164,8 @@ def _image_data_file_paths(uri: str) -> set[str]:
 def test_append_before_widening_grows_clip_rows(tmp_path: pathlib.Path) -> None:
     """Appending base rows before any embedding group exists simply grows the table."""
     uri = str(tmp_path / "clips.lance")
-    create_version = write_outcomes_to_lance([_make_outcome("c0"), _make_outcome("c1")], lance_uri=uri)
-    append_version = write_outcomes_to_lance([_make_outcome("c2"), _make_outcome("c3")], lance_uri=uri)
+    create_version = _write_outcomes([_make_outcome("c0"), _make_outcome("c1")], lance_uri=uri)
+    append_version = _write_outcomes([_make_outcome("c2"), _make_outcome("c3")], lance_uri=uri)
 
     assert append_version > create_version
     table = lance.dataset(uri).to_table()
@@ -144,11 +175,11 @@ def test_append_before_widening_grows_clip_rows(tmp_path: pathlib.Path) -> None:
 def test_append_after_widening_reads_present_embedding_fields_as_null(tmp_path: pathlib.Path) -> None:
     """A narrow base-row append into a widened table null-fills every present embedding field."""
     uri = str(tmp_path / "clips.lance")
-    write_outcomes_to_lance([_make_outcome("c0"), _make_outcome("c1")], lance_uri=uri)
+    _write_outcomes([_make_outcome("c0"), _make_outcome("c1")], lance_uri=uri)
     # Widen with the text and image groups (action deliberately left absent).
     ensure_embedding_columns(lance.dataset(uri), [TEXT_COLUMN_GROUP, IMAGE_COLUMN_GROUP])
 
-    write_outcomes_to_lance([_make_outcome("c2"), _make_outcome("c3")], lance_uri=uri)
+    _write_outcomes([_make_outcome("c2"), _make_outcome("c3")], lance_uri=uri)
 
     present_fields = [*TEXT_COLUMN_GROUP.field_names, *IMAGE_COLUMN_GROUP.field_names]
     result = lance.dataset(uri).to_table(columns=["clip_id", *present_fields]).to_pydict()
@@ -165,7 +196,7 @@ def test_append_after_widening_reads_present_embedding_fields_as_null(tmp_path: 
 def test_append_does_not_alter_existing_embedding_values_or_files(tmp_path: pathlib.Path) -> None:
     """Appending new base rows leaves already-filled embedding values and files untouched."""
     uri = str(tmp_path / "clips.lance")
-    write_outcomes_to_lance(
+    _write_outcomes(
         [_make_outcome("c0", clip_uri="c0.mp4"), _make_outcome("c1", clip_uri="c1.mp4")],
         lance_uri=uri,
     )
@@ -173,7 +204,7 @@ def test_append_does_not_alter_existing_embedding_values_or_files(tmp_path: path
     written = _fill_image_group(uri)
     files_before = _image_data_file_paths(uri)
 
-    write_outcomes_to_lance([_make_outcome("c2", clip_uri="c2.mp4")], lance_uri=uri)
+    _write_outcomes([_make_outcome("c2", clip_uri="c2.mp4")], lance_uri=uri)
 
     result = lance.dataset(uri).to_table(columns=["clip_id", "embedding_image"]).to_pydict()
     per_clip = dict(zip(result["clip_id"], result["embedding_image"], strict=True))

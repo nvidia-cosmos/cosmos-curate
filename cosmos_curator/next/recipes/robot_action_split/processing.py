@@ -231,8 +231,8 @@ def process_batch(  # noqa: C901, PLR0912, PLR0915
     consecutive batches sharing the same source chunk).  When provided the
     download step is skipped entirely.
 
-    Returns a list of outcome dicts (one per item) with all fields required
-    by ``lance_sink.OUTCOME_SCHEMA``.
+    Returns a list of outcome dicts (one per item) with all fields required by
+    ``records.CLIP_SCHEMA`` (on success) or ``records.ERROR_SCHEMA`` (on failure).
     """
     media_root = config.output.media_root
     action_format = config.output.action_format
