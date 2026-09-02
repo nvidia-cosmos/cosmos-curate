@@ -1199,9 +1199,6 @@ nvcf-helm:
     - *setup_curator_cli
     - *configure_nvcf_cli
     - .gitlab/scripts/nvcf_helm_cleanup.sh
-  retry:
-    max: 2
-    when: always
   artifacts:
     when: always
     paths:
