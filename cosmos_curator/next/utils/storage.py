@@ -55,7 +55,12 @@ def write_media(location: str, data: bytes, *, storage_profile: str = "default")
         client.upload_bytes(S3Prefix(location), data)
         return
 
-    destination = Path(location)
+    # ``artifact_uri`` in this same module hands back file:// URIs, and recipes
+    # accept a file:// output prefix, so a location can arrive as one. ``Path``
+    # would read the scheme as a directory name and write the object into a
+    # relative ``file:/`` tree beside whatever the worker's cwd was -- quietly,
+    # so the run reports success and the bytes are somewhere else.
+    destination = local_path(location)
     destination.parent.mkdir(parents=True, exist_ok=True)
     fd, temporary_name = tempfile.mkstemp(prefix=f".{destination.name}.", dir=destination.parent)
     temporary_path = Path(temporary_name)
@@ -258,6 +263,13 @@ def _fsync_directory(directory: Path) -> None:
         os.fsync(descriptor)
     finally:
         os.close(descriptor)
+
+
+def local_path(location: str) -> Path:
+    """Return the filesystem path a non-S3 location names, whether URI or path."""
+    if location.startswith("file://"):
+        return _file_uri_to_path(location)
+    return Path(location)
 
 
 def _file_uri_to_path(uri: str) -> Path:

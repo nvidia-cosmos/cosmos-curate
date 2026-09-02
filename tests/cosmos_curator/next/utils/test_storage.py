@@ -13,14 +13,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Removal-helper contract for ``next.utils.storage``.
+"""Read/write/removal contract for ``next.utils.storage``.
 
-Covers ``remove_prefix`` (whole staging tree / prefix) and ``remove_object`` (a
-single durable artifact) on both the local and the remote branch, plus the two
-degenerate paths every cleanup call relies on: an absent target is a no-op, and
-a non-absence failure propagates rather than being reported as a clean removal.
-The remote branch is exercised through a fake storage client so no network or
-credentials are needed.
+Covers ``write_media`` (including the ``file://`` locations ``artifact_uri``
+hands out), ``remove_prefix`` (whole staging tree / prefix), ``remove_object``
+(a single durable artifact), and ``read_media_if_present``, on both the local
+and the remote branch. The removal and read helpers share the same
+degenerate paths every cleanup call relies on: an absent target is a no-op,
+and a non-absence failure propagates rather than being reported as a clean
+removal. The remote branch is exercised through a fake storage client so no
+network or credentials are needed.
 """
 
 import pathlib
@@ -84,6 +86,31 @@ class _FakeReadClient:
 
     def download_object_as_bytes(self, _uri: StoragePrefix, _chunk_size_bytes: int = 0) -> bytes:
         return self._data
+
+
+def test_a_file_uri_destination_is_written_where_it_names(tmp_path: pathlib.Path) -> None:
+    """A file:// location must land where it names, not under the scheme.
+
+    ``Path`` reads the scheme as a directory, so the object goes into a relative
+    ``file:/`` tree under whatever the worker's cwd was -- silently, so the run
+    reports success and the bytes are somewhere else.
+    """
+    storage.write_media(f"{tmp_path.as_uri()}/nested/out.bin", b"payload")
+
+    assert (tmp_path / "nested" / "out.bin").read_bytes() == b"payload"
+
+
+def test_the_uri_this_package_hands_out_is_one_it_can_write_to(tmp_path: pathlib.Path) -> None:
+    """``artifact_uri`` normalizes a local path to ``file://``; writing must round-trip it."""
+    recorded = storage.artifact_uri(str(tmp_path / "clip.mp4"))
+    # Checked before writing, not after: a plain path would write fine, so an
+    # artifact_uri that stopped returning a URI would leave this test passing
+    # for a shape it does not cover.
+    assert recorded.startswith("file://")
+
+    storage.write_media(recorded, b"payload")
+
+    assert (tmp_path / "clip.mp4").read_bytes() == b"payload"
 
 
 def test_remove_prefix_deletes_a_local_directory_tree(tmp_path: pathlib.Path) -> None:
