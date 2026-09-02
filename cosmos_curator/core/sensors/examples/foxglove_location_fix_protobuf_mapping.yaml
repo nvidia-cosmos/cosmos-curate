@@ -1,0 +1,41 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# Mapping for a valid-only ``foxglove.LocationFix`` MCAP channel. The MCAP
+# ``log_time`` is the sensor timestamp; ``align_timestamp_ns`` is intentionally
+# omitted so the GPS sensor defaults it to that mapped timestamp.
+#
+# The Foxglove writer only emits usable position fixes, so every output position
+# component is marked valid. LocationFix covariance, heading, velocity, and
+# metadata remain intentionally unmapped until their sensor-library contracts
+# are defined.
+
+fields:
+  sensor_timestamp_ns:
+    from: $mcap.logtime
+    type: timestamp
+    unit: ns
+
+  latitude_deg:
+    from: latitude
+    type: float
+  longitude_deg:
+    from: longitude
+    type: float
+  altitude_m:
+    from: altitude
+    type: float
+  position_valid:
+    default: [true, true, true]
