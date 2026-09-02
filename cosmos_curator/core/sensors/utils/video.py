@@ -1069,6 +1069,18 @@ def iter_video_frames(
     time. PyAV emits frames in presentation order even when the stream is coded
     out of order, so B-frame video needs no special handling here.
 
+    Every frame is converted to an RGB array on the way past, whether or not the
+    caller keeps it. That is deliberate, and it follows from the walk this
+    function is for: a dense read, where nearly every decoded frame is used.
+    Converting lazily would put a wrapper and an indirection on all of them to
+    save on the few that get dropped.
+
+    Which makes this the wrong entry point for a caller reading a small fraction
+    of a recording -- it pays a conversion for every frame it skips. Sampling at
+    a lower rate does not by itself make a caller sparse: a rate that divides the
+    dense one draws its frames from the same walk and costs nothing extra. The
+    cost appears when nothing else is reading the frames in between.
+
     Args:
         source: Video data source. See
             :data:`cosmos_curator.core.sensors.types.types.DataSource`. The

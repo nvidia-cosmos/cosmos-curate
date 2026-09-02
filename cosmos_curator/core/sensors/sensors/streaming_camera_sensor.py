@@ -194,6 +194,12 @@ class StreamingCameraSensor:
         order they were yielded. Skipping a payload is fine; going back to one
         raises, because the walk cannot rewind to serve it.
 
+        A sparse grid rides that same walk. Asking for a low rate selects which
+        frames are served, not which are decoded, so it costs what a dense grid
+        over the same span costs. Two grids that share an alignment -- a clip
+        rate and a caption rate that divides it -- are one traversal serving both,
+        which is the shape this sensor was built for.
+
         Args:
             spec: The sampling grid to serve.
             policy: Its ``max_delta_ns`` bounds how far a reference may sit from
