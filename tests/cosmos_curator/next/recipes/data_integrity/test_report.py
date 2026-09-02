@@ -114,6 +114,66 @@ def test_empty_session_is_error() -> None:
     assert report.status is OverallStatus.ERROR
 
 
+def test_a_failing_session_metric_fails_a_session_of_passing_streams() -> None:
+    """The whole point of a session-grain verdict: no one stream is at fault, the set is."""
+    report = SessionReport(
+        session_path="s",
+        streams=[_stream("a", statuses=[CheckStatus.PASS]), _stream("b", statuses=[CheckStatus.PASS])],
+        metrics=[_metric("multi_sensor_overlap", CheckStatus.FAIL)],
+    )
+    assert report.status is OverallStatus.FAIL
+
+
+def test_a_skipped_session_metric_leaves_the_verdict_alone() -> None:
+    """Most sessions have too few sensors to compare, and that is not a finding."""
+    report = SessionReport(
+        session_path="s",
+        streams=[_stream("a", statuses=[CheckStatus.PASS])],
+        metrics=[_metric("multi_sensor_overlap", CheckStatus.SKIPPED)],
+    )
+    assert report.status is OverallStatus.PASS
+
+
+def test_an_errored_stream_still_outranks_a_failing_session_metric() -> None:
+    """ERROR first, because a session with an unmeasured stream has a partial verdict to re-queue."""
+    report = SessionReport(
+        session_path="s",
+        streams=[_stream("a", statuses=[CheckStatus.PASS]), _stream("b", error="boom")],
+        metrics=[_metric("multi_sensor_overlap", CheckStatus.FAIL)],
+    )
+    assert report.status is OverallStatus.ERROR
+
+
+def test_render_text_puts_the_session_metrics_under_the_session_heading() -> None:
+    """Beneath the roll-up, not beside a stream: attributing one to a stream would misplace the blame."""
+    report = SessionReport(
+        session_path="s",
+        streams=[_stream("a", statuses=[CheckStatus.PASS])],
+        metrics=[_metric("multi_sensor_overlap", CheckStatus.FAIL)],
+    )
+    lines = [line for line in render_text(report).splitlines() if line]
+
+    assert lines[-4].startswith("Data-integrity report for session:")
+    assert lines[-3].startswith("  streams: 1")
+    assert "multi_sensor_overlap" in lines[-2]
+    assert lines[-1] == "Session overall: FAIL"
+
+
+def test_report_to_dict_keeps_session_metrics_out_of_the_streams() -> None:
+    """A consumer walking "streams" must not find a session's verdict among them."""
+    report = SessionReport(
+        session_path="s",
+        streams=[_stream("a", statuses=[CheckStatus.PASS])],
+        metrics=[_metric("multi_sensor_overlap", CheckStatus.FAIL)],
+    )
+    as_dict = report_to_dict(report)
+
+    assert [m["name"] for m in cast("list[dict[str, object]]", as_dict["metrics"])] == ["multi_sensor_overlap"]
+    streams = cast("list[dict[str, object]]", as_dict["streams"])
+    assert [m["name"] for m in cast("list[dict[str, object]]", streams[0]["metrics"])] == ["m0"]
+    assert json.loads(to_json(report)) == as_dict
+
+
 def test_report_to_dict_counts_and_roundtrips_json() -> None:
     """report_to_dict captures counts and to_json is a faithful JSON encoding of it."""
     report = SessionReport(

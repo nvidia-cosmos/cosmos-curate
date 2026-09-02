@@ -206,9 +206,13 @@ def h264_video() -> Callable[..., bytes]:
     openh264 encoder can't make B-frames here -- see ``_BFRAME_CLIP``); the exact count
     is not significant, only that the stream has B-frames. For ``bframes == 0`` it
     encodes a tiny clip live (any H.264 encoder handles that).
+
+    ``frames`` sets how long that live clip runs, at 30 fps. It is what lets a session
+    hold sensors that stopped at different times, which is the only way a session-grain
+    measurement has anything to measure.
     """
 
-    def _make(*, bframes: int = 0) -> bytes:
+    def _make(*, bframes: int = 0, frames: int = 30) -> bytes:
         if bframes > 0:
             return _BFRAME_CLIP.read_bytes()
         buffer = io.BytesIO()
@@ -216,7 +220,7 @@ def h264_video() -> Callable[..., bytes]:
             stream = container.add_stream("h264", rate=30)
             stream.width, stream.height, stream.pix_fmt = 64, 64, "yuv420p"
             stream.codec_context.options = {"bf": "0", "g": "30"}
-            for i in range(30):
+            for i in range(frames):
                 frame = av.VideoFrame.from_ndarray(np.full((64, 64, 3), i, dtype=np.uint8), format="rgb24")
                 for packet in stream.encode(frame):
                     container.mux(packet)

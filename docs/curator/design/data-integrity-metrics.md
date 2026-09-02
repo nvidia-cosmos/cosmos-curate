@@ -26,6 +26,16 @@ All four timestamp metrics (`TimestampOrderingMetric`, `RateMetric`, `TimestampG
 
 `FrameReorderingPresentMetric` takes a single boolean flag: a non-boolean → `TypeError`, and a second `update()` → `RuntimeError`.
 
+## Timestamp provenance
+
+A metric measures the timestamps it is handed and cannot tell where they came from, so the value of every timing result depends on the clock behind its input. For video, that input is `CameraSensor.timestamps_ns`, which returns the container's presentation timestamps.
+
+Whether PTS reflects capture depends on how the file was muxed. A variable-frame-rate source carries the real sample times, and the metrics below measure exactly what they claim. A constant-frame-rate source does not: the encoder discards capture times and regenerates them on a fixed grid, and each file's grid restarts at `0`. Against such a source the interval-based metrics (`RateMetric`, `TimestampGapMetric`, `JitterMetric`) see a metronome and report a flawless stream by construction, while the session-grain metrics see every sensor starting at the same instant and report zero spread with total overlap — in both cases regardless of what the hardware actually did.
+
+Measured on one internal 12-camera session (605 frames, 30 Hz), container PTS gives an interval of exactly 33.333 ms at every step and a cross-sensor spread of `0`. The same session's capture timestamps — recorded in per-camera sidecar files on a clock shared across the rig — give intervals ranging 33.306–33.374 ms and put the cameras 133 ms apart, for 1.3% non-overlap.
+
+So a perfect score from these metrics on a constant-frame-rate source means *nothing was measurable*, not *the data was verified healthy*. Distinguishing the two requires sourcing capture timestamps in preference to PTS, which is sensor-library work rather than a change to any metric here.
+
 ## TimestampOrderingMetric
 
 Classifies how a timestamp stream steps — increasing, equal, or decreasing — so one pass tells you whether it is non-decreasing, strictly increasing, or neither.
@@ -140,26 +150,36 @@ Non-decreasing and strictly increasing are not separate metrics — they are two
 
 Keeping the measurement single and the policy in the evaluator keeps the catalog small and failures diagnostic — you always see the backward-step and duplicate counts separately, and you pick the strictness at check time rather than by choosing a different metric.
 
-## Planned metrics (not in v1)
+## Session-grain metrics
 
-The multi-sensor metrics below are proposals for a later release (see [data-integrity-design.md](data-integrity-design.md)); they are not implemented in v1. They are listed so the catalog captures the intended direction, but their fields and behavior are not final.
+The two metrics below measure a **session**, not a stream: their subject is a set of sensors, and no one stream in it can carry the answer. They take recording bounds rather than timelines — one `(start_ns, end_ns)` pair per sensor, folded one sensor at a time — so a caller that has just measured a session's streams can feed them what it already has.
 
-### MultiSensorGapMetric
+They live in a separate registry (`SESSION_INSTRUMENTS`) from the five above, because everything that iterates the per-stream registry does so once per stream. `di-session` runs them, prints them under the session heading, and exits nonzero on a failure. The Lance tables that will hold them are specified in [data-integrity-store-schema.md](data-integrity-store-schema.md) section 5 but not yet written, so a stored run cannot see them yet ([CVC-1244](https://jirasw.nvidia.com/browse/CVC-1244)).
+
+Bounds are validated at the boundary like every other input: a non-integer bound → `TypeError` (a `bool` included, since it is an `int` subclass), one outside `int64` nanoseconds → `ValueError`. Ordering is deliberately *not* required — a sensor whose last sample precedes its first is corrupt rather than unrepresentable, and each metric reports that through its own arithmetic instead of raising, leaving `TimestampOrderingMetric` to name the stream responsible.
+
+### MultiSensorSpreadMetric
 
 Measures how far apart a set of sensors begin and end — a session-level alignment signal across sensors.
 
+Named for the spread rather than for a gap (the design doc's earlier `MultiSensorGapMetric`): what it measures is how far apart the sensors start and stop, and a second "gap" beside `TimestampGapMetric` — which is about missing samples *within* one stream — would name two unrelated things alike.
+
 **How it works:** from each sensor's recording bounds (`start_ns` / `end_ns`), it takes the spread of the starts (`max(starts) − min(starts)`) and the spread of the stops (`max(stops) − min(stops)`). Large spreads indicate sensors that came up or shut down at very different times.
 
-**Measurement fields (proposed):**
+**Measurement fields:**
 
 - `start_spread_ns` — spread of the sensors' start times (`max(starts) − min(starts)`)
 - `stop_spread_ns` — spread of the sensors' stop times (`max(stops) − min(stops)`)
 - `num_sensors` — number of sensors compared
+- `max_spread_ns` (derived) — the worse of the two spreads; the field policy judges, since a session is as badly aligned as its furthest-out sensor
 
 **Corner cases:**
 
-- requires at least two sensors
-- a sensor with no timestamps has no bounds to compare
+- fewer than two sensors → an undefined measurement (`is_defined == False`); one sensor is never out of step with itself
+- a sensor with no timestamps has no bounds to compare, and is not counted in `num_sensors`
+- folding order does not matter; the metric is symmetric in its inputs
+
+The bounds must share a clock across sensors for the spread to mean anything; see [Timestamp provenance](#timestamp-provenance) for why a constant-frame-rate video source does not satisfy this and reports `0` regardless of rig skew.
 
 ### MultiSensorOverlapMetric
 
@@ -169,12 +189,16 @@ Measures how much of a recording session all sensors' recording bounds overlap �
 
 **Measurement fields:**
 
-- `overlap_fraction`, `non_overlap_fraction` — bounding-interval overlap fraction and its complement
+- `overlap_fraction`, `non_overlap_fraction` — bounding-interval overlap fraction and its complement, or `nan` when undefined
 - `effective_duration_ns`, `total_duration_ns` — overlapping-bounds span and full session span
+- `num_sensors` — number of sensors compared
+- `non_overlap_percent` (derived) — `non_overlap_fraction` as a percentage; the field policy judges, because a threshold here is always a ceiling and an overlap is the one quantity a session wants *more* of
 
 **Corner cases:**
 
-- requires at least two sensors
-- when the latest start is after the earliest stop there is no common window, so the overlap is zero
-- when the total session span is zero (every sensor shares the same zero-duration bounds) the ratio is undefined, so the measurement is undefined (`is_defined == False`) rather than a division by zero
-- a sensor with no timestamps has no bounds to contribute (as with `MultiSensorGapMetric`)
+- fewer than two sensors → an undefined measurement (`is_defined == False`), with both durations reported as `0` rather than as the lone sensor's own span, which would read as a measured overlap
+- when the latest start is after the earliest stop there is no common window, so the overlap is zero — a real finding, not an undefined one
+- when the total session span is zero (every sensor shares the same zero-duration bounds) the ratio is undefined, so the measurement is undefined rather than a division by zero
+- a non-*positive* total span is undefined for the same reason: it means the bounds contradict each other (some sensor's last sample precedes the first sensor's start). Both durations stay on the measurement, since they are what shows a reader which of the two situations it is
+- a sensor with no timestamps has no bounds to contribute (as with `MultiSensorSpreadMetric`)
+- folding order does not matter

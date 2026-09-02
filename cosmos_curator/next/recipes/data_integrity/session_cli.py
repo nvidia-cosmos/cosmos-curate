@@ -57,6 +57,7 @@ from cosmos_curator.next.recipes.data_integrity.cli_support import (
     ERROR_EXIT_CODE,
     FAIL_EXIT_CODE,
     PASS_EXIT_CODE,
+    add_session_threshold_args,
     add_threshold_args,
     available_cpu_count,
     interrupt_guard,
@@ -84,10 +85,13 @@ _EXIT_CODES = {
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="di-session",
-        description="Run every data-integrity metric against every stream of a single session.",
+        description=(
+            "Run every data-integrity metric against every stream of a single session, "
+            "then the session-grain metrics across all of them."
+        ),
         epilog=(
-            "Exit codes: 0 = every stream PASS; 1 = at least one stream FAIL; 2 = an error occurred; "
-            "130 = interrupted with Ctrl-C. "
+            "Exit codes: 0 = everything PASS; 1 = at least one FAIL, of a stream or of the session itself; "
+            "2 = an error occurred; 130 = interrupted with Ctrl-C. "
             "A stream that could not be measured outranks a FAIL, since the session verdict stays incomplete."
         ),
     )
@@ -147,6 +151,7 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         ),
     )
     add_threshold_args(parser)
+    add_session_threshold_args(parser)
     add_store_args(parser)
     add_storage_credential_args(parser)
     return parser.parse_args(argv)
@@ -371,6 +376,10 @@ def _run(
             # After the report, so the operator keeps the verdict even when persisting
             # fails -- but a failure is still exit code 2, because saving the results
             # was part of what was asked for.
+            #
+            # Streams only: the store is keyed per stream, so the session-grain verdicts
+            # printed above have no row to be written to yet (CVC-1244). Until they do,
+            # a stored run can read back PASS for a session this exited nonzero on.
             try:
                 persist_run(
                     args.store_path,

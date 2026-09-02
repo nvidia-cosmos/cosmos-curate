@@ -24,6 +24,11 @@ three places -- and so a re-evaluated verdict is produced by exactly the same co
 that produced the original: :func:`evaluate_metric`, the tool's one path from a
 measurement to a verdict.
 
+Two registries, because a metric's *subject* is part of its shape:
+:data:`INSTRUMENTS` judges one stream, :data:`SESSION_INSTRUMENTS` judges a whole
+session. The spec type is the same for both; what differs is who iterates it and what
+they feed it.
+
 :class:`Thresholds` lives here rather than with the CLI because a threshold is only
 meaningful next to the accessor that reads it.
 
@@ -48,6 +53,8 @@ from cosmos_curator.core.sensors.data_integrity.metrics import (
     FrameReorderingPresentMeasurement,
     JitterMeasurement,
     Measurement,
+    MultiSensorOverlapMeasurement,
+    MultiSensorSpreadMeasurement,
     RateMeasurement,
     TimestampGapMeasurement,
     TimestampOrderingMeasurement,
@@ -67,6 +74,14 @@ NAME_GAP = "timestamp_gap"
 NAME_JITTER = "jitter"
 NAME_REORDERING = "frame_reordering_present"
 
+# Session-grain metric identifiers, kept distinct from every name above because the
+# two grains share a namespace in reports even though they live in separate datasets.
+# "spread" rather than the design doc's "gap": what it measures is how far apart the
+# sensors start and stop, and a second "gap" beside ``timestamp_gap`` -- which is about
+# missing samples within one stream -- would name two unrelated things alike.
+NAME_SENSOR_SPREAD = "multi_sensor_spread"
+NAME_SENSOR_OVERLAP = "multi_sensor_overlap"
+
 
 @attrs.define(frozen=True)
 class Thresholds:
@@ -84,6 +99,14 @@ class Thresholds:
         max_jitter_percent: max inter-sample jitter, in percent of the period.
         allow_frame_reordering: when False (default), a B-frame / frame-reordering
             flag fails the frame-reordering metric.
+        max_sensor_spread_ns: max allowed spread between the sensors of one session
+            starting, or stopping, whichever end is worse. Unlike the limits above it
+            has no first-principles value -- a perfectly synchronised rig spreads by
+            zero, but no real one does -- so the default is a placeholder to be set
+            from what the rigs actually do.
+        max_non_overlap_percent: max allowed share of a session during which some
+            sensor was not recording, in percent. Stated as the complement because
+            every limit here is a ceiling, and an overlap is a floor.
 
     """
 
@@ -92,6 +115,8 @@ class Thresholds:
     max_gaps: int = 0
     max_jitter_percent: float = 10.0
     allow_frame_reordering: bool = False
+    max_sensor_spread_ns: int = 1_000_000_000
+    max_non_overlap_percent: float = 5.0
 
 
 DEFAULT_THRESHOLDS = Thresholds()
@@ -325,8 +350,50 @@ _REORDERING_SPEC = InstrumentSpec(
     margin_is_int=True,
 )
 
-#: Every metric, in report order: the timeline's own correctness first, then the
-#: three checks that need a rate to judge, then the codec-level flag.
+_SENSOR_SPREAD_SPEC = InstrumentSpec(
+    name=NAME_SENSOR_SPREAD,
+    version=1,
+    measurement_cls=MultiSensorSpreadMeasurement,
+    fields=(
+        FieldSpec("start_spread_ns", FieldKind.INT),
+        FieldSpec("stop_spread_ns", FieldKind.INT),
+        FieldSpec("num_sensors", FieldKind.INT),
+    ),
+    requires_expected_hz=False,
+    threshold=lambda t: t.max_sensor_spread_ns,
+    # The worse end of the rig: a session is as badly aligned as its furthest-out
+    # sensor, whether that sensor was late to start or late to stop.
+    accessor=lambda m: m.max_spread_ns,
+    reason=lambda m, threshold: f"max_spread_ns={m.max_spread_ns} over {m.num_sensors} sensors (threshold={threshold})",
+    margin_is_int=True,
+)
+
+_SENSOR_OVERLAP_SPEC = InstrumentSpec(
+    name=NAME_SENSOR_OVERLAP,
+    version=1,
+    measurement_cls=MultiSensorOverlapMeasurement,
+    fields=(
+        FieldSpec("overlap_fraction", FieldKind.FLOAT),
+        FieldSpec("non_overlap_fraction", FieldKind.FLOAT),
+        FieldSpec("effective_duration_ns", FieldKind.INT),
+        FieldSpec("total_duration_ns", FieldKind.INT),
+        FieldSpec("num_sensors", FieldKind.INT),
+    ),
+    requires_expected_hz=False,
+    threshold=lambda t: t.max_non_overlap_percent,
+    # The complement, because :func:`below_threshold` is the only comparison a spec can
+    # express and an overlap is the one quantity here that a session wants *more* of.
+    accessor=lambda m: m.non_overlap_percent,
+    reason=(
+        lambda m, threshold: (
+            f"non_overlap_percent={m.non_overlap_percent:.4f} over {m.num_sensors} sensors (threshold={threshold:.4f}%)"
+        )
+    ),
+    margin_is_int=False,
+)
+
+#: Every per-stream metric, in report order: the timeline's own correctness first, then
+#: the three checks that need a rate to judge, then the codec-level flag.
 INSTRUMENTS: tuple[InstrumentSpec, ...] = (
     _ORDERING_SPEC,
     _RATE_SPEC,
@@ -335,11 +402,26 @@ INSTRUMENTS: tuple[InstrumentSpec, ...] = (
     _REORDERING_SPEC,
 )
 
-_BY_NAME = {spec.name: spec for spec in INSTRUMENTS}
+#: Every session-grain metric, whose subject is a whole session rather than one stream.
+#:
+#: A separate tuple rather than more entries in :data:`INSTRUMENTS`, because everything
+#: that iterates that one -- the per-stream engine, the store's row builders and its
+#: schema map, re-evaluation -- does so once per stream. A session-arity spec in there
+#: would have every one of them try to measure a session per stream.
+SESSION_INSTRUMENTS: tuple[InstrumentSpec, ...] = (
+    _SENSOR_SPREAD_SPEC,
+    _SENSOR_OVERLAP_SPEC,
+)
+
+_BY_NAME = {spec.name: spec for spec in (*INSTRUMENTS, *SESSION_INSTRUMENTS)}
 
 
 def instrument(name: str) -> InstrumentSpec:
-    """Look up one metric's spec by name.
+    """Look up one metric's spec by name, of either grain.
+
+    One lookup across both registries because a name is unique across them, and a
+    caller holding a stored metric name -- re-evaluation, a staleness check -- wants
+    the spec, not a prior answer about which grain it came from.
 
     Raises:
         KeyError: if ``name`` is not a registered metric, with the known names
@@ -356,7 +438,12 @@ def instrument(name: str) -> InstrumentSpec:
 
 
 def instrument_versions() -> dict[str, int]:
-    """Map every metric name to its current instrument version, for the manifest."""
+    """Map every per-stream metric name to its current instrument version, for the manifest.
+
+    Session-grain metrics are absent because the manifest describes what a run wrote,
+    and nothing stores a session-grain measurement yet. They join this map with the
+    tables that hold them (CVC-1244).
+    """
     return {spec.name: spec.version for spec in INSTRUMENTS}
 
 
@@ -370,13 +457,17 @@ def evaluate_metric(spec: InstrumentSpec, measurement: Measurement, thresholds: 
     them without needing anything a CLI owns.
 
     SKIPPED when the measurement is undefined -- the kernel refuses to judge one,
-    having no honest margin to report. The ``num_samples=<N>`` / ``insufficient
-    data`` distinction follows whether the measurement carries a ``num_samples``
-    field (:class:`FrameReorderingPresentMeasurement` does not).
+    having no honest margin to report. The detail names whichever count the metric
+    counts, falling back to ``insufficient data`` for a metric that counts nothing
+    (:class:`FrameReorderingPresentMeasurement`).
     """
     if not measurement.is_defined:
-        n = getattr(measurement, "num_samples", None)
-        detail = f"num_samples={n}" if n is not None else "insufficient data"
+        detail = "insufficient data"
+        for counted in ("num_samples", "num_sensors"):
+            n = getattr(measurement, counted, None)
+            if n is not None:
+                detail = f"{counted}={n}"
+                break
         return CheckResult(
             name=spec.name,
             status=CheckStatus.SKIPPED,

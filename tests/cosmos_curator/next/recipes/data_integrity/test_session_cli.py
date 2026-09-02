@@ -90,6 +90,23 @@ def test_exit_code_fail(monkeypatch: pytest.MonkeyPatch) -> None:
     assert session_cli.main(["--session-path", "s"]) == FAIL_EXIT_CODE
 
 
+def test_a_failing_session_metric_exits_one_on_its_own(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """No stream is at fault, so nothing but the session verdict can carry this to the exit code."""
+    report = SessionReport(
+        "s",
+        [_stream("a", CheckStatus.PASS), _stream("b", CheckStatus.PASS)],
+        metrics=[CheckResult("multi_sensor_overlap", CheckStatus.FAIL, "non_overlap_percent=40", None, None)],
+    )
+    monkeypatch.setattr(session_cli, "run_session", lambda *_a, **_k: report)
+
+    assert session_cli.main(["--session-path", "s"]) == FAIL_EXIT_CODE
+    out = capsys.readouterr().out
+    assert "multi_sensor_overlap" in out, "an operator handed exit 1 has to be able to see what failed"
+
+
 def test_unmeasured_stream_exits_error_even_alongside_a_failure(monkeypatch: pytest.MonkeyPatch) -> None:
     """A session mixing a FAIL with an unreadable stream exits 2, not 1.
 
@@ -117,6 +134,49 @@ def test_threshold_flags_reach_the_session_runner(monkeypatch: pytest.MonkeyPatc
 
     assert session_cli.main(["--session-path", "s", "--max-gaps", "4", "--allow-frame-reordering"]) == 0
     assert seen["thresholds"] == Thresholds(max_gaps=4, allow_frame_reordering=True)
+
+
+def test_session_threshold_flags_reach_the_session_runner(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The session limits thread through too.
+
+    Worth pinning separately from the per-stream flags: ``thresholds_from_args`` reads these
+    two with a ``getattr`` fallback, so that a CLI offering only the per-stream flags still
+    gets a whole policy. That fallback would quietly answer with the default for a renamed
+    dest or dropped ``add_session_threshold_args`` call, leaving the flags accepted and inert.
+    """
+    seen: dict[str, object] = {}
+
+    def _run(*_a: object, **kwargs: object) -> SessionReport:
+        seen.update(kwargs)
+        return SessionReport("s", [_stream("a", CheckStatus.PASS)])
+
+    monkeypatch.setattr(session_cli, "run_session", _run)
+
+    argv = ["--session-path", "s", "--max-sensor-spread-ns", "250000000", "--max-non-overlap-percent", "2.5"]
+    assert session_cli.main(argv) == PASS_EXIT_CODE
+    assert seen["thresholds"] == Thresholds(max_sensor_spread_ns=250_000_000, max_non_overlap_percent=2.5)
+
+
+@pytest.mark.parametrize(
+    ("flag", "value"),
+    [
+        ("--max-sensor-spread-ns", "-1"),
+        ("--max-sensor-spread-ns", "nan"),
+        ("--max-non-overlap-percent", "-0.5"),
+        ("--max-non-overlap-percent", "inf"),
+    ],
+)
+def test_invalid_session_threshold_values_are_rejected_by_argparse(
+    flag: str, value: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Bad policy values fail at parse time rather than producing a meaningless verdict."""
+    with pytest.raises(SystemExit) as excinfo:
+        session_cli.main(["--session-path", "s", flag, value])
+    assert excinfo.value.code == 2  # argparse's own usage-error status
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert f"argument {flag}:" in captured.err
+    assert value in captured.err
 
 
 def test_interrupt_exits_without_a_report(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:

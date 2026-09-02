@@ -19,7 +19,7 @@ v1 is the measurement + evaluation kernel: the metric instruments and the evalua
 - pure PASS/FAIL evaluators (`below_threshold`, `above_threshold`, `within_range`) over metric measurements
 - unit tests with synthetic fixtures
 
-The kernel deliberately stops at the metric/evaluator boundary. The orchestration that runs it, and the full-fidelity sensor input path it consumes, are left as open design problems for a later release (see [Future integration](#future-integration)). Multi-sensor session-overlap / session-gap metrics are also out of scope for v1 (see [Metric Categories](#metric-categories)). What is out of scope entirely is captured in [Non-Goals](#non-goals).
+The kernel deliberately stops at the metric/evaluator boundary. The orchestration that runs it, and the full-fidelity sensor input path it consumes, are left as open design problems for a later release (see [Future integration](#future-integration)). Multi-sensor metrics were out of scope for v1 and have since been added; what is still missing is somewhere to store their verdicts (see [Metric Categories](#metric-categories)). What is out of scope entirely is captured in [Non-Goals](#non-goals).
 
 ## Design Principles
 
@@ -205,13 +205,21 @@ Metrics come in two arities:
 - single-sensor metrics
 - multi-sensor metrics
 
-The distinction is a property of the metric (how many sensors' arrays it
-consumes), not a type hierarchy and not separate metric classes — metrics stay
-flat. v1 ships single-sensor metrics only. The multi-sensor metrics (session
-overlap / gap) are planned for a later release; the metric shape accommodates
-them, but the orchestration that would carry multi-sensor arity belongs to that
-future layer (see [Future integration](#future-integration)), so that support is
-undecided, not built.
+The distinction is a property of the metric (how many sensors it consumes), not a
+type hierarchy and not separate metric classes — metrics stay flat, and both
+arities are the same `InstrumentSpec`.
+
+v1 shipped single-sensor metrics only. The two multi-sensor metrics
+(`MultiSensorSpreadMetric`, `MultiSensorOverlapMetric`) have since been added: they
+fold one sensor's recording bounds per `update()` rather than a window of one
+sensor's timeline, so the instrument shape carried them unchanged. What arity did
+cost is a second registry — `SESSION_INSTRUMENTS` beside `INSTRUMENTS` — because
+every caller that iterates the per-stream registry does so once per stream, and a
+session-arity spec in there would have each of them measure a session per stream.
+
+Where arity is still undecided is persistence: the store is keyed per stream, so a
+session-grain verdict has no row to live on yet. The tables for it are specified in
+[data-integrity-store-schema.md](data-integrity-store-schema.md) section 5.
 
 ## Streaming and Windows
 
@@ -298,11 +306,12 @@ This section names the **problems** that layer must solve, and the **constraints
 Open problems, in rough dependency order:
 
 - **Full-fidelity sensor input** — producing a stream of consecutive, in-order, full-fidelity windows (distinct from lossy sampling) from a concrete sensor, for the instruments to fold. This is separate sensor-library work, and the prerequisite for any recording-level check.
+- **Capture timestamps in preference to container PTS** — `CameraSensor.timestamps_ns` returns presentation timestamps, which a constant-frame-rate mux synthesizes on a fixed grid starting at `0` per file. Against such a source the timing metrics and both multi-sensor metrics report a perfect score whatever the hardware did, so the result says nothing was measurable rather than that the data is healthy (see [Timestamp provenance](data-integrity-metrics.md#timestamp-provenance) for the measured comparison). Also sensor-library work, and what makes the timing suite meaningful on video.
 - **Composing metrics into runnable units** — how a metric, an evaluator, and a sensor selection combine into something nameable and reusable (a "check").
 - **Declaring and configuring checks** — how checks are described as data and loaded. Format and schema are undecided.
 - **Driving many metrics from one read** — large recordings (a lidar file can be tens of GB) mean a single pass over the windows must feed many instruments at once; how that pass resolves each metric's array inputs from a sensor and packages the results is open.
 - **An end-to-end entry point** — running a configured set of checks against a sensor (a CLI, or otherwise).
-- **Multi-sensor metrics** — session-overlap and session-gap metrics (see [Metric Categories](#metric-categories)); the metric shape already accommodates them, but the orchestration that carries multi-sensor arity belongs to this layer.
+- **Persisting multi-sensor verdicts** — the two multi-sensor metrics now exist and `di-session` reports them (see [Metric Categories](#metric-categories)), but the store is keyed per stream, so nothing writes them down.
 
 Constraints any solution must respect:
 

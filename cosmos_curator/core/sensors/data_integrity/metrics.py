@@ -29,6 +29,11 @@ bounded regardless of stream length -- no metric grows its output with the numbe
 events found. A one-shot measurement over a whole array is a single ``update()``
 followed by ``measurement()``.
 
+What a metric folds is its own business. Most fold windows of one stream's timeline;
+the multi-sensor metrics at the end of this module fold one *sensor's* recording
+bounds per ``update()``, which is what lets a caller measuring a whole session feed
+each stream as it finishes.
+
 Time-domain values are nanoseconds in the ``int64`` range, matching ``core.sensors``:
 array fields are ``np.int64``, while scalar discrete fields (``expected_period_ns``,
 ``max_gap_ns``) are Python ``int`` in that range. Aggregate statistics over them (for
@@ -45,6 +50,7 @@ from numpy.typing import NDArray
 # Nanoseconds per second — time-domain fields are int64 ns, matching core.sensors.
 NSEC_PER_SEC = 1_000_000_000
 _INT64_MAX = int(np.iinfo(np.int64).max)
+_INT64_MIN = int(np.iinfo(np.int64).min)
 
 
 def _checked_diffs(timestamps_ns: NDArray[np.int64]) -> NDArray[np.int64]:
@@ -642,3 +648,237 @@ class FrameReorderingPresentMetric:
         evaluating.
         """
         return FrameReorderingPresentMeasurement(has_reordering=self._has_reordering)
+
+
+def _validate_bounds(start_ns: object, end_ns: object) -> None:
+    """Reject recording bounds that are not int64 nanoseconds, before any state changes.
+
+    The scalar counterpart of :func:`_validate_timestamps`, for the multi-sensor
+    metrics: parameters are typed ``object`` so the runtime guards hold for a caller
+    that bypasses the type checker, and ``bool`` is rejected explicitly because it is
+    an ``int`` subclass, so a flag folded in as a timestamp would otherwise look
+    perfectly plausible.
+
+    Ordering is deliberately not required. A sensor whose last sample precedes its
+    first is corrupt rather than unrepresentable, and the metrics say so through their
+    own arithmetic -- no common window, an undefined ratio -- which is more useful to a
+    session than an exception that takes the other sensors' measurement down with it.
+    """
+    for name, value in (("start_ns", start_ns), ("end_ns", end_ns)):
+        if isinstance(value, (bool, np.bool_)) or not isinstance(value, (int, np.integer)):
+            msg = f"{name} must be an integer number of nanoseconds, got {type(value).__name__}"
+            raise TypeError(msg)
+        if not _INT64_MIN <= int(value) <= _INT64_MAX:
+            msg = f"{name} must be within int64 nanoseconds, got {value}"
+            raise ValueError(msg)
+
+
+class _SensorBounds:
+    """Running extremes of a set of sensors' recording bounds.
+
+    Shared by the two multi-sensor metrics, which differ only in what they derive from
+    the same four numbers. Folds one sensor at a time, which is what lets a caller
+    measuring a session feed each stream as it finishes rather than holding them all.
+    """
+
+    def __init__(self) -> None:
+        """Initialize with no sensor folded in."""
+        self._count = 0
+        # Meaningless until the first fold, which is what ``extremes`` guards.
+        self._min_start = 0
+        self._max_start = 0
+        self._min_stop = 0
+        self._max_stop = 0
+
+    @property
+    def count(self) -> int:
+        """How many sensors have been folded in."""
+        return self._count
+
+    def add(self, start_ns: int, end_ns: int) -> None:
+        """Fold one sensor's bounds into the running extremes."""
+        _validate_bounds(start_ns, end_ns)
+        start, stop = int(start_ns), int(end_ns)
+        if self._count == 0:
+            self._min_start = self._max_start = start
+            self._min_stop = self._max_stop = stop
+        else:
+            self._min_start = min(self._min_start, start)
+            self._max_start = max(self._max_start, start)
+            self._min_stop = min(self._min_stop, stop)
+            self._max_stop = max(self._max_stop, stop)
+        self._count += 1
+
+    def extremes(self) -> tuple[int, int, int, int] | None:
+        """``(min_start, max_start, min_stop, max_stop)``, or ``None`` if nothing was folded."""
+        if self._count == 0:
+            return None
+        return self._min_start, self._max_start, self._min_stop, self._max_stop
+
+
+@attrs.define(frozen=True)
+class MultiSensorSpreadMeasurement:
+    """How far apart a set of sensors began and stopped recording.
+
+    A session-level alignment signal: from each sensor's recording bounds it takes the
+    spread of the starts and the spread of the stops. Large spreads mean sensors that
+    came up, or shut down, at very different times.
+
+    Bounds only. Two sensors that started together can still disagree everywhere in
+    between, which is what the per-stream gap and jitter metrics are for.
+
+    Attributes:
+        start_spread_ns: ``max(starts) - min(starts)``, in nanoseconds
+        stop_spread_ns: ``max(stops) - min(stops)``, in nanoseconds
+        num_sensors: how many sensors contributed bounds
+
+    """
+
+    start_spread_ns: int
+    stop_spread_ns: int
+    num_sensors: int
+
+    #: One sensor is never out of step with itself, so there is nothing to spread.
+    MIN_SENSORS: ClassVar[int] = 2
+
+    @property
+    def is_defined(self) -> bool:
+        """True once at least two sensors contributed bounds to compare."""
+        return self.num_sensors >= self.MIN_SENSORS
+
+    @property
+    def max_spread_ns(self) -> int:
+        """The worse of the two spreads -- the one end of the rig furthest out of step."""
+        return max(self.start_spread_ns, self.stop_spread_ns)
+
+
+class MultiSensorSpreadMetric:
+    """Instrument for :class:`MultiSensorSpreadMeasurement`.
+
+    Takes bounds rather than timelines: ``update(start_ns=..., end_ns=...)`` once per
+    sensor. A sensor with no timestamps has no bounds to compare and is simply not
+    folded in, which is the caller's call to make -- an absent sensor is a different
+    finding from a late one, and belongs to whoever knows which sensors were expected.
+    """
+
+    def __init__(self) -> None:
+        """Initialize with no sensor folded in."""
+        self._bounds = _SensorBounds()
+
+    def update(self, *, start_ns: int, end_ns: int) -> None:
+        """Fold one sensor's recording bounds into the running state."""
+        self._bounds.add(start_ns, end_ns)
+
+    def measurement(self) -> MultiSensorSpreadMeasurement:
+        """Finalize the immutable spread measurement."""
+        extremes = self._bounds.extremes()
+        if extremes is None:
+            return MultiSensorSpreadMeasurement(start_spread_ns=0, stop_spread_ns=0, num_sensors=0)
+        min_start, max_start, min_stop, max_stop = extremes
+        return MultiSensorSpreadMeasurement(
+            start_spread_ns=max_start - min_start,
+            stop_spread_ns=max_stop - min_stop,
+            num_sensors=self._bounds.count,
+        )
+
+
+@attrs.define(frozen=True)
+class MultiSensorOverlapMeasurement:
+    """How much of a session every sensor was recording at once.
+
+    The effective duration is ``min(stops) - max(starts)`` clamped at zero -- the
+    window every sensor was up for -- and the total is ``max(stops) - min(starts)``,
+    the span from the first sensor starting to the last one stopping. The fraction is
+    their ratio.
+
+    Bounding intervals only, never inside them: an overlap of 1.0 says every sensor was
+    nominally recording throughout, not that any of them produced usable samples.
+
+    Attributes:
+        overlap_fraction: effective over total, or ``nan`` when undefined
+        non_overlap_fraction: ``1 - overlap_fraction``, or ``nan`` when undefined.
+            Carried rather than derived because it is the form policy judges: an
+            overlap has to clear a floor, and every threshold in this tool is a ceiling.
+        effective_duration_ns: the window every sensor was up for, clamped at zero
+        total_duration_ns: first start to last stop
+        num_sensors: how many sensors contributed bounds
+
+    """
+
+    overlap_fraction: float
+    non_overlap_fraction: float
+    effective_duration_ns: int
+    total_duration_ns: int
+    num_sensors: int
+
+    #: A single sensor trivially overlaps itself; there is no agreement to measure.
+    MIN_SENSORS: ClassVar[int] = 2
+
+    @property
+    def non_overlap_percent(self) -> float:
+        """:attr:`non_overlap_fraction` as a percentage, the form policy is stated in."""
+        return self.non_overlap_fraction * 100.0
+
+    @property
+    def is_defined(self) -> bool:
+        """True once at least two sensors span a positive total duration.
+
+        A non-positive total means there is nothing to divide by: either every sensor
+        shares the same instant, or their bounds are inconsistent enough that the last
+        stop precedes the first start. Both are undefined rather than zero -- a zero
+        overlap would read as a finding about the rig, when the truth is that the
+        question does not have an answer.
+        """
+        return self.num_sensors >= self.MIN_SENSORS and self.total_duration_ns > 0
+
+
+class MultiSensorOverlapMetric:
+    """Instrument for :class:`MultiSensorOverlapMeasurement`.
+
+    Takes bounds rather than timelines: ``update(start_ns=..., end_ns=...)`` once per
+    sensor, on the same terms as :class:`MultiSensorSpreadMetric`.
+    """
+
+    def __init__(self) -> None:
+        """Initialize with no sensor folded in."""
+        self._bounds = _SensorBounds()
+
+    def update(self, *, start_ns: int, end_ns: int) -> None:
+        """Fold one sensor's recording bounds into the running state."""
+        self._bounds.add(start_ns, end_ns)
+
+    def measurement(self) -> MultiSensorOverlapMeasurement:
+        """Finalize the immutable overlap measurement."""
+        extremes = self._bounds.extremes()
+        count = self._bounds.count
+        if extremes is None or count < MultiSensorOverlapMeasurement.MIN_SENSORS:
+            # Durations of zero rather than of one sensor's own span: with nothing to
+            # compare against, reporting its length would look like a measured overlap.
+            return MultiSensorOverlapMeasurement(
+                overlap_fraction=float("nan"),
+                non_overlap_fraction=float("nan"),
+                effective_duration_ns=0,
+                total_duration_ns=0,
+                num_sensors=count,
+            )
+        min_start, max_start, min_stop, max_stop = extremes
+        effective = max(min_stop - max_start, 0)
+        total = max_stop - min_start
+        if total <= 0:
+            # The durations stay on the row: they are what shows a reader whether this
+            # is one shared instant or a set of bounds that contradict each other.
+            return MultiSensorOverlapMeasurement(
+                overlap_fraction=float("nan"),
+                non_overlap_fraction=float("nan"),
+                effective_duration_ns=effective,
+                total_duration_ns=total,
+                num_sensors=count,
+            )
+        overlap = effective / total
+        return MultiSensorOverlapMeasurement(
+            overlap_fraction=overlap,
+            non_overlap_fraction=1.0 - overlap,
+            effective_duration_ns=effective,
+            total_duration_ns=total,
+            num_sensors=count,
+        )

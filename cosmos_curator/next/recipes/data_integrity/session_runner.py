@@ -20,8 +20,8 @@ the shared engine in :mod:`cosmos_curator.core.sensors.data_integrity.engine`,
 reached through :mod:`.sources`, which opens the source it is pointed at. This
 module adds only the session layer on top of them: :func:`run_session` discovers a
 session's streams, runs the shared engine on each, classifies open/decode failures
-as a per-stream ``ERROR``, and aggregates the results into a
-:class:`SessionReport`.
+as a per-stream ``ERROR``, judges the session as a whole with
+:func:`session_metrics`, and aggregates the results into a :class:`SessionReport`.
 
 :func:`run_one_stream` is the per-stream unit :func:`run_session` is built from --
 open one source, measure it, and turn a failure into that stream's ``ERROR`` rather
@@ -45,12 +45,14 @@ from loguru import logger
 
 from cosmos_curator.core.sensors.data_integrity.engine import (
     run_metrics,
+    run_session_metrics,
     validate_expected_hz,
     validate_non_negative_int,
     validate_positive_int,
 )
 from cosmos_curator.core.sensors.data_integrity.instruments import DEFAULT_THRESHOLDS, Thresholds
 from cosmos_curator.core.sensors.data_integrity.results import (
+    CheckResult,
     IntegritySensor,
     SessionReport,
     StreamResult,
@@ -347,6 +349,28 @@ def run_one_stream(  # noqa: PLR0913
         return stream_result(source, metrics, video_info, resolved_cfg)
 
 
+def session_metrics(streams: list[StreamResult], thresholds: Thresholds = DEFAULT_THRESHOLDS) -> list[CheckResult]:
+    """Judge one session as a whole, from the per-stream results already measured.
+
+    Free of I/O and of the engine's per-stream work: every session-grain metric reads
+    only each stream's recording bounds, which measuring the streams already produced.
+    Public alongside :func:`run_one_stream` for the same reason -- the Ray Data
+    pipeline measures a session's streams itself, and must reach the session's verdict
+    by the same path as the CLI rather than growing a second one.
+
+    A stream contributes bounds only if it has both. An errored stream has none, and
+    neither does one whose timeline came back empty, so both drop out here and the
+    session is judged on the sensors that did report. With fewer than two left, every
+    session metric comes back ``SKIPPED``.
+    """
+    bounds = [
+        (stream.start_ns, stream.end_ns)
+        for stream in streams
+        if stream.start_ns is not None and stream.end_ns is not None
+    ]
+    return run_session_metrics(bounds, thresholds=thresholds)
+
+
 def run_session(  # noqa: PLR0913
     session_path: str,
     *,
@@ -398,7 +422,8 @@ def run_session(  # noqa: PLR0913
             reader for download progress), for local paths as well as cloud URIs.
 
     Returns:
-        A :class:`SessionReport` with one :class:`StreamResult` per discovered stream.
+        A :class:`SessionReport` with one :class:`StreamResult` per discovered stream,
+        plus the session-grain verdicts over all of them (see :func:`session_metrics`).
 
     Raises:
         ValueError: if ``expected_hz``, ``batch_size``, ``limit``, or ``max_workers``
@@ -471,4 +496,4 @@ def run_session(  # noqa: PLR0913
         # report stays deterministic regardless of completion order.
         with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="di-stream") as pool:
             streams = list(pool.map(_check, work))
-    return SessionReport(session_path=session_path, streams=streams)
+    return SessionReport(session_path=session_path, streams=streams, metrics=session_metrics(streams, thresholds))

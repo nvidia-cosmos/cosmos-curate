@@ -15,6 +15,7 @@
 
 """Unit tests for the v1 data-integrity metrics."""
 
+import math
 import warnings
 
 import numpy as np
@@ -23,12 +24,22 @@ import pytest
 from cosmos_curator.core.sensors.data_integrity.metrics import (
     FrameReorderingPresentMetric,
     JitterMetric,
+    MultiSensorOverlapMeasurement,
+    MultiSensorOverlapMetric,
+    MultiSensorSpreadMeasurement,
+    MultiSensorSpreadMetric,
     RateMetric,
     TimestampGapMetric,
     TimestampOrderingMetric,
 )
 
 HZ_100_PERIOD_NS = 10_000_000  # one sample every 10 ms at 100 Hz
+
+# The two session-grain metrics share a shape but no base class, so the cases that
+# run against both are parametrized over this pair.
+type SessionMetric = type[MultiSensorSpreadMetric | MultiSensorOverlapMetric]
+type SessionMeasurement = MultiSensorSpreadMeasurement | MultiSensorOverlapMeasurement
+type Bounds = list[tuple[int, int]]
 
 
 def _ts(values: list[int]) -> np.ndarray:
@@ -728,10 +739,150 @@ def _jitter_measurement():  # noqa: ANN202
     return _jitter(_ts([0, 10_000_000, 20_000_000]), expected_hz=100.0)
 
 
+# --- MultiSensorSpreadMetric / MultiSensorOverlapMetric -----------------------
+
+
+def _spread(bounds: Bounds) -> MultiSensorSpreadMeasurement:
+    metric = MultiSensorSpreadMetric()
+    for start_ns, end_ns in bounds:
+        metric.update(start_ns=start_ns, end_ns=end_ns)
+    return metric.measurement()
+
+
+def _overlap(bounds: Bounds) -> MultiSensorOverlapMeasurement:
+    metric = MultiSensorOverlapMetric()
+    for start_ns, end_ns in bounds:
+        metric.update(start_ns=start_ns, end_ns=end_ns)
+    return metric.measurement()
+
+
+def test_spread_measures_each_end_of_the_rig_separately() -> None:
+    """Coming up together and shutting down together are different facts about a rig."""
+    m = _spread([(0, 1_000), (100, 1_000), (250, 1_400)])
+    assert m.start_spread_ns == 250
+    assert m.stop_spread_ns == 400
+    assert m.num_sensors == 3
+    assert m.max_spread_ns == 400
+    assert m.is_defined is True
+
+
+def test_a_rig_recording_in_lockstep_spreads_by_nothing() -> None:
+    """Identical bounds are the zero this metric is measured against."""
+    m = _spread([(500, 1_500), (500, 1_500)])
+    assert (m.start_spread_ns, m.stop_spread_ns, m.max_spread_ns) == (0, 0, 0)
+    assert m.is_defined is True
+
+
+@pytest.mark.parametrize("bounds", [[], [(0, 1_000)]])
+def test_one_sensor_is_never_out_of_step_with_itself(bounds: Bounds) -> None:
+    """Fewer than two sensors leaves nothing to compare, so the measurement is undefined."""
+    m = _spread(bounds)
+    assert m.is_defined is False
+    assert m.num_sensors == len(bounds)
+
+
+def test_overlap_is_the_window_every_sensor_was_up_for() -> None:
+    """Effective over total: one sensor late and another early cost the session both ends."""
+    m = _overlap([(0, 1_000), (250, 1_250)])
+    assert m.effective_duration_ns == 750  # 1000 - 250
+    assert m.total_duration_ns == 1_250  # 1250 - 0
+    assert m.overlap_fraction == pytest.approx(0.6)
+    assert m.non_overlap_fraction == pytest.approx(0.4)
+    assert m.non_overlap_percent == pytest.approx(40.0)
+    assert m.num_sensors == 2
+    assert m.is_defined is True
+
+
+def test_sensors_that_never_ran_together_overlap_by_zero() -> None:
+    """A latest start after the earliest stop is a real finding, not an undefined one."""
+    m = _overlap([(0, 1_000), (2_000, 3_000)])
+    assert m.effective_duration_ns == 0
+    assert m.total_duration_ns == 3_000
+    assert m.overlap_fraction == 0.0
+    assert m.non_overlap_fraction == 1.0
+    assert m.is_defined is True
+
+
+def test_a_session_of_one_shared_instant_has_no_ratio_to_report() -> None:
+    """A zero total span is undefined rather than a division by zero."""
+    m = _overlap([(500, 500), (500, 500)])
+    assert m.total_duration_ns == 0
+    assert math.isnan(m.overlap_fraction)
+    assert math.isnan(m.non_overlap_fraction)
+    assert m.is_defined is False
+
+
+def test_bounds_that_contradict_themselves_are_undefined_rather_than_negative() -> None:
+    """A stream whose last sample precedes its first would otherwise divide by a negative span.
+
+    Corrupt rather than unrepresentable, so the metric reports it instead of raising:
+    the per-stream ordering metric is what names the stream responsible.
+    """
+    m = _overlap([(1_000, 900), (1_100, 950)])
+    assert m.total_duration_ns == -50
+    assert math.isnan(m.overlap_fraction)
+    assert m.is_defined is False
+
+
+@pytest.mark.parametrize("bounds", [[], [(0, 1_000)]])
+def test_a_lone_sensor_overlaps_nothing_and_reports_no_duration(bounds: Bounds) -> None:
+    """Its own span must not read back as a measured overlap."""
+    m = _overlap(bounds)
+    assert m.is_defined is False
+    assert (m.effective_duration_ns, m.total_duration_ns) == (0, 0)
+    assert m.num_sensors == len(bounds)
+
+
+@pytest.mark.parametrize("metric_cls", [MultiSensorSpreadMetric, MultiSensorOverlapMetric])
+def test_the_order_sensors_are_folded_in_does_not_matter(metric_cls: SessionMetric) -> None:
+    """These are symmetric in their inputs, which is what lets a session feed them as streams finish."""
+    bounds: Bounds = [(300, 1_400), (0, 1_000), (150, 1_250)]
+
+    def measure(items: Bounds) -> SessionMeasurement:
+        metric = metric_cls()
+        for start_ns, end_ns in items:
+            metric.update(start_ns=start_ns, end_ns=end_ns)
+        return metric.measurement()
+
+    assert measure(bounds) == measure(list(reversed(bounds)))
+
+
+@pytest.mark.parametrize("metric_cls", [MultiSensorSpreadMetric, MultiSensorOverlapMetric])
+@pytest.mark.parametrize("bad", [1.5, "0", None, True, np.True_])
+def test_bounds_must_be_integer_nanoseconds(metric_cls: SessionMetric, bad: object) -> None:
+    """A bool is rejected too: an int subclass folded in as a timestamp would look plausible."""
+    with pytest.raises(TypeError):
+        metric_cls().update(start_ns=bad, end_ns=1_000)
+
+
+@pytest.mark.parametrize("metric_cls", [MultiSensorSpreadMetric, MultiSensorOverlapMetric])
+def test_bounds_outside_int64_are_rejected(metric_cls: SessionMetric) -> None:
+    """The store's column is int64; a bound that cannot land in one is caught at the boundary."""
+    with pytest.raises(ValueError, match="int64"):
+        metric_cls().update(start_ns=0, end_ns=2**63)
+
+
+@pytest.mark.parametrize("metric_cls", [MultiSensorSpreadMetric, MultiSensorOverlapMetric])
+def test_numpy_integer_bounds_are_accepted(metric_cls: SessionMetric) -> None:
+    """Bounds arrive from numpy timelines, so the int64 scalars they yield must fold in as they are."""
+    metric = metric_cls()
+    metric.update(start_ns=np.int64(0), end_ns=np.int64(1_000))
+    metric.update(start_ns=np.int64(100), end_ns=np.int64(1_100))
+    assert metric.measurement().num_sensors == 2
+
+
 def _bframes_measurement():  # noqa: ANN202
     metric = FrameReorderingPresentMetric()
     metric.update(has_reordering=True)
     return metric.measurement()
+
+
+def _spread_measurement() -> MultiSensorSpreadMeasurement:
+    return _spread([(0, 1_000), (100, 1_100)])
+
+
+def _overlap_measurement() -> MultiSensorOverlapMeasurement:
+    return _overlap([(0, 1_000), (100, 1_100)])
 
 
 @pytest.mark.parametrize(
@@ -742,6 +893,8 @@ def _bframes_measurement():  # noqa: ANN202
         (_gap_measurement, "max_gap_ns"),
         (_jitter_measurement, "jitter_percent"),
         (_bframes_measurement, "has_reordering"),
+        (_spread_measurement, "start_spread_ns"),
+        (_overlap_measurement, "overlap_fraction"),
     ],
 )
 def test_measurement_is_frozen(make_measurement, field) -> None:  # noqa: ANN001

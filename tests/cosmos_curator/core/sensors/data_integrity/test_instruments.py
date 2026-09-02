@@ -23,6 +23,7 @@ import pytest
 from cosmos_curator.core.sensors.data_integrity.instruments import (
     DEFAULT_THRESHOLDS,
     INSTRUMENTS,
+    SESSION_INSTRUMENTS,
     FieldKind,
     InstrumentSpec,
     Thresholds,
@@ -33,10 +34,15 @@ from cosmos_curator.core.sensors.data_integrity.metrics import (
     FrameReorderingPresentMeasurement,
     JitterMeasurement,
     Measurement,
+    MultiSensorOverlapMeasurement,
+    MultiSensorSpreadMeasurement,
     RateMeasurement,
     TimestampGapMeasurement,
     TimestampOrderingMeasurement,
 )
+
+#: Both registries, for the structural checks that hold of any spec whatever its grain.
+ALL_INSTRUMENTS = (*INSTRUMENTS, *SESSION_INSTRUMENTS)
 
 
 def _same_fields(left: Measurement, right: Measurement) -> bool:
@@ -107,13 +113,30 @@ _ROUND_TRIP_CASES: list[Measurement] = [
     ),
     FrameReorderingPresentMeasurement(has_reordering=True),
     FrameReorderingPresentMeasurement(has_reordering=None),
+    MultiSensorSpreadMeasurement(start_spread_ns=250, stop_spread_ns=400, num_sensors=3),
+    MultiSensorOverlapMeasurement(
+        overlap_fraction=0.6,
+        non_overlap_fraction=0.4,
+        effective_duration_ns=750,
+        total_duration_ns=1_250,
+        num_sensors=2,
+    ),
+    # Undefined: a session of one shared instant has no ratio, and the NaN saying so
+    # has to survive storage rather than reading back as a measured zero overlap.
+    MultiSensorOverlapMeasurement(
+        overlap_fraction=float("nan"),
+        non_overlap_fraction=float("nan"),
+        effective_duration_ns=0,
+        total_duration_ns=0,
+        num_sensors=2,
+    ),
 ]
 
 
 @pytest.mark.parametrize("measurement", _ROUND_TRIP_CASES, ids=lambda m: type(m).__name__)
 def test_row_round_trip_preserves_every_field(measurement: Measurement) -> None:
     """A measurement survives to_row / from_row unchanged, NaN and None included."""
-    spec = next(s for s in INSTRUMENTS if isinstance(measurement, s.measurement_cls))
+    spec = next(s for s in ALL_INSTRUMENTS if isinstance(measurement, s.measurement_cls))
     assert _same_fields(spec.from_row(spec.to_row(measurement)), measurement)
 
 
@@ -142,7 +165,7 @@ def test_from_row_ignores_columns_it_does_not_own() -> None:
     assert spec.from_row(row).has_reordering is False  # type: ignore[attr-defined]
 
 
-@pytest.mark.parametrize("spec", INSTRUMENTS, ids=lambda s: s.name)
+@pytest.mark.parametrize("spec", ALL_INSTRUMENTS, ids=lambda s: s.name)
 def test_declared_fields_match_the_measurement_class(spec: InstrumentSpec) -> None:
     """The registry's field list must not drift from the attrs class it describes.
 
@@ -155,7 +178,7 @@ def test_declared_fields_match_the_measurement_class(spec: InstrumentSpec) -> No
     assert declared == actual
 
 
-@pytest.mark.parametrize("spec", INSTRUMENTS, ids=lambda s: s.name)
+@pytest.mark.parametrize("spec", ALL_INSTRUMENTS, ids=lambda s: s.name)
 def test_nullable_declaration_matches_the_annotation(spec: InstrumentSpec) -> None:
     """A field declared non-nullable must not be an ``| None`` on the measurement."""
     annotations = {field.name: str(field.type) for field in attrs.fields(spec.measurement_cls)}
@@ -163,7 +186,7 @@ def test_nullable_declaration_matches_the_annotation(spec: InstrumentSpec) -> No
         assert field.nullable == ("None" in annotations[field.name]), field.name
 
 
-@pytest.mark.parametrize("spec", INSTRUMENTS, ids=lambda s: s.name)
+@pytest.mark.parametrize("spec", ALL_INSTRUMENTS, ids=lambda s: s.name)
 def test_threshold_reads_the_policy(spec: InstrumentSpec) -> None:
     """Every metric resolves a threshold out of a Thresholds without raising."""
     assert isinstance(spec.threshold(DEFAULT_THRESHOLDS), (int, float))
@@ -207,12 +230,23 @@ def test_unknown_metric_names_its_alternatives() -> None:
 
 
 def test_registry_is_indexed_consistently() -> None:
-    """Lookup by name returns the same spec objects the ordered registry holds."""
-    assert [instrument(spec.name) for spec in INSTRUMENTS] == list(INSTRUMENTS)
+    """Lookup by name returns the same spec objects the ordered registries hold, of either grain."""
+    assert [instrument(spec.name) for spec in ALL_INSTRUMENTS] == list(ALL_INSTRUMENTS)
+
+
+def test_the_manifest_versions_only_what_a_run_writes() -> None:
+    """Session metrics are measured but not yet stored, so claiming a version for them would overstate the store."""
     assert instrument_versions() == {spec.name: spec.version for spec in INSTRUMENTS}
+
+
+def test_the_two_grains_stay_in_separate_registries() -> None:
+    """Everything iterating INSTRUMENTS does so per stream, so a session spec in there measures a session per stream."""
+    assert not set(INSTRUMENTS) & set(SESSION_INSTRUMENTS)
+    names = [spec.name for spec in ALL_INSTRUMENTS]
+    assert len(names) == len(set(names)), "one lookup spans both registries, so a shared name would shadow a metric"
 
 
 def test_every_field_kind_maps_to_a_python_type() -> None:
     """A new FieldKind must be given storage meaning, not silently default to one."""
-    kinds = {field.kind for spec in INSTRUMENTS for field in spec.fields}
+    kinds = {field.kind for spec in ALL_INSTRUMENTS for field in spec.fields}
     assert kinds <= set(FieldKind)

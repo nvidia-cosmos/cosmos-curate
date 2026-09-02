@@ -324,15 +324,19 @@ class SessionReport:
     Attributes:
         session_path: the session path / prefix the streams were discovered under.
         streams: per-stream results, in discovery order.
+        metrics: session-grain results -- the checks whose subject is the session
+            rather than any one stream, such as whether its sensors were recording
+            over the same interval. Empty when nothing session-grain was run.
 
     """
 
     session_path: str
     streams: list[StreamResult]
+    metrics: list[CheckResult] = attrs.field(factory=list)
 
     @property
     def status(self) -> OverallStatus:
-        """Session verdict: ``ERROR`` if any stream errored, else ``FAIL`` if any failed, else ``PASS``.
+        """Session verdict: ``ERROR`` if any stream errored, else ``FAIL`` if anything failed, else ``PASS``.
 
         ``ERROR`` outranks ``FAIL`` because the two are different kinds of
         statement. A ``FAIL`` is a completed measurement judged against the
@@ -344,12 +348,18 @@ class SessionReport:
         alone. Both are still counted in the report, so neither is hidden. An
         empty session (nothing discovered) is ``ERROR`` for the same reason:
         nothing was measured.
+
+        A failing session-grain metric is a ``FAIL`` on the same terms as a failing
+        stream: it is a judged measurement, so it re-judges. It cannot raise the
+        verdict to ``ERROR``, because a session metric that could not be measured is
+        ``SKIPPED`` rather than errored -- an unmeasurable session is already an
+        ``ERROR`` by way of the streams that made it one.
         """
         if not self.streams:
             return OverallStatus.ERROR
         statuses = {s.status for s in self.streams}
         if OverallStatus.ERROR in statuses:
             return OverallStatus.ERROR
-        if OverallStatus.FAIL in statuses:
+        if OverallStatus.FAIL in statuses or any(check.status is CheckStatus.FAIL for check in self.metrics):
             return OverallStatus.FAIL
         return OverallStatus.PASS

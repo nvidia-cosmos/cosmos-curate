@@ -52,6 +52,10 @@ Nothing here is video-specific by design. The metric kernel only ever sees times
 GPS and lidar streams fit these same tables; `codec_name` and `has_bframes` are the only video-shaped columns, and
 they're nullable for exactly that reason.
 
+Three more tables are specified but not yet written: `session.lance`, `session_measurements/<metric>.lance` and
+`session_evaluation.lance`, for the metrics whose subject is a session rather than a stream. They are additive —
+everything in sections 1–4 keeps its shape — and section 5 is their spec.
+
 ### Append-only
 
 Tables are **append-only** — we never edit rows in place. A re-run or a re-judge adds rows; readers asking "what's
@@ -336,7 +340,111 @@ Join keys (distinct from the dedup keys in section 1 — these link tables, thos
 
 ---
 
-## 5. Putting it together — every possible state
+## 5. Session-grain — `session.lance` and session verdicts
+
+**Agreed, not built.** The two metrics below are implemented and `di-session` prints them and exits on them today,
+but nothing writes these three tables yet — so a stored run can read back `PASS` for a session the CLI exited `1`
+on. Closing that is [CVC-1244](https://jirasw.nvidia.com/browse/CVC-1244). This section is the spec it builds to.
+
+Sections 1–4 all assume the subject of a measurement is a stream. That was true of the first five metrics and stops
+being true here: **how far apart a rig's sensors started, and how much of the session they were all recording for,
+are facts about the session, not about any one camera in it.** There is no stream to hang such a row on — picking one
+would blame it for the others — and `stream_id` / `source` are `nullable=False` on both the measurement identity
+prefix and `evaluation.lance`, so there is nowhere to put one today.
+
+### `session.lance`
+
+One row per session per run. Dedup on `session_id` by `(created_at DESC, run_id DESC)`, the same rule
+`stream.lance` uses.
+
+| Column | Type | Null? | Meaning |
+|---|---|---|---|
+| `session_id` | `string` | no | the dedup key: hash of `locator_namespace` + normalized `session_path` |
+| `run_id` | `string` | no | one per invocation |
+| `created_at` | `timestamp[us, UTC]` | no | |
+| `session_path` | `string` | no | the session dir / prefix |
+| `locator_namespace` | `string` | no | `local` \| `s3` \| `az` |
+| `num_streams` | `int64` | no | how many streams the run found under it |
+| `num_unreadable` | `int64` | no | how many of those could not be opened |
+| `error` | `string` | yes | if set, the session itself could not be listed and has no streams and no measurements |
+
+`error` is the session-level analogue of `stream.error`, and it settles a question the pipeline review raised: a
+stale path in a thousand-path manifest gets a row saying so, rather than costing the run every measurement already
+taken. Until this table exists, the pipeline carries that as a run-level count instead.
+
+### `session_measurements/<metric>.lance`
+
+One dataset per session-grain metric, same reasoning as section 3 — typed columns, `NaN` distinct from `null`,
+`is_defined` with three states.
+
+The identity prefix is `MEASUREMENT_IDENTITY_FIELDS` with `session_id` where `stream_id` sits, and **no `source`**:
+
+| Column | Type | Null? | Meaning |
+|---|---|---|---|
+| `session_id` | `string` | no | the dedup key |
+| `run_id` | `string` | no | links back to `session.lance` |
+| `created_at` | `timestamp[us, UTC]` | no | |
+| `session_path` | `string` | no | for humans, in place of `source` |
+| `instrument_version` | `int32` | no | version of the code that measured this |
+| `is_defined` | `bool` | **yes — 3 states** | as in section 3 |
+
+...then the metric's own fields:
+
+| Table | Typed columns |
+|---|---|
+| `multi_sensor_spread.lance` | `start_spread_ns` `int64`, `stop_spread_ns` `int64`, `num_sensors` `int64` |
+| `multi_sensor_overlap.lance` | `overlap_fraction` `float64`, `non_overlap_fraction` `float64`, `effective_duration_ns` `int64`, `total_duration_ns` `int64`, `num_sensors` `int64` |
+
+`num_sensors` is on both because it is what makes an undefined row legible: a session of one camera has nothing to
+compare, and the count is the whole explanation.
+
+### `session_evaluation.lance`
+
+One row per `policy_id` × `session_id` × `metric_name`, mirroring `evaluation.lance` column for column with
+`session_id` in place of `stream_id` and `session_path` in place of `source`. Everything section 4 says about it
+holds unchanged: one verdict column, `margin` / `threshold` `null` on a `SKIPPED` row, `measurement_run_id`
+separate from `run_id` so a re-judge is distinguishable from an original verdict.
+
+### The two session metrics
+
+| `metric_name` | What gets judged | Type | Default threshold |
+|---|---|---|---|
+| `multi_sensor_spread` | `max(start_spread_ns, stop_spread_ns)` | int | 1_000_000_000 — **a placeholder**, see below |
+| `multi_sensor_overlap` | `non_overlap_percent` | float | 5.0 |
+
+Overlap is judged through its complement because a spec can only ask for a value to stay *below* a limit, and an
+overlap is the one quantity here a session wants more of.
+
+The spread default is the one number in the tool with no first-principles basis. Every other default is a real limit
+(zero backward steps, zero gaps); a perfectly synchronised rig spreads by `0`, but no real rig does, so `0` would
+fail everything. One second is a placeholder. For scale, one internal 12-camera session measured 133 ms of spread
+and 1.3% non-overlap on its capture clock, so the default is roughly 7× the observed skew — the right order of
+magnitude, and loose enough that it would catch only gross failures.
+
+### Three tables rather than one
+
+A single `session.lance` carrying the verdict inline is the obvious smaller option, and it is wrong for the same
+reason section 3 and section 4 are separate: it fuses facts with judgements. Measurements are the expensive,
+never-rebuild half; verdicts are cheap and policy-dependent, and re-judging under new thresholds has to be able to
+write a second generation of them without touching what was measured. That is what `reevaluate` exists to do, and a
+verdict welded onto the session row cannot participate.
+
+The other alternative is **widening the existing tables** — make `stream_id` and `source` nullable, add
+`session_id`, and let one measurement table hold rows of both grains. That is fewer datasets, and it means one
+reader gets both. It loses more than it saves:
+
+- Every existing reader has to learn to ask which grain a row is, and `nullable=False` on `stream_id` is currently
+  what guarantees it does not have to.
+- The two grains have different dedup keys, so one table would carry two rules for picking the newest row.
+- A metric's dataset is named after the metric, so a widened table would still be one dataset per metric — the
+  saving is in the *identity prefix*, not in the number of datasets.
+
+Additive parallel tables leave every reader in sections 1–4 untouched: nothing that exists today changes shape, and
+a reader that does not care about sessions never learns these tables exist.
+
+---
+
+## 6. Putting it together — every possible state
 
 | Situation | `stream.error` | `is_defined` | metric columns | `check_status` | `margin` / `threshold` |
 |---|---|---|---|---|---|
@@ -354,7 +462,7 @@ That last row is why `stream.lance` exists.
 
 ---
 
-## 6. Telling if a saved measurement is out of date
+## 7. Telling if a saved measurement is out of date
 
 Three independent signals, covering the three ways a saved fact can stop being true:
 
@@ -371,7 +479,7 @@ signal: any unrelated change in the repo would mark everything stale.
 
 ---
 
-## 7. Example
+## 8. Example
 
 One session, three streams: a good one, one with a single frame and no known rate, and a corrupt one.
 
@@ -422,7 +530,7 @@ untouched — both verdicts coexist.
 
 ---
 
-## 8. One note on where the code lives
+## 9. One note on where the code lives
 
 The store lives at `cosmos_curator/next/recipes/data_integrity/`, alongside the CLIs that write it. It began under
 `core/sensors/data_integrity/` because both CLIs did, and a CI test forbids anything under `core/sensors/` from
@@ -450,16 +558,14 @@ undo.
 
 ---
 
-## 9. Open questions
+## 10. Open questions
 
 1. **Append-only vs overwrite.** Proposed append-only (keeps history, makes multiple verdict generations natural),
    but `split_comparison` overwrites, and append means readers must de-duplicate on the keys in section 1. Worth it?
 2. **`policy_id`.** Proposed: a hash of the threshold values, so identical policies collide on purpose. Should a
    human-readable label be required instead of optional?
-3. **Does `session.lance` belong in v1?** Deferred here because a session row would carry only `session_path`,
-   `locator_namespace`, `created_at` and `run_id` — all already on stream rows — so it would be normalization with
-   nothing yet to normalize, in exchange for a join on every read. The columns are in place for it to become a pure
-   projection when sessions gain real attributes of their own (rig calibration, vehicle, drive metadata).
+3. ~~**Does `session.lance` belong in v1?**~~ **Settled — see section 5.** It was deferred while a session row
+   would have carried nothing of its own; multi-sensor metrics gave it something to carry.
 4. **`measurements/` subdirectory, or metric datasets flat at the store root?** Nesting keeps the root readable at
    twenty metrics; flat is one less path to construct.
 5. **One store per session, or one shared store for many?** The schema handles both. We should just agree a

@@ -264,12 +264,13 @@ def available_cpu_count() -> int:
 
 
 def add_threshold_args(parser: argparse.ArgumentParser) -> None:
-    """Add the pass/fail policy flags, one per :class:`Thresholds` field.
+    """Add the pass/fail policy flags for the per-stream metrics, one per field.
 
     Shared by both CLIs so a policy flag never means two different things, and so
     adding a threshold is a change in one place. Defaults come from
     :data:`DEFAULT_THRESHOLDS` rather than being repeated as literals, keeping the
-    help text honest if a default is ever retuned.
+    help text honest if a default is ever retuned. The session-grain limits are in
+    :func:`add_session_threshold_args`, which only the session CLI adds.
     """
     group = parser.add_argument_group(
         "thresholds",
@@ -319,12 +320,53 @@ def add_threshold_args(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def add_session_threshold_args(parser: argparse.ArgumentParser) -> None:
+    """Add the policy flags for the metrics whose subject is a session.
+
+    Separate from :func:`add_threshold_args`, and added only by the CLI that measures a
+    session: a single-video run never compares two sensors, so offering it these limits
+    would be offering it a knob that cannot turn anything.
+    """
+    group = parser.add_argument_group(
+        "session thresholds",
+        "Pass/fail policy for the checks that compare a session's sensors to each other.",
+    )
+    group.add_argument(
+        "--max-sensor-spread-ns",
+        type=non_negative_int,
+        default=DEFAULT_THRESHOLDS.max_sensor_spread_ns,
+        metavar="NS",
+        help=(
+            "Spread tolerated between the session's sensors starting, or stopping, whichever is worse, "
+            f"in nanoseconds (default: {DEFAULT_THRESHOLDS.max_sensor_spread_ns}). Unlike the limits above "
+            "this default is a placeholder rather than a first-principles limit."
+        ),
+    )
+    group.add_argument(
+        "--max-non-overlap-percent",
+        type=non_negative_finite_float,
+        default=DEFAULT_THRESHOLDS.max_non_overlap_percent,
+        metavar="PCT",
+        help=(
+            "Share of the session tolerated during which some sensor was not recording, in percent "
+            f"(default: {DEFAULT_THRESHOLDS.max_non_overlap_percent}). Stated as the complement of the "
+            "overlap because every threshold here is a ceiling."
+        ),
+    )
+
+
 def thresholds_from_args(args: argparse.Namespace) -> Thresholds:
-    """Build a :class:`Thresholds` from a namespace populated by :func:`add_threshold_args`."""
+    """Build a :class:`Thresholds` from a namespace populated by the threshold flags.
+
+    The session limits fall back to their defaults when the parser did not offer them,
+    so a CLI that adds only :func:`add_threshold_args` still gets a whole policy.
+    """
     return Thresholds(
         max_strict_violations=args.max_strict_violations,
         max_rate_deviation_percent=args.max_rate_deviation_percent,
         max_gaps=args.max_gaps,
         max_jitter_percent=args.max_jitter_percent,
         allow_frame_reordering=args.allow_frame_reordering,
+        max_sensor_spread_ns=getattr(args, "max_sensor_spread_ns", DEFAULT_THRESHOLDS.max_sensor_spread_ns),
+        max_non_overlap_percent=getattr(args, "max_non_overlap_percent", DEFAULT_THRESHOLDS.max_non_overlap_percent),
     )

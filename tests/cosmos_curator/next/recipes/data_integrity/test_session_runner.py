@@ -43,6 +43,7 @@ from cosmos_curator.next.recipes.data_integrity.session_runner import (
     is_infrastructure_error,
     run_session,
     run_stream,
+    session_metrics,
 )
 
 HZ_100_PERIOD_NS = 10_000_000  # one sample every 10 ms at 100 Hz
@@ -193,6 +194,80 @@ def test_run_session_aggregates_streams(monkeypatch: pytest.MonkeyPatch) -> None
     assert report.session_path == "sess"
     assert [s.source for s in report.streams] == ["x", "y"]
     assert report.status is OverallStatus.FAIL
+
+
+def test_run_session_judges_the_session_as_well_as_its_streams(
+    tmp_path: pathlib.Path,
+    h264_video: Callable[..., bytes],
+) -> None:
+    """A session whose sensors stopped at different times fails on the session's own verdict.
+
+    Real files rather than canned results: the bounds a session metric folds are read
+    off each decode, so a fake would be measuring the fake.
+    """
+    (tmp_path / "front.mp4").write_bytes(h264_video(frames=30))
+    (tmp_path / "rear.mp4").write_bytes(h264_video(frames=15))
+
+    report = run_session(str(tmp_path), expected_hz=30.0)
+
+    assert {s.status for s in report.streams} == {OverallStatus.PASS}, "each stream is fine on its own"
+    overlap = next(m for m in report.metrics if m.name == "multi_sensor_overlap")
+    assert overlap.status is CheckStatus.FAIL
+    assert report.status is OverallStatus.FAIL, "a session verdict has to be able to fail a passing set of streams"
+
+
+def test_session_metrics_are_skipped_for_a_session_of_one_stream(
+    tmp_path: pathlib.Path,
+    h264_video: Callable[..., bytes],
+) -> None:
+    """The common case for a single-camera clip, and it must not read as agreement."""
+    (tmp_path / "only.mp4").write_bytes(h264_video())
+
+    report = run_session(str(tmp_path), expected_hz=30.0)
+
+    assert {m.status for m in report.metrics} == {CheckStatus.SKIPPED}
+    assert report.status is OverallStatus.PASS, "a skipped session metric is not a finding"
+
+
+def test_only_streams_with_bounds_are_folded_into_the_sessions_verdict() -> None:
+    """An errored stream has no bounds, so the session is judged on the sensors that reported.
+
+    The stream's own ERROR already outranks the session verdict, so what this pins is
+    that the error does not corrupt the measurement of everything alongside it.
+    """
+    aligned = [_canned("x", CheckStatus.PASS), _canned("y", CheckStatus.PASS)]
+    errored = StreamResult(
+        source="z",
+        codec_name=None,
+        has_bframes=None,
+        num_samples=None,
+        start_ns=None,
+        end_ns=None,
+        metrics=[],
+        error="moov atom not found",
+    )
+
+    assert session_metrics(aligned) == session_metrics([*aligned, errored])
+
+
+def test_a_session_of_one_readable_stream_has_nothing_to_compare() -> None:
+    """Two streams, one unreadable, leaves one set of bounds -- which is not a session measurement."""
+    metrics = session_metrics(
+        [
+            _canned("x", CheckStatus.PASS),
+            StreamResult(
+                source="y",
+                codec_name=None,
+                has_bframes=None,
+                num_samples=None,
+                start_ns=None,
+                end_ns=None,
+                metrics=[],
+                error="moov atom not found",
+            ),
+        ]
+    )
+    assert {m.status for m in metrics} == {CheckStatus.SKIPPED}
 
 
 def test_run_session_captures_open_errors(tmp_path: pathlib.Path) -> None:

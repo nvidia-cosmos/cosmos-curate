@@ -331,7 +331,13 @@ not a different record.
 
 The Lance schema stays per-stream, so nothing about the store anticipates those checks yet —
 a session-grain verdict has no row to live on today. Aligning the unit of work now is what
-keeps that a schema change rather than a rewrite.
+keeps that a schema change rather than a rewrite; the tables it needs are specified in
+[data-integrity-store-schema.md][store-schema] section 5, pending [CVC-1244][cvc1244].
+
+Two session-grain metrics now exist, and `di-session` reports and exits on them, but this
+pipeline does not compute them: with nowhere to write one, a task that measured a session
+would throw the answer away. So the two tools can disagree about a session until the tables
+land — the CLI can fail one the pipeline records as passing.
 
 Within a session the kernel's requirement is unchanged: each stream is read once, through
 `run_checks`, which takes exactly one URI, and folded into every instrument.
@@ -772,9 +778,9 @@ Granularity](#work-granularity).
 
 **Session-grain store rows to match.** A `session.lance` table, and verdicts that hang off a
 session rather than a stream, is what a cross-sensor check ultimately needs. Deferred rather
-than rejected: nothing measured today produces a session-grain verdict, so the table would
-have no rows to hold. Aligning the unit of work first is what keeps it an additive schema
-change.
+than rejected, and since specified: aligning the unit of work first is what kept it an
+additive schema change, and the three tables it adds are now written down in
+[data-integrity-store-schema.md][store-schema] section 5, pending [CVC-1244][cvc1244].
 
 **Reuse `session_runner.run_session` inside a Ray task.** Attractive because it is the
 existing single-session orchestrator. Rejected for what surrounds the loop rather than the
@@ -923,3 +929,4 @@ The first implementation is complete when:
 
 [mr1104]: https://gitlab-master.nvidia.com/aidot/cosmos-curator-public/cosmos-curator/-/merge_requests/1104
 [cvc1244]: https://jirasw.nvidia.com/browse/CVC-1244
+[store-schema]: data-integrity-store-schema.md

@@ -25,6 +25,7 @@ machine-readable one via :func:`report_to_dict` / :func:`to_json`.
 import json
 
 from cosmos_curator.core.sensors.data_integrity.results import (
+    CheckResult,
     OverallStatus,
     SessionReport,
     StreamResult,
@@ -38,6 +39,19 @@ def _count_by_status(streams: list[StreamResult]) -> dict[str, int]:
     return counts
 
 
+def _metrics_to_dicts(metrics: list[CheckResult]) -> list[dict[str, object]]:
+    return [
+        {
+            "name": metric.name,
+            "status": metric.status.value,
+            "reason": metric.reason,
+            "measurement": metric.measurement,
+            "evaluation": metric.evaluation,
+        }
+        for metric in metrics
+    ]
+
+
 def report_to_dict(report: SessionReport) -> dict[str, object]:
     """Convert a :class:`SessionReport` to a plain JSON-serializable dict."""
     return {
@@ -45,6 +59,9 @@ def report_to_dict(report: SessionReport) -> dict[str, object]:
         "status": report.status.value,
         "num_streams": len(report.streams),
         "stream_status_counts": _count_by_status(report.streams),
+        # Beside the streams rather than inside them: these judge the session, and a
+        # consumer that walks "streams" must not see them as one stream's verdict.
+        "metrics": _metrics_to_dicts(report.metrics),
         "streams": [
             {
                 "source": stream.source,
@@ -59,16 +76,7 @@ def report_to_dict(report: SessionReport) -> dict[str, object]:
                     stream.expected_hz_source.value if stream.expected_hz_source is not None else None
                 ),
                 "error": stream.error,
-                "metrics": [
-                    {
-                        "name": metric.name,
-                        "status": metric.status.value,
-                        "reason": metric.reason,
-                        "measurement": metric.measurement,
-                        "evaluation": metric.evaluation,
-                    }
-                    for metric in stream.metrics
-                ],
+                "metrics": _metrics_to_dicts(stream.metrics),
             }
             for stream in report.streams
         ],
@@ -117,6 +125,12 @@ def render_text(report: SessionReport) -> str:
     lines.append(
         f"  streams: {len(report.streams)}   "
         + "   ".join(f"{name.lower()}: {counts[name]}" for name in (s.value for s in OverallStatus))
+    )
+    # Under the session heading, in the same columns the per-stream metrics use, so the
+    # two read alike -- what differs is only which line they sit beneath.
+    lines.extend(
+        f"  {metric.name:<{_METRIC_NAME_WIDTH}}{metric.status.value:<{_METRIC_STATUS_WIDTH}}{metric.reason}"
+        for metric in report.metrics
     )
     lines.append(f"Session overall: {report.status.value}")
     return "\n".join(lines)

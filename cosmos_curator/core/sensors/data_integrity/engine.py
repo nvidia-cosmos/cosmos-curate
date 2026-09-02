@@ -13,13 +13,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Per-stream engine for the data-integrity metrics: run them all and judge them.
+"""Engine for the data-integrity metrics: run them all and judge them.
 
-This is the single source of truth for *running every data-integrity metric
-against one open sensor and evaluating the results*. What it adds on top of the
-metric kernel (:mod:`.metrics` / :mod:`.evaluation`) is the running: streaming a
-sensor's timeline into every metric and resolving the effective expected rate
-(:func:`resolve_expected_hz`).
+This is the single source of truth for *running every data-integrity metric against
+its subject and evaluating the results*. What it adds on top of the metric kernel
+(:mod:`.metrics` / :mod:`.evaluation`) is the running: :func:`run_metrics` streams one
+open sensor's timeline into every per-stream metric and resolves the effective
+expected rate (:func:`resolve_expected_hz`), while :func:`run_session_metrics` folds a
+session's sensor bounds into every session-grain metric.
 
 Everything here is pure compute over an already-open sensor. There is no I/O, no
 URI handling and no argparse: opening a source is the caller's job, which is what
@@ -35,6 +36,7 @@ aggregation live with the callers.
 
 import math
 import time
+from collections.abc import Iterable
 from typing import Protocol
 
 from cosmos_curator.core.sensors.data_integrity.instruments import (
@@ -45,6 +47,9 @@ from cosmos_curator.core.sensors.data_integrity.instruments import (
     NAME_ORDERING,
     NAME_RATE,
     NAME_REORDERING,
+    NAME_SENSOR_OVERLAP,
+    NAME_SENSOR_SPREAD,
+    SESSION_INSTRUMENTS,
     Thresholds,
     evaluate_metric,
 )
@@ -52,6 +57,8 @@ from cosmos_curator.core.sensors.data_integrity.metrics import (
     FrameReorderingPresentMetric,
     JitterMetric,
     Measurement,
+    MultiSensorOverlapMetric,
+    MultiSensorSpreadMetric,
     RateMetric,
     TimestampGapMetric,
     TimestampOrderingMetric,
@@ -244,3 +251,47 @@ def run_metrics(
     if stats is not None:
         stats["evaluate_ms"] = (time.perf_counter() - t0) * 1000
     return results, video_info(sensor), resolved_cfg
+
+
+def run_session_metrics(
+    bounds: Iterable[tuple[int, int]],
+    *,
+    thresholds: Thresholds = DEFAULT_THRESHOLDS,
+) -> list[CheckResult]:
+    """Run every session-grain metric over one session's sensor bounds and evaluate them.
+
+    The counterpart of :func:`run_metrics` for the metrics whose subject is a session
+    rather than a stream. It takes the bounds and nothing else -- no sensors, no
+    sources, no session path -- because that is all these metrics read, and taking less
+    keeps a caller free to feed bounds it has already collected (a session runner
+    holding finished per-stream results) rather than sensors it would have to reopen.
+
+    A sensor that produced no timestamps has no bounds and is the caller's to leave
+    out: an absent sensor is a different finding from a late one, and only the caller
+    knows which sensors it expected. With fewer than two bounds every session metric
+    reports ``SKIPPED``, having nothing to compare.
+
+    Args:
+        bounds: ``(start_ns, end_ns)`` per sensor, in any order -- these metrics are
+            symmetric in their inputs.
+        thresholds: pass/fail policy (see :class:`Thresholds`).
+
+    Returns:
+        One :class:`CheckResult` per session metric, in registry order.
+
+    Raises:
+        TypeError: if a bound is not an integer.
+        ValueError: if a bound is outside int64 nanoseconds.
+
+    """
+    spread = MultiSensorSpreadMetric()
+    overlap = MultiSensorOverlapMetric()
+    for start_ns, end_ns in bounds:
+        spread.update(start_ns=start_ns, end_ns=end_ns)
+        overlap.update(start_ns=start_ns, end_ns=end_ns)
+
+    built: dict[str, _MetricInstrument] = {
+        NAME_SENSOR_SPREAD: spread,
+        NAME_SENSOR_OVERLAP: overlap,
+    }
+    return [evaluate_metric(spec, built[spec.name].measurement(), thresholds) for spec in SESSION_INSTRUMENTS]
