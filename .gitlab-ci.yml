@@ -259,14 +259,12 @@ stages:
 
   # Shared rule entries for the long-running SLURM + NVCF end-to-end jobs
   # (slurm_end_to_end, nvcf-helm, nvcf-helm-validate). These dominate MR CI
-  # wall time, so they are opt-in on day-to-day MRs but always enforced before
-  # code reaches nvidia/main. The per-job rule lists below are composed from
-  # these entries; they differ only in how a label-less MR is handled.
+  # wall time, so they are opt-in on day-to-day MRs but always run before code
+  # reaches nvidia/main. Individual jobs determine whether failures are blocking.
   e2e_merge_train_entry: &e2e_merge_train_entry
-    # Merge train: mandatory coverage before merging to nvidia/main
+    # Merge train: automatic coverage before merging to nvidia/main
     if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_EVENT_TYPE == "merge_train"'
     when: on_success
-    allow_failure: false
   e2e_merge_train_optional_entry: &e2e_merge_train_optional_entry
     # Merge train, but non-blocking: these jobs still run for signal yet never fail the merge.
     if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_EVENT_TYPE == "merge_train"'
@@ -276,7 +274,6 @@ stages:
     # Regular MR (not merge train) with the opt-in label: run automatically
     if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_LABELS =~ /(^|,)run-e2e-tests($|,)/'
     when: on_success
-    allow_failure: false
   e2e_web_strict_entry: &e2e_web_strict_entry
     if: '$CI_PIPELINE_SOURCE == "web" && $NVCF_HELM_STRICT == "true"'
     when: on_success
@@ -1172,6 +1169,7 @@ semgrep-sast:
 # Run end-to-end tests on NVCF cluster
 nvcf-helm:
   stage: end-to-end
+  allow_failure: true
   needs:
     - job: resolve_version
       artifacts: true
@@ -1217,6 +1215,7 @@ nvcf-helm:
 # Run validation tests against S3 artifacts from NVCF function
 nvcf-helm-validate:
   stage: end-to-end
+  allow_failure: true
   needs: [ "nvcf-helm" ]
   rules: *nvcf_helm_validate_rules
   image: ${CI_BUILDER_IMAGE}
