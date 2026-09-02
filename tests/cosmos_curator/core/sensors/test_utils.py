@@ -116,7 +116,7 @@ def protobuf_message_class(
     return cast("type[Message]", message_factory.GetMessageClass(pool.FindMessageTypeByName(message_name)))
 
 
-def write_protobuf_mcap(  # noqa: PLR0913
+def write_protobuf_mcap(
     path: Path,
     samples: list[McapSample],
     *,

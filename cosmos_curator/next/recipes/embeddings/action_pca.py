@@ -82,13 +82,14 @@ from cosmos_curator.next.embeddings.action.embedder import (
 from cosmos_curator.next.embeddings.action.pca import PcaArtifact, PcaArtifactStore, fit_action_pca
 from cosmos_curator.next.embeddings.action.wrist_motion import DESCRIPTOR_DIM, DESCRIPTOR_VERSION
 from cosmos_curator.next.embeddings.schemas import ACTION_COLUMN_GROUP, ACTION_DIM
-from cosmos_curator.next.recipes.embeddings.columns import count_filled, distinct_non_null_values, scan_column
+from cosmos_curator.next.recipes.embeddings.columns import count_filled, scan_column
 from cosmos_curator.next.recipes.embeddings.config import EmbeddingPipelineConfig
 from cosmos_curator.next.recipes.embeddings.modalities import (
     ACTION_APPLICABILITY_FILTER,
     ModalityResult,
     WorkerResources,
 )
+from cosmos_curator.next.utils.lance_utils import distinct_non_null_values
 
 # The action group's two provenance columns, unpacked once by position from the
 # column-group definition so their order is asserted at import (a reordering there

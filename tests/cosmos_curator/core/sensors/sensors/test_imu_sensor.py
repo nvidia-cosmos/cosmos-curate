@@ -199,7 +199,7 @@ def _vendor_imu_payload(*, turnrate: tuple[float, ...] = (0.1, 0.2, 0.3)) -> byt
     return message.SerializeToString()
 
 
-def _customer_imu_payload(  # noqa: PLR0913
+def _customer_imu_payload(
     *,
     sensor_timestamp_ns: int,
     host_timestamp_ns: int,
@@ -240,7 +240,7 @@ def _sample(sensor_timestamp_ns: int, sequence_counter: int) -> McapSample:
     )
 
 
-def _write_customer_imu_mcap(  # noqa: PLR0913
+def _write_customer_imu_mcap(
     path: Path,
     samples: list[McapSample],
     *,

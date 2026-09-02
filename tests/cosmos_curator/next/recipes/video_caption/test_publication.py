@@ -40,7 +40,7 @@ def _workspace(tmp_path: Path) -> CaptionWorkspace:
     )
 
 
-def _setup_attempt(  # noqa: PLR0913 -- integration fixture inputs stay explicit
+def _setup_attempt(  # integration fixture inputs stay explicit
     tmp_path: Path,
     factory: Callable[..., tuple[str, lance.LanceDataset]],
     spec: CaptionModelSpec,
@@ -91,7 +91,7 @@ def _run_publication_workers_in_process(
     if request.node.get_closest_marker("env") is not None:
         return
 
-    def prepare_one(  # noqa: PLR0913 -- mirrors the explicit worker boundary
+    def prepare_one(  # mirrors the explicit worker boundary
         fragment_id: int,
         *,
         uri: str,
@@ -124,7 +124,7 @@ def _run_publication_workers_in_process(
             expected=result_schema(spec),
         )
 
-    def prepare_all(  # noqa: PLR0913 -- mirrors the explicit Ray plan boundary
+    def prepare_all(  # mirrors the explicit Ray plan boundary
         files: tuple[str, ...],
         *,
         uri: str,
@@ -153,7 +153,7 @@ def _run_publication_workers_in_process(
     ) -> Iterator[PreparedFragmentPublication]:
         yield from prepared
 
-    def reprepare(  # noqa: PLR0913 -- mirrors the explicit retry task boundary
+    def reprepare(  # mirrors the explicit retry task boundary
         fragment_id: int,
         *,
         uri: str,
@@ -490,7 +490,7 @@ def test_stale_descriptor_is_discarded_and_restaged_after_a_disjoint_commit_race
 
 
 @pytest.mark.parametrize("commit_attempts", [1, 3])
-def test_ambiguous_commit_response_is_resolved_from_canonical_state(  # noqa: PLR0913 -- integration inputs
+def test_ambiguous_commit_response_is_resolved_from_canonical_state(  # integration inputs
     tmp_path: Path,
     clip_dataset_factory: Callable[..., tuple[str, lance.LanceDataset]],
     caption_spec: CaptionModelSpec,

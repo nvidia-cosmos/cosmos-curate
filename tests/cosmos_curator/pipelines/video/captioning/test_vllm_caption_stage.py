@@ -332,7 +332,7 @@ def test_free_vllm_inputs_clears_inputs_and_optionally_mp4(*, keep_mp4: bool) ->
 @pytest.mark.parametrize("model_variant", VALID_VARIANTS)
 @patch("cosmos_curator.pipelines.video.captioning.vllm_caption_stage.windowing_utils.make_windows_for_video")
 @patch("cosmos_curator.pipelines.video.captioning.vllm_caption_stage.make_model_inputs")
-def test_prep_windows_model_input_assignment(  # noqa: PLR0913
+def test_prep_windows_model_input_assignment(
     mock_make_model_inputs: MagicMock,
     mock_make_windows: MagicMock,
     model_variant: str,

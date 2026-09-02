@@ -460,7 +460,7 @@ def _validate_generation(
     assert decoded_text, f"vLLM engine returned an empty caption (finish_reason={generation.finish_reason!r})"
 
 
-def run_sensor_aligned_episode_captioning(  # noqa: PLR0913 - explicit probe inputs keep local runs reproducible
+def run_sensor_aligned_episode_captioning(
     episode_input: SensorEpisodeInput,
     artifact_dir: Path,
     *,

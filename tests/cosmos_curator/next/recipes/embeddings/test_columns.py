@@ -23,8 +23,12 @@ file because they share the same fixture shape:
   back out (``drop_embedding_group``), each a single metadata commit;
 - STATE: the at-most-one-producer and staleness rules
   (``validate_embedding_group``);
-- READ: the pending predicate (``pending_filter``), the filled count, the bounded
-  distinct-value read, and the one-column stream.
+- READ: the pending predicate (``pending_filter``), the filled count, and the
+  one-column stream.
+
+The bounded distinct-value read those state rules are built on belongs to
+``lance_utils`` and is covered by that module's own suite, because the curation
+leg reads the same columns through it.
 
 The pending predicate is asserted by COUNTING the rows it matches against a real
 table rather than by comparing SQL text, so a rewrite that preserves the meaning
@@ -50,7 +54,6 @@ from cosmos_curator.next.embeddings.schemas import (
 )
 from cosmos_curator.next.recipes.embeddings.columns import (
     count_filled,
-    distinct_non_null_values,
     drop_embedding_group,
     ensure_embedding_columns,
     pending_filter,
@@ -61,10 +64,6 @@ from cosmos_curator.next.recipes.embeddings.modalities import _IMAGE_APPLICABILI
 from cosmos_curator.next.utils.lance_utils import LANCE_DATA_STORAGE_VERSION
 
 from .conftest import CLIPS_BASE_SCHEMA, ClipsTableFactory, add_group_columns
-
-# Distinct producer identities a validation read is allowed to surface: one is the
-# legal state, and the second only exists so "more than one" is distinguishable.
-_PRODUCERS_INSPECTED = 2
 
 
 def _fixed_size_list(values: Sequence[list[float] | None], dim: int) -> pa.Array:
@@ -77,7 +76,7 @@ def _vector(seed: int, dim: int) -> list[float]:
     return [float(seed)] * dim
 
 
-def _write_clips_dataset(  # noqa: PLR0913 -- a test data builder; each group is one optional block of per-row values
+def _write_clips_dataset(
     tmp_path: pathlib.Path,
     *,
     rows: int,
@@ -414,108 +413,6 @@ def test_validate_multiple_producers_fails(tmp_path: pathlib.Path) -> None:
     )
     with pytest.raises(ValueError, match="multiple producers"):
         validate_embedding_group(lance.dataset(uri), IMAGE_COLUMN_GROUP, expected_provenance=None)
-
-
-def test_distinct_non_null_values_returns_single_fingerprint(tmp_path: pathlib.Path) -> None:
-    """The single surviving action fingerprint is read back for the basis-load path."""
-    rows = 3
-    uri = _write_clips_dataset(
-        tmp_path,
-        rows=rows,
-        action={
-            "action": [_vector(i, ACTION_DIM) for i in range(rows)],
-            "descriptor_version": ["v1"] * rows,
-            "fingerprint": ["fp-abc"] * rows,
-        },
-    )
-    values = distinct_non_null_values(
-        lance.dataset(uri), "embedding_action_pca_fingerprint", max_values=_PRODUCERS_INSPECTED
-    )
-    assert values == ("fp-abc",)
-
-
-def test_distinct_non_null_values_detects_a_producer_confined_to_the_final_row(tmp_path: pathlib.Path) -> None:
-    """A second producer present in only the last row is still surfaced.
-
-    This is the case that separates a bounded read from a truncated one: every
-    fragment but the last carries a single identity, so the answer is only settled
-    once the whole column has been considered. Stopping early here would hide
-    exactly the two-checkpoint corruption validation exists to catch.
-    """
-    rows = 32
-    uri = _write_clips_dataset(
-        tmp_path,
-        rows=rows,
-        action={
-            "action": [_vector(i, ACTION_DIM) for i in range(rows)],
-            "descriptor_version": ["v1"] * rows,
-            "fingerprint": ["fp-first"] * (rows - 1) + ["fp-last"],
-        },
-    )
-    values = distinct_non_null_values(
-        lance.dataset(uri), "embedding_action_pca_fingerprint", max_values=_PRODUCERS_INSPECTED
-    )
-    assert values == ("fp-first", "fp-last")
-
-
-def test_distinct_non_null_values_caps_the_result_at_max_values(tmp_path: pathlib.Path) -> None:
-    """A column holding more identities than asked for yields exactly ``max_values``."""
-    rows = 9
-    uri = _write_clips_dataset(
-        tmp_path,
-        rows=rows,
-        action={
-            "action": [_vector(i, ACTION_DIM) for i in range(rows)],
-            "descriptor_version": ["v1"] * rows,
-            "fingerprint": [f"fp-{i}" for i in range(rows)],
-        },
-    )
-    values = distinct_non_null_values(
-        lance.dataset(uri), "embedding_action_pca_fingerprint", max_values=_PRODUCERS_INSPECTED
-    )
-    assert len(values) == _PRODUCERS_INSPECTED
-
-
-def test_distinct_non_null_values_ignores_unfilled_rows(tmp_path: pathlib.Path) -> None:
-    """Rows the group has not filled contribute nothing, so a partial column reads one identity."""
-    rows = 4
-    uri = _write_clips_dataset(
-        tmp_path,
-        rows=rows,
-        action={
-            "action": [_vector(0, ACTION_DIM), None, _vector(2, ACTION_DIM), None],
-            "descriptor_version": ["v1", None, "v1", None],
-            "fingerprint": ["fp-abc", None, "fp-abc", None],
-        },
-    )
-    values = distinct_non_null_values(
-        lance.dataset(uri), "embedding_action_pca_fingerprint", max_values=_PRODUCERS_INSPECTED
-    )
-    assert values == ("fp-abc",)
-
-
-def test_distinct_non_null_values_reads_an_identity_containing_a_quote(tmp_path: pathlib.Path) -> None:
-    """A producer identity containing a single quote is read back verbatim.
-
-    The read is expressed as a SQL statement, so a value able to terminate a
-    string literal must never reach one. Were it to, a lone legal identity could
-    be misread as two and abort the run.
-    """
-    rows = 6
-    quoted = "fp-o'brien"
-    uri = _write_clips_dataset(
-        tmp_path,
-        rows=rows,
-        action={
-            "action": [_vector(i, ACTION_DIM) for i in range(rows)],
-            "descriptor_version": ["v1"] * rows,
-            "fingerprint": [quoted] * rows,
-        },
-    )
-    values = distinct_non_null_values(
-        lance.dataset(uri), "embedding_action_pca_fingerprint", max_values=_PRODUCERS_INSPECTED
-    )
-    assert values == (quoted,)
 
 
 def test_count_filled_counts_non_null_primary(tmp_path: pathlib.Path) -> None:

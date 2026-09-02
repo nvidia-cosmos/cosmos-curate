@@ -759,7 +759,7 @@ assert "ray" not in sys.modules, "importing s3_client pulled in ray"
 """
 
 
-def test_module_imports_without_ray() -> None:
+def test_module_imports_without_ray(repo_root: Path) -> None:
     """Importing this module must not require ray.
 
     ``S3Prefix`` is pure string validation, and the client CLI uses it to validate ``s3://``
@@ -772,6 +772,7 @@ def test_module_imports_without_ray() -> None:
         capture_output=True,
         text=True,
         check=False,
+        cwd=repo_root,
     )
 
     assert result.returncode == 0, f"s3_client is not importable without ray:\n{result.stderr}"

@@ -174,7 +174,7 @@ def _windows_list(count: int) -> list[dict[str, Any]]:
     ]
 
 
-def _row(  # noqa: PLR0913 -- fixture builder: one keyword per source column
+def _row(
     clip_uuid: str,
     *,
     video_uuid: str = "video-1",

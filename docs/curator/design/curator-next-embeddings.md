@@ -85,8 +85,8 @@ not tuning: changing one invalidates every stored vector.
 The rest of this section explains *why three and not one*: what each modality
 captures and ignores (§1.1), how they answer orthogonal questions (§1.2), how
 they correlate (§1.3), worked examples where one vector alone is wrong (§1.4),
-how downstream pipelines consume them (§1.5), and the intended — not yet built —
-fusion flow (§1.6).
+how downstream pipelines consume them (§1.5), and the fusion flow implemented by
+the curation leg, intentionally not by this embeddings package (§1.6).
 
 ### 1.1 The three modalities in detail
 
@@ -180,7 +180,7 @@ real pattern in egocentric manipulation data:
 | Two clips have…                                | Text      | Image     | Action    | One-modality failure                                        |
 | ---------------------------------------------- | --------- | --------- | --------- | ----------------------------------------------------------- |
 | identical task, different objects              | same      | different | ~same     | text/action alone **wrongly merge**; image keeps them apart |
-| same scene, different task                     | different | ~same     | different | image alone **wrongly merges** two unrelated tasks          |
+| same scene, different task                     | different | ~same     | task-blind | image alone **wrongly merges** two unrelated tasks; only text separates them |
 | same motion, different task wording            | different | ~same     | ~same     | text alone **wrongly splits** near-duplicates               |
 | same task **and** look, different manipulation | same      | ~same     | different | text+image alone **wrongly merge** distinct executions      |
 | different wording, nearly identical action     | different | varies    | ~same     | text alone **wrongly splits**; action recovers the match    |
@@ -188,6 +188,18 @@ real pattern in egocentric manipulation data:
 
 
 "~same" means close under that modality's distance; "different" means far.
+
+**Read every Action cell as a claim about motion only.** Where a row's Action entry says
+"~same", it is because the *gesture* is similar, never because the task label matches, and
+"task-blind" marks a row where the two clips differ in task and the action vector simply
+cannot see it. This is measured, not cautionary: on Mecka clips with
+labels the action block scores a task-separation ratio of 0.990 and a same-task-closer AUC
+of 0.543 — different-task pairs sit no farther apart than same-task pairs. The same run
+scored AUC 0.853 for text and 0.879 for image over the same rows, so the apparatus can
+find task structure where it exists. Gross dual-wrist kinematics do not distinguish
+woodworking from `cleaning_shoes`: both are reach, grasp, and manipulate under a
+head-mounted view. Action's value in this table is therefore entirely in the rows where
+*execution* is the discriminator, and no consumer may use it to answer a task question.
 
 ### 1.4 Worked examples: why one embedding is not enough
 
@@ -201,8 +213,11 @@ have — and how it would misbehave on a single modality.
    object variety.
 2. **Same object / scene, different task** — same kitchen and coffee machine;
   clip A `"press the button"`, clip B `"open the drawer"`. *Text*: different.
-   *Image*: ~same. *Action*: different. → Two distinct tasks; **text** and
-   **action** separate them. On image alone they merge, hiding a whole task.
+   *Image*: ~same. *Action*: task-blind — pressing and pulling are both short
+   single-arm reaches, and the measured task AUC of 0.543 says the vector does
+   not separate them. → Two distinct tasks; **text** separates them, and text
+   alone does. On image alone they merge, hiding a whole task; on action alone
+   they also merge, which is why action is never the modality asked here.
 3. **Same task, different execution** — `"Pour water"` done slowly two-handed vs
   quickly one-handed. *Text*: same. *Image*: ~same. *Action*: different. → Both
    are useful but distinct executions; **action** keeps the manipulation variety.
@@ -259,7 +274,7 @@ The three vectors are designed to be fused into a single distance so that
      │            │            │
      └────────────┼────────────┘
                   ▼
-          Future fusion  (per-modality normalize + weighted concat)
+         Curation fusion  (per-modality normalize + weighted concat)
                   ▼
              Similarity   (one distance over the fused vector)
                   ▼
@@ -275,6 +290,23 @@ Fusion must respect the **scale contract** (§6): text/image are unit-norm
 normalizes each modality into a common space before weighting — which is why the
 widths and normalizations here are a downstream **interface**, not free
 parameters.
+
+Two details of the sketch above are refined by the leg that actually consumes it
+(`curator-next-curation.md`), and the difference matters to anyone reading this
+section as a specification:
+
+- **The fused distance feeds clustering and de-duplication, not balancing.** The
+  `Balanced dataset` box is downstream of the fused vector but is not computed
+  *from* it. Curation balances on the canonical task label together with a
+  subtask cluster cell derived from `embedding_text_subtask`, not on raw
+  `(task_name, subtask_name)` strings, deliberately keeping the label geometry
+  separate from the fused locality geometry, because a locality cluster mixes
+  many tasks and a task spans many clusters.
+- **"Similar in task **and** look **and** motion" is carried by different blocks
+  than the symmetry suggests.** The task part comes from text; the motion part
+  comes from action; action supplies **no** task component at all (measured task
+  AUC 0.543, §1.3). Fusing the three yields a redundancy distance, which is what
+  clustering and dedup need — not a task-aware distance.
 
 > **This milestone produces only the modality-specific embeddings.** It does
 > **not** implement fusion, clustering, de-duplication, balanced sampling, or any
@@ -976,6 +1008,13 @@ Keeping both is what lets a downstream leg operate at *either* level, or both.
 | cluster within each task, then de-duplicate only *inside* the task          | both                     |
 | balance subtasks while preserving task diversity                            | both                     |
 
+The curation leg uses `embedding_text_subtask` as one block of its fused
+clip-similarity vector for clustering and de-duplication. It also uses
+`embedding_text_task` to merge near-duplicate task labels during fairness grouping.
+See [Curator Next Curation](curator-next-curation.md#grouping-canonical-labels-then-a-similarity-merge).
+The two columns are still stored separately rather than pre-combined because the
+needs in the table above are not curation-specific, and a downstream leg may weight
+each block independently.
 
 **Independent weighting, without re-embedding.** Because the vectors are stored
 apart, a future leg chooses a strategy at consumption time — for example:
@@ -1562,6 +1601,28 @@ caller could silently reweight the fused distance while every shape check still
 passed. Changing a normalization convention invalidates every stored vector,
 exactly like changing a curation weight.
 
+A consumer that normalizes on read is making a deliberate scale conversion, and
+curation does exactly that: it L2-normalizes the action block into the cosine
+space so the fused vector stays unit-norm. That converts the question from "same
+motion size" to "same motion pattern" and is documented as such in
+`curator-next-curation.md`. Nothing is lost for *task* purposes by that
+conversion, because the raw vector has no task signal to lose. The measurement is
+taken in this table's own space — `distance_space: euclidean_pca`, magnitude
+intact — and still returns a task-separation ratio of 0.990 and AUC 0.543 (§1.3).
+Normalization only ever discards information, so a direction-only view cannot
+acquire a task signal the full vector never had.
+
+**What the action vector can and cannot be asked**, stated once so no consumer
+has to re-derive it:
+
+| Question | Supported | Why |
+|---|---|---|
+| "did these two clips move alike?" | yes | the basis is fitted so Euclidean distance approximates motion difference (§5) |
+| "is this clip a near-duplicate recording of that one?" | yes, as one term of the fused distance | motion agreement is a necessary part of redundancy |
+| "how large was the gesture?" | yes, from the raw magnitude | magnitude is preserved at write time, which is why this table says raw |
+| "which task is this?" | **no** | ratio 0.990, AUC 0.543 — a coin flip |
+| "are these two clips the same task?" | **no** | same as above; use canonicalized `task_name` (not the action vector) |
+
 ---
 
 
@@ -1602,7 +1663,12 @@ non-NULL *partial* row is not checked because it is unreachable: one
 column holds a single producer needs every non-null value looked at — no Lance
 fragment statistic or index metadata answers it — so the check is expressed as a
 `SELECT DISTINCT ... LIMIT` and Lance does that pass over one encoded column,
-returning a bounded result; the driver never holds a value per row.
+returning a bounded result; the driver never holds a value per row. The same
+bounded read (`lance_utils.distinct_non_null_values`) is what the Curate leg's
+preflight uses to refuse *fusing* a group that carries two identities, since one
+table can be filled by two runs whose configs differed and only a later reader of
+the whole column can see it — see
+[Producer identity](curator-next-curation.md#producer-identity-is-part-of-the-source-contract).
 - **Fill** — `fill_embedding_group` derives the version, the fragment ids and the
 pending predicate (`applicable AND primary vector IS NULL`) from the manifest —
 a **metadata read**: no row is scanned and no row is counted on the driver — and

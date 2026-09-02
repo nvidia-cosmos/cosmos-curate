@@ -63,7 +63,7 @@ def _make_status_response(status: str = "fulfilled") -> NVCFResponse:
 
 def _patch_function_helper(mock_cc: MagicMock, mock_nvcf_client: MagicMock) -> None:
     class CliTestNvcfHelper(NvcfHelper):
-        def __init__(  # noqa: PLR0913
+        def __init__(
             self,
             url: str,
             nvcf_url: str,

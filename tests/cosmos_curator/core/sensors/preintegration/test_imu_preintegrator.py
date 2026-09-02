@@ -25,7 +25,7 @@ _HALF_SECOND_NS = 500_000_000
 _ONE_SECOND_NS = 1_000_000_000
 
 
-def _imu_data(  # noqa: PLR0913
+def _imu_data(
     *,
     align_timestamps_ns: npt.NDArray[np.int64] | None = None,
     sensor_timestamps_ns: npt.NDArray[np.int64] | None = None,

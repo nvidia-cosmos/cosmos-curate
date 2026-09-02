@@ -3,6 +3,7 @@
 
 """Tests for the built-in pipeline-kind composition root."""
 
+import pathlib
 import subprocess
 import sys
 
@@ -15,6 +16,7 @@ def test_registered_kind_names_are_derived_from_concrete_objects() -> None:
     """The composition root never restates discriminator strings as mapping keys."""
     assert BUILTIN_PIPELINE_KINDS.names() == (
         "caption_judge",
+        "curate",
         "data-integrity",
         "embeddings",
         "multimodal-split",
@@ -26,30 +28,33 @@ def test_registered_kind_names_are_derived_from_concrete_objects() -> None:
     assert tuple(kind.name for kind in BUILTIN_PIPELINE_KINDS) == BUILTIN_PIPELINE_KINDS.names()
 
 
-def test_importing_composition_root_defers_config_and_runtime_modules() -> None:
-    """CLI startup may import adapters, but not recipe models or execution dependencies.
+def test_importing_composition_root_pulls_in_no_third_party_dependency(repo_root: pathlib.Path) -> None:
+    """CLI startup may import adapters, but nothing outside the stdlib and this package.
 
-    The model and inference libraries are named explicitly because the embeddings
-    runtime is the first registered kind that reaches them: an adapter that
-    imported its recipe at module level would put every one of them on the path of
-    a bare ``--help``.
+    Asserted as default-deny rather than against a list of known-heavy names.
+    A denylist only fails for the dependencies someone thought to enumerate,
+    and the ones that would hurt most here -- pyarrow via a recipe's column
+    module, or lance, cuml and cupy via a runtime -- arrive through imports no
+    such list anticipated.
     """
-    heavy = ("pydantic", "ray", "torch", "transformers", "sentence_transformers", "lance")
     probe = (
         "import sys;"
-        f"heavy = {heavy!r};"
+        "before = set(sys.modules);"
         "from cosmos_curator.client.pipeline_cli.builtin_pipeline_kinds import BUILTIN_PIPELINE_KINDS;"
         "BUILTIN_PIPELINE_KINDS.names();"
-        "print([m for m in sys.modules if m in heavy or m.endswith('.config')])"
+        "added = {m.split('.')[0] for m in set(sys.modules) - before};"
+        "print(sorted(added - sys.stdlib_module_names))"
     )
     result = subprocess.run(  # noqa: S603
         [sys.executable, "-c", probe],
         check=True,
         capture_output=True,
         text=True,
+        timeout=120,
+        cwd=repo_root,
     )
 
-    assert result.stdout.strip() == "[]"
+    assert result.stdout.strip() == "['cosmos_curator']"
 
 
 def test_robot_action_split_underscore_spelling_is_not_supported() -> None:

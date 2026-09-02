@@ -78,7 +78,7 @@ def _import_from_targets(node: ast.ImportFrom, package: str) -> list[str]:
     return [base, *(f"{base}.{alias.name}" for alias in node.names)]
 
 
-def test_importing_package_does_not_load_heavy_deps() -> None:
+def test_importing_package_does_not_load_heavy_deps(repo_root: pathlib.Path) -> None:
     """A fresh import of the package leaves torch/transformers/etc. unloaded."""
     code = (
         "import sys, importlib;"
@@ -92,6 +92,7 @@ def test_importing_package_does_not_load_heavy_deps() -> None:
         capture_output=True,
         text=True,
         check=False,
+        cwd=repo_root,
     )
     assert result.returncode == 0, f"importing the package failed:\n{result.stderr}"
     loaded = result.stdout.split()

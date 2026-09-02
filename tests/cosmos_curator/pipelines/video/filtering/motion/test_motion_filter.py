@@ -240,7 +240,7 @@ def test_motion_filter_calculation(
         (0.002, 0.001, False),
     ],
 )
-def test_end_to_end_motion_processing(  # noqa: PLR0913 - parametrized test with multiple fixtures
+def test_end_to_end_motion_processing(
     camera_sensor_motion_stage: ClipFrameExtractionStage,
     sample_filtering_task: SplitPipeTask,
     sequential_runner: RunnerInterface,

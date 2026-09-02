@@ -48,7 +48,7 @@ def _write_config(tmp_path: pathlib.Path, store_root: str = "/data/di-store") ->
     return path
 
 
-def test_registering_the_kind_loads_neither_ray_nor_lance() -> None:
+def test_registering_the_kind_loads_neither_ray_nor_lance(repo_root: pathlib.Path) -> None:
     """Every import is deferred into the callable that needs it, and this pins that."""
     probe = (
         "import sys;"
@@ -60,6 +60,7 @@ def test_registering_the_kind_loads_neither_ray_nor_lance() -> None:
         check=True,
         capture_output=True,
         text=True,
+        cwd=repo_root,
     )
 
     assert result.stdout.strip() == "[]"

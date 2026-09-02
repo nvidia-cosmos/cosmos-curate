@@ -32,14 +32,15 @@ handle, rather than trusting shared state to have refreshed itself.
         +--> STATE    a filled group has at most one producer, and it is the
         |             configured one - checked before any compute is spent
         |
-        +--> READ     the pending predicate, filled counts, bounded distinct
-                      values, and a one-column stream
+        +--> READ     the pending predicate, filled counts, and a one-column
+                      stream
 
 The reads are deliberately cheap. The pending predicate is only BUILT here and is
-evaluated later, per fragment, by the worker that owns it; the filled count and
-the distinct provenance values are resolved inside Lance and return a bounded
-result whatever the table's length; and the one function that streams rows
-projects a single column.
+evaluated later, per fragment, by the worker that owns it; the filled count is
+resolved inside Lance and returns a bounded result whatever the table's length;
+and the one function that streams rows projects a single column. The producer
+identifies the state check reads come from ``lance_utils``, which owns the bounded
+distinct-value read.
 
 The physical write and its commit are NOT here; they belong to the fill path.
 Splitting them lets schema and state be tested with no dependency on the
@@ -57,6 +58,7 @@ import pyarrow as pa
 from loguru import logger
 
 from cosmos_curator.next.embeddings.schemas import EmbeddingColumnGroup
+from cosmos_curator.next.utils.lance_utils import distinct_non_null_values
 
 # Validation only has to tell "one producer" from "more than one", so it asks for
 # one value beyond the single one it tolerates and never for the whole column.
@@ -256,34 +258,6 @@ def count_filled(dataset: lance.LanceDataset, group: EmbeddingColumnGroup) -> in
     if group.primary_vector not in dataset.schema.names:
         return 0
     return int(dataset.count_rows(filter=f"{group.primary_vector} IS NOT NULL"))
-
-
-def distinct_non_null_values(dataset: lance.LanceDataset, column: str, *, max_values: int) -> tuple[str, ...]:
-    """Return up to ``max_values`` distinct non-null values of a string column, sorted.
-
-    Used to read the single surviving producer identity (e.g. the action PCA
-    fingerprint) and, in validation, to detect more than one producer.
-
-    Lance resolves the distinctness and applies the bound, so at most
-    ``max_values`` rows cross into Python however long or varied the column is.
-    Lance must still visit every non-null value to PROVE only one is present -
-    no fragment statistic or index metadata it exposes can answer that - but
-    that pass is a pushed-down scan of one encoded column, and the driver holds
-    ``max_values`` values rather than one Python string per row.
-
-    Raises:
-        ValueError: If ``column`` is not a field of the dataset.
-
-    """
-    if column not in dataset.schema.names:
-        msg = f"cannot read distinct values of {column!r}: {dataset.uri} has no such column"
-        raise ValueError(msg)
-    # The column name is interpolated, so it is checked against the schema above
-    # rather than quoted: Lance reads a double-quoted identifier as a string
-    # literal, which would silently match every row instead of failing.
-    statement = f"SELECT DISTINCT {column} FROM dataset WHERE {column} IS NOT NULL LIMIT {max_values}"  # noqa: S608
-    batches = dataset.sql(statement).build().to_batch_records()
-    return tuple(sorted(value for batch in batches for value in batch.column(0).to_pylist()))
 
 
 def scan_column(

@@ -1062,7 +1062,7 @@ def _extractor_env(pod_spec: dict[str, object]) -> dict[str, str] | None:
     ("extract", "secret", "ca_path", "expect_init_container", "expect_ca_key_env", "expect_cert_store"),
     _CERT_SOURCE_CASES,
 )
-def test_helm_otlp_cert_sources_render_expected_pod_shape(  # noqa: PLR0913
+def test_helm_otlp_cert_sources_render_expected_pod_shape(
     tmp_path: Path,
     *,
     extract: bool,

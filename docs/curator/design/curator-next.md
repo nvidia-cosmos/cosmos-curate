@@ -71,7 +71,8 @@ Curator focuses on a few reusable areas:
 
 - **Media and sensors.** Prepare source data through discovery, decoding, sampling, and sensor alignment.
 - **Models and selection.** Generate annotations, embeddings, and scores; support clustering, deduplication, and
-  selection.
+  selection — the [curation leg](curator-next-curation.md) composes clustering, de-duplication, and balanced selection
+  into one reference recipe over the [embedding tables](curator-next-embeddings.md).
 - **Validation and integration.** Define shared schemas and provenance, make results inspectable, and connect them to
   downstream tools.
 

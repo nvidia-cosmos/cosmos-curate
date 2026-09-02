@@ -211,7 +211,7 @@ def test_find_closest_indices_input_validation(
         ),
     ],
 )
-def test_sample_window_indices_core_contract(  # noqa: PLR0913
+def test_sample_window_indices_core_contract(
     canonical: npt.NDArray[np.int64],
     grid: npt.NDArray[np.int64],
     expected_canonical: npt.NDArray[np.int64],
@@ -285,7 +285,7 @@ def test_sample_window_indices_core_contract(  # noqa: PLR0913
         ),
     ],
 )
-def test_sample_window_indices_half_open_window_semantics(  # noqa: PLR0913
+def test_sample_window_indices_half_open_window_semantics(
     canonical: npt.NDArray[np.int64],
     grid: npt.NDArray[np.int64],
     expected_canonical: npt.NDArray[np.int64],
@@ -410,7 +410,7 @@ def test_sample_window_indices_ignores_window_bounds_for_eligibility(
         ),
     ],
 )
-def test_sample_window_indices_nearest_neighbour_selection(  # noqa: PLR0913
+def test_sample_window_indices_nearest_neighbour_selection(
     canonical: npt.NDArray[np.int64],
     grid: npt.NDArray[np.int64],
     expected_canonical: npt.NDArray[np.int64],
@@ -419,7 +419,7 @@ def test_sample_window_indices_nearest_neighbour_selection(  # noqa: PLR0913
     *,
     dedup: bool,
 ) -> None:
-    """sample_window_indices should perform nearest-neighbour matching within the eligible window-local subset."""
+    """sample_window_indices should perform nearest-neighbour matching across all canonical timestamps."""
     window = _window_from_grid(grid)
     indices, counts = sample_window_indices(
         canonical=canonical,
@@ -635,7 +635,7 @@ def test_sample_window_indices_input_validation(
         ),
     ],
 )
-def test_sample_window_indices_shape_and_density_cases(  # noqa: PLR0913
+def test_sample_window_indices_shape_and_density_cases(
     canonical: npt.NDArray[np.int64],
     grid: npt.NDArray[np.int64],
     expected_canonical: npt.NDArray[np.int64],

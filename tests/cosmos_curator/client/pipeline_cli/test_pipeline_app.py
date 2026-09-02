@@ -218,8 +218,8 @@ def test_pipeline_template_rejects_unknown_kind_as_json() -> None:
         "error": "unknown_kind",
         "message": (
             "Unknown pipeline kind 'unknown'. Valid pipeline kinds: "
-            "caption_judge, data-integrity, embeddings, multimodal-split, robot-action-split, "
-            "video-caption, video-split, video_split"
+            "caption_judge, curate, data-integrity, embeddings, multimodal-split, "
+            "robot-action-split, video-caption, video-split, video_split"
         ),
     }
 

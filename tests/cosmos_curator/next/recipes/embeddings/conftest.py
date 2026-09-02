@@ -116,7 +116,7 @@ def make_clips_table(tmp_path: pathlib.Path) -> ClipsTableFactory:
     ``tmp_path``.
     """
 
-    def build(  # noqa: PLR0913 -- a test data builder; each argument is one independent per-row column override
+    def build(
         *,
         rows: int = 6,
         rows_per_file: int = 3,

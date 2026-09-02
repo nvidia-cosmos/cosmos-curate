@@ -384,7 +384,7 @@ def test_run_benchmark_attempt_skips_status_logs(tmp_path: Path) -> None:
 @patch("benchmarks.split_pipeline.nvcf_split_benchmark._read_optional_json")
 @patch("benchmarks.split_pipeline.nvcf_split_benchmark._read_summary_json")
 @patch("benchmarks.split_pipeline.nvcf_split_benchmark.logger")
-def test_report_metrics_happy_path(  # noqa: PLR0913
+def test_report_metrics_happy_path(
     mock_logger: MagicMock,  # noqa: ARG001
     mock_read_summary_json: MagicMock,
     mock_read_optional_json: MagicMock,

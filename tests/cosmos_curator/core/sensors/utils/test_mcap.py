@@ -103,7 +103,7 @@ def _payload(width: int, height: int, fill: int) -> bytes:
     return bytes([fill]) * (width * height * 3)
 
 
-def _write_rgb8_mcap(  # noqa: PLR0913
+def _write_rgb8_mcap(
     path: Path,
     topic: str,
     times_ns: list[int],

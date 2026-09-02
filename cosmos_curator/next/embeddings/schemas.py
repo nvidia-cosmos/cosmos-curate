@@ -258,10 +258,11 @@ DESCRIPTOR_ROW: pa.Schema = pa.schema(
 
 # The canonical typed source contract projected from the clips CLIP_SCHEMA.
 # clip_id is the join key every leg's write needs; task/subtask feed text;
-# clip_uri feeds image; action_data_uri feeds action; source_dataset resolves the
-# ACT2 spec for the header-less pickle path. task_name / subtask_name /
-# source_dataset are non-null because the design doc's no-drop argument depends on
-# them. clip_uri / action_data_uri are large_string in the clips table. This
+# clip_uri feeds image; action_data_uri feeds action; source_dataset remains a
+# required upstream/base-contract field even though no current embedding worker
+# projects or consumes it. task_name / subtask_name / source_dataset are non-null
+# because the design doc's no-drop argument depends on them. clip_uri /
+# action_data_uri are large_string in the clips table. This
 # schema is the single source of truth for what embed may read: EMBED_SOURCE_COLUMNS
 # is derived from its field names, so the two cannot drift.
 EMBED_SOURCE_ROW: pa.Schema = pa.schema(

@@ -3,6 +3,7 @@
 
 """Tests that Curator Next owns its Ray Data runtime configuration."""
 
+import pathlib
 import subprocess
 import sys
 from types import SimpleNamespace
@@ -65,7 +66,7 @@ def test_eager_actor_autoscaling_removes_conservative_growth_limits(monkeypatch:
     assert autoscaling_config.actor_pool_max_upscaling_delta is None
 
 
-def test_recipes_do_not_reach_into_the_deprecated_ray_data_package() -> None:
+def test_recipes_do_not_reach_into_the_deprecated_ray_data_package(repo_root: pathlib.Path) -> None:
     """``next`` must stay importable once ``pipelines.ray_data`` is deleted."""
     probe = (
         "import sys;"
@@ -77,6 +78,7 @@ def test_recipes_do_not_reach_into_the_deprecated_ray_data_package() -> None:
         check=True,
         capture_output=True,
         text=True,
+        cwd=repo_root,
     )
 
     assert result.stdout.strip() == "[]"

@@ -66,26 +66,47 @@ Robot clip
 |---|---|---|---|
 | **Text** | task / subtask meaning, paraphrases | appearance, motion, environment | cosine (unit-norm) |
 | **Image** | scene / object appearance, viewpoint, lighting | task meaning, motion over time | cosine (unit-norm) |
-| **Action** | hand / wrist trajectories, manipulation style, dynamics | appearance, scene, language | Euclidean (raw PCA) |
+| **Action** | hand / wrist trajectories, manipulation style, dynamics | appearance, scene, language, **task identity** | Euclidean (raw PCA) |
+
+Action's "ignores" column includes task identity as a measured fact, not a
+caveat: on Mecka clips with repaired labels the action vector's
+task-separation ratio is 0.990 and its same-task-closer AUC is 0.543, a coin
+flip, while text scores 0.853 and image 0.879 on the same rows. Gross dual-wrist
+kinematics do not distinguish woodworking from `cleaning_shoes`. Use the action
+vector for motion similarity and de-duplication; never to retrieve or balance by
+task.
 
 Any single modality alone would group or split clips incorrectly:
 
 - **Same task, different object** — `"pick up the mug"` (white vs blue mug): text
   and action match, only **image** keeps the object variety.
 - **Same scene, different task** — same kitchen, `"press button"` vs `"open
-  drawer"`: image matches, only **text/action** separate the tasks.
+  drawer"`: image matches, only **text** separates the tasks. Action does not:
+  both are short single-arm reaches, and the measured task AUC above says the
+  vector cannot tell them apart.
 - **Same motion, different wording** — `"pick up bottle"` vs `"grab bottle"`:
   text strings differ, **action** (and paraphrase-robust text) recover the match.
 
 The three vectors are stored as **co-located column groups on the same
 `clips.lance` row**, so a clip's modalities are already aligned — no
 modality-to-modality join is needed. A consumer can read one group or several; a
-later curation leg is expected to fuse them into one distance for clustering,
-de-duplication, and balanced sampling:
+later curation leg is expected to fuse them into one distance for clustering and
+de-duplication:
 
 ```text
-Text . Image . Action --> fusion --> similarity --> clustering --> dedup --> balanced set
+Text . Image . Action --> fusion --> similarity --> clustering --> dedup --+
+                                                                          |
+                                                                          v
+CANONICAL_TASK_COLUMN + SUBTASK_CLUSTER_COLUMN -------------------> balanced set
 ```
+
+Balanced sampling is deliberately **not** driven by the fused distance. The
+curation leg balances on the canonical task label (folded from `task_name` by
+`canonicalize_label()`) together with a subtask cluster cell
+(`SUBTASK_CLUSTER_COLUMN`, a partition of `embedding_text_subtask`), not on raw
+`subtask_name` strings. That keeps the label geometry separate from the fused
+locality geometry, because one locality cluster mixes many tasks and one task
+spans many clusters.
 
 **This leg produces only the modality-specific embeddings** — it does *not*
 implement fusion, clustering, or curation. See the design doc §1 for the full

@@ -137,7 +137,7 @@ def _nested_message_class() -> type[Message]:
     return message_factory.GetMessageClass(pool.FindMessageTypeByName("validator_test.NestedEnvelope"))
 
 
-def _write_mcap(  # noqa: PLR0913
+def _write_mcap(
     path: Path,
     *,
     topic: str = _TOPIC,
@@ -469,7 +469,7 @@ def test_validation_api_accepts_repeated_scalar_collection() -> None:
         ),
     ],
 )
-def test_script_validates_checked_in_reference_contract(  # noqa: PLR0913
+def test_script_validates_checked_in_reference_contract(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
     target: str,

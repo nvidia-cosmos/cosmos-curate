@@ -151,7 +151,7 @@ def _custom_gps_message_class() -> type[Message]:
     return protobuf_message_class(_custom_gps_file_descriptor_set(), _CUSTOM_GPS_SCHEMA_NAME)
 
 
-def _custom_gps_payload(  # noqa: PLR0913
+def _custom_gps_payload(
     *,
     sensor_time_us: int,
     lat: float = 47.1,
@@ -189,7 +189,7 @@ def _custom_gps_mapping(**extra_fields: object) -> dict[str, object]:
     }
 
 
-def _write_custom_gps_mcap(  # noqa: PLR0913
+def _write_custom_gps_mcap(
     path: Path,
     samples: list[McapSample],
     *,

@@ -662,7 +662,7 @@ def test_checkpoint_config_is_always_cleared(tmp_path: Path) -> None:
 
 
 @pytest.mark.env("default")
-def test_checkpointed_phase_a_reuses_results_against_a_newer_input_superset(  # noqa: PLR0913
+def test_checkpointed_phase_a_reuses_results_against_a_newer_input_superset(
     tmp_path: Path,
     clip_dataset_factory: Callable[..., tuple[str, lance.LanceDataset]],
     clip_row_factory: Callable[..., dict[str, object]],

@@ -45,7 +45,7 @@ SESSION = "/data/session"
 FRONT = "/data/session/front.mp4"
 
 
-def _write(  # noqa: PLR0913 -- one optional argument per fact a test may want to vary
+def _write(
     root: str,
     streams: list[StreamResult],
     *,

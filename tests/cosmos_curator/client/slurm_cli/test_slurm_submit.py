@@ -1678,7 +1678,7 @@ class TestSubmit:
         (1, "head_node", "worker_node", 1, 100, False),
     ],
 )
-def test_head_node_is_head_node(  # noqa: PLR0913
+def test_head_node_is_head_node(
     num_nodes: int, head_node: str, nodename: str, procid: int, stop_retries_after: int, *, is_head_node: bool
 ) -> None:
     """Test that the head node is the head node."""

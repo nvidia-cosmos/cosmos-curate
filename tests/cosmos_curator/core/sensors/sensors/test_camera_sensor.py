@@ -43,7 +43,7 @@ from cosmos_curator.core.sensors.utils.video import GpuVideoDecodeConfig, VideoD
 from tests.cosmos_curator.core.sensors.test_utils import make_sampling_grid
 
 
-def _make_video_index_and_metadata(  # noqa: PLR0913
+def _make_video_index_and_metadata(
     *,
     pts_ns: list[int],
     pts_stream: list[int],

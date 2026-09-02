@@ -118,7 +118,7 @@ def drifting() -> Callable[..., list[int]]:
 def make_stream() -> Callable[..., StreamResult]:
     """Run the real engine over a synthetic timeline and package the result."""
 
-    def _make(  # noqa: PLR0913 -- every knob shapes a different synthetic stream
+    def _make(
         source: str,
         timestamps: list[int],
         *,

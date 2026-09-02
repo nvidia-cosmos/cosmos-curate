@@ -209,7 +209,7 @@ def test_should_save_stage(
         (1.0, True, 1, True, True),  # Save with CuratorStageSpec wrapper
     ],
 )
-def test_stage_save_wrapper(  # noqa: PLR0913
+def test_stage_save_wrapper(
     tmp_path: Path,
     sample_rate: float,
     expected_files: int,
@@ -725,7 +725,7 @@ class SaveCountingStage(CuratorStage):
         (0.0, 1.0, [], 1, 0),  # Empty tasks never saved
     ],
 )
-def test_make_stage_save_class_deterministic(  # noqa: PLR0913
+def test_make_stage_save_class_deterministic(
     tmp_path: Path,
     random_value: float,
     sample_rate: float,
