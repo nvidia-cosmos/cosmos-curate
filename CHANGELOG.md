@@ -2,6 +2,43 @@
 
 ## Latest
 
+## [2.6.0]
+
+### Released
+
+- 2026-09-03
+
+### Added
+
+- Add the Curator Next `curation` recipe for embedding-based clustering, de-duplication, and
+  fairness-balanced selection, plus `video-captioning` and `embeddings` (text/image/action)
+  pipelines.
+- Add a Ray Data data-integrity pipeline for AV sessions, an observation-timeline artifact, a
+  forward-only streaming camera sensor, Foxglove GPS mapping, and structured `AlignmentError`
+  handling for sampling windows.
+- Add failure recovery for the egocentric (robot-action-split) pipeline so reruns resume from
+  already-committed Lance fragments instead of reprocessing, incremental video split, and NVCF
+  split benchmarks with OTLP telemetry.
+
+### Fixed
+
+- Stop ffmpeg subprocesses hanging under Ray 2.57, and fix xenna P2P chunk paths/body limits.
+- Correct data-integrity handling of unreachable data, stale paths, and int64 overflow in
+  sampling-distance comparisons; sampling windows no longer restrict source data eligibility.
+- Fix pre-signed output temp-dir handling, generic artifactory lookups, and robot-action-split
+  Lance fragment/schema issues.
+
+### Changed
+
+- Upgrade Ray to 2.58.0 and Cosmos-Xenna to 0.5.11.
+- Retire `_cli_cloud.py` and relocate cloud-consuming sensor scripts out of `core.sensors`.
+- Pipeline video split transcoding and uploads for improved throughput.
+
+### Documentation
+
+- Clarify extracted-frame ownership/embedding sampling and expected streaming camera decode
+  workload; replace ticket IDs in comments with descriptive references.
+
 ## [2.5.0]
 
 ### Released
