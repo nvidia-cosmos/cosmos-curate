@@ -74,6 +74,8 @@ class TranscodeConfig:
     use_input_bit_rate: bool = False
     num_clips_per_chunk: int = 32
     max_output_frames: int | None = None
+    # Only the NVENC path is affected; libopenh264 is Constrained Baseline already.
+    disable_b_frames: bool = False
     verbose: bool = False
     perf_profile: bool = False
 
@@ -148,6 +150,7 @@ def build_transcode_stages(config: TranscodeConfig) -> list[CuratorStage | Curat
             use_input_bit_rate=config.use_input_bit_rate,
             num_clips_per_chunk=config.num_clips_per_chunk,
             max_output_frames=config.max_output_frames,
+            disable_b_frames=config.disable_b_frames,
             verbose=config.verbose,
             log_stats=config.perf_profile,
         ),

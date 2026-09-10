@@ -184,6 +184,7 @@ class ClipTranscodingStage(CuratorStage):
         use_input_bit_rate: bool = False,
         num_clips_per_chunk: int = 32,
         max_output_frames: int | None = None,
+        disable_b_frames: bool = False,
         verbose: bool = False,
         ffmpeg_verbose: bool = False,
         log_stats: bool = False,
@@ -201,6 +202,11 @@ class ClipTranscodingStage(CuratorStage):
             num_clips_per_chunk: Number of clips per chunk.
             max_output_frames: If set, limit each clip's output frame count to this value
                 by reducing FPS during transcoding. Source FPS is never increased.
+            disable_b_frames: Encode without frame reordering. ``libopenh264`` is
+                Constrained Baseline and never emits B-frames, so this only affects the
+                NVENC path, whose quality settings otherwise enable them. Needed by
+                consumers that cannot decode reordered frames -- notably Foxglove, which
+                does not support B-frames in ``foxglove.CompressedVideo``.
             verbose: Whether to print verbose logs.
             ffmpeg_verbose: Whether to print FFmpeg verbose logs.
             log_stats: Whether to log performance statistics.
@@ -216,6 +222,7 @@ class ClipTranscodingStage(CuratorStage):
         self._use_input_bit_rate = use_input_bit_rate
         self._num_clips_per_chunk = num_clips_per_chunk
         self._max_output_frames = max_output_frames
+        self._disable_b_frames = disable_b_frames
         self._verbose = verbose
         self._ffmpeg_verbose = ffmpeg_verbose
         self._log_stats = log_stats
@@ -378,8 +385,6 @@ class ClipTranscodingStage(CuratorStage):
                         "21",
                         "-tune",
                         "hq",
-                        "-b_ref_mode",
-                        "middle",
                         "-temporal-aq",
                         "1",
                         "-rc-lookahead",
@@ -388,6 +393,9 @@ class ClipTranscodingStage(CuratorStage):
                         "1",
                     ],
                 )
+                # `-tune hq` enables B-frames, and `-b_ref_mode middle` only means
+                # anything alongside them, so the two are mutually exclusive.
+                command.extend(["-bf", "0"] if self._disable_b_frames else ["-b_ref_mode", "middle"])
                 # To fix `10 bit encode not supported` error
                 if force_pix_fmt:
                     command.extend(["-pix_fmt", "yuv420p"])

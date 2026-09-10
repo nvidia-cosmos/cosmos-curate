@@ -270,3 +270,43 @@ class TestMaxOutputFrames:
         # 60fps * 2s = 120 < 186 → not limited
         assert flags[1][0] is None
         assert flags[1][1] is None
+
+
+class TestDisableBFrames:
+    """NVENC B-frame control, needed by consumers that cannot decode reordered frames."""
+
+    @staticmethod
+    def _nvenc_command(tmp_path: pathlib.Path, *, disable_b_frames: bool) -> list[str]:
+        clips = [Clip(uuid=uuid.uuid4(), source_video="test.mp4", span=(0.0, 2.0))]
+        stage = ClipTranscodingStage(encoder="h264_nvenc", disable_b_frames=disable_b_frames)
+        captured_cmd: list[str] = []
+
+        def fake_check_output(cmd: list[str], **_kwargs: object) -> bytes:
+            captured_cmd.extend(cmd)
+            for clip in clips:
+                (tmp_path / f"{clip.uuid}.mp4").write_bytes(b"\x00" * 100)
+            return b""
+
+        with patch("subprocess.check_output", side_effect=fake_check_output):
+            stage._extract_clips(
+                tmp_path,
+                "input.mp4",
+                force_pix_fmt=False,
+                use_bit_rate=None,
+                clips=clips,
+                input_video="test.mp4",
+                source_fps=30.0,
+            )
+        return captured_cmd
+
+    def test_disabled_passes_bf_zero(self, tmp_path: pathlib.Path) -> None:
+        """`-bf 0` replaces `-b_ref_mode middle`, which only means anything with B-frames."""
+        command = self._nvenc_command(tmp_path, disable_b_frames=True)
+        assert command[command.index("-bf") + 1] == "0"
+        assert "-b_ref_mode" not in command
+
+    def test_default_keeps_b_frames(self, tmp_path: pathlib.Path) -> None:
+        """Left alone, the NVENC quality settings keep frame reordering."""
+        command = self._nvenc_command(tmp_path, disable_b_frames=False)
+        assert "-bf" not in command
+        assert command[command.index("-b_ref_mode") + 1] == "middle"

@@ -2,6 +2,39 @@
 
 ## Latest
 
+### Fixed
+
+- Write split-pipeline MCAP output in non-decreasing `log_time` order, so `mcap doctor`
+  no longer reports out-of-order messages and indexed readers stop hitting overlapping
+  chunks. Clip annotations and embeddings were previously appended after a clip's whole
+  media stream while carrying timestamps back at the clip start, and audio/video messages
+  were written in container demux order rather than merged by time. Fragment consolidation
+  now k-way merges fragments by `log_time` instead of concatenating them in chunk order.
+- Keep the MCAP audio sample clock exact instead of truncating a fraction of a nanosecond
+  per block.
+
+### Added
+
+- Anchor split-pipeline MCAP `log_time` to the source video's capture time, parsed from its
+  path (capture folder or file stem) and interpreted in the zone given by the new
+  `--mcap-timezone` flag (default `UTC`). Videos whose path names no time keep a 0-based
+  timeline. The `session-metadata` record gains `start-time-unix-ns`, `start-time-source`,
+  and `start-time-timezone`.
+- Warn when a clip's video carries B-frames, which Foxglove cannot decode in
+  `foxglove.CompressedVideo`, and encode clips without frame reordering (`-bf 0` on the
+  NVENC path) when `--generate-mcap` is set.
+
+### Changed
+
+- Rename the MCAP audio topic from `/camera/audio-raw` to `/camera/audio`, matching the
+  reference recordings this output interoperates with.
+
+### Documentation
+
+- Document the split pipeline's MCAP writer in the stage reference: channel layout, output
+  paths, how the timeline is anchored, its dependency on clip upload, and how to verify an
+  output with the `mcap` CLI.
+
 ## [2.6.0]
 
 ### Released

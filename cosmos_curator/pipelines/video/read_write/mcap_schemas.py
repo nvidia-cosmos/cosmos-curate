@@ -18,7 +18,7 @@ The channel layout mirrors the Foxglove-compatible session recordings the
 curated MCAP output is meant to interoperate with: video frames on
 ``/camera/image-raw`` (`foxglove.CompressedVideo`), captions and detection
 payloads on ``/scene-annotation`` (`midcentury.SceneAnnotation`), audio on
-``/camera/audio-raw`` (`foxglove.RawAudio`), one-shot calibration/transform
+``/camera/audio`` (`foxglove.RawAudio`), one-shot calibration/transform
 messages, and clip embeddings on ``/clip/embedding``
 (`midcentury.ClipEmbedding`, curator-specific).
 
@@ -39,7 +39,7 @@ from cosmos_curator.pipelines.video.utils.ns_timing import NS_PER_SECOND
 
 TOPIC_IMAGE_RAW = "/camera/image-raw"
 TOPIC_SCENE_ANNOTATION = "/scene-annotation"
-TOPIC_AUDIO_RAW = "/camera/audio-raw"
+TOPIC_AUDIO = "/camera/audio"
 TOPIC_CAMERA_INFO = "/camera/camera-info"
 TOPIC_TF_STATIC = "/tf-static"
 TOPIC_CLIP_EMBEDDING = "/clip/embedding"
@@ -206,7 +206,7 @@ CLIP_EMBEDDING_SCHEMA: dict[str, Any] = {
 TOPIC_SCHEMAS: dict[str, dict[str, Any]] = {
     TOPIC_IMAGE_RAW: COMPRESSED_VIDEO_SCHEMA,
     TOPIC_SCENE_ANNOTATION: SCENE_ANNOTATION_SCHEMA,
-    TOPIC_AUDIO_RAW: RAW_AUDIO_SCHEMA,
+    TOPIC_AUDIO: RAW_AUDIO_SCHEMA,
     TOPIC_CAMERA_INFO: CAMERA_CALIBRATION_SCHEMA,
     TOPIC_TF_STATIC: FRAME_TRANSFORMS_SCHEMA,
     TOPIC_CLIP_EMBEDDING: CLIP_EMBEDDING_SCHEMA,

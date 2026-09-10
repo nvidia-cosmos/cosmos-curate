@@ -28,7 +28,7 @@ def test_topic_schemas_cover_all_topics() -> None:
     assert set(mcap_schemas.TOPIC_SCHEMAS) == {
         mcap_schemas.TOPIC_IMAGE_RAW,
         mcap_schemas.TOPIC_SCENE_ANNOTATION,
-        mcap_schemas.TOPIC_AUDIO_RAW,
+        mcap_schemas.TOPIC_AUDIO,
         mcap_schemas.TOPIC_CAMERA_INFO,
         mcap_schemas.TOPIC_TF_STATIC,
         mcap_schemas.TOPIC_CLIP_EMBEDDING,

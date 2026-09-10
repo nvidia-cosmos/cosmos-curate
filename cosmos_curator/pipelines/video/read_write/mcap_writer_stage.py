@@ -22,21 +22,32 @@ clips of one input video; ``consolidate_mcap_fragments`` runs on the driver
 after the pipeline finishes and merges each video's fragments into one final
 ``<output>/mcap/<relative_input_path>.mcap``.
 
-Timestamps are 0-based source-video offsets: each message is logged at
-``clip.start_ns`` plus its offset within the clip, so gaps between clips on
-the source timeline remain gaps in the MCAP. Video messages are written in
-demux (decode) order, which readers like Foxglove require; with B-frames the
-per-message ``log_time`` can therefore be locally non-monotonic, which MCAP
-permits.
+Messages carry the source video's capture start (parsed from its path, see
+``mcap_time``) plus their offset on the source timeline, so gaps between clips
+remain gaps in the MCAP. A video whose path names no capture time falls back to
+a 0-based timeline.
+
+Every file this module writes -- fragments and the merged result alike -- is
+written in non-decreasing ``log_time`` order, which is what ``mcap doctor``
+checks and what indexed readers need to seek without decompressing overlapping
+chunks. Per-clip messages are therefore sorted before they are handed to the
+writer, and consolidation merges fragments by ``log_time`` rather than
+concatenating them. Note that video frames are not reordered relative to their
+presentation times: Foxglove does not support B-frames in
+``foxglove.CompressedVideo`` at all, so decode order and presentation order must
+coincide, and this stage warns when a clip violates that.
 """
 
 import functools
+import heapq
 import io
 import json
+import operator
 import pathlib
 import shutil
 import tempfile
 import uuid
+import zoneinfo
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack, contextmanager
@@ -48,6 +59,7 @@ import smart_open  # type: ignore[import-untyped]
 from av.bitstream import BitStreamFilterContext
 from loguru import logger
 from mcap.reader import McapReader, make_reader
+from mcap.records import Channel, Message, Schema
 from mcap.writer import CompressionType, Writer
 
 from cosmos_curator.core.interfaces.stage_interface import CuratorStage, CuratorStageResource
@@ -61,7 +73,7 @@ from cosmos_curator.core.utils.storage.storage_utils import (
     get_full_path,
     read_bytes,
 )
-from cosmos_curator.pipelines.video.read_write import mcap_schemas
+from cosmos_curator.pipelines.video.read_write import mcap_schemas, mcap_time
 from cosmos_curator.pipelines.video.read_write.metadata_writer_stage import (
     ClipWriterStage,
     drop_clip_intermediate_data,
@@ -69,16 +81,23 @@ from cosmos_curator.pipelines.video.read_write.metadata_writer_stage import (
     window_ns_bounds,
 )
 from cosmos_curator.pipelines.video.utils.data_model import Clip, SplitPipeTask, Video, Window
-from cosmos_curator.pipelines.video.utils.ns_timing import seconds_to_ns
+from cosmos_curator.pipelines.video.utils.ns_timing import NS_PER_SECOND, seconds_to_ns
 
 MCAP_LIBRARY = "cosmos-curator split-pipeline mcap-writer"
 DEFAULT_FRAME_ID = "camera"
+DEFAULT_CAPTURE_TIMEZONE = "UTC"
 
 # PyAV codec name -> foxglove.CompressedVideo ``format`` value. h264/hevc additionally
 # need an AVCC -> Annex-B bitstream filter; av1/vp9 packets are already in the
 # low-overhead form Foxglove expects.
 _FOXGLOVE_VIDEO_FORMATS = {"h264": "h264", "hevc": "h265", "av1": "av1", "vp9": "vp9"}
 _ANNEXB_BSF_NAMES = {"h264": "h264_mp4toannexb", "hevc": "hevc_mp4toannexb"}
+
+# One pending MCAP message: (log_time_ns, topic, payload). Produced rather than written
+# directly so a clip's messages can be ordered before they reach the writer.
+_Msg = tuple[int, str, bytes]
+
+_log_time_of = operator.itemgetter(0)
 
 
 @functools.cache
@@ -157,6 +176,7 @@ class McapWriterStage(CuratorStage):
         embedding_algorithm: str,
         embedding_model_version: str,
         caption_models: list[str],
+        capture_timezone: str = DEFAULT_CAPTURE_TIMEZONE,
         dry_run: bool = False,
         verbose: bool = False,
         log_stats: bool = False,
@@ -169,6 +189,9 @@ class McapWriterStage(CuratorStage):
         self._embedding_algorithm = embedding_algorithm
         self._embedding_model_version = embedding_model_version
         self._caption_models = caption_models
+        # Held as a name rather than a tzinfo so the stage stays trivially serializable
+        # for Xenna's remote actors; resolved once per worker in stage_setup.
+        self._capture_timezone_name = capture_timezone
         self._dry_run = dry_run
         self._verbose = verbose
         self._log_stats = log_stats
@@ -179,7 +202,7 @@ class McapWriterStage(CuratorStage):
         return CuratorStageResource(cpus=0.5)
 
     def stage_setup(self) -> None:
-        """Initialize the fragment storage writer and the clip read client."""
+        """Initialize the fragment storage writer, the clip read client, and the capture zone."""
         self._fragments_writer = StorageWriter(
             ClipWriterStage.get_output_path_mcap_fragments(self._output_path),
             profile_name=self._output_s3_profile_name,
@@ -188,6 +211,9 @@ class McapWriterStage(CuratorStage):
             self._output_path,
             profile_name=self._output_s3_profile_name,
         )
+        self._capture_timezone = zoneinfo.ZoneInfo(self._capture_timezone_name)
+        # One video yields several chunks, each parsed from the same path.
+        self._capture_start_cache: dict[str, tuple[int, str] | None] = {}
 
     def process_data(self, tasks: list[SplitPipeTask]) -> list[SplitPipeTask] | None:  # type: ignore[override]
         """Write one MCAP fragment per video chunk, then drop retained clip payloads.
@@ -214,6 +240,27 @@ class McapWriterStage(CuratorStage):
         assert input_video_path.startswith(self._input_path)
         return input_video_path[len(self._input_path) :]
 
+    def _capture_start(self, video: Video) -> tuple[int, str]:
+        """Return the video's ``(epoch_base_ns, source_label)`` for the MCAP timeline.
+
+        Falls back to a 0-based timeline (and warns once per video) when the source
+        path names no capture time.
+        """
+        input_video_path = video.input_path
+        if input_video_path not in self._capture_start_cache:
+            parsed = mcap_time.parse_capture_start_ns(input_video_path, self._capture_timezone)
+            if parsed is None:
+                logger.warning(
+                    f"No capture time in path {input_video_path}; MCAP log times will be "
+                    "0-based source-video offsets rather than absolute"
+                )
+            self._capture_start_cache[input_video_path] = parsed
+        parsed = self._capture_start_cache[input_video_path]
+        if parsed is None:
+            return 0, mcap_time.CAPTURE_START_SOURCE_NONE
+        epoch_ns, matched = parsed
+        return epoch_ns, f"path:{matched}"
+
     def _write_video_fragment(self, video: Video) -> None:
         # A fully filtered / zero-clip chunk 0 still writes a metadata-only fragment so
         # every processed video yields a final MCAP; other empty chunks write nothing.
@@ -236,17 +283,27 @@ class McapWriterStage(CuratorStage):
         and embeddings (lazy channel registration omits those channels), and SAM3
         detections genuinely exist per camera.
         """
+        epoch_base_ns, start_source = self._capture_start(video)
         with _open_mcap_writer(out_file) as writer:
             channels = _McapChannels(writer)
             if video.clip_chunk_index == 0:
-                self._write_session_start(writer, channels, video)
-            for clip in video.clips:
-                base_ns = _clip_base_ns(clip)
+                self._write_session_start(writer, channels, video, epoch_base_ns, start_source)
+            # Clips already arrive in ascending source-timeline order (``chunk_video``
+            # slices ``video.clips`` contiguously), and they do not overlap, so ordering
+            # each clip's own messages is enough to order the whole fragment.
+            for clip in sorted(video.clips, key=_clip_base_ns):
+                base_ns = epoch_base_ns + _clip_base_ns(clip)
+                messages: list[_Msg] = []
                 media = self._read_clip_mp4(clip, video.relative_path)
                 if media is not None:
-                    _write_clip_media(channels, clip, base_ns, media)
-                self._write_clip_annotations(channels, clip, base_ns)
-                self._write_clip_embedding(channels, clip, base_ns)
+                    messages.extend(_clip_media_messages(clip, base_ns, media))
+                messages.extend(self._clip_annotation_messages(clip, base_ns))
+                messages.extend(self._clip_embedding_messages(clip, base_ns))
+                # A stable sort keeps production order for equal log times, so a keyframe
+                # carrying SPS/PPS stays ahead of anything sharing its timestamp.
+                messages.sort(key=_log_time_of)
+                for log_time_ns, topic, payload in messages:
+                    channels.add_message(topic, log_time_ns, payload)
 
     def _read_clip_mp4(self, clip: Clip, relative_path: str) -> bytes | None:
         """Read one clip's mp4 back from the ``clips/`` output written by ClipWriterStage."""
@@ -259,7 +316,7 @@ class McapWriterStage(CuratorStage):
             logger.warning(f"Clip {clip.uuid} from {clip.source_video} has no written mp4; skipping MCAP media")
             return None
 
-    def _session_metadata(self, video: Video) -> dict[str, str]:
+    def _session_metadata(self, video: Video, epoch_base_ns: int, start_source: str) -> dict[str, str]:
         meta = video.metadata
         values: dict[str, Any] = {
             "source-video": video.input_path,
@@ -277,69 +334,93 @@ class McapWriterStage(CuratorStage):
             "embedding-algorithm": self._embedding_algorithm,
             "embedding-model-version": self._embedding_model_version,
             "curator-version": _curator_version(),
+            # Where the MCAP timeline's zero sits, and how it was established, so a
+            # reader can tell an absolute recording from a 0-based fallback.
+            "start-time-unix-ns": epoch_base_ns,
+            "start-time-source": start_source,
+            "start-time-timezone": self._capture_timezone_name,
         }
         return {key: str(value) for key, value in values.items() if value is not None}
 
-    def _write_session_start(self, writer: Writer, channels: _McapChannels, video: Video) -> None:
+    def _write_session_start(
+        self,
+        writer: Writer,
+        channels: _McapChannels,
+        video: Video,
+        epoch_base_ns: int,
+        start_source: str,
+    ) -> None:
         """Write the one-shot records: session metadata, camera calibration, static transform.
 
-        Emitted at log_time 0 (the source-video start on the 0-based timeline),
-        from chunk 0 only so the merged file carries them exactly once.
+        Emitted at the source video's start (its capture time, or 0 when the path names
+        none), from chunk 0 only so the merged file carries them exactly once. Being the
+        earliest instant on the timeline, they also sort ahead of every clip message.
         """
-        writer.add_metadata(mcap_schemas.SESSION_METADATA_RECORD_NAME, self._session_metadata(video))
+        writer.add_metadata(
+            mcap_schemas.SESSION_METADATA_RECORD_NAME,
+            self._session_metadata(video, epoch_base_ns, start_source),
+        )
         if video.metadata.width and video.metadata.height:
             channels.add_message(
                 mcap_schemas.TOPIC_CAMERA_INFO,
-                0,
+                epoch_base_ns,
                 mcap_schemas.camera_calibration_message(
-                    0, DEFAULT_FRAME_ID, video.metadata.width, video.metadata.height
+                    epoch_base_ns, DEFAULT_FRAME_ID, video.metadata.width, video.metadata.height
                 ),
             )
         channels.add_message(
             mcap_schemas.TOPIC_TF_STATIC,
-            0,
-            mcap_schemas.frame_transforms_message(0, DEFAULT_FRAME_ID),
+            epoch_base_ns,
+            mcap_schemas.frame_transforms_message(epoch_base_ns, DEFAULT_FRAME_ID),
         )
 
-    def _write_clip_annotations(self, channels: _McapChannels, clip: Clip, base_ns: int) -> None:
-        """Write window captions and SAM3 per-frame detections on ``/scene-annotation``.
+    def _clip_annotation_messages(self, clip: Clip, base_ns: int) -> list[_Msg]:
+        """Build window captions and SAM3 per-frame detections for ``/scene-annotation``.
 
         Mirrors the reference recordings, where plain-text scene descriptions and
         JSON-encoded detection payloads share one topic.
         """
+        messages: list[_Msg] = []
         for window in clip.windows:
             caption = _select_window_caption(window, self._caption_models)
             if caption is None:
                 continue
             window_start_ns, _ = window_ns_bounds(clip, window)
             log_time = base_ns + (window_start_ns if window_start_ns is not None else 0)
-            channels.add_message(
-                mcap_schemas.TOPIC_SCENE_ANNOTATION,
-                log_time,
-                mcap_schemas.scene_annotation_message(log_time, caption),
+            messages.append(
+                (
+                    log_time,
+                    mcap_schemas.TOPIC_SCENE_ANNOTATION,
+                    mcap_schemas.scene_annotation_message(log_time, caption),
+                )
             )
         for entry in clip.sam3_frames or []:
             timestamp_s = entry.get("timestamp_s")
             offset_ns = seconds_to_ns(float(timestamp_s)) if timestamp_s is not None else 0
             log_time = base_ns + offset_ns
             payload = json.dumps({"frame_idx": entry.get("frame_idx"), "detections": entry.get("detections", [])})
-            channels.add_message(
-                mcap_schemas.TOPIC_SCENE_ANNOTATION,
-                log_time,
-                mcap_schemas.scene_annotation_message(log_time, payload),
+            messages.append(
+                (
+                    log_time,
+                    mcap_schemas.TOPIC_SCENE_ANNOTATION,
+                    mcap_schemas.scene_annotation_message(log_time, payload),
+                )
             )
+        return messages
 
-    def _write_clip_embedding(self, channels: _McapChannels, clip: Clip, base_ns: int) -> None:
+    def _clip_embedding_messages(self, clip: Clip, base_ns: int) -> list[_Msg]:
         embedding = select_clip_embedding(clip, self._embedding_algorithm)
         if embedding is None:
-            return
-        channels.add_message(
-            mcap_schemas.TOPIC_CLIP_EMBEDDING,
-            base_ns,
-            mcap_schemas.clip_embedding_message(
-                base_ns, self._embedding_algorithm, self._embedding_model_version, embedding
-            ),
-        )
+            return []
+        return [
+            (
+                base_ns,
+                mcap_schemas.TOPIC_CLIP_EMBEDDING,
+                mcap_schemas.clip_embedding_message(
+                    base_ns, self._embedding_algorithm, self._embedding_model_version, embedding
+                ),
+            )
+        ]
 
 
 def _clip_base_ns(clip: Clip) -> int:
@@ -356,36 +437,37 @@ def _select_window_caption(window: Window, caption_models: list[str]) -> str | N
     return None
 
 
-def _write_clip_media(channels: _McapChannels, clip: Clip, base_ns: int, media: bytes) -> None:
-    """Demux one clip mp4 and write its video packets and decoded audio blocks."""
+def _clip_media_messages(clip: Clip, base_ns: int, media: bytes) -> list[_Msg]:
+    """Demux one clip mp4 and build its video-packet and decoded-audio messages."""
+    messages: list[_Msg] = []
     with av.open(io.BytesIO(media), mode="r") as container:
-        maybe_writers = (
-            _ClipVideoWriter.create(channels, container, clip, base_ns),
-            _ClipAudioWriter.create(channels, container, base_ns),
+        maybe_encoders = (
+            _ClipVideoEncoder.create(container, clip, base_ns),
+            _ClipAudioEncoder.create(container, base_ns),
         )
-        writers = {w.stream_index: w for w in maybe_writers if w is not None}
-        if not writers:
-            return
+        encoders = {e.stream_index: e for e in maybe_encoders if e is not None}
+        if not encoders:
+            return messages
         for packet in container.demux():
             if packet.dts is None:  # demux flush sentinel
                 continue
-            if (writer := writers.get(packet.stream_index)) is not None:
-                writer.write_packet(packet)
-        for writer in writers.values():
-            writer.flush()
+            if (encoder := encoders.get(packet.stream_index)) is not None:
+                messages.extend(encoder.write_packet(packet))
+        for encoder in encoders.values():
+            messages.extend(encoder.flush())
+    return messages
 
 
-class _ClipVideoWriter:
-    """Write a clip's compressed video packets as ``foxglove.CompressedVideo`` messages.
+class _ClipVideoEncoder:
+    """Build ``foxglove.CompressedVideo`` messages from a clip's compressed video packets.
 
     h264/hevc packets are converted from AVCC (length-prefixed NALs, mp4) to
     Annex-B (start codes, SPS/PPS inline) via the ``*_mp4toannexb`` bitstream
     filter, as required by the CompressedVideo spec.
     """
 
-    def __init__(  # noqa: PLR0913
+    def __init__(
         self,
-        channels: _McapChannels,
         clip_uuid: uuid.UUID,
         base_ns: int,
         *,
@@ -393,7 +475,6 @@ class _ClipVideoWriter:
         stream_index: int,
         bsf: BitStreamFilterContext | None,
     ) -> None:
-        self._channels = channels
         self._clip_uuid = clip_uuid
         self._base_ns = base_ns
         self._video_format = video_format
@@ -402,15 +483,15 @@ class _ClipVideoWriter:
         # Seeded from the first demuxed packet (the IDR frame): its PTS is the clip's zero point.
         self._first_pts_ns: int | None = None
         self._warned_missing_pts = False
+        self._reordered_packets = 0
 
     @classmethod
     def create(
         cls,
-        channels: _McapChannels,
         container: "av.container.InputContainer",
         clip: Clip,
         base_ns: int,
-    ) -> "_ClipVideoWriter | None":
+    ) -> "_ClipVideoEncoder | None":
         if not container.streams.video:
             logger.warning(f"Clip {clip.uuid} from {clip.source_video} has no video stream")
             return None
@@ -426,7 +507,6 @@ class _ClipVideoWriter:
         bsf_name = _ANNEXB_BSF_NAMES.get(codec_name)
         bsf = BitStreamFilterContext(bsf_name, stream) if bsf_name is not None else None
         return cls(
-            channels,
             clip.uuid,
             base_ns,
             video_format=video_format,
@@ -434,85 +514,106 @@ class _ClipVideoWriter:
             bsf=bsf,
         )
 
-    def write_packet(self, packet: "av.Packet[Any]") -> None:
+    def write_packet(self, packet: "av.Packet[Any]") -> list[_Msg]:
+        if packet.pts is not None and packet.dts is not None and packet.pts != packet.dts:
+            self._reordered_packets += 1
         out_packets = self._bsf.filter(packet) if self._bsf is not None else [packet]
-        for out_packet in out_packets:
-            self._write_filtered_packet(out_packet)
+        return [message for out_packet in out_packets if (message := self._packet_message(out_packet)) is not None]
 
-    def flush(self) -> None:
-        if self._bsf is None:
-            return
-        for out_packet in self._bsf.filter(None):
-            self._write_filtered_packet(out_packet)
+    def flush(self) -> list[_Msg]:
+        messages: list[_Msg] = []
+        if self._bsf is not None:
+            messages = [
+                message
+                for out_packet in self._bsf.filter(None)
+                if (message := self._packet_message(out_packet)) is not None
+            ]
+        if self._reordered_packets:
+            logger.warning(
+                f"Clip {self._clip_uuid} has {self._reordered_packets} reordered (B-frame) video "
+                "packets; Foxglove does not support B-frames in foxglove.CompressedVideo, so this "
+                "clip's frames will not decode there. Re-encode without B-frames (ffmpeg -bf 0)."
+            )
+        return messages
 
-    def _write_filtered_packet(self, packet: "av.Packet[Any]") -> None:
+    def _packet_message(self, packet: "av.Packet[Any]") -> _Msg | None:
         if packet.pts is None or packet.time_base is None:
             if not self._warned_missing_pts:
                 self._warned_missing_pts = True
                 logger.warning(f"Clip {self._clip_uuid} has video packets without PTS; skipping those frames")
-            return
+            return None
         packet_pts_ns = pts_to_ns(packet.pts, packet.time_base)
         if self._first_pts_ns is None:
             self._first_pts_ns = packet_pts_ns
         log_time = self._base_ns + (packet_pts_ns - self._first_pts_ns)
-        self._channels.add_message(
-            mcap_schemas.TOPIC_IMAGE_RAW,
+        return (
             log_time,
+            mcap_schemas.TOPIC_IMAGE_RAW,
             mcap_schemas.compressed_video_message(log_time, DEFAULT_FRAME_ID, packet, self._video_format),
         )
 
 
-class _ClipAudioWriter:
-    """Decode a clip's audio track and write it as pcm-s16 ``foxglove.RawAudio`` messages."""
+class _ClipAudioEncoder:
+    """Decode a clip's audio track into pcm-s16 ``foxglove.RawAudio`` messages."""
 
-    def __init__(self, channels: _McapChannels, stream: "av.audio.stream.AudioStream", base_ns: int) -> None:
-        self._channels = channels
+    def __init__(self, stream: "av.audio.stream.AudioStream", base_ns: int) -> None:
         self._stream = stream
         self.stream_index = stream.index
         self._base_ns = base_ns
         self._resampler: av.AudioResampler | None = None
-        self._elapsed_ns = 0
+        self._elapsed_samples = 0
 
     @classmethod
     def create(
         cls,
-        channels: _McapChannels,
         container: "av.container.InputContainer",
         base_ns: int,
-    ) -> "_ClipAudioWriter | None":
+    ) -> "_ClipAudioEncoder | None":
         if not container.streams.audio:
             return None
-        return cls(channels, container.streams.audio[0], base_ns)
+        return cls(container.streams.audio[0], base_ns)
 
-    def write_packet(self, packet: "av.Packet[Any]") -> None:
+    def write_packet(self, packet: "av.Packet[Any]") -> list[_Msg]:
+        messages: list[_Msg] = []
         for frame in self._stream.codec_context.decode(packet):
-            self._write_frame(frame)
+            messages.extend(self._frame_messages(frame))
+        return messages
 
-    def flush(self) -> None:
+    def flush(self) -> list[_Msg]:
+        messages: list[_Msg] = []
         for frame in self._stream.codec_context.decode(None):
-            self._write_frame(frame)
+            messages.extend(self._frame_messages(frame))
         if self._resampler is not None:
-            for resampled in self._resampler.resample(None):
-                self._write_resampled(resampled)
+            messages.extend(
+                message
+                for resampled in self._resampler.resample(None)
+                if (message := self._resampled_message(resampled)) is not None
+            )
+        return messages
 
-    def _write_frame(self, frame: "av.AudioFrame") -> None:
+    def _frame_messages(self, frame: "av.AudioFrame") -> list[_Msg]:
         if self._resampler is None:
             self._resampler = av.AudioResampler(format="s16", layout=frame.layout.name, rate=frame.sample_rate)
-        for resampled in self._resampler.resample(frame):
-            self._write_resampled(resampled)
+        return [
+            message
+            for resampled in self._resampler.resample(frame)
+            if (message := self._resampled_message(resampled)) is not None
+        ]
 
-    def _write_resampled(self, frame: "av.AudioFrame") -> None:
+    def _resampled_message(self, frame: "av.AudioFrame") -> _Msg | None:
         data = frame.to_ndarray().tobytes()
         if not data:
-            return
+            return None
         number_of_channels = len(frame.layout.channels)
-        # Resampled PCM output is contiguous, so a running sample clock is the single
+        # Resampled PCM output is contiguous, so a running sample count is the single
         # source of truth; decoder PTS gaps or absences cannot rewind or overlap blocks.
-        log_time = self._base_ns + self._elapsed_ns
-        self._elapsed_ns += seconds_to_ns(frame.samples / frame.sample_rate)
-        self._channels.add_message(
-            mcap_schemas.TOPIC_AUDIO_RAW,
+        # Counting samples rather than accumulating per-block nanoseconds keeps the clock
+        # exact instead of truncating a fraction of a nanosecond per block.
+        log_time = self._base_ns + self._elapsed_samples * NS_PER_SECOND // frame.sample_rate
+        self._elapsed_samples += frame.samples
+        return (
             log_time,
+            mcap_schemas.TOPIC_AUDIO,
             mcap_schemas.raw_audio_message(log_time, data, frame.sample_rate, number_of_channels),
         )
 
@@ -670,16 +771,27 @@ def _open_fragment(
             yield tmp_file
 
 
+def _fragment_messages(
+    fragment_uri: "storage_client.StoragePrefix | pathlib.Path",
+    reader: McapReader,
+) -> Iterator[tuple["storage_client.StoragePrefix | pathlib.Path", Schema | None, Channel, Message]]:
+    """Stream one fragment's messages in file order, tagged with the fragment they came from."""
+    for schema, channel, message in reader.iter_messages(log_time_order=False):
+        yield fragment_uri, schema, channel, message
+
+
 def _merge_fragments(
     out_file: IO[bytes],
     fragments: list[tuple["storage_client.StoragePrefix | pathlib.Path", McapReader]],
 ) -> None:
     """Rewrite the fragments' records into one MCAP, remapping schema/channel ids.
 
-    Fragments are visited in chunk order and their messages are copied in file
-    order (NOT log_time order), preserving the decode-order guarantee for video
-    packets; since chunks partition the source timeline in order, per-topic
-    log_time stays globally ascending up to B-frame jitter within a chunk.
+    Each fragment is already written in ``log_time`` order, so the fragments are
+    k-way merged on ``log_time`` rather than concatenated: the merged file is then
+    ordered whatever the relationship between chunk index and time, and an indexed
+    reader never has to decompress overlapping chunks. ``heapq.merge`` is stable in
+    argument order, so equal log times keep chunk order, and it pulls lazily -- only
+    one message per fragment is ever held.
     """
     with _open_mcap_writer(out_file) as writer:
         schema_ids: dict[tuple[str, str, bytes], int] = {}
@@ -687,38 +799,42 @@ def _merge_fragments(
         # Fragments restart sequences at 0, so renumber per channel across the merge.
         sequences: dict[int, int] = {}
         metadata_seen: set[str] = set()
-        for fragment_uri, reader in fragments:
+        for _, reader in fragments:
             for metadata_record in reader.iter_metadata():
                 if metadata_record.name in metadata_seen:
                     continue
                 metadata_seen.add(metadata_record.name)
                 writer.add_metadata(metadata_record.name, dict(metadata_record.metadata))
-            for schema, channel, message in reader.iter_messages(log_time_order=False):
-                if schema is None:
-                    logger.warning(f"Fragment {fragment_uri} has a channel without schema; skipping its messages")
-                    continue
-                schema_key = (schema.name, schema.encoding, schema.data)
-                if schema_key not in schema_ids:
-                    schema_ids[schema_key] = writer.register_schema(
-                        name=schema.name,
-                        encoding=schema.encoding,
-                        data=schema.data,
-                    )
-                channel_key = (channel.topic, schema.name, channel.message_encoding)
-                if channel_key not in channel_ids:
-                    channel_ids[channel_key] = writer.register_channel(
-                        schema_id=schema_ids[schema_key],
-                        topic=channel.topic,
-                        message_encoding=channel.message_encoding,
-                        metadata=dict(channel.metadata),
-                    )
-                channel_id = channel_ids[channel_key]
-                sequence = sequences.get(channel_id, 0)
-                sequences[channel_id] = sequence + 1
-                writer.add_message(
-                    channel_id=channel_id,
-                    log_time=message.log_time,
-                    data=message.data,
-                    publish_time=message.publish_time,
-                    sequence=sequence,
+        merged = heapq.merge(
+            *(_fragment_messages(fragment_uri, reader) for fragment_uri, reader in fragments),
+            key=lambda entry: entry[3].log_time,
+        )
+        for fragment_uri, schema, channel, message in merged:
+            if schema is None:
+                logger.warning(f"Fragment {fragment_uri} has a channel without schema; skipping its messages")
+                continue
+            schema_key = (schema.name, schema.encoding, schema.data)
+            if schema_key not in schema_ids:
+                schema_ids[schema_key] = writer.register_schema(
+                    name=schema.name,
+                    encoding=schema.encoding,
+                    data=schema.data,
                 )
+            channel_key = (channel.topic, schema.name, channel.message_encoding)
+            if channel_key not in channel_ids:
+                channel_ids[channel_key] = writer.register_channel(
+                    schema_id=schema_ids[schema_key],
+                    topic=channel.topic,
+                    message_encoding=channel.message_encoding,
+                    metadata=dict(channel.metadata),
+                )
+            channel_id = channel_ids[channel_key]
+            sequence = sequences.get(channel_id, 0)
+            sequences[channel_id] = sequence + 1
+            writer.add_message(
+                channel_id=channel_id,
+                log_time=message.log_time,
+                data=message.data,
+                publish_time=message.publish_time,
+                sequence=sequence,
+            )

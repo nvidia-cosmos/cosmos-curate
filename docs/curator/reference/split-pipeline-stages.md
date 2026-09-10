@@ -34,6 +34,7 @@ The blocks below are appended in this order:
 | 15 | Per-event captioning | `--event-captioning`; requires `--sam3` |
 | 16 | T5 encoding for Cosmos-Predict | `--generate-cosmos-predict-dataset` |
 | 17 | Output writer | Always |
+| 18 | MCAP writer | `--generate-mcap` |
 
 ## Stage Catalog
 
@@ -66,6 +67,7 @@ The blocks below are appended in this order:
 | Main flags | `--transcode-encoder`, `--transcode-cpus-per-worker`, `--transcode-ffmpeg-batch-size`, `--transcode-max-output-frames`, `--clip-re-chunk-size` |
 | Purpose | Encodes each detected clip into standalone MP4 bytes. This is the common clip payload consumed by later stages and written by `ClipWriterStage`. |
 | Output | Populates `clip.encoded_data` and rechunks clips for downstream throughput. |
+| Encoder notes | The default `libopenh264` is Constrained Baseline and emits no B-frames. `h264_nvenc` does, via its `-tune hq` quality settings; `--generate-mcap` therefore switches the NVENC path to `-bf 0`, because `foxglove.CompressedVideo` cannot decode reordered frames. Audio is stream-copied from the source (`-c:a copy`). |
 
 ### Super-Resolution
 
@@ -250,6 +252,48 @@ Run-level aggregates of caption status and quality-flag fields are documented in
 | Purpose | Writes clips, metadata, embeddings, previews, SAM3 outputs, processed-video records, and summary files to local or cloud storage. |
 | Output | Standard output directories include `clips/`, `filtered_clips/`, `metas/v0/`, `metas_jsonl/v0/`, embedding directories such as `iv2_embd/`, `ce1_embd_<variant>/`, `openai_embd/`, `previews/`, `processed_videos/`, `sam3_*` directories, `summary.json`, and, when caption generation is enabled and `--no-caption-quality-stats` is not set, `caption_quality_stats.json`. |
 
+### MCAP Writer
+
+| Item | Details |
+|---|---|
+| Stage | `McapWriterStage`, plus the post-pipeline `consolidate_mcap_fragments` |
+| Code | [`read_write/mcap_writer_stage.py`](../../../cosmos_curator/pipelines/video/read_write/mcap_writer_stage.py); channel schemas in [`mcap_schemas.py`](../../../cosmos_curator/pipelines/video/read_write/mcap_schemas.py), capture-time parsing in [`mcap_time.py`](../../../cosmos_curator/pipelines/video/read_write/mcap_time.py) |
+| Main flags | `--generate-mcap`, `--mcap-timezone`, `--num-mcap-writer-workers-per-node` |
+| Purpose | Writes one Foxglove-compatible MCAP per input video, carrying the curated clips' video frames, audio, captions, SAM3 detections, and clip embeddings on a single source-video timeline. Gaps between clips on that timeline remain gaps in the MCAP. |
+| Output | One fragment per (video, clip chunk) under `mcap_fragments/<relative_input_path>/<chunk_index>.mcap` while the pipeline runs, merged on the driver afterwards into `mcap/<relative_input_path>.mcap`; fragments are then deleted. An incomplete fragment set (interrupted run) is left in place instead of being merged. |
+| Dependency | Requires clip upload — `--generate-mcap` with `--no-upload-clips` is rejected, because the stage reads each clip's MP4 back from the `clips/` output rather than holding it in the Ray object store. Enabling it also makes `ClipWriterStage` retain captions and embeddings for this stage to consume, and makes the transcoder encode without B-frames. |
+| Cost notes | 0.5 CPU per worker, two workers per node by default. Each worker holds one clip's MP4 plus that clip's message payloads at a time; reading clips back is a page-cache hit for local output. |
+
+Channels:
+
+| Topic | Schema | Contents |
+|---|---|---|
+| `/camera/image-raw` | `foxglove.CompressedVideo` | One message per clip video packet, converted to Annex-B. |
+| `/camera/audio` | `foxglove.RawAudio` | Decoded clip audio as interleaved little-endian `pcm-s16` blocks. |
+| `/scene-annotation` | `midcentury.SceneAnnotation` | Window captions as plain text, and SAM3 per-frame detections as a JSON payload, sharing one topic. |
+| `/clip/embedding` | `midcentury.ClipEmbedding` | One base64 little-endian float32 vector per clip, at the clip start. |
+| `/camera/camera-info` | `foxglove.CameraCalibration` | One-shot, at the video start. K/R/P are placeholders with the principal point at the image center; the pipeline has no calibration source. |
+| `/tf-static` | `foxglove.FrameTransforms` | One-shot identity `map` -> `camera` transform, at the video start. |
+
+Timing: `log_time` is the source video's capture start plus the message's offset on the
+source timeline. The capture start is parsed from the input path — the enclosing directory
+first (`.../375edge/01/2026-08-18-09-00/3.mp4`), then the file stem
+(`2026-08-10-09-00-bullet-far.mp4`, `2018-03-05.13-10-00.13-15-00.bus.mp4`) — and read in the
+zone given by `--mcap-timezone` (default `UTC`), since those names are local wall-clock
+readings. A path that names no time logs a warning and keeps a 0-based timeline. Either way
+the `session-metadata` record states which happened, in `start-time-unix-ns`,
+`start-time-source`, and `start-time-timezone`, alongside the source video's identity, shape,
+codecs, and clip counts.
+
+Every file the stage writes — fragments and the merged result alike — is in non-decreasing
+`log_time` order, so `mcap doctor` is silent and indexed readers can seek without
+decompressing overlapping chunks. Verify an output with:
+
+```bash
+mcap doctor <output>/mcap/<video>.mcap   # expect no output
+mcap info   <output>/mcap/<video>.mcap   # expect a real UTC start time
+```
+
 ## Common Combinations
 
 | Goal | Useful flags |
@@ -264,3 +308,4 @@ Run-level aggregates of caption status and quality-flag fields are documented in
 | Track prompted objects | `--sam3 --sam3-prompts "a car" "a pedestrian"` |
 | Generate object-grounded event annotations | `--sam3 --sam3-prompts ... --event-captioning` |
 | Emit Cosmos-Predict2 training assets | `--generate-cosmos-predict-dataset` |
+| Emit one Foxglove-viewable MCAP per input video | `--generate-mcap --mcap-timezone <IANA zone>` |

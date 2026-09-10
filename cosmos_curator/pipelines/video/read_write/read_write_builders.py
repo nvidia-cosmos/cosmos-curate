@@ -18,7 +18,10 @@ import attrs
 
 from cosmos_curator.core.interfaces.stage_interface import CuratorStage, CuratorStageSpec
 from cosmos_curator.pipelines.video.read_write.download_stages import VideoDownloader
-from cosmos_curator.pipelines.video.read_write.mcap_writer_stage import McapWriterStage
+from cosmos_curator.pipelines.video.read_write.mcap_writer_stage import (
+    DEFAULT_CAPTURE_TIMEZONE,
+    McapWriterStage,
+)
 from cosmos_curator.pipelines.video.read_write.metadata_writer_stage import ClipWriterStage
 from cosmos_curator.pipelines.video.tracking.serialization import Sam3OutputFormat
 
@@ -64,6 +67,9 @@ class OutputConfig:
     # one knob guarantees a retaining ClipWriterStage always has its consumer.
     generate_mcap: bool = False
     mcap_num_workers_per_node: int = 2
+    # Zone the capture time embedded in a source video's path is expressed in; the MCAP
+    # writer needs it to turn that local reading into an absolute (epoch) log_time.
+    mcap_capture_timezone: str = DEFAULT_CAPTURE_TIMEZONE
     num_workers_per_node: int = 8
     num_run_attempts: int = 5
     verbose: bool = False
@@ -130,6 +136,7 @@ def build_output_stages(config: OutputConfig) -> list[CuratorStage | CuratorStag
                     embedding_algorithm=config.embedding_algorithm,
                     embedding_model_version=config.embedding_model_version,
                     caption_models=config.caption_models,
+                    capture_timezone=config.mcap_capture_timezone,
                     dry_run=config.dry_run,
                     verbose=config.verbose,
                     log_stats=config.perf_profile,

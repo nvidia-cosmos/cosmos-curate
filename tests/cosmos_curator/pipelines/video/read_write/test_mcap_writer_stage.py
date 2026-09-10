@@ -28,7 +28,7 @@ import pytest
 from mcap.reader import make_reader
 from mcap.records import Channel, Message, Metadata, Schema
 
-from cosmos_curator.pipelines.video.read_write import mcap_schemas
+from cosmos_curator.pipelines.video.read_write import mcap_schemas, mcap_writer_stage
 from cosmos_curator.pipelines.video.read_write.mcap_writer_stage import (
     McapWriterStage,
     consolidate_mcap_fragments,
@@ -46,9 +46,17 @@ NUM_FRAMES = 10
 FPS = 30
 CLIP_DURATION_S = NUM_FRAMES / FPS
 
+# A clip long enough for the muxer to interleave audio and video the way a real capture
+# does: the audio blocks a container emits between two video packets do not line up with
+# the running sample clock the writer timestamps them from, so writing in demux order
+# yields out-of-order log times. Ten frames are too few to hit that.
+LONG_NUM_FRAMES = 60
+LONG_NUM_AUDIO_FRAMES = 94
+LONG_CLIP_DURATION_S = LONG_NUM_FRAMES / FPS
+
 
 @functools.lru_cache
-def _make_mp4(*, with_audio: bool = False) -> bytes:
+def _make_mp4(*, with_audio: bool = False, num_frames: int = NUM_FRAMES, num_audio_frames: int = 16) -> bytes:
     """Encode a tiny synthetic h264 mp4 (optionally with an aac audio track) in memory."""
     buffer = io.BytesIO()
     container = av.open(buffer, mode="w", format="mp4")
@@ -61,8 +69,8 @@ def _make_mp4(*, with_audio: bool = False) -> bytes:
         audio_stream = container.add_stream("aac", rate=48000)
         audio_stream.layout = "mono"
 
-    for i in range(NUM_FRAMES):
-        array = np.full((stream.height, stream.width, 3), i * 10, dtype=np.uint8)
+    for i in range(num_frames):
+        array = np.full((stream.height, stream.width, 3), (i * 10) % 256, dtype=np.uint8)
         frame = av.VideoFrame.from_ndarray(array, format="rgb24")
         for packet in stream.encode(frame):
             container.mux(packet)
@@ -70,7 +78,7 @@ def _make_mp4(*, with_audio: bool = False) -> bytes:
         container.mux(packet)
 
     if audio_stream is not None:
-        for i in range(16):
+        for i in range(num_audio_frames):
             audio_frame = av.AudioFrame(format="s16", layout="mono", samples=1024)
             for plane in audio_frame.planes:
                 plane.update(b"\x00" * plane.buffer_size)
@@ -85,6 +93,14 @@ def _make_mp4(*, with_audio: bool = False) -> bytes:
     return buffer.getvalue()
 
 
+def _make_long_av_mp4() -> bytes:
+    return _make_mp4(
+        with_audio=True,
+        num_frames=LONG_NUM_FRAMES,
+        num_audio_frames=LONG_NUM_AUDIO_FRAMES,
+    )
+
+
 def _make_clip(
     tmp_path: Path,
     video_path: Path,
@@ -92,13 +108,15 @@ def _make_clip(
     mp4_bytes: bytes | None,
     start_s: float = 0.0,
     with_annotations: bool = True,
+    num_frames: int = NUM_FRAMES,
 ) -> Clip:
     """Build a post-ClipWriterStage clip, writing its mp4 to the clips/ output the stage reads."""
+    duration_s = num_frames / FPS
     clip = Clip(
         uuid=uuid.uuid4(),
         source_video=video_path.as_posix(),
-        span=(start_s, start_s + CLIP_DURATION_S),
-        windows=[Window(start_frame=0, end_frame=NUM_FRAMES - 1, caption={"qwen": "a test scene"})]
+        span=(start_s, start_s + duration_s),
+        windows=[Window(start_frame=0, end_frame=num_frames - 1, caption={"qwen": "a test scene"})]
         if with_annotations
         else [],
     )
@@ -106,9 +124,9 @@ def _make_clip(
         clip_file = tmp_path / "output" / "clips" / f"{clip.uuid}.mp4"
         clip_file.parent.mkdir(parents=True, exist_ok=True)
         clip_file.write_bytes(mp4_bytes)
-    clip.pts_ns = (np.arange(NUM_FRAMES) * (NS_PER_SECOND // FPS)).astype(np.int64)
+    clip.pts_ns = (np.arange(num_frames) * (NS_PER_SECOND // FPS)).astype(np.int64)
     clip.start_ns = round(start_s * NS_PER_SECOND)
-    clip.end_ns = clip.start_ns + round(CLIP_DURATION_S * NS_PER_SECOND)
+    clip.end_ns = clip.start_ns + round(duration_s * NS_PER_SECOND)
     if with_annotations:
         clip.intern_video_2_embedding = np.array([0.1, 0.2, 0.3], dtype=np.float32)
         clip.sam3_frames = [
@@ -144,7 +162,7 @@ def _make_video(
     )
 
 
-def _process(tmp_path: Path, *videos: Video) -> None:
+def _process(tmp_path: Path, *videos: Video, capture_timezone: str = "UTC") -> None:
     """Run a fresh stage over one task holding *videos* (first video is primary)."""
     stage = McapWriterStage(
         output_path=str(tmp_path / "output"),
@@ -153,6 +171,7 @@ def _process(tmp_path: Path, *videos: Video) -> None:
         embedding_algorithm="internvideo2",
         embedding_model_version="v1",
         caption_models=["qwen"],
+        capture_timezone=capture_timezone,
     )
     stage.stage_setup()
     stage.process_data([SplitPipeTask(session_id="test-session", videos=list(videos))])
@@ -164,6 +183,29 @@ def _read_mcap(path: Path) -> tuple[list[tuple[Schema | None, Channel, Message]]
         messages = list(reader.iter_messages())
         metadata_records = list(reader.iter_metadata())
     return messages, metadata_records
+
+
+def _assert_log_time_sorted(path: Path) -> int:
+    """Assert the file's messages are in non-decreasing log_time order, as `mcap doctor` does.
+
+    Read with ``log_time_order=False``: the reader's default re-sorts via the message
+    index and would hide exactly the defect this checks.
+    """
+    with path.open("rb") as fh:
+        log_times = [message.log_time for _, _, message in make_reader(fh).iter_messages(log_time_order=False)]
+    out_of_order = [
+        (index, log_times[index - 1], log_times[index])
+        for index in range(1, len(log_times))
+        if log_times[index] < log_times[index - 1]
+    ]
+    assert not out_of_order, f"{len(out_of_order)} of {len(log_times)} messages out of order: {out_of_order[:5]}"
+    return len(log_times)
+
+
+def _session_metadata(path: Path) -> dict[str, str]:
+    records = [record for record in _read_mcap(path)[1] if record.name == mcap_schemas.SESSION_METADATA_RECORD_NAME]
+    assert len(records) == 1
+    return dict(records[0].metadata)
 
 
 def _messages_by_topic(
@@ -256,7 +298,7 @@ def test_fragment_audio_channel(tmp_path: Path) -> None:
     assert "McapWriterStage" not in video.errors
 
     messages, _ = _read_mcap(_fragment_path(tmp_path, video_path, 0))
-    audio = _messages_by_topic(messages)[mcap_schemas.TOPIC_AUDIO_RAW]
+    audio = _messages_by_topic(messages)[mcap_schemas.TOPIC_AUDIO]
     assert audio
     payload = json.loads(audio[0][1].data)
     assert payload["format"] == "pcm-s16"
@@ -482,3 +524,132 @@ def test_consolidate_no_fragments_is_noop(tmp_path: Path) -> None:
     """Consolidation returns quietly when there is nothing to merge."""
     consolidate_mcap_fragments(str(tmp_path / "missing-output"), "default")
     assert not (tmp_path / "missing-output").exists()
+
+
+def test_fragment_is_log_time_sorted(tmp_path: Path) -> None:
+    """A fragment is written in non-decreasing log_time order, annotations included.
+
+    Regression: annotations and the embedding used to be appended after a clip's whole
+    media stream while carrying timestamps back at the clip start, so every fragment with
+    a caption was out of order.
+    """
+    video_path = tmp_path / "input" / "video.mp4"
+    clip = _make_clip(tmp_path, video_path, mp4_bytes=_make_mp4())
+    _process(tmp_path, _make_video(video_path, [clip]))
+
+    fragment = _fragment_path(tmp_path, video_path, 0)
+    assert _assert_log_time_sorted(fragment) == NUM_FRAMES + 3 + 1 + 2  # frames, annotations, embedding, one-shots
+
+
+def test_fragment_with_audio_and_video_is_log_time_sorted(tmp_path: Path) -> None:
+    """A clip carrying both media channels comes out ordered across them."""
+    video_path = tmp_path / "input" / "video.mp4"
+    clip = _make_clip(tmp_path, video_path, mp4_bytes=_make_long_av_mp4(), num_frames=LONG_NUM_FRAMES)
+    _process(tmp_path, _make_video(video_path, [clip]))
+
+    fragment = _fragment_path(tmp_path, video_path, 0)
+    _assert_log_time_sorted(fragment)
+
+    # Both media channels really are present, so the assertion above spans them.
+    by_topic = _messages_by_topic(_read_mcap(fragment)[0])
+    assert len(by_topic[mcap_schemas.TOPIC_IMAGE_RAW]) == LONG_NUM_FRAMES
+    assert len(by_topic[mcap_schemas.TOPIC_AUDIO]) > LONG_NUM_FRAMES
+
+
+def test_fragment_orders_media_produced_out_of_order(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Media messages are ordered by log_time however the demuxer hands them over.
+
+    In production the skew comes from the container's own audio/video interleave, which the
+    running audio sample clock does not track: a real 600 s capture had 11,621 video and
+    audio messages written before earlier ones. A synthetic mp4 small enough for a unit test
+    happens to mux in order, so the producer is stubbed to hand back the same messages
+    shuffled -- what the writer must not preserve.
+    """
+    video_path = tmp_path / "input" / "video.mp4"
+    clip = _make_clip(tmp_path, video_path, mp4_bytes=_make_mp4(with_audio=True))
+
+    real_media_messages = mcap_writer_stage._clip_media_messages
+
+    def shuffled(clip: Clip, base_ns: int, media: bytes) -> list[tuple[int, str, bytes]]:
+        messages = real_media_messages(clip, base_ns, media)
+        # Interleave the two halves so audio and video land far from their log times.
+        midpoint = len(messages) // 2
+        return [message for pair in zip(messages[midpoint:], messages[:midpoint], strict=False) for message in pair]
+
+    monkeypatch.setattr(mcap_writer_stage, "_clip_media_messages", shuffled)
+    _process(tmp_path, _make_video(video_path, [clip]))
+
+    _assert_log_time_sorted(_fragment_path(tmp_path, video_path, 0))
+
+
+def test_multi_clip_fragment_is_log_time_sorted(tmp_path: Path) -> None:
+    """Several clips in one chunk stay ordered relative to each other."""
+    video_path = tmp_path / "input" / "video.mp4"
+    clips = [
+        _make_clip(tmp_path, video_path, mp4_bytes=_make_mp4(with_audio=True), start_s=index * 2 * CLIP_DURATION_S)
+        for index in range(3)
+    ]
+    _process(tmp_path, _make_video(video_path, clips))
+
+    _assert_log_time_sorted(_fragment_path(tmp_path, video_path, 0))
+
+
+def test_consolidated_file_is_log_time_sorted(tmp_path: Path) -> None:
+    """The merged file is ordered even when chunk index order disagrees with time order."""
+    video_path = tmp_path / "input" / "video.mp4"
+
+    # Chunk 0 holds the *later* clip and chunk 1 the earlier one: concatenating fragments
+    # in chunk order would produce an unsorted file, and overlapping chunk index entries.
+    late_clip = _make_clip(tmp_path, video_path, mp4_bytes=_make_mp4(with_audio=True), start_s=4 * CLIP_DURATION_S)
+    _process(tmp_path, _make_video(video_path, [late_clip], clip_chunk_index=0, num_clip_chunks=2))
+    early_clip = _make_clip(tmp_path, video_path, mp4_bytes=_make_mp4(with_audio=True), start_s=0.0)
+    _process(tmp_path, _make_video(video_path, [early_clip], clip_chunk_index=1, num_clip_chunks=2))
+
+    fragment_messages = sum(len(_read_mcap(_fragment_path(tmp_path, video_path, index))[0]) for index in (0, 1))
+
+    consolidate_mcap_fragments(str(tmp_path / "output"), "default")
+
+    final_path = tmp_path / "output" / "mcap" / "video.mp4.mcap"
+    assert _assert_log_time_sorted(final_path) == fragment_messages
+
+
+def test_capture_start_from_path_sets_absolute_log_times(tmp_path: Path) -> None:
+    """A capture folder in the source path anchors the timeline to real UTC."""
+    video_path = tmp_path / "input" / "2026-08-18-09-00" / "3.mp4"
+    clip = _make_clip(tmp_path, video_path, mp4_bytes=_make_mp4(), start_s=0.5)
+    _process(tmp_path, _make_video(video_path, [clip]), capture_timezone="America/Los_Angeles")
+
+    # 2026-08-18 09:00 Pacific == 16:00Z, matching the reference 375mcap recordings.
+    epoch_ns = 1787068800 * NS_PER_SECOND
+    fragment = _fragment_path(tmp_path, video_path, 0)
+    _assert_log_time_sorted(fragment)
+
+    messages, _ = _read_mcap(fragment)
+    by_topic = _messages_by_topic(messages)
+    # The one-shot records sit at the video start; clip media at the clip's own offset.
+    assert by_topic[mcap_schemas.TOPIC_TF_STATIC][0][1].log_time == epoch_ns
+    frames = by_topic[mcap_schemas.TOPIC_IMAGE_RAW]
+    assert min(message.log_time for _, message in frames) == epoch_ns + clip.start_ns
+
+    metadata = _session_metadata(fragment)
+    assert metadata["start-time-unix-ns"] == str(epoch_ns)
+    assert metadata["start-time-source"] == "path:2026-08-18-09-00"
+    assert metadata["start-time-timezone"] == "America/Los_Angeles"
+
+
+def test_capture_start_falls_back_to_zero_based(tmp_path: Path) -> None:
+    """A path naming no capture time keeps the 0-based timeline and says so in metadata."""
+    video_path = tmp_path / "input" / "3PANEL.mp4"
+    clip = _make_clip(tmp_path, video_path, mp4_bytes=_make_mp4(), start_s=0.5)
+    _process(tmp_path, _make_video(video_path, [clip]), capture_timezone="America/Los_Angeles")
+
+    fragment = _fragment_path(tmp_path, video_path, 0)
+    metadata = _session_metadata(fragment)
+    assert metadata["start-time-unix-ns"] == "0"
+    assert metadata["start-time-source"] == "none"
+
+    frames = _messages_by_topic(_read_mcap(fragment)[0])[mcap_schemas.TOPIC_IMAGE_RAW]
+    assert min(message.log_time for _, message in frames) == clip.start_ns

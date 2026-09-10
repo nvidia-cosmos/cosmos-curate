@@ -25,6 +25,7 @@ Which:
 import argparse
 import pathlib
 import time
+import zoneinfo
 from typing import Any, cast
 
 import attrs
@@ -119,7 +120,10 @@ from cosmos_curator.pipelines.video.filtering.motion.motion_builders import (
     MotionFilterConfig,
     build_motion_filter_stages,
 )
-from cosmos_curator.pipelines.video.read_write.mcap_writer_stage import consolidate_mcap_fragments
+from cosmos_curator.pipelines.video.read_write.mcap_writer_stage import (
+    DEFAULT_CAPTURE_TIMEZONE,
+    consolidate_mcap_fragments,
+)
 from cosmos_curator.pipelines.video.read_write.metadata_writer_stage import (
     ClipWriterStage,
     consolidate_lance_fragments,
@@ -168,6 +172,17 @@ from cosmos_curator.pipelines.video.utils.vllm_defaults import (
     resolve_vllm_sampling_config,
     resolve_vllm_sampling_fps,
 )
+
+
+def _zoneinfo_key(value: str) -> str:
+    """Argparse type that rejects an unknown IANA zone name up front rather than mid-run."""
+    try:
+        zoneinfo.ZoneInfo(value)
+    except Exception as exc:
+        msg = f"unknown time zone {value!r}: {exc}"
+        raise argparse.ArgumentTypeError(msg) from exc
+    return value
+
 
 QWEN2_CAPTION_ALGOS = {"qwen"}
 QWEN3_CAPTION_ALGOS = {
@@ -545,6 +560,9 @@ def _assemble_stages(  # noqa: C901, PLR0912, PLR0915
                 use_input_bit_rate=args.transcode_use_input_video_bit_rate,
                 num_clips_per_chunk=args.clip_re_chunk_size,
                 max_output_frames=args.transcode_max_output_frames,
+                # foxglove.CompressedVideo cannot decode B-frames, so MCAP output needs
+                # clips encoded without frame reordering.
+                disable_b_frames=args.generate_mcap,
                 verbose=args.verbose,
                 perf_profile=args.perf_profile,
             )
@@ -1125,6 +1143,7 @@ def _assemble_stages(  # noqa: C901, PLR0912, PLR0915
                 sam3_output_format=args.sam3_output_format,
                 generate_mcap=generate_mcap,
                 mcap_num_workers_per_node=args.num_mcap_writer_workers_per_node,
+                mcap_capture_timezone=args.mcap_timezone,
                 num_workers_per_node=args.num_clip_writer_workers_per_node,
                 verbose=args.verbose,
                 perf_profile=args.perf_profile,
@@ -1436,6 +1455,17 @@ def _setup_parser(parser: argparse.ArgumentParser) -> None:  # noqa: PLR0915
         help=(
             "Write one MCAP file per input video (clip frames, captions, embeddings, audio) "
             "after the clip writer stage."
+        ),
+    )
+    parser.add_argument(
+        "--mcap-timezone",
+        type=_zoneinfo_key,
+        default=DEFAULT_CAPTURE_TIMEZONE,
+        help=(
+            "IANA time zone the capture time in a source video's path is expressed in "
+            "(e.g. America/Los_Angeles for a '.../2026-08-18-09-00/3.mp4' recorded at 09:00 "
+            "Pacific). Used to turn that local reading into an absolute MCAP log_time; videos "
+            f"whose path names no time keep a 0-based timeline. Default: {DEFAULT_CAPTURE_TIMEZONE}."
         ),
     )
     parser.add_argument(
