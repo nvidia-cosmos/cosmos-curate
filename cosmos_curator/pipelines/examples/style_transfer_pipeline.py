@@ -19,8 +19,9 @@ A standalone pipeline for testing the style-transfer stage end-to-end. Reads
 videos from an input directory, applies Cosmos3 Generator Transfer (in-process
 via vLLM-Omni), and writes restyled videos to an output directory.
 
-Runs in the ``default`` Pixi env (vLLM-Omni ships in the ``runtime`` feature). The
-model weights are downloaded on first use into the curator model cache; no separate
+The driver runs in the ``default`` Pixi environment, while the transfer actor runs
+in the dedicated ``style-transfer`` environment that carries vLLM-Omni. The model
+weights are downloaded on first use into the curator model cache; no separate
 framework checkout is required.
 
 Usage::

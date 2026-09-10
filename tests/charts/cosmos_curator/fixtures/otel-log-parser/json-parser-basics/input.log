@@ -1,0 +1,4 @@
+{"levelname":"INFO","message":"ray json asctime","name":"ray.worker","lineno":43,"asctime":"2026-07-30 14:01:41,456"}
+{"levelname":"ERROR","message":"json failed","name":"cosmos_curator.example","lineno":44,"asctime":"2026-07-30 14:01:42,789","exception":"Traceback\nValueError: boom"}
+{"asctime":"2026-07-30 14:01:43,111","levelname":"ERROR","message":"ray json failed","filename":"worker.py","lineno":45,"exc_text":"Traceback\nRuntimeError: ray boom","job_id":"01000000"}
+{}

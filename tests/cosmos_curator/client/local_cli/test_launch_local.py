@@ -65,6 +65,34 @@ def test_launch_command() -> None:
     assert called_args[:3] == ["docker", "run", "--rm"]
     assert "--network=host" not in called_args
     assert "--cap-add=SYS_ADMIN" not in called_args
+    assert "COSMOS_CURATOR_RAY_IO_SLOTS_PER_NODE=16" in called_args
+    # A pseudo-TTY becomes the container's controlling terminal, and Ray (>=2.57) puts each worker
+    # in its own process group. Any worker child reading stdin from such a background group is
+    # stopped with SIGTTIN, which silently hangs ffmpeg mid-pipeline. PYTHONUNBUFFERED replaces the
+    # line buffering the TTY used to provide.
+    assert "-t" not in called_args
+    assert "-it" not in called_args
+    assert "PYTHONUNBUFFERED=1" in called_args
+
+
+def test_launch_command_forwards_local_ray_io_capacity() -> None:
+    """The containerized recipe can size the local Ray node's logical IO resource."""
+    args = [
+        "local",
+        "launch",
+        "--ray-io-slots-per-node",
+        "7",
+        "--",
+        "echo",
+        "hello",
+    ]
+    with patch("cosmos_curator.client.local_cli.launch_local.subprocess.call") as mock_call:
+        mock_call.return_value = 0
+
+        result = runner.invoke(cosmos_curator, args)
+
+    assert result.exit_code == 0
+    assert "COSMOS_CURATOR_RAY_IO_SLOTS_PER_NODE=7" in mock_call.call_args.args[0]
 
 
 def test_launch_command_with_docker_network() -> None:

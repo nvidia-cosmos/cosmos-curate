@@ -17,17 +17,15 @@
 import attrs
 
 from cosmos_curator.core.sensors.sampling.grid import SamplingGrid
-from cosmos_curator.core.sensors.sampling.policy import SamplingPolicy
 
 
 @attrs.define(frozen=True, hash=False)
 class SamplingSpec:
     """Timestamp sampling specification.
 
-    ``policy=None`` means no sampling policy is applied. When a
-    :class:`SamplingPolicy` is provided, its rules constrain sampling.
+    The spec owns the shared request timeline only. Concrete sampling policies
+    are supplied explicitly at each sampling call boundary.
     """
 
     __hash__ = None  # type: ignore[assignment]
     grid: SamplingGrid
-    policy: SamplingPolicy | None = None

@@ -985,7 +985,7 @@ def test_make_spans() -> None:
 
 
 # ---------------------------------------------------------------------------
-# New tests for CVC-694 strict timestamp consumption
+# Tests for strict timestamp consumption
 # ---------------------------------------------------------------------------
 
 

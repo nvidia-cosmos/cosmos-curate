@@ -143,11 +143,18 @@ class OpenAIEmbeddingStage(CuratorStage):
         )
 
     def _embed_clip(self, clip: Clip) -> None:
-        """Embed a single clip — designed to run inside a thread pool."""
+        """Embed a single clip inside a thread pool.
+
+        This stage is the map's terminal consumer. It is released on every
+        handled exit—missing extraction data or signature, a caught
+        embedding-request failure, and success. Propagating exceptions retain
+        it.
+        """
         ef = clip.extracted_frames.resolve()
         if ef is None or self._frame_extraction_signature not in ef:
             clip.errors["openai_embedding"] = "extracted frames missing"
             logger.error(f"Clip {clip.uuid} has no extracted frames for {self._frame_extraction_signature}")
+            clip.extracted_frames.drop()
             return
         frames = ef[self._frame_extraction_signature]
         try:
@@ -158,6 +165,7 @@ class OpenAIEmbeddingStage(CuratorStage):
                 logger.exception(f"OpenAI API embedding failed for clip {clip.uuid}")
             else:
                 logger.warning(f"OpenAI API embedding failed for clip {clip.uuid}: {exc}")
+            clip.extracted_frames.drop()
             return
         clip.openai_embedding = embedding
         if self._verbose:

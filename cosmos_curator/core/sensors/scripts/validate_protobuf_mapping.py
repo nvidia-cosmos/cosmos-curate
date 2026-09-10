@@ -12,7 +12,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Smoke-test a GPS or IMU protobuf YAML mapping against an MCAP schema."""
+"""Smoke-test a GPS, IMU, or ego-trajectory protobuf YAML mapping against an MCAP schema."""
 
 import argparse
 import dataclasses
@@ -28,6 +28,10 @@ from mcap.exceptions import McapError
 from mcap.reader import McapReader, make_reader
 from mcap.records import Channel, Schema
 
+from cosmos_curator.core.sensors.sensors.ego_trajectory_sensor import (
+    REQUIRED_EGO_TRAJECTORY_MAPPING_FIELDS,
+    DecodedEgoTrajectorySample,
+)
 from cosmos_curator.core.sensors.sensors.gps_sensor import (
     REQUIRED_GPS_MAPPING_FIELDS,
     DecodedGpsSample,
@@ -367,6 +371,7 @@ INPUT_ERROR_EXIT_CODE = 2
 
 
 _TARGET_CONFIGS: dict[str, tuple[type[Any], frozenset[str]]] = {
+    "egotrajectory": (DecodedEgoTrajectorySample, REQUIRED_EGO_TRAJECTORY_MAPPING_FIELDS),
     "gps": (DecodedGpsSample, REQUIRED_GPS_MAPPING_FIELDS),
     "imu": (DecodedImuSample, REQUIRED_IMU_MAPPING_FIELDS),
 }
@@ -393,8 +398,8 @@ def _schema_and_channel_for_topic(reader: McapReader, topic: str) -> tuple[Schem
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Validate a GPS or IMU protobuf YAML mapping against the descriptor embedded in an MCAP without "
-            "decoding message payloads."
+            "Validate a GPS, IMU, or ego-trajectory protobuf YAML mapping against the descriptor embedded in "
+            "an MCAP without decoding message payloads."
         )
     )
     parser.add_argument("--target", choices=sorted(_TARGET_CONFIGS), required=True)

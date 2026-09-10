@@ -99,8 +99,10 @@ monkey-patches its target library to emit spans automatically:
 * **requests** -- spans for outbound HTTP requests.
 * **urllib3** -- spans for low-level HTTP transport.
 * **threading** -- propagates trace context across threads.
-* **logging** -- injects ``otelTraceID`` / ``otelSpanID`` into
-  stdlib ``logging.LogRecord`` attributes.
+* **logging** -- injects ``trace_id`` / ``span_id`` /
+  ``trace_sampled`` onto stdlib ``logging.LogRecord`` objects while a
+  span is active, so structured (``PYTHON_LOG_FORMAT=json``) log lines
+  can be correlated with the trace that produced them.
 * **fastapi** -- spans for inbound HTTP endpoints (NVCF).
 
 Instrumentors are gated on ``importlib.util.find_spec()`` so they
@@ -112,6 +114,7 @@ import atexit
 import contextlib
 import errno
 import importlib.util
+import logging
 import os
 import pathlib
 import tempfile
@@ -183,9 +186,10 @@ class TracingConfig:
             ``OTEL_EXPORTER_OTLP_ENDPOINT``,
             ``OTEL_EXPORTER_OTLP_TRACES_ENDPOINT``, or
             ``--profile-tracing-otlp-endpoint`` to enable.
-        traceparent: W3C-style trace context propagated from the
+        traceparent: W3C trace context propagated from the
             driver's root span.  Format:
-            ``"{trace_id_hex}:{span_id_hex}"`` or empty string
+            ``"{version}-{trace_id}-{span_id}-{trace_flags}"``
+            or empty string
             when not propagated.  Workers use this to create spans
             as children of the driver's root span, unifying all
             processes under a single ``trace_id``.
@@ -560,10 +564,11 @@ class _TracingBackend:
 
         # Inject remote parent context from the driver's root span.
         #
-        # When traceparent is set (format: "trace_id_hex:span_id_hex"),
+        # When traceparent is set (W3C format, see attach_remote_parent),
         # construct a remote SpanContext and attach it as the current
         # context.  All subsequent spans created on this worker become
-        # children of the driver's root span, sharing the same trace_id.
+        # children of the driver's root span, sharing the same trace_id
+        # and its sampling decision.
         # This unifies the distributed trace across driver + workers.
         if self._config.traceparent:
             self._attach_remote_parent(self._config.traceparent)
@@ -579,8 +584,8 @@ class _TracingBackend:
         the ``setup_provider()`` call site.
 
         Args:
-            traceparent: ``"{trace_id_hex}:{span_id_hex}"`` string
-                set by :func:`propagate_trace_context` on the driver.
+            traceparent: W3C ``traceparent`` string set by
+                :func:`propagate_trace_context` on the driver.
 
         """
         attach_remote_parent(traceparent)
@@ -588,10 +593,18 @@ class _TracingBackend:
     def propagate_context(self) -> None:
         """Write the current span's trace context to the environment.
 
-        Serializes the active span's ``trace_id`` and ``span_id``
-        into ``COSMOS_CURATOR_TRACEPARENT`` so that Ray workers (which
-        inherit environment variables at startup) can reconstruct the
-        remote parent and create child spans under the same trace.
+        Serializes the active span's ``trace_id``, ``span_id`` and
+        ``trace_flags`` into ``COSMOS_CURATOR_TRACEPARENT`` so that Ray
+        workers (which inherit environment variables at startup) can
+        reconstruct the remote parent and create child spans under the
+        same trace.
+
+        The value is a standard W3C ``traceparent``
+        (``{version}-{trace_id}-{span_id}-{trace_flags}``).  Carrying
+        the flags is what lets a worker inherit the root's sampling
+        decision: ``ParentBased`` samplers defer to the parent, so
+        dropping the flags here would silently force every worker span
+        to be sampled regardless of ``--profile-tracing-sampling``.
 
         Called from ``profiling_scope()`` **inside** the
         ``trace_root_anchor()`` context, after ``enable_tracing()``
@@ -624,11 +637,12 @@ class _TracingBackend:
         span = trace.get_current_span()
         ctx = span.get_span_context()
         if ctx is not None and ctx.trace_id != 0:
-            traceparent = f"{ctx.trace_id:032x}:{ctx.span_id:016x}"
+            traceparent = f"00-{ctx.trace_id:032x}-{ctx.span_id:016x}-{int(ctx.trace_flags):02x}"
             os.environ[_ENV_TRACEPARENT] = traceparent
             logger.debug(
                 f"[otel] {self._id}: Root trace context propagated: "
-                f"trace_id={ctx.trace_id:032x}, span_id={ctx.span_id:016x}",
+                f"trace_id={ctx.trace_id:032x}, span_id={ctx.span_id:016x}, "
+                f"sampled={ctx.trace_flags.sampled}",
             )
 
     def flush(self) -> None:
@@ -762,8 +776,30 @@ _current_backend: _TracingBackend | None = None
 #   requests           opentelemetry-instrumentation-requests     Outbound HTTP
 #   urllib3            opentelemetry-instrumentation-urllib3       Low-level HTTP
 #   threading          opentelemetry-instrumentation-threading    Context propagation
-#   logging            opentelemetry-instrumentation-logging      trace_id in logs
+#   logging            opentelemetry-instrumentation-logging      trace_id/span_id on log records
 #   fastapi            opentelemetry-instrumentation-fastapi      NVCF HTTP endpoints
+
+
+def _inject_span_context(span: trace.Span, record: logging.LogRecord) -> None:
+    """Stamp the active span's ids onto *record* so log lines link back to the trace.
+
+    Registered as ``LoggingInstrumentor``'s ``log_hook``, which invokes it only
+    when a valid (non-``INVALID``) span context is current.  Records emitted
+    outside a span therefore carry no span fields at all, rather than the ``"0"``
+    placeholders ``inject_trace_context=True`` would write -- an absent field is
+    what stops log UIs from rendering a dead link to a nonexistent trace.
+
+    Values must stay JSON-native (lowercase hex ``str`` and ``bool``): Ray's
+    ``JSONFormatter`` serializes extra record attributes without a ``default=``
+    fallback.  Runs on every ``LogRecord`` created while a span is active, hence
+    the single dict update.
+    """
+    ctx = span.get_span_context()
+    record.__dict__.update(
+        trace_id=format(ctx.trace_id, "032x"),
+        span_id=format(ctx.span_id, "016x"),
+        trace_sampled=ctx.trace_flags.sampled,
+    )
 
 
 def _try_instrument(
@@ -830,13 +866,21 @@ def _instrument_libraries() -> None:
         "threading (context propagation)",
     )
 
-    # logging (inject trace_id / span_id into stdlib log records)
+    # logging (inject trace_id / span_id / trace_sampled into stdlib log records)
+    #
+    # enable_log_auto_instrumentation defaults to True, which would attach an OTel
+    # LoggingHandler to the *root* logger.  We configure no OTel logs pipeline, so
+    # that handler only feeds a no-op provider -- but its mere presence makes xenna's
+    # _FallbackJsonHandler defer to it and stay silent, swallowing every record
+    # emitted before ray.init takes over the root logger.  Keep it off.
     _try_instrument(
         "logging",
         "opentelemetry.instrumentation.logging",
         "LoggingInstrumentor",
         "logging (trace context injection)",
         set_logging_format=False,
+        log_hook=_inject_span_context,
+        enable_log_auto_instrumentation=False,
     )
 
     # fastapi (NVCF service endpoints)
@@ -1086,18 +1130,30 @@ def read_propagated_traceparent() -> str:
 def attach_remote_parent(traceparent: str) -> None:
     """Attach a remote parent span context to the **current thread**.
 
-    Parses a ``"{trace_id_hex}:{span_id_hex}"`` string (the same
-    format written by :func:`propagate_trace_context`) and attaches
-    it as the active OTel context.  All subsequent spans created on
-    this thread become children of the remote parent, sharing its
-    ``trace_id``.
+    Parses a W3C ``traceparent``
+    (``{version}-{trace_id}-{span_id}-{trace_flags}``, the format
+    written by :func:`propagate_trace_context`) and attaches it as the
+    active OTel context.  All subsequent spans created on this thread
+    become children of the remote parent, sharing its ``trace_id`` and
+    its sampling decision.
+
+    The propagated ``trace_flags`` matter: ``ParentBased`` samplers
+    defer to the parent, so a parent reconstructed with the wrong flag
+    overrides ``--profile-tracing-sampling`` for every span on this
+    thread.
+
+    The legacy ``"{trace_id_hex}:{span_id_hex}"`` form (no flags) is
+    still accepted and assumed sampled, matching how it behaved when it
+    was the only format, so a worker can still attach to a driver that
+    has not been upgraded.
 
     No-op when *traceparent* is empty or malformed (logs a warning
     on parse failure).
 
     Args:
-        traceparent: ``"{trace_id_hex}:{span_id_hex}"`` string, or
-            empty string to skip.
+        traceparent: W3C ``traceparent`` string, the legacy
+            ``"{trace_id_hex}:{span_id_hex}"`` form, or empty string
+            to skip.
 
     """
     if not traceparent:
@@ -1106,17 +1162,22 @@ def attach_remote_parent(traceparent: str) -> None:
     from opentelemetry.trace import NonRecordingSpan, SpanContext, TraceFlags  # noqa: PLC0415
 
     try:
-        trace_id_hex, span_id_hex = traceparent.split(":")
+        if "-" in traceparent:
+            _version, trace_id_hex, span_id_hex, flags_hex = traceparent.split("-")
+            flags = TraceFlags(int(flags_hex, 16))
+        else:
+            trace_id_hex, span_id_hex = traceparent.split(":")
+            flags = TraceFlags(TraceFlags.SAMPLED)
         remote_ctx = SpanContext(
             trace_id=int(trace_id_hex, 16),
             span_id=int(span_id_hex, 16),
             is_remote=True,
-            trace_flags=TraceFlags(TraceFlags.SAMPLED),
+            trace_flags=flags,
         )
         parent_ctx = trace.set_span_in_context(NonRecordingSpan(remote_ctx))
         context.attach(parent_ctx)
         logger.trace(
-            f"[otel] attach_remote_parent: trace_id={trace_id_hex}, span_id={span_id_hex}",
+            f"[otel] attach_remote_parent: trace_id={trace_id_hex}, span_id={span_id_hex}, sampled={flags.sampled}",
         )
     except Exception as exc:  # noqa: BLE001
         logger.warning(f"[otel] attach_remote_parent: Failed to parse traceparent: {exc}")

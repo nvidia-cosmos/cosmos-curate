@@ -23,9 +23,32 @@ import numpy as np
 import numpy.typing as npt
 
 from cosmos_curator.core.sensors.utils.helpers import as_readonly_view
-from cosmos_curator.core.sensors.utils.validation import bool_array, int64_array, strictly_increasing_int64_array
+from cosmos_curator.core.sensors.utils.validation import (
+    INT64_MAX,
+    INT64_MIN,
+    bool_array,
+    int64_array,
+    strictly_increasing_int64_array,
+)
 
 VIDEO_METADATA_VERSION = "2"
+
+
+def validate_timestamp_offset_ns(value: object, *, name: str = "timestamp_offset_ns") -> int:
+    """Validate and normalize one signed-nanosecond quantity.
+
+    ``name`` appears in the error, so a caller validating an origin rather than an
+    offset reports the argument the caller actually passed.
+    """
+    if isinstance(value, (bool, np.bool_)) or not isinstance(value, (int, np.integer)):
+        msg = f"{name} must be an integer, got {type(value).__name__}"
+        raise ValueError(msg)  # noqa: TRY004
+
+    normalized_value = int(value)
+    if not INT64_MIN <= normalized_value <= INT64_MAX:
+        msg = f"{name} must fit signed int64, got {normalized_value}"
+        raise ValueError(msg)
+    return normalized_value
 
 
 def _is_ndarray_field(attr: attrs.Attribute) -> bool:  # type: ignore[type-arg]
@@ -138,7 +161,8 @@ class VideoIndex:
             not used for seeks in this library).  Not monotonically increasing for
             B-frame video (arrays are in PTS order, not file order).
         size: packet size in bytes; paired with ``offset`` for the same complete index
-        pts_ns: presentation timestamps in nanoseconds, in ascending order.
+        pts_ns: presentation timestamps in the configured nanosecond timeline,
+            in ascending order.
         pts_stream: presentation timestamps in stream-native time_base units,
             in ascending order.  Use these for seeks and decode plans to avoid
             lossy ns↔stream_pts round-trips.
@@ -152,11 +176,14 @@ class VideoIndex:
             ``make_decode_plan`` and ``container.seek``.
         time_base: stream time_base as a ``Fraction``
             (e.g. ``Fraction(1, 15360)``).  Satisfies
-            ``pts_to_ns(pts_stream, time_base) == pts_ns`` exactly.
-            **Do not** compute ``pts_stream`` from ``pts_ns`` via floor
+            ``pts_to_ns(pts_stream, time_base) + timestamp_offset_ns == pts_ns``
+            exactly. **Do not** compute ``pts_stream`` from ``pts_ns`` via floor
             division — the round-trip is lossy for fps-rate time_bases
-            (e.g. ``Fraction(1, 30)``).  Always preserve ``pts_stream``
-            directly from the container index.
+            (e.g. ``Fraction(1, 30)``). Always preserve ``pts_stream`` directly
+            from the container index.
+        timestamp_offset_ns: fixed signed-nanosecond offset applied to the
+            nanosecond timestamp arrays. Stream-native PTS arrays and
+            ``time_base`` remain unchanged.
 
     """
 
@@ -194,6 +221,7 @@ class VideoIndex:
         ),
     )
     time_base: Fraction
+    timestamp_offset_ns: int = attrs.field(default=0, converter=validate_timestamp_offset_ns)
     _display_mask: npt.NDArray[np.bool_] = attrs.field(init=False, repr=False, eq=False)
     _display_pts_ns: npt.NDArray[np.int64] = attrs.field(init=False, repr=False, eq=False)
     _display_pts_stream: npt.NDArray[np.int64] = attrs.field(init=False, repr=False, eq=False)
@@ -228,6 +256,40 @@ class VideoIndex:
         """Return displayable presentation timestamps in stream-native units."""
         return self._display_pts_stream
 
+    def with_timestamp_offset(self, timestamp_offset_ns: int) -> Self:
+        """Return a native index shifted by ``timestamp_offset_ns``.
+
+        A nonzero offset may be applied only when the index's
+        ``timestamp_offset_ns`` is zero. Applying zero is a no-op. The
+        stream-native PTS arrays and ``time_base`` are preserved for decode
+        scheduling and seeking.
+        """
+        timestamp_offset_ns = validate_timestamp_offset_ns(timestamp_offset_ns)
+        if self.timestamp_offset_ns != 0:
+            msg = "timestamp_offset_ns can only be applied to a native VideoIndex"
+            raise ValueError(msg)
+        if timestamp_offset_ns == 0:
+            return self
+
+        if len(self.pts_ns):
+            # ``pts_ns`` is strictly increasing, so every interior value is
+            # bounded by these endpoints and cannot overflow independently.
+            shifted_first_ns = int(self.pts_ns[0]) + timestamp_offset_ns
+            shifted_last_ns = int(self.pts_ns[-1]) + timestamp_offset_ns
+            if not (INT64_MIN <= shifted_first_ns <= INT64_MAX and INT64_MIN <= shifted_last_ns <= INT64_MAX):
+                msg = (
+                    "timestamp_offset_ns shifts VideoIndex timestamps outside signed int64: "
+                    f"offset={timestamp_offset_ns}"
+                )
+                raise ValueError(msg)
+
+        return attrs.evolve(
+            self,
+            pts_ns=self.pts_ns + np.int64(timestamp_offset_ns),
+            kf_pts_ns=self.kf_pts_ns + np.int64(timestamp_offset_ns),
+            timestamp_offset_ns=timestamp_offset_ns,
+        )
+
     def __eq__(self, other: object) -> bool:
         """Check if two VideoIndex objects are equal."""
         if not isinstance(other, VideoIndex):
@@ -246,6 +308,7 @@ class VideoIndex:
             and bool(np.all(self.kf_pts_ns == other.kf_pts_ns))
             and bool(np.all(self.kf_pts_stream == other.kf_pts_stream))
             and self.time_base == other.time_base
+            and bool(self.timestamp_offset_ns == other.timestamp_offset_ns)
         )
 
     # Lazily filled by :meth:`packet_array_fields` / :meth:`scalar_fields`.
@@ -282,7 +345,8 @@ class VideoIndex:
 
         Complement of :meth:`packet_array_fields` over the init=True,
         non-underscore-prefixed attrs fields. Today this is just
-        ``("time_base",)``; any future non-array init field auto-appears.
+        ``("time_base", "timestamp_offset_ns")``; any future non-array init
+        field auto-appears.
         """
         cached: tuple[str, ...] | None = cls.__dict__.get("_cached_scalar_fields")
         if cached is None:

@@ -43,7 +43,7 @@ Examples of packets:
 
 **Avoid sensor-specific frame indices.** When a camera drops a frame, its frame indices no longer align with other cameras—e.g., primary frame 30 and left frame 29 may both correspond to t=1.0s. Downstream consumers that assume "index N = same moment across cameras" get off-by-one or off-by-few errors.
 
-**Use timestamps as the canonical identifier.** Each `AlignedFrame` carries `align_timestamps_ns` `(N,)` for the batch and per-sensor `sensor_timestamps_ns` inside each payload (e.g. `frame[sensor_id]`). Downstream code aligns on those arrays, not on opaque frame indices. For stream position (e.g., progress bars), use `enumerate(sensor_group.sample(spec))` with a **`SamplingSpec`** (see below).
+**Use timestamps as the canonical identifier.** Each `AlignedFrame` carries `align_timestamps_ns` `(N,)` for the batch and per-sensor `sensor_timestamps_ns` inside each payload (e.g. `frame[sensor_id]`). Downstream code aligns on those arrays, not on opaque frame indices. For stream position (e.g., progress bars), use `enumerate(sensor_group.sample(spec, policies=policies))` with a **`SamplingSpec`** (see below).
 
 ### Streaming Design
 
@@ -81,7 +81,7 @@ This library:
   │                                                                             │
   │  CameraSensor │ ImuSensor │ GpsSensor │ LidarSensor │ ...                   │
   │  - start_ns, end_ns                                                         │
-  │  - sample(spec) → Generator[SensorData] (SoA, batch dim N per yield)        │
+  │  - sample(spec, policy=...) → Generator[SensorData] (SoA, batch dim N)      │
   └─────────────────────────────────────────────────────────────────────────────┘
                                           │
                                           ▼
@@ -93,10 +93,10 @@ This library:
                                           │
                                           ▼
   ┌─────────────────────────────────────────────────────────────────────────────┐
-  │  sensor_group.sample(spec) → Generator[AlignedFrame]                        │
-  │  - ``spec: SamplingSpec`` has ``.grid`` and optional ``.policy``            │
+  │  sensor_group.sample(spec, policies={id: policy}) → Generator[AlignedFrame] │
+  │  - ``spec: SamplingSpec`` has ``.grid``                                     │
   │  - Each step: ``window`` from ``for window in spec.grid``, (N,)             │
-  │  - Each sensor: next batch from ``sensor.sample(spec)`` (same spec)         │
+  │  - Each sensor: next batch from ``sensor.sample(spec, policy=...)``         │
   │  - ``AlignedFrame(align_timestamps_ns=window.timestamps_ns,``               │
   │    ``sensor_data={id → …})``                                                │
                                           │
@@ -134,6 +134,36 @@ not:
 
 - “these are all source samples that happened to occur during this
   wall-clock interval”
+
+### Camera timeline origin
+
+`CameraSensor(origin_ns=...)` accepts a Python integer or NumPy integer scalar
+signed-nanosecond origin -- where the first displayed frame sits on the
+caller's clock -- or `None` to keep the container's own timeline. A recording
+that carries a capture timeline beside it knows when it started but not what
+PTS the container gave that instant, so the sensor computes the offset itself
+rather than asking the caller to supply one directly: it anchors the first
+displayed frame to `origin_ns` and derives the shift from there. Boolean
+values and values outside the signed-`int64` range are rejected. CameraSensor
+applies the resulting offset once to the native MP4 index during construction.
+
+For a configured `origin_ns`, the index satisfies:
+
+```text
+offset_ns = origin_ns - pts_to_ns(first_display_pts_stream, time_base)
+pts_ns = pts_to_ns(pts_stream, time_base) + offset_ns
+```
+
+The offset shifts `VideoIndex.pts_ns`, `kf_pts_ns`, and derived
+`display_pts_ns`. Consequently, `CameraSensor.start_ns`, `end_ns`,
+`timestamps_ns`, `stream_timestamps()`, and `CameraData.sensor_timestamps_ns`
+all use the offset timeline. `CameraData.pts_stream`, `VideoIndex.pts_stream`,
+`kf_pts_stream`, and `time_base` remain native MP4 values, so decode planning
+and seeking are unchanged.
+
+The offset changes timestamp positions, not durations. In particular,
+`NearestTimestampPolicy.max_delta_ns` remains an unshifted tolerance in
+nanoseconds; no offset is added to it.
 
 ### Reference-Grid Sampling Contract
 
@@ -174,7 +204,9 @@ sampling rule is sensor-specific:
   band around the reference timestamp. The first generic IMU data structure,
   `ImuData`, represents point samples rather than preintegrated windows; see
   `cosmos_curator/core/sensors/data/imu_data.py` and the design rationale in
-  `sensor-library-imu-data.md`.
+  `sensor-library-imu-data.md`. `PreintegratedImuSensor` treats windows as
+  output batches: callers explicitly start a new preintegration episode with
+  `reset_pose()`, rather than deriving one from clip or window boundaries.
 - GPS/GNSS may select the nearest decoded fix, meaning the receiver's computed
   position solution at one point in time, or interpolate between decoded fixes.
   GNSS is the broader satellite-positioning category that includes GPS; WGS-84
@@ -310,9 +342,9 @@ may use time_span or other aggregation / interpolation rules.
 Lidar could use any of the time_span methods, while imu may prefer `previous`
 or another causal integration rule.
 
-## SamplingGrid, SamplingPolicy, and SamplingSpec
+## SamplingGrid, Sampling Policies, and SamplingSpec
 
-The library splits **what** to sample (reference timeline + **windowing**) from **how strictly** to enforce alignment (tolerances, overlap, and future QC rules).
+The library splits **what** to sample (reference timeline + **windowing**) from per-sensor sampling policy.
 
 ### SamplingGrid
 
@@ -330,26 +362,24 @@ Iteration advances nominal window starts `start_ns + k * stride_ns` for  `k = 0,
 ``for window in grid`` yields **``SamplingWindow``** objects whose ``window.start_ns`` and ``window.exclusive_end_ns`` are the nominal half-open
 bounds of that window, and whose `window.timestamps_ns` are the active reference timestamps that fall within those bounds.
 
-### SamplingPolicy
+### Sampling Policies
 
-A **`SamplingPolicy`** holds **alignment and quality parameters** that are not intrinsic to the reference timeline — for example:
+Policies are explicit concrete objects passed at the sampling boundary:
 
-- **`tolerance_ns`** — maximum allowed time delta between a reference timestamp and the chosen canonical sample (per-sensor or global; exact semantics are implementation-defined).
-- **`sensor_overlap`** — minimum temporal overlap across sensors within a **window** (or similar multi-sensor gate).
+- **`NearestTimestampPolicy(max_delta_ns: int | None = None)`** — nearest timestamp selection for camera-like sensors. `0` requires exact matches; `None` disables only the maximum-delta check.
+- **`NoSamplingPolicy()`** — explicit no-op policy for sensors whose current sampling behavior is policy-independent.
 
-It does **not** own ``timestamps_ns`` or window geometry from **`SamplingGrid`**. New fields (max gap, fail vs skip window, per-sensor maps) can extend this type without changing **`SamplingGrid`**.
-
-A **`SamplingSpec`** may omit policy entirely. Use **`policy=None`** when no sampling policy should be applied.
+Callers pass fully constructed policy objects. Sensors validate whether the provided concrete policy type is supported; they do not infer defaults from `None`, dictionaries, modality defaults, or overrides.
 
 ### SamplingSpec
 
-A **`SamplingSpec`** bundles **`grid: SamplingGrid`** and optional **`policy: SamplingPolicy | None`**. It is the **only** argument type for **`sensor.sample(spec)`** — there is no separate overload for bare **`grid`** / **`policy`**.
+A **`SamplingSpec`** bundles **`grid: SamplingGrid`**. It owns the shared request timeline only.
 
-Internals may read **`spec.grid`** and **`spec.policy`**; CLIs and configs pass a single **`spec`**.
+Internals read **`spec.grid`**. Concrete policies are supplied separately to **`sensor.sample(spec, policy=...)`** or **`sensor_group.sample(spec, policies={...})`**.
 
 ### Batch contract: each window defines `N`
 
-Concrete sensors implement **`sample(spec)`** as a **generator**. For each
+Concrete sensors implement **`sample(spec, policy=...)`** as a **generator**. For each
 **window**, ``for window in spec.grid`` produces a 1-D **`SamplingWindow`**.
 Under the half-open contract:
 
@@ -367,9 +397,12 @@ Under the half-open contract:
   timestamp in the source stream).
 - **Payloads** — For cameras, ``frames`` has shape ``(N, H, W, 3)`` for RGB
   (see ``CameraData`` in ``camera_data.py``). **``H``** and **``W``** come from
-  the decoded stream or container metadata; for MCAP ``rgb8`` topics aligned
-  with ``make_mcap_from_mp4``, **``H``** and **``W``** are read from the
-  channel metadata on that topic.
+  the decoded stream or container metadata. For MCAP camera topics,
+  ``McapCameraSensor`` reads Foxglove ``CompressedVideo`` messages containing
+  Annex B H.264/H.265 access units and derives dimensions from the first decoded
+  frame and cadence from observed MCAP ``message.log_time`` values during the
+  forward pass. The MCAP camera path is a forward-only streaming decoder;
+  sampling windows must be monotonically increasing and non-overlapping.
 
 So **`len(window)`**, **`len(align_timestamps_ns)`**,
 **`len(sensor_timestamps_ns)`**, and **`frames.shape[0]`** are the same
@@ -392,14 +425,12 @@ cam0_ct = Mp4Container(cam0_file)
 cam1_ct = Mp4Container(cam1_file)
 imu0_ct = McapContainer(imu0_file)
 gps0_ct = McapContainer(gps0_file)
-lidar0_ct = McapContainer(lidar0_ct)
 
 # Parsers - decodes packets inside the container
 cam0_parser = VideoParser(cam0_ct.metadata)
 cam1_parser = VideoParser(cam1_ct.metadata)
 imu0_parser = ImuParser()
 gps0_parser = GpsParser()
-lidar0_parser = HesaiLidarParser()
 
 # Intrinsics
 cam0_int = CameraIntrinsics(parser=CameraIntrinsicsParser(rig_metadata))
@@ -408,14 +439,12 @@ cam1_int = CameraIntrinsics(parser=CameraIntrinsicsParser(rig_metadata))
 # Extrinsics
 cam0_ext = CameraExtrinsics(parser=CameraExtrinsicsParser(metadata))
 cam1_ext = CameraExtrinsics(parser=CameraExtrinsicsParser(metadata))
-lidar0_ext = LidarExtrinsics(parser=LidarExtrinsicsParser(metadata))
 
 # Sensors
 cam0 = CameraSensor(cam0_ct, cam0_parser, cam0_int, cam0_ext)  # camera data collection rate is 30 Hz
 cam1 = CameraSensor(cam1_ct, cam1_parser, cam0_int, cam0_ext)  # camera data collection rate is 30 Hz
 imu0 = ImuSensor(imu0_ct, imu0_parser)  # imu collection rate is 100hz
 gps0 = GpsSensor(gps0_ct, gps0_parser)  # gps collection rate is 1hz
-lidar0 = LidarSensor(lidar0_ct, lidar0_parser, lidar0_ext)  # lidar collection rate is 10hz
 
 # Group sensors into a group
 sensor_group = SensorGroup(sensors={
@@ -423,7 +452,6 @@ sensor_group = SensorGroup(sensors={
     "cam1": cam1,
     "imu0": imu0,
     "gps0": gps0,
-    "lidar0": lidar0
 })
 
 # Reference timeline + windowing (reusable across groups)
@@ -436,24 +464,23 @@ grid = SamplingGrid(
     duration_ns=10 * 1_000_000_000,  # query interval width on the timeline (paired with stride)
 )
 
-# Alignment / quality rules (always paired with a grid in a SamplingSpec)
-policy = SamplingPolicy(
-    tolerance_ns=5_000_000,       # e.g. max |ref − canonical| for a matched sample (5 ms)
-    sensor_overlap=0.99,          # e.g. min fraction of a window where all sensors overlap
-)
-
-spec = SamplingSpec(grid=grid, policy=policy)  # optional policy; sole handle for sample / align
+spec = SamplingSpec(grid=grid)
+policies = {
+    "cam0": NearestTimestampPolicy(max_delta_ns=5_000_000),
+    "cam1": NearestTimestampPolicy(max_delta_ns=5_000_000),
+    "imu0": NoSamplingPolicy(),
+    "gps0": NoSamplingPolicy(),
+}
 
 # Iterate over the group, yielding aligned frames
 # Each frame will contain 1 or more sensor sources
 # Data from each sensor source will be aligned to the same reference timestamps
-for frame in sensor_group.sample(spec):
+for frame in sensor_group.sample(spec, policies=policies):
     frame.align_timestamps_ns  # (N,) active alignment timestamps for this batch
     frame["cam0"]   # CameraData: frames (N, H, W, 3) uint8 RGB
     frame["cam1"]   # CameraData: same layout; H, W from stream metadata
     frame["imu0"]   # ImuData, SoA, point samples aligned to the reference grid
     frame["gps0"]   # GpsData, SoA, WGS-84 fixes selected or interpolated
-    frame["lidar0"]  # LidarData, rays aggregated or bucketed around the same reference timestamps
 ```
 
 ### Unit conventions
@@ -461,9 +488,9 @@ for frame in sensor_group.sample(spec):
 On **`SamplingGrid`**, `start_ns`, `exclusive_end_ns`, `stride_ns`, and
 `duration_ns` are `int` **nanoseconds**; `timestamps_ns` uses the same unit
 — aligned with MCAP's `log_time` / `publish_time`
-(uint64 on the wire) convention. On **`SamplingPolicy`**, `tolerance_ns` and
-similar fields use the same nanosecond unit so comparisons to alignment and
-sensor times stay exact.
+(uint64 on the wire) convention. Policy timestamp fields such as
+**`NearestTimestampPolicy.max_delta_ns`** use the same nanosecond unit so
+comparisons to alignment and sensor times stay exact.
 
 ### Dtype conventions
 
@@ -514,12 +541,12 @@ seekable stream or downloaded to a `Path` / `bytes` first.
 
 - **Containers**: Time indexed container files are the only supported container format, like MCAP, or MP4.
 - **SamplingGrid**: Half-open timeline (`start_ns`, `exclusive_end_ns`) and active `timestamps_ns` plus `stride_ns` / `duration_ns`; iterable in **window** order (`for window in grid`). Each **`window`** is a `SamplingWindow` with `start_ns`, `exclusive_end_ns`, and `timestamps_ns` `(N,)`. Drives batch shape **`N`** per yield. Held by a **`SamplingSpec`**; not passed alone to **`sample`** / **`align`**.
-- **SamplingPolicy**: Alignment and QC parameters (`tolerance_ns`, etc.); **no** timeline geometry. May be attached to a **`SamplingSpec`**.
-- **SamplingSpec**: **Required** argument to **`sensor.sample(spec)`**. Always contains **`grid: SamplingGrid`** and may also carry **`policy: SamplingPolicy | None`**. Single object threaded through sampling and alignment.
+- **Sampling policies**: Explicit concrete policy objects such as **`NearestTimestampPolicy(max_delta_ns=...)`** and **`NoSamplingPolicy()`**. They contain no timeline geometry and are passed separately at sampling boundaries.
+- **SamplingSpec**: **Required** argument to **`sensor.sample(spec, policy=...)`**. Always contains **`grid: SamplingGrid`**.
 - **Binary Parsers**: Parse binary data, like vendor-specific lidar data, or h265 encoded video packets, into easily handled Pythonic data formats like CameraData, LidarData, ImuData, etc.
-- **Sensors**: One per data source (CameraSensor, ImuSensor, GpsSensor, LidarSensor, etc.). Expose `start_ns`, `end_ns`, and **`sample(spec)`** — a generator over **`spec.grid`** **windows**. Each yield returns SoA with batch dimension **`N`**. Uses **`spec.policy`** when validating matches (e.g. tolerance). Each sensor type implements its own sampling strategy (nearest, interpolate, preintegrate, bucket).
-- **SensorGroup**: Group of sensors. Holds `sensors`; provides `start_ns`, `end_ns` from sensor bounds. Call `.sample(spec)` to iterate.
-- **SensorGroup.sample()**: Takes **`spec: SamplingSpec`**. Walks **`spec.grid`** in window order (`for window in spec.grid`). For each **`window`**, `window.timestamps_ns` is the alignment batch; each sensor's **`sample(spec)`** is advanced in lockstep so every payload has batch dimension `N`. Uses **`spec.policy`** for cross-sensor checks (e.g. minimum temporal overlap, tolerance). Assembles `AlignedFrame(align_timestamps_ns=window.timestamps_ns, sensor_data=…)`.
+- **Sensors**: One per data source (CameraSensor, ImuSensor, GpsSensor, LidarSensor, etc.). Expose `start_ns`, `end_ns`, and **`sample(spec, policy=...)`** — a generator over **`spec.grid`** **windows**. Each yield returns SoA with batch dimension **`N`**. Each sensor validates its concrete policy type before sampling. Each sensor type implements its own sampling strategy (nearest, interpolate, preintegrate, bucket).
+- **SensorGroup**: Group of sensors. Holds `sensors`; provides `start_ns`, `end_ns` from sensor bounds. Call `.sample(spec, policies={sensor_id: policy})` to iterate.
+- **SensorGroup.sample()**: Takes **`spec: SamplingSpec`** and a complete **`policies`** mapping. It validates the mapping for missing ids, unknown ids, bare `None`, and unsupported policy types before starting any sensor iterator. Then it walks **`spec.grid`** in window order (`for window in spec.grid`). For each **`window`**, `window.timestamps_ns` is the alignment batch; each sensor's **`sample(spec, policy=...)`** is advanced in lockstep so every payload has batch dimension `N`. Assembles `AlignedFrame(align_timestamps_ns=window.timestamps_ns, sensor_data=…)`.
 - **AlignedFrame**: Batch of timestamp-aligned data (SoA). Fields: `align_timestamps_ns` `(N,)` (that window’s active alignment times from the `SamplingGrid`), and `sensor_data: dict[str, SensorData]` (e.g. `CameraData` with `align_timestamps_ns`, `sensor_timestamps_ns`, `frames` each of length `N`). Index with `frame[sensor_id]` or `frame.sensor_data[sensor_id]`. See `cosmos_curator/core/sensors/data/aligned_frame.py`.
 - **ImuData**: `cosmos_curator/core/sensors/data/imu_data.py` implements the
   first generic IMU payload as SoA point samples with required angular velocity
@@ -545,11 +572,12 @@ seekable stream or downloaded to a `Path` / `bytes` first.
 
   ```python
   import smart_open
+  from cosmos_curator.core.sensors.sampling.policy import NearestTimestampPolicy
   from cosmos_curator.core.sensors.sensors.camera_sensor import CameraSensor
 
   with smart_open.open("s3://bucket/clip.mp4", "rb", transport_params={"client": boto3_s3}) as stream:
       sensor = CameraSensor(stream)
-      for batch in sensor.sample(spec):
+      for batch in sensor.sample(spec, policy=NearestTimestampPolicy()):
           ...
   ```
 
@@ -585,8 +613,8 @@ cosmos_curator
         ├── sampling
         │    ├── __init__.py
         │    ├── grid.py           # SamplingGrid (reference timeline + window iteration)
-        │    ├── policy.py         # SamplingPolicy (tolerance, overlap, alignment QC)
-        │    ├── spec.py           # SamplingSpec(grid, optional policy) — required for sample / align
+        │    ├── policy.py         # NearestTimestampPolicy, NoSamplingPolicy
+        │    ├── spec.py           # SamplingSpec(grid) — required for sample / align
         │    └── sampler.py        # nearest_neighbor, time_spans
         └── data
              ├── __init__.py       # Structure-of-Arrays (SoA) data structures
@@ -626,7 +654,7 @@ MCAP camera streams without truncating to microseconds.
 
 Additional benefits:
 
-- **Exact arithmetic** — integer subtraction and comparison have no rounding error, which matters when evaluating `tolerance_ns` constraints.
+- **Exact arithmetic** — integer subtraction and comparison have no rounding error, which matters when evaluating `max_delta_ns` constraints.
 - **Useful sentinel** — `INT64_MIN` is a natural invalid-timestamp value.
 - **No mixed-dtype bugs** — a single canonical unit eliminates the class of errors that arise from accidentally mixing seconds and nanoseconds.
 

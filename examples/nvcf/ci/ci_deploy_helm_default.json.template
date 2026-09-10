@@ -23,7 +23,44 @@
           "remoteWrite": {
             "endpoint": "${HELM_THANOS_RECEIVER_URL}"
           },
-          "enabled": true
+          "enabled": true,
+          "otlp": {
+            "enabled": true
+          }
+        },
+        "otlp": {
+          "endpoint": "${OTLP_ENDPOINT_URL}",
+          "extractNVCFSecrets": true,
+          "tls": {
+            "certPath": "/etc/curator-otlp/certs/tls.crt",
+            "keyPath": "/etc/curator-otlp/certs/tls.key",
+            "caPath": "/etc/curator-otlp/certs/ca.crt"
+          },
+          "nvcfSecrets": {
+            "secretName": "nvcf-secrets",
+            "certKey": "otlp-client-crt",
+            "keyKey": "otlp-client-key",
+            "caKey": "otlp-ca-crt"
+          }
+        },
+        "tracing": {
+          "otlp": {
+            "enabled": true
+          }
+        },
+        "logging": {
+          "format": "json",
+          "rayBackendJson": true,
+          "otlp": {
+            "enabled": true,
+            "includeMetricsExternalLabels": true,
+            "extraResourceAttributes": {
+              "deployment.environment": "cosmos-curate-ci"
+            },
+            "extraLabels": {
+              "k8s.cluster.name": "cosmos-curate-ci"
+            }
+          }
         },
         "#commentScratch": "path to additional node storage on host",
         "#scratchDir": "/scratch"

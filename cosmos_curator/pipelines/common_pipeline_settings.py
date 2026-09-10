@@ -311,7 +311,9 @@ class CommonPipelineSettings:
                 "Enable distributed tracing (OpenTelemetry) via Ray's tracing hook. "
                 "Captures cross-actor spans (task scheduling, actor creation, method "
                 "invocations) as NDJSON files in <output-path>/profile/traces/. "
-                "Implies --perf-profile. "
+                "Implies --perf-profile. Can also be enabled for a whole deployment "
+                "by setting COSMOS_CURATOR_PROFILE_TRACING=1; set it to 0 to opt a "
+                "single run out of such a default. "
                 "Note: should be set to True by default once Xenna adds proper "
                 "tracing support."
             ),
@@ -325,10 +327,13 @@ class CommonPipelineSettings:
         metadata=cli(
             help=(
                 "Trace sampling rate when --profile-tracing is enabled. "
-                "Value between 0.0 (none) and 1.0 (all). Default: 0.01 (1%%). "
+                "Value between 0.0 (none) and 1.0 (all). Default: 1.0 (all). "
+                "The decision is made once at the trace root and inherited by "
+                "every span in the run, so a value below 1.0 drops whole runs "
+                "rather than thinning spans within a run. "
                 "Controls both cosmos-curator and vLLM native span sampling."
             ),
-            default=0.01,
+            default=1.0,
         ),
     )
     profile_tracing_otlp_endpoint: str = attrs.field(
@@ -491,7 +496,7 @@ class CommonPipelineSettings:
         metadata=cli(
             help=(
                 "Optional JSON object of literal run-attribute labels to attach to OTLP traces "
-                'and metrics push (e.g. \'{"customer":"nvidia","nspect_id":"..."}\').'
+                'and metrics push (e.g. \'{"customer":"example","environment":"ci"}\').'
             ),
             default={},
             arg_type=json.loads,
@@ -552,15 +557,19 @@ def composite_profiling_scope(
     *,
     stage_name: str = "_root",
     label: str = "main",
+    observability_env_defaults_applied: bool = False,
 ) -> Generator[argparse.Namespace]:
-    """Enter :func:`~cosmos_curator.core.utils.infra.profiling.profiling_scope` with a flat namespace from *settings*.
+    """Enter profiling with a flat namespace derived from *settings*.
 
     Builds the flat namespace via :func:`composite_to_namespace`, then syncs ``settings.common``
     after profiling applies CLI side effects (e.g. implied ``perf_profile``). Yields the same
     namespace to pass to ``run_pipeline(..., args=...)`` and :func:`sync_common_from_namespace`
-    after ``run_pipeline`` returns.
+    after ``run_pipeline`` returns. ``observability_env_defaults_applied`` explicitly
+    carries the NVCF normalization marker that the typed settings conversion cannot retain.
     """
     ns = composite_to_namespace(settings)
+    if observability_env_defaults_applied:
+        ns.observability_env_defaults_applied = True
     with profiling_scope(ns, stage_name=stage_name, label=label):
         sync_common_from_namespace(settings, ns)
         yield ns

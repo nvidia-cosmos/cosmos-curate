@@ -461,7 +461,7 @@ class GpuVideoDecoder:
         raise NotImplementedError(msg)
 
 
-class _HeaderIndexUnavailableError(ValueError):
+class HeaderIndexUnavailableError(ValueError):
     """Header-based packet indexing is unavailable for this stream."""
 
 
@@ -580,7 +580,7 @@ def _get_video_index_from_header(
     """Build packet lists from header index entries (``VideoIndexCreationMethod.FROM_HEADER``).
 
     Raises:
-        _HeaderIndexUnavailableError: If the stream exposes no usable
+        HeaderIndexUnavailableError: If the stream exposes no usable
             ``index_entries`` and callers should retry with full demux.
 
     """
@@ -596,7 +596,7 @@ def _get_video_index_from_header(
     index_entries = getattr(stream_index, "index_entries", None)
     if index_entries is None:
         msg = "stream does not expose header index entries; retry with FULL_DEMUX"
-        raise _HeaderIndexUnavailableError(msg)
+        raise HeaderIndexUnavailableError(msg)
 
     for entry in index_entries:
         pts.append(entry.timestamp)
@@ -607,7 +607,7 @@ def _get_video_index_from_header(
 
     if len(pts) == 0:
         msg = "stream header index is empty; retry with FULL_DEMUX"
-        raise _HeaderIndexUnavailableError(msg)
+        raise HeaderIndexUnavailableError(msg)
 
     return offset, size, pts, is_keyframe, is_discard
 
@@ -701,7 +701,7 @@ def _resolve_auto_index_method(
     return VideoIndexCreationMethod.FROM_HEADER, True
 
 
-def _resolve_auto_index_method_for_source(
+def resolve_auto_index_method_for_source(
     data: DataSource,
     stream_idx: int = 0,
     video_format: str | None = None,
@@ -799,7 +799,7 @@ def make_index_and_metadata(
                 return _build_index_and_metadata(
                     container, video_stream, stream_idx, resolved, allow_header_fallback=False
                 )
-            except _HeaderIndexUnavailableError as e:
+            except HeaderIndexUnavailableError as e:
                 if not allow_header_fallback:
                     raise
                 logger.warning(
@@ -858,7 +858,7 @@ def _build_index_and_metadata(
         case VideoIndexCreationMethod.FROM_HEADER:
             try:
                 offset, size, pts, is_keyframe, is_discard = _get_video_index_from_header(video_stream)
-            except _HeaderIndexUnavailableError as e:
+            except HeaderIndexUnavailableError as e:
                 if not allow_header_fallback:
                     raise
                 logger.warning(
@@ -1055,3 +1055,61 @@ def make_decode_plan(
         plan.append((int(kf), group))
 
     return plan
+
+
+def iter_video_frames(
+    source: DataSource,
+    stream_idx: int = 0,
+    config: CpuVideoDecodeConfig = DEFAULT_VIDEO_DECODE_CONFIG,
+) -> Generator[tuple[int, npt.NDArray[np.uint8]]]:
+    """Decode ``source`` from the beginning, yielding ``(pts_ns, frame)`` in presentation order.
+
+    Walks the container once instead of seeking to planned targets, so a caller
+    reading every frame decodes each of them exactly once and holds one at a
+    time. PyAV emits frames in presentation order even when the stream is coded
+    out of order, so B-frame video needs no special handling here.
+
+    Every frame is converted to an RGB array on the way past, whether or not the
+    caller keeps it. That is deliberate, and it follows from the walk this
+    function is for: a dense read, where nearly every decoded frame is used.
+    Converting lazily would put a wrapper and an indirection on all of them to
+    save on the few that get dropped.
+
+    Which makes this the wrong entry point for a caller reading a small fraction
+    of a recording -- it pays a conversion for every frame it skips. Sampling at
+    a lower rate does not by itself make a caller sparse: a rate that divides the
+    dense one draws its frames from the same walk and costs nothing extra. The
+    cost appears when nothing else is reading the frames in between.
+
+    Args:
+        source: Video data source. See
+            :data:`cosmos_curator.core.sensors.types.types.DataSource`. The
+            library accepts no URIs; callers open their own stream.
+        stream_idx: PyAV index of the video stream to decode, usually 0.
+        config: Decoder backend configuration. Threading matters most: a
+            single-threaded walk of 4K footage measured 10.5s against 2.8s at the
+            default four threads.
+
+    Yields:
+        ``(pts_ns, frame)``, where ``pts_ns`` is the frame's presentation
+        timestamp in nanoseconds and ``frame`` is RGB ``uint8`` of shape
+        ``(H, W, 3)``.
+
+    Raises:
+        ValueError: If the selected video stream has no ``time_base``.
+
+    """
+    with (
+        open_data_source(source, mode="rb") as stream,
+        open_video_container(stream, stream_idx=stream_idx) as (container, video_stream),
+    ):
+        if video_stream.time_base is None:
+            msg = "Time base is None for the opened video stream"
+            raise ValueError(msg)
+        video_stream.thread_type = config.thread_type
+        video_stream.thread_count = config.thread_count
+        time_base = video_stream.time_base
+        for frame in container.decode(video_stream):
+            if frame.pts is None:
+                continue
+            yield pts_to_ns(frame.pts, time_base), cast("npt.NDArray[np.uint8]", frame.to_ndarray(format="rgb24"))

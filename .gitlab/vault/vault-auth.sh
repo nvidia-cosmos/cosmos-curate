@@ -46,6 +46,19 @@ fi
 # Verify vault binary
 "${VAULT_BIN}" -version
 
+# Derive the Vault secret path suffix from whichever Artifactory host is
+# currently selected via ARTIFACTORY_URL. This keeps the URL as the single
+# source of truth for both the twine publish target and which Artifactory
+# creds get pulled -- no separate var to keep in sync when flipping between
+# legacy/cloud.
+if [ -z "${ARTIFACTORY_URL:-}" ]; then
+  echo "Error: ARTIFACTORY_URL is not set"
+  exit 1
+fi
+VAULT_ARTIFACTORY_HOST="$(echo "${ARTIFACTORY_URL}" | sed -E 's#^[a-zA-Z][a-zA-Z0-9+.-]*://([^/]+).*#\1#')"
+export VAULT_ARTIFACTORY_HOST
+echo "Resolved Artifactory host for Vault lookup: ${VAULT_ARTIFACTORY_HOST}"
+
 # Run vault agent to authenticate and render secrets
 echo "Authenticating with Vault and retrieving secrets..."
 "${VAULT_BIN}" agent -config=.gitlab/vault/vault-agent.config -exit-after-auth

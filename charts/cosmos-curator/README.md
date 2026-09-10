@@ -17,7 +17,7 @@ This Helm chart deploys Cosmos Curator. The chart supports two deployment modes:
 * Environment Variable `NGC_NVCF_ORG` - Your NVCF organization ID - used to determine URLs
 
 ### Native Kubernetes Requirements
-* Kubernetes cluster (v1.28+) with GPU-enabled nodes
+* Kubernetes cluster (v1.32+) with GPU-enabled nodes
 * NVIDIA GPUs accessible from containers (drivers, container runtime, device plugin configured)
 * `kubectl` access with appropriate permissions
 * Cosmos Curator container built and published to an accessible repo
@@ -32,9 +32,9 @@ helm repo update
 ```
 
 ### Set Chart Version
-The latest version is `2.3.0`. Set this as an environment variable:
+The latest version is `2.4.0`. Set this as an environment variable:
 ```bash
-export CHART_VERSION=2.3.0
+export CHART_VERSION=2.4.0
 ```
 
 ## Deployment
@@ -144,6 +144,11 @@ helm uninstall --namespace cosmos-curator cosmos-curator
 
 Refer to the  `values.yaml` for a complete list and default values.
 
+`extraVolumes` and `extraVolumeMounts` add pod volumes and mounts to the main
+curator container. When `logging.otlp.enabled` is true, the same mounts are also
+added to the OTLP log collector sidecar so explicit `otlp.tls.*Path` settings can
+be backed by operator-managed volumes such as the cert-manager CSI driver.
+
 ### Persistent Storage
 
 The `/config` directory (used for model caching via `modelCacheDir: "/config/models"`) as well as Ray spill can be configured for various persistence options.
@@ -185,46 +190,61 @@ To keep PVCs for manual cleanup or re-use between deployments, set `whenDeleted:
 
 
 
-### Structured Logging
+### Observability
 
-The chart exposes two logging knobs, written to the curator ConfigMap and propagated
-to head and worker pods through the statefulset's `envFrom`:
+The chart supports metrics, traces, and logs through several independent export
+paths:
 
-```yaml
-logging:
-  format: json          # "text" (default) | "json"
-  rayBackendJson: false # opt-in JSON for Ray's C++ backend/system logs
-```
+| Config | Runs where | Signal | What it does |
+| --- | --- | --- | --- |
+| `metrics.remoteWrite.*` | Chart-managed collector deployment | Metrics | Scrapes curator/Ray Prometheus metrics and exports them to Prometheus remote write. |
+| `metrics.otlp.*` | Chart-managed collector deployment | Metrics | Scrapes the same curator/Ray Prometheus metrics and exports them to OTLP HTTP metrics. This can be enabled with or without remote write. |
+| `metrics.serviceMonitor.*` | In-cluster Prometheus Operator | Metrics | Creates a ServiceMonitor so an existing in-cluster Prometheus can scrape curator/Ray metrics directly. This does not use the chart-managed collector. |
+| `metrics.otlpPush.*` | Curator container | Metrics | Pushes in-pipeline metrics directly to OTLP from the curator process. This does not use the chart-managed collector. |
+| `tracing.otlp.*` | Curator container | Traces | Enables direct OTLP trace export from the curator process. |
+| `logging.otlp.*` | Per-pod collector sidecar | Logs | Tails curator/Ray log files and exports them to OTLP logs. |
 
-- `format: json` emits structured JSON application logs (Ray driver/workers, the
-  launcher scripts, and the pre-`ray.init` fallback) using a single flat, Ray-aligned
-  schema. `format: text` (default) leaves output human-readable and unchanged.
-- `rayBackendJson: true` additionally emits Ray's C++ backend logs (raylet, GCS, ...)
-  as JSON by setting `RAY_BACKEND_LOG_JSON=1`. It is independent of `format` and never
-  auto-set by curator/xenna code.
+`otlp.*` is the shared OTLP transport for logs, traces, and in-process metrics
+push. It is also used by the chart-managed collector's OTLP metrics exporter
+unless `metrics.otlp.endpoint` is set. Use `metrics.otlp.*` only when that
+collector metrics exporter needs a different OTLP endpoint or client TLS
+settings from the other OTLP signals.
 
-For the full field schema, Elasticsearch / log-shipper guidance, the
-`log_to_driver` trade-off, and non-Helm (local Docker / Slurm) usage, see the
-**[Observability Guide](../../docs/curator/guides/observability.md#structured-logging)**.
+Do not include `/v1/logs`, `/v1/metrics`, or `/v1/traces` in the shared
+`otlp.endpoint`; signal-specific exporters add the path. Only
+`metrics.otlp.endpoint` expects the full metrics endpoint when it is used.
+When `otlp.endpoint` is set, `${env:...}` values in `metrics.otlp.endpoint` are
+treated as collector-local defaults and the shared endpoint takes precedence.
 
-### Metrics and Monitoring
+`otlp.tls.secret.*` mounts a direct Kubernetes Secret for pod-local OTLP
+consumers: the log sidecar, in-process traces, and in-process metrics push. You
+can also set explicit `otlp.tls.certPath`, `keyPath`, and `caPath` values and
+mount those files with `extraVolumes`/`extraVolumeMounts`; those mounts are
+shared with the log sidecar when log export is enabled. The chart-managed metrics
+collector runs as the `opentelemetry-collector` subchart; to use a direct
+Kubernetes Secret there, configure `opentelemetry-collector.extraVolumes` and
+`opentelemetry-collector.extraVolumeMounts` to mount the files at the paths used
+by `otlp.tls.*`, or use `metrics.extractNVCFSecrets` for NVCF-style collector
+secrets.
 
-The chart supports two approaches for exposing Prometheus metrics:
+Do not use collector-only `${env:...}` substitution in top-level `otlp.endpoint`
+when `metrics.otlpPush.enabled` or `tracing.otlp.enabled` is true. That endpoint
+is also exported to the Python process as `OTEL_EXPORTER_OTLP_ENDPOINT`, where
+`${env:...}` is not expanded.
 
-#### OpenTelemetry Collector
+Remote write and collector OTLP can be enabled together. The collector scrapes
+the curator/Ray Prometheus endpoint once and fans out to both exporters. These
+exporters intentionally keep separate certificate paths so a remote-write
+backend and an OTLP backend can require different client certificates.
 
-The default OTEL collector scrapes metrics and remote writes to an external Prometheus endpoint:
+Upgrading from chart 2.3: existing values that set `metrics.otlp.enabled: true`
+can keep using the legacy `metrics.otlp.endpoint` default,
+`${env:OTEL_EXPORTER_OTLP_METRICS_ENDPOINT}`, for the chart-managed collector's
+OTLP metrics exporter. New shared logs/traces/metrics configurations should use
+top-level `otlp.endpoint`.
 
-```yaml
-metrics:
-  enabled: true  # Enables both metrics endpoint and OTEL collector
-  remoteWrite:
-    endpoint: "https://your-prometheus/api/v1/receive"
-    certPath: "/etc/certs/tls.crt"
-    keyPath: "/etc/certs/tls.key"
-```
+For NVCF BYOO OTLP metrics only, the previous recipe still works:
 
-Or an OTLP endpoint - by default, it will use the [NVCF BYOO endpoint](https://docs.nvidia.com/cloud-functions/user-guide/latest/cloud-function/observability.html#appendix-c-adding-custom-application-metrics-logs-traces).
 ```yaml
 metrics:
   enabled: true
@@ -234,6 +254,88 @@ metrics:
     enabled: true
     endpoint: "${env:OTEL_EXPORTER_OTLP_METRICS_ENDPOINT}"
 ```
+
+See the [NVIDIA Cloud Functions observability documentation](https://docs.nvidia.com/cloud-functions/user-guide/latest/cloud-function/observability.html#appendix-c-adding-custom-application-metrics-logs-traces) for the BYOO metrics endpoint setup.
+
+When tracing and JSON logging are both enabled, log lines emitted inside a span
+include `trace_id` and `span_id`; see
+**[Linking log lines to traces](../../docs/curator/guides/observability.md#linking-log-lines-to-traces)**.
+
+#### Logging
+
+The chart exposes two structured logging knobs, written to the curator ConfigMap
+and propagated to head and worker pods through the statefulset's `envFrom`:
+
+```yaml
+logging:
+  format: json          # "text" (default) | "json"
+  rayBackendJson: false # opt-in JSON for Ray's C++ backend/system logs
+```
+
+- `format: json` emits structured JSON application logs (Ray driver/workers, the
+  launcher scripts, and the pre-`ray.init` fallback) using a single flat,
+  Ray-aligned schema. `format: text` (default) leaves output human-readable and
+  unchanged.
+- `rayBackendJson: true` additionally emits Ray's C++ backend logs (raylet, GCS,
+  ...) as JSON by setting `RAY_BACKEND_LOG_JSON=1`. It is independent of `format`
+  and never auto-set by curator/xenna code.
+- `logging.otlp.enabled: true` defaults both `PYTHON_LOG_FORMAT=json` and
+  `RAY_BACKEND_LOG_JSON=1` through `logging.otlp.forceJsonFormat: true`; set it
+  to `false` when you want OTLP shipping but human-readable container streams.
+
+For the full field schema, Elasticsearch / log-shipper guidance, the
+`log_to_driver` trade-off, and non-Helm (local Docker / Slurm) usage, see the
+**[Observability Guide](../../docs/curator/guides/observability.md#structured-logging)**.
+
+The chart can also export Ray log files to a generic OTLP logs endpoint using
+an OpenTelemetry Collector sidecar on each StatefulSet pod. This does not change
+stdout/stderr logging, so platform log indexing continues to work.
+
+The sidecar tails `/tmp/ray/session_*/logs/*.log`, `*.out`, `*.err`, and
+`/tmp/curator/stdout-stderr.log` from the same emptyDir mounted by the curator
+container. Ray `job-driver-*` files are collected by default because they are the
+durable source for submitted-driver output. Set
+`logging.otlp.collectJobDriverLogs: false` only when another source, such as the
+stdout tee, is known to export the same lines. `monitor.log` is excluded by
+default because Ray's autoscaler monitor
+emits a verbose polling loop; include it temporarily only while debugging Ray
+autoscaler or cluster status issues. JSON-looking lines are parsed as JSON, Ray
+Python text logs have their timestamp and level mapped to OTLP log fields, and
+retain fields such as `code.filepath` and `lineno`. Other non-JSON lines are
+preserved as text bodies. By default the sidecar adds Kubernetes pod metadata
+from the downward API: Kubernetes namespace, pod name, pod UID, pod IP, node
+name, service account, StatefulSet name, and StatefulSet pod index.
+
+When OTLP logging is enabled, the pod termination grace period defaults to 60
+seconds and the sidecar uses a 15 second native Kubernetes `preStop.sleep` hook
+before receiving SIGTERM. This gives the collector time to continue reading final
+container output and flush it during shutdown. No readiness probe is added for
+the sidecar, so logging health does not gate pipeline traffic.
+
+The filelog receiver stores checkpoints under
+`/var/lib/otelcol/file_storage` on a dedicated `emptyDir`, so restarted
+collectors resume from the last checkpoint within the same pod. The exporter
+sending queue is intentionally memory-only so a telemetry backend outage cannot
+grow the sidecar `emptyDir` until kubelet evicts the curator pod.
+
+Node labels such as GPU product are not available from the downward API unless the
+platform also copies them onto pod labels or annotations. To include those fields,
+either add static `logging.otlp.extraResourceAttributes` or use `logging.otlp.extraEnv`
+with a pod label/annotation fieldRef and set an attribute value such as
+`${env:GPU_PRODUCT}`.
+
+For direct OTLP ingestion, the receiving backend decides which resource
+attributes become index labels and which remain structured metadata. Keep any
+additional indexed attributes low-cardinality.
+
+By default, the OTLP log sidecar also copies the chart's effective metrics external
+labels into log resource attributes. In NVCF deployments, the CLI currently adds
+`function_id`, `version_id`, `gpu`, `org`, and when present `backend`, `regions`,
+and `availability_zones` under `metrics.extraExternalLabels`, so those same
+values are available on OTLP log records. Set
+`logging.otlp.includeMetricsExternalLabels: false` to decouple logs from metric
+labels.
+
 #### ServiceMonitor
 
 For in-cluster Prometheus configured to monitor ServiceMonitor CRs
@@ -250,9 +352,12 @@ metrics:
 ```
 
 
-**Common Metric Filtering:**
+#### Common metric filtering
 
-Both approaches use the same metric filtering rules defined in `metrics.prometheus.scrapeConfigs[0].metric_relabel_configs`. By default, high-cardinality Ray metrics (tasks, actors, object store details) are dropped. To customize:
+The chart collector and ServiceMonitor paths use the same metric filtering rules
+defined in `metrics.prometheus.scrapeConfigs[0].metric_relabel_configs`. By
+default, high-cardinality Ray metrics (tasks, actors, object store details) are
+dropped. To customize:
 
 ```yaml
 metrics:

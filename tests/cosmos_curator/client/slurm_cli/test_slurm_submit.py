@@ -155,6 +155,7 @@ def test_render_sbatch_script(exclude_nodes: list[str] | None) -> None:
         time_limit="01:00:00",
         log_dir=pathlib.Path("/logs"),
         stop_retries_after=100,
+        ray_io_slots_per_node=9,
         exclude_nodes=exclude_nodes,
         comment="test_comment",
     )
@@ -169,6 +170,7 @@ def test_render_sbatch_script(exclude_nodes: list[str] | None) -> None:
     assert f"--gres={GRES}" in sbatch_script
     assert f"--time={job_spec.time_limit}" in sbatch_script
     assert f"STOP_RETRIES_AFTER={job_spec.stop_retries_after}" in sbatch_script
+    assert f"COSMOS_CURATOR_RAY_IO_SLOTS_PER_NODE={job_spec.ray_io_slots_per_node}" in sbatch_script
     if exclude_nodes:
         assert f"--exclude={expected_exclude_nodes}" in sbatch_script
     else:
@@ -453,7 +455,7 @@ def test_submit_uses_shared_defaults_for_container_runtime(
     assert env_vars["TRITON_HOME"] == "/cache/triton"
     assert env_vars["HF_HOME"] == "/cache/huggingface"
     assert env_vars["LAION_CACHE_HOME"] == "/cache/laion"
-    assert env_vars["CONDA_OVERRIDE_CUDA"] == "13.0.2"
+    assert env_vars["CONDA_OVERRIDE_CUDA"] == "13.0.3"
     assert env_vars["EXTRA"] == "value"
     assert env_vars["HOST_ONLY"] == "host-value"
     assert "SLURM_JOB_ID" not in env_vars
@@ -1676,7 +1678,7 @@ class TestSubmit:
         (1, "head_node", "worker_node", 1, 100, False),
     ],
 )
-def test_head_node_is_head_node(  # noqa: PLR0913
+def test_head_node_is_head_node(
     num_nodes: int, head_node: str, nodename: str, procid: int, stop_retries_after: int, *, is_head_node: bool
 ) -> None:
     """Test that the head node is the head node."""

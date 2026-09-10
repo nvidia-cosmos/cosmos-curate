@@ -59,16 +59,17 @@ from cosmos_curator.client.slurm_cli.slurm_common import (
     _resolve_slurm_account,
     _validate_gpu_options,
 )
-from cosmos_curator.core.utils import environment
+from cosmos_curator.core.utils import environment as core_environment
 
 logger = logging.getLogger(__name__)
 
 _SBATCH_TEMPLATE_PATH = Path("sbatch.sh.j2")
 _PROM_SVC_DISC_SCRIPT_PATH = Path("prometheus_service_discovery.py")
-_START_RAY = environment.CONTAINER_PATHS_CODE_DIR / "cosmos_curator" / "scripts" / "onto_slurm.py"
+_START_RAY = core_environment.CONTAINER_PATHS_CODE_DIR / "cosmos_curator" / "scripts" / "onto_slurm.py"
 _MAX_FILE_MODE = 0o7777
 _HOME_DIR = Path(os.getenv("REMOTE_HOME_DIR", Path.home()))
 _SBATCH_DYNAMIC_CONTAINER_ENV_KEYS = (
+    core_environment.CURATOR_IO_SLOTS_PER_NODE_ENV_VAR,
     "HEAD_NODE_ADDR",
     "HEAD_NODE_PORT",
     "PRIMARY_NODE_HOSTNAME",
@@ -240,7 +241,7 @@ class SlurmSubmitOptions:
     remote_job_path: Path | None = None
     container_image: str = _DEFAULT_CONTAINER_IMAGE
     curator_path: Path | None = None
-    workspace_path: Path = environment.LOCAL_WORKSPACE_PATH
+    workspace_path: Path = core_environment.LOCAL_WORKSPACE_PATH
     cache_path: Path = _DEFAULT_CACHE_PATH
     mount_s3_creds: bool = True
     mount_azure_creds: bool = False
@@ -260,6 +261,7 @@ class SlurmSubmitOptions:
     exclusive: bool = True
     time: str | None = None
     stop_retries_after: int = 600
+    ray_io_slots_per_node: int = core_environment.DEFAULT_CURATOR_IO_SLOTS_PER_NODE
     exclude_nodes: str | None = None
     log_dir: Path | None = None
     comment: str | None = None
@@ -290,6 +292,7 @@ class SlurmJobSpec:
     qos: str | None = None
     time_limit: str | None = None
     stop_retries_after: int = 600
+    ray_io_slots_per_node: int = core_environment.DEFAULT_CURATOR_IO_SLOTS_PER_NODE
     exclude_nodes: list[str] | None = None
     comment: str | None = None
     prometheus_service_discovery_path: Path | None = None
@@ -348,6 +351,7 @@ def _render_sbatch_script(spec: SlurmJobSpec) -> str:
         launcher_env_vars_to_unset=(*_PIXI_ACTIVATION_ENV_VARS, *_CONDA_ACTIVATION_ENV_VARS),
         time_limit_string=spec.time_limit,
         stop_retries_after=spec.stop_retries_after,
+        ray_io_slots_per_node=spec.ray_io_slots_per_node,
         exclude_nodes=spec.exclude_nodes,
         log_dir=str(spec.log_dir),
         comment=spec.comment,
@@ -739,6 +743,9 @@ def build_slurm_submit_job_spec(command: list[str], options: SlurmSubmitOptions 
     if opts.num_nodes < 1:
         msg = "--nodes must be at least 1"
         raise typer.BadParameter(msg)
+    if opts.ray_io_slots_per_node < 1:
+        msg = "--ray-io-slots-per-node must be at least 1"
+        raise typer.BadParameter(msg)
 
     gres, gpus = _validate_gpu_options(gres=opts.gres, gpus=opts.gpus)
     submit_runtime = _build_slurm_container_runtime(
@@ -789,6 +796,7 @@ def build_slurm_submit_job_spec(command: list[str], options: SlurmSubmitOptions 
         exclusive=opts.exclusive,
         time_limit=opts.time,
         stop_retries_after=opts.stop_retries_after,
+        ray_io_slots_per_node=opts.ray_io_slots_per_node,
         exclude_nodes=exclude_nodes_list,
         comment=opts.comment,
         prometheus_service_discovery_path=opts.prometheus_service_discovery_path,
@@ -860,7 +868,7 @@ def submit_cli(  # noqa: PLR0913
             help="Host workspace directory to mount as /config inside the container.",
             rich_help_panel="container",
         ),
-    ] = environment.LOCAL_WORKSPACE_PATH,
+    ] = core_environment.LOCAL_WORKSPACE_PATH,
     cache_path: Annotated[
         Path,
         Option(
@@ -1025,6 +1033,15 @@ def submit_cli(  # noqa: PLR0913
             rich_help_panel="cluster",
         ),
     ] = 600,
+    ray_io_slots_per_node: Annotated[
+        int,
+        Option(
+            "--ray-io-slots-per-node",
+            help="Logical source-IO capacity advertised by each Ray node.",
+            rich_help_panel="cluster",
+            min=1,
+        ),
+    ] = core_environment.DEFAULT_CURATOR_IO_SLOTS_PER_NODE,
     exclude_nodes: Annotated[
         str | None,
         Option(help="Comma separated list of nodes to exclude", rich_help_panel="cluster"),
@@ -1104,6 +1121,7 @@ def submit_cli(  # noqa: PLR0913
             exclusive=exclusive,
             time=time,
             stop_retries_after=stop_retries_after,
+            ray_io_slots_per_node=ray_io_slots_per_node,
             exclude_nodes=exclude_nodes,
             log_dir=log_dir,
             comment=comment,

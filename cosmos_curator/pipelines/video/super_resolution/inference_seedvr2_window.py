@@ -21,7 +21,7 @@
 # - SPDX-License-Identifier remains Apache-2.0 for compliance; NVIDIA modifications are covered by the
 #   SPDX-FileCopyrightText line(s) above.
 # - Modifications from vendored original:
-#   1. Removed `from __future__ import annotations` (project convention — Python 3.12 native hints).
+#   1. Removed `from __future__ import annotations` (project convention — Python 3.13 native hints).
 #   2. Extracted `cut_videos` from nested function inside `generation_loop` to module level.
 #   3. Replaced removed torchvision.io video I/O (`VideoReader`, `write_video`) with PyAV / mediapy;
 #      torchvision 0.26 removed video decoding/encoding (moved to TorchCodec). `read_image` is retained.

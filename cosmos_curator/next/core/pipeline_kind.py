@@ -13,14 +13,33 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Core contracts and registration for config-backed pipeline kinds."""
+"""Core contracts and registration for config-backed pipeline kinds.
+
+A registered kind's config model MUST declare ``schema_version`` and ``kind`` as
+required fields with no default, and its ``kind`` must be a per-recipe ``Literal``
+equal to ``PipelineKind.name``. That equality is checked twice, in layers that do
+not see each other: the CLI reads ``kind`` from the file to pick the adapter, and
+the model's ``Literal`` re-checks it, so a routed-but-mismatched file and a direct
+``resolve_config`` caller both fail rather than one of them slipping through. No
+default, because a defaulted ``schema_version`` would let a later generation's
+file parse under this generation's field meanings.
+
+``prepare_run`` is two-phase by contract, not as an optimization. It resolves the
+config eagerly and returns a closure that runs it, which is what lets a caller
+classify a failure by where it arose -- a config fault surfaces from
+``prepare_run``, anything else from the closure -- without any adapter catching or
+re-labelling exceptions. Adapters therefore catch nothing.
+
+Adapters are imported at CLI startup, so an adapter's module scope must stay free
+of its recipe's config model and runtime dependencies; every such import belongs
+inside the callback that needs it.
+"""
 
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, Protocol
-from uuid import UUID
+from typing import Any, NotRequired, Protocol, TypedDict
 
 
 @dataclass(frozen=True)
@@ -34,6 +53,15 @@ class PipelineRunOutput:
 PreparedPipelineRun = Callable[[], PipelineRunOutput]
 
 
+class PipelinePreset(TypedDict):
+    """Metadata required for a discoverable pipeline preset."""
+
+    name: str
+    qualified_name: str
+    fragment: dict[str, Any]
+    section: NotRequired[str]
+
+
 class PipelineRunPreparer(Protocol):
     """Resolve one user config and return its deferred runtime invocation."""
 
@@ -42,7 +70,6 @@ class PipelineRunPreparer(Protocol):
         config: Path,
         *,
         set_overrides: list[str],
-        attempt_id: UUID | None,
     ) -> PreparedPipelineRun:
         """Prepare one deferred pipeline execution."""
         ...
@@ -58,7 +85,7 @@ class PipelineKind:
     validate: Callable[[Path, Sequence[str]], dict[str, object]]
     render: Callable[[Path, Sequence[str]], str]
     schema_json: Callable[[], str]
-    list_presets: Callable[[], list[dict[str, Any]]]
+    list_presets: Callable[[], list[PipelinePreset]]
     prepare_run: PipelineRunPreparer
 
 

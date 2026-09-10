@@ -23,7 +23,12 @@ import numpy.typing as npt
 from cosmos_curator.core.sensors.data.camera_data import CameraData
 from cosmos_curator.core.sensors.data.extrinsics import SensorExtrinsics
 from cosmos_curator.core.sensors.data.intrinsics import CameraIntrinsics
-from cosmos_curator.core.sensors.data.video import VideoIndex, VideoMetadata
+from cosmos_curator.core.sensors.data.video import (
+    VideoIndex,
+    VideoMetadata,
+    validate_timestamp_offset_ns,
+)
+from cosmos_curator.core.sensors.sampling.policy import NearestTimestampPolicy, require_nearest_timestamp_policy
 from cosmos_curator.core.sensors.sampling.sampler import sample_window_indices
 from cosmos_curator.core.sensors.sampling.spec import SamplingSpec
 from cosmos_curator.core.sensors.types.types import DataSource, VideoIndexCreationMethod
@@ -68,6 +73,7 @@ class CameraSensor:
         index_method: VideoIndexCreationMethod = VideoIndexCreationMethod.AUTO,
         intrinsics: CameraIntrinsics | None = None,
         extrinsics: SensorExtrinsics | None = None,
+        origin_ns: int | None = None,
     ) -> None:
         """Initialize the camera sensor.
 
@@ -92,8 +98,18 @@ class CameraSensor:
                 before constructing ``CameraSensor``.
             extrinsics: Optional pre-parsed rigid transform from the camera frame
                 to a caller-defined reference frame.
+            origin_ns: Where the first displayed frame sits on the caller's
+                clock, in nanoseconds, or ``None`` to keep the container's own
+                timeline. A recording that carries a capture timeline beside it
+                knows when it started but not what PTS the container gave that
+                instant, so the sensor subtracts its own first PTS rather than
+                asking the caller to. Stream-native PTS values remain unchanged
+                for decode planning and seeking.
 
         """
+        # Before indexing, so an unusable origin costs nothing to reject.
+        if origin_ns is not None:
+            origin_ns = validate_timestamp_offset_ns(origin_ns, name="origin_ns")
         self._source = source
         self._stream_idx = stream_idx
         self._decode_config = decode_config
@@ -105,6 +121,10 @@ class CameraSensor:
         if len(self._video_index.display_pts_ns) == 0:
             msg = "video stream contains no displayable frames"
             raise ValueError(msg)
+        if origin_ns is not None:
+            self._video_index = self._video_index.with_timestamp_offset(
+                origin_ns - int(self._video_index.display_pts_ns[0])
+            )
         self._empty_camera_data: CameraData | None = None
 
     @property
@@ -116,6 +136,11 @@ class CameraSensor:
     def video_metadata(self) -> VideoMetadata:
         """Return the video metadata for this sensor."""
         return self._video_metadata
+
+    @property
+    def timestamp_offset_ns(self) -> int:
+        """Return the fixed offset applied to this sensor's nanosecond timeline."""
+        return self._video_index.timestamp_offset_ns
 
     @property
     def start_ns(self) -> int:
@@ -202,6 +227,10 @@ class CameraSensor:
         """
         return self._video_metadata.has_bframes
 
+    def supports_sampling_policy(self, policy: object) -> bool:
+        """Return whether this sensor can sample with *policy*."""
+        return isinstance(policy, NearestTimestampPolicy)
+
     def _get_empty_camera_data(self) -> CameraData:
         """Return a cached empty batch preserving the expected frame shape."""
         if self._empty_camera_data is None:
@@ -221,6 +250,8 @@ class CameraSensor:
     def sample(
         self,
         spec: SamplingSpec,
+        *,
+        policy: NearestTimestampPolicy,
         stats: dict[str, float] | None = None,
     ) -> Generator[CameraData]:
         """Sample camera frames according to the provided ``SamplingSpec``.
@@ -243,6 +274,8 @@ class CameraSensor:
         Args:
             spec: the sampling spec to use when sampling data from this
                 sensor.
+            policy: nearest-timestamp policy controlling per-window frame
+                selection.
             stats: optional dict for benchmarking instrumentation.  When
                 provided, seek and convert timings are accumulated into the
                 dict by the underlying decode function.  Pass ``None``
@@ -252,6 +285,7 @@ class CameraSensor:
             CameraData batches
 
         """
+        policy = require_nearest_timestamp_policy(policy, sensor_name=type(self).__name__)
         decoder_cm: AbstractContextManager[CpuVideoDecoder | GpuVideoDecoder]
         match self._decode_config:
             case CpuVideoDecodeConfig() as config:
@@ -268,10 +302,7 @@ class CameraSensor:
                     yield self._get_empty_camera_data()
                     continue
 
-                indices, counts = sample_window_indices(self.video_index.display_pts_ns, window, policy=spec.policy)
-                if len(indices) == 0:
-                    yield self._get_empty_camera_data()
-                    continue
+                indices, counts = sample_window_indices(self.video_index.display_pts_ns, window, policy=policy)
                 sampled_pts_stream = self.video_index.display_pts_stream[indices]
                 decode_plan = make_decode_plan(self.video_index.kf_pts_stream, sampled_pts_stream, counts)
                 frames, motion_vectors = decoder.decode(decode_plan)
@@ -279,7 +310,8 @@ class CameraSensor:
 
                 yield CameraData(
                     align_timestamps_ns=window.timestamps_ns,
-                    sensor_timestamps_ns=pts_to_ns(pts_stream_expanded, decoder.time_base),
+                    sensor_timestamps_ns=pts_to_ns(pts_stream_expanded, decoder.time_base)
+                    + self._video_index.timestamp_offset_ns,
                     pts_stream=pts_stream_expanded,
                     frames=frames,
                     metadata=self._video_metadata,

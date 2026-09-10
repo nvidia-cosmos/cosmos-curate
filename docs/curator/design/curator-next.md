@@ -58,6 +58,10 @@ Conceptually, a Curator workflow looks like this:
 Tabular sensor data can live directly in Lance. Payload references point to media and other bulk sensor data in
 user-selected storage.
 
+The [Incremental Curation design](curator-next-incremental-curation.md) develops this durable dataset into a canonical
+clip table. Splitting appends rows in new fragments, while later curation dynamically adds columns and fills them one
+existing fragment at a time. Each commit is also a recovery boundary.
+
 The center box lists capabilities available inside the program, not required stages or a class hierarchy. Users choose
 the operations and ordering their workflow requires.
 
@@ -67,7 +71,8 @@ Curator focuses on a few reusable areas:
 
 - **Media and sensors.** Prepare source data through discovery, decoding, sampling, and sensor alignment.
 - **Models and selection.** Generate annotations, embeddings, and scores; support clustering, deduplication, and
-  selection.
+  selection — the [curation leg](curator-next-curation.md) composes clustering, de-duplication, and balanced selection
+  into one reference recipe over the [embedding tables](curator-next-embeddings.md).
 - **Validation and integration.** Define shared schemas and provenance, make results inspectable, and connect them to
   downstream tools.
 
@@ -81,8 +86,10 @@ Agent-friendly has two complementary meanings:
 - **Authoring.** Components expose clear, typed interfaces that coding agents can discover and combine.
 - **Operations.** Structured inputs and machine-readable results make runs reproducible and diagnosable by agentic tools.
 
-The [Orca design note](orca.md) explores the operations layer. Orca remains separate from the reusable toolkit; Curator
-components and recipes remain usable without it.
+Two design notes explore the operations layer from different ends: the [Orca design note](orca.md) covers agentic
+orchestration, and the [managed Ray clusters design](curator-next-slurm-ray.md) covers the cluster substrate those
+runs execute on. Both remain separate from the reusable toolkit; Curator components and recipes remain usable without
+either.
 
 ## Reference Recipes
 
@@ -112,6 +119,22 @@ during the transition; it is not a commitment to the long-term public package la
 
 New Curator Next components and reference recipes develop here. Existing code, including current Ray Data work, moves
 here only through explicit transition work. Code and tests define current behavior during incubation.
+
+Incubation carries two assumptions that shape day-to-day decisions:
+
+- **`cosmos_curator.pipelines.ray_data` is deprecated and scheduled for deletion**, not headed for indefinite
+  coexistence. Where a `next` recipe and a Ray Data pipeline overlap, the Ray Data one is the temporary side. New code
+  should not acquire dependencies on that package, and awkwardness that only exists until it is deleted — duplicate
+  config kinds, compatibility shims — is worth accepting rather than designing around, provided it is contained where it
+  can be removed in one step.
+- **`next` owes no backwards compatibility to what it has published so far.** Schemas, identities, config shapes, and
+  import paths change when a better answer appears; rerunning is preferred to writing a migration. This is what makes it
+  cheap to correct a design early, and it stops being true at graduation.
+
+Because recipes are maintained starting points rather than independent products, they are expected to converge. The
+first recipe to settle a shared concern — execution shape, publication protocol, failure accounting — establishes the
+pattern, and later recipes adopt it rather than inventing a second one. Recipes may well be developed in parallel;
+divergence between them is a signal that the pattern belongs in the shared toolkit, not that each recipe needs its own.
 
 Once components are proven across multiple workflows, they graduate into namespaces named for durable responsibilities.
 Graduation includes an explicit transition plan for code and users.

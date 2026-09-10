@@ -58,7 +58,11 @@ from cosmos_curator.models.vllm_exceptions import FatalVllmDecodeError
 from cosmos_curator.models.vllm_model_ids import get_vllm_model_id
 from cosmos_curator.models.vllm_sentinels import VLLM_UNKNOWN_CAPTION
 from cosmos_curator.pipelines.common.model_constraints import PreprocessMode
-from cosmos_curator.pipelines.video.captioning.caption_quality_flags import apply_caption_quality_flags
+from cosmos_curator.pipelines.video.captioning.caption_quality_flags import (
+    DEFAULT_CAPTION_QUALITY_THRESHOLDS,
+    CaptionQualityThresholdConfig,
+    apply_caption_quality_flags,
+)
 from cosmos_curator.pipelines.video.captioning.single_inference import SingleInferenceCaptionStage
 from cosmos_curator.pipelines.video.utils import windowing_utils
 from cosmos_curator.pipelines.video.utils.data_model import (
@@ -511,6 +515,7 @@ class VllmCaptionStage(SingleInferenceCaptionStage):
         log_stats: bool = False,
         use_filter_windows: bool = False,
         caption_quality_flags_enabled: bool = True,
+        caption_quality_thresholds: CaptionQualityThresholdConfig = DEFAULT_CAPTION_QUALITY_THRESHOLDS,
         caption_single_options: CaptionSingleOptions = _DEFAULT_CAPTION_SINGLE_OPTIONS,
     ) -> None:
         """Initialize the vLLM caption stage.
@@ -528,6 +533,7 @@ class VllmCaptionStage(SingleInferenceCaptionStage):
                 of clip.windows. Use this when paired with VllmPrepStage(use_filter_windows=True).
             caption_quality_flags_enabled: Whether to annotate subject-caption windows
                 with heuristic caption quality flags.
+            caption_quality_thresholds: Threshold policy for caption quality flags.
             caption_single_options: Sampling overrides applied only by
                 :meth:`caption_single`. The default empty struct keeps
                 the per-window batch path's ``SamplingParams`` and the
@@ -553,6 +559,7 @@ class VllmCaptionStage(SingleInferenceCaptionStage):
         self._inflight_batching = inflight_batching
         self._use_filter_windows = use_filter_windows
         self._caption_quality_flags_enabled = caption_quality_flags_enabled
+        self._caption_quality_thresholds = caption_quality_thresholds
         # caption_single overrides — unpacked to private fields so helper
         # methods can read them without ``self._caption_single_options.<field>``
         # bookkeeping. The dataclass is just a tidy constructor surface.
@@ -599,14 +606,33 @@ class VllmCaptionStage(SingleInferenceCaptionStage):
                     logger.exception("Failed to copy model weights, will use default location")
 
         # Instantiate vLLM Engine involves torch.compile which produces cache
-        # To avoid conflict, do it once here
+        # To avoid conflict, do it once here.
+        #
+        # The engine is deliberately left alive: xenna promotes this same actor (same OS
+        # process) from node setup to a regular worker, and ``stage_setup``'s
+        # ``if self._llm is None`` guard reuses this engine instead of rebuilding it.
         gpu_stage_startup(
             f"{self.__class__.__name__}-on-node",
             self.resources.gpus,
             pre_setup=True,
             expected_free_fraction=_VLLM_REQUIRED_FREE_FRACTION,
         )
-        self._llm = vllm_model(self._vllm_config)
+        try:
+            self._llm = vllm_model(self._vllm_config)
+        except BaseException:
+            # A partially-built engine has usually already spawned ``VLLM::EngineCore``
+            # children. This actor never reaches ``stage_setup``, so xenna tears it down
+            # with ``ray.kill()`` and skips ``destroy()`` because setup never completed.
+            # Since Ray 2.57 enables ``process_group_cleanup_enabled`` by default the
+            # raylet then ``killpg``s the actor's whole process group, which can SIGKILL a
+            # child mid-``torch.compile``-cache-write and leave every later worker hitting
+            # the concurrent-recompile conflict this warm-up exists to prevent. Release
+            # the children ourselves; a teardown failure must not mask the setup error.
+            try:
+                self._release_vllm_engine()
+            except Exception:  # noqa: BLE001 - must not mask the setup error
+                logger.exception("Failed to release the partially-built node-setup vLLM engine")
+            raise
         gpu_stage_startup(f"{self.__class__.__name__}-on-node", self.resources.gpus, pre_setup=False)
 
     def stage_setup(self) -> None:
@@ -638,21 +664,29 @@ class VllmCaptionStage(SingleInferenceCaptionStage):
     def destroy(self) -> None:
         """Release vLLM and GPU resources before the actor exits.
 
-        Order matters: drop ``self._llm`` first so vLLM's internal
-        ``LLMEngine.shutdown()`` can drain VllmWorker via IPC (the only path
-        that releases its CUDA context); SIGTERM/SIGKILL are last-resort
-        fallbacks. Safe to call when ``stage_setup`` never ran.
+        Safe to call when ``stage_setup`` never ran.
         """
         start = time.monotonic()
-        # Stop the watchdog first so it doesn't ``os._exit(1)`` mid-teardown
-        # when the intentional subprocess exits below trigger its liveness check.
+        self._release_vllm_engine()
+        elapsed = time.monotonic() - start
+        logger.info(f"VllmCaptionStage.destroy: completed in {elapsed:.1f}s")
+
+    def _release_vllm_engine(self) -> None:
+        """Tear down the vLLM engine and its subprocesses, leaving ``self._llm`` as ``None``.
+
+        Order matters: stop the watchdog first so it doesn't ``os._exit(1)`` mid-teardown
+        when the intentional subprocess exits below trigger its liveness check (a no-op
+        when no watchdog was ever started). Then drop ``self._llm`` so vLLM's internal
+        ``LLMEngine.shutdown()`` can drain VllmWorker via IPC - the only path that
+        releases its CUDA context; SIGTERM/SIGKILL are last-resort fallbacks.
+
+        Shared by ``destroy()`` and the ``stage_setup_on_node`` failure path.
+        """
         self._stop_engine_core_watchdog()
         self._drop_vllm_refs()
         self._wait_for_vllm_children_exit(_VLLM_GRACEFUL_SHUTDOWN_S)
         self._terminate_vllm_subprocesses()
         gpu_stage_cleanup(self.__class__.__name__)
-        elapsed = time.monotonic() - start
-        logger.info(f"VllmCaptionStage.destroy: completed in {elapsed:.1f}s")
 
     def _wait_for_vllm_children_exit(self, timeout: float) -> None:
         """Wait up to ``timeout`` seconds for vLLM subprocesses to exit on their own.
@@ -995,7 +1029,11 @@ class VllmCaptionStage(SingleInferenceCaptionStage):
             return
 
         window_groups = [clip.windows for task in tasks for clip in get_video_from_task(task).clips if clip.windows]
-        apply_caption_quality_flags(window_groups, self._vllm_config.model_variant)
+        apply_caption_quality_flags(
+            window_groups,
+            self._vllm_config.model_variant,
+            thresholds=self._caption_quality_thresholds,
+        )
 
     def _build_caption_single_sampling_params(self) -> "SamplingParams":
         """Return a fresh ``SamplingParams`` for ``caption_single`` with overrides applied.

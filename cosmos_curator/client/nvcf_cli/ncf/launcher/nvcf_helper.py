@@ -542,19 +542,33 @@ class NvcfHelper(NvcfBase):
             if config is not None:
                 # Override what's in chart/invoke with any CLI args
                 deploy_data["configuration"]["replicas"] = instance_count
-                labels_dict = {
+                metrics_config = deploy_data["configuration"].setdefault("metrics", {})
+                external_labels = metrics_config.get("extraExternalLabels") or {}
+                if not isinstance(external_labels, dict):
+                    _raise_runtime_err("configuration.metrics.extraExternalLabels must be an object")
+                labels_dict = dict(external_labels)
+                placement_label_keys = {
+                    "backend",
+                    "regions",
+                    "availability_zones",
+                }
+                for label_key in placement_label_keys:
+                    labels_dict.pop(label_key, None)
+                label_defaults = {
                     "function_id": funcid,
                     "version_id": version,
                     "gpu": gpu,
                     "org": self.org,
                 }
-                if backend is not None:
-                    labels_dict["backend"] = backend
+                clusters = deploy_data.get("clusters")
+                if isinstance(clusters, list) and len(clusters) == 1:
+                    label_defaults["backend"] = clusters[0]
                 if "regions" in deploy_data:
-                    labels_dict["regions"] = ",".join(deploy_data["regions"])
+                    label_defaults["regions"] = ",".join(deploy_data["regions"])
                 if "availabilityZones" in deploy_data:
-                    labels_dict["availability_zones"] = ",".join(deploy_data["availabilityZones"])
-                deploy_data["configuration"]["metrics"]["extraExternalLabels"] = labels_dict
+                    label_defaults["availability_zones"] = ",".join(deploy_data["availabilityZones"])
+                labels_dict.update({key: value for key, value in label_defaults.items() if value})
+                metrics_config["extraExternalLabels"] = labels_dict
 
         deploy_list.get("deploymentSpecifications", []).append(deploy_data)
         resp = self.ncg_api_hdl.post(endpoint, data=deploy_list)

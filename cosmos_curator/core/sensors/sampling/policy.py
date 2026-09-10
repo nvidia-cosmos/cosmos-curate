@@ -12,31 +12,44 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Timestamp sampling policy."""
+"""Timestamp sampling policies."""
 
 import attrs
 
 
 @attrs.define(frozen=True, hash=False)
-class SamplingPolicy:
-    """Timestamp sampling policy.
+class NearestTimestampPolicy:
+    """Nearest-timestamp sampling policy.
 
     Attributes:
-        tolerance_ns: the maximum allowed time delta between a reference
-            timestamp and the chosen canonical sample (per-sensor or global;
-            exact semantics are implementation-defined).
-        sensor_overlap: minimum required temporal overlap fraction across
-            participating sensors in multi-sensor aligned sampling. A value of
-            ``0.0`` disables the overlap check.
+        max_delta_ns: the maximum allowed time delta between a reference
+            timestamp and the chosen canonical sample. ``None`` disables only
+            this maximum-delta check.
 
     """
 
     __hash__ = None  # type: ignore[assignment]
-    tolerance_ns: int = attrs.field(default=0, validator=attrs.validators.ge(0))
-    sensor_overlap: float = attrs.field(
-        default=0.0,
-        validator=attrs.validators.and_(
-            attrs.validators.ge(0.0),
-            attrs.validators.le(1.0),
-        ),
-    )
+    max_delta_ns: int | None = attrs.field(default=None, validator=attrs.validators.optional(attrs.validators.ge(0)))
+
+
+@attrs.define(frozen=True, hash=False)
+class NoSamplingPolicy:
+    """Explicit no-operation policy for sensors whose current sampling is policy-independent."""
+
+    __hash__ = None  # type: ignore[assignment]
+
+
+def require_nearest_timestamp_policy(policy: object, *, sensor_name: str) -> NearestTimestampPolicy:
+    """Return *policy* when it is a nearest-timestamp policy, otherwise raise a configuration error."""
+    if isinstance(policy, NearestTimestampPolicy):
+        return policy
+    msg = f"{sensor_name} requires NearestTimestampPolicy, got {type(policy).__name__}"
+    raise TypeError(msg)
+
+
+def require_no_sampling_policy(policy: object, *, sensor_name: str) -> NoSamplingPolicy:
+    """Return *policy* when it is the explicit no-op policy, otherwise raise a configuration error."""
+    if isinstance(policy, NoSamplingPolicy):
+        return policy
+    msg = f"{sensor_name} requires NoSamplingPolicy, got {type(policy).__name__}"
+    raise TypeError(msg)

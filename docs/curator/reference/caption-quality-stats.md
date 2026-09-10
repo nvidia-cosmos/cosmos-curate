@@ -16,14 +16,18 @@ those counters in one file. The writer builds the counters while it already
 inspects caption windows for metadata output, so the artifact does not add a
 separate metadata scan.
 
+This compact artifact supports run monitoring and controlled experiments across
+models, prompts, datasets, and caption-quality settings without requiring each
+consumer to rescan per-clip metadata.
+
 `caption_quality_stats.json` has its own schema contract: known counter keys,
 exactness invariants, and `schema_version` for contract changes. Keeping these
 counters separate from `summary.json` leaves room for richer caption-quality
 metrics later without expanding the main run accounting artifact.
 
 Version 1 stores counters only. It does not store rates, scores, thresholds,
-percentiles, raw caption text, or pass/fail verdicts. Consumers derive rates from
-the emitted counts and denominators.
+percentiles, raw caption text, or pass/fail verdicts. Consumers calculate rates
+from the flag counts and the number of windows evaluated.
 
 The artifact answers structural-health questions such as:
 
@@ -49,6 +53,31 @@ These signals can correlate with caption length, prompt style, and model
 formatting. Consumers should define any policy outside this artifact. Thresholds
 and tokenization details live in the captioning code rather than the artifact
 contract.
+
+## Caption-Quality Thresholds
+
+The split pipeline lets users configure four caption-quality thresholds through
+CLI or JSON/API settings. The defaults preserve existing behavior, while
+overrides let experiments adjust flag sensitivity for different models, prompts,
+and datasets.
+
+| CLI option | JSON/API key | Default | Valid values |
+|---|---|---:|---|
+| `--caption-quality-length-floor-words` | `caption_quality_length_floor_words` | `4` | Integer greater than or equal to `0` |
+| `--caption-quality-length-ceiling-words` | `caption_quality_length_ceiling_words` | `1024` | Integer at least `1` and not below the configured length floor |
+| `--caption-quality-repeated-trigram-min-count` | `caption_quality_repeated_trigram_min_count` | `5` | Integer greater than or equal to `2` |
+| `--caption-quality-near-duplicate-jaccard-threshold` | `caption_quality_near_duplicate_jaccard_threshold` | `0.9` | Number greater than `0` and less than or equal to `1` |
+
+These thresholds apply only to the regular windowed synchronous vLLM
+video-captioning path. Async vLLM, non-vLLM backends, filter-window captioning,
+and per-event captioning do not evaluate these flags.
+
+The thresholds change how the flags are calculated. They are not stored in
+`caption_quality_stats.json`, so changing them does not alter the version 1
+artifact schema.
+
+Consumers comparing runs with different settings should record the effective
+thresholds alongside their experiment results.
 
 ## Artifact Contract
 
@@ -138,7 +167,7 @@ branch on its value. Schema differences across pipelines are versioned through
 | `caption_status_counts` | Counts by `caption_status`, captured after the captioning path maps raw backend results to the known key set. Missing or `null` status maps to `skipped`. |
 | `caption_failure_reason_counts` | Counts observed non-empty `caption_failure_reason` values. Failure reasons are a subset of error windows; some error windows may not have a structured reason. |
 | `caption_quality_flags_evaluated_count` | Count of windows where the v1 caption-quality heuristic flag set was evaluated. |
-| `caption_quality_flag_counts` | Per-flag numerator: windows where the flag value is exactly `true`. |
+| `caption_quality_flag_counts` | Number of evaluated windows where each flag is exactly `true`. |
 | `empty_caption_count` | OK-status windows whose active subject-caption text is empty or whitespace-only after stripping. |
 | `sentinel_caption_count` | OK-status windows whose active subject-caption text exactly matches a canonical sentinel string after stripping. |
 
@@ -222,9 +251,10 @@ removes any existing root `caption_quality_stats.json` at the output prefix so
 file presence reflects the current summary run.
 
 When caption-quality flags are disabled, the artifact is still emitted for
-captioning runs, but no flag values are computed, so the shared evaluated count
-and true counts are zero. Status, failure-reason, empty-caption,
-sentinel-caption, and `caption_windows_checked` counters still apply.
+captioning runs, but no flag values are computed, so the number of windows
+evaluated for flags and all three flag counts are zero. Status, failure-reason,
+empty-caption, sentinel-caption, and `caption_windows_checked` counters still
+apply.
 
 Multi-camera runs are omitted with a warning.
 
@@ -274,9 +304,24 @@ exact caption structural-health counters. If the artifact is missing, consumers
 should treat exact run-level caption-quality stats as unavailable, not as a
 healthy zero-count result.
 
+Common uses include monitoring a single run and comparing structural-health
+rates across models, prompts, datasets, or threshold settings. Consumers should
+keep the relevant run configuration with the results.
+
 Consumers should validate `schema_version`, known map keys, and artifact
 invariants before using the counters. Derived rates should be computed outside
-the artifact from the emitted counts and denominators.
+the artifact from each flag count and `caption_quality_flags_evaluated_count`,
+and only when at least one window was evaluated.
+
+### NVCF Split Benchmark Example
+
+The NVCF split benchmark is one consumer of this artifact. When the artifact is
+valid, the benchmark publishes the three flag counts and the number of windows
+evaluated for those flags. It also records the four effective threshold settings
+in metrics metadata so benchmark runs remain interpretable.
+
+Missing or unusable stats are marked with `caption_quality_stats_present=0`, not
+reported as healthy zero counts.
 
 ## Future Extensions
 
@@ -284,4 +329,5 @@ Future versions may add compatible fields such as derived rates after schema
 review. Additive fields should preserve the version 1 counter meanings.
 
 If future heuristic flags no longer share one applicability rule, add per-flag
-evaluated denominators without replacing `caption_quality_flags_evaluated_count`.
+evaluated-window counts without replacing
+`caption_quality_flags_evaluated_count`.

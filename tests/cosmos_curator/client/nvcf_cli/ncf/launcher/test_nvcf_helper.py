@@ -613,6 +613,151 @@ def test_nvcf_helper_deploy_function_omits_clusters_without_backend(monkeypatch:
     assert labels["availability_zones"] == "test-az"
 
 
+def test_nvcf_helper_deploy_function_rejects_non_object_external_labels(
+    monkeypatch: MonkeyPatch, tmp_path: Path
+) -> None:
+    """Malformed Helm external labels fail with a configuration error."""
+    mock_ncg_client = MagicMock()
+
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    nvcf_helper = NvcfHelper(url="", nvcf_url="", key="", org="", team="", timeout=15)
+    nvcf_helper.ncg_api_hdl = mock_ncg_client
+
+    tmp_file = tmp_path / "test-data.json"
+    with Path.open(tmp_file, "w") as f:
+        json.dump(
+            {"configuration": {"metrics": {"extraExternalLabels": "not-an-object"}}},
+            f,
+        )
+
+    with pytest.raises(RuntimeError, match=r"configuration\.metrics\.extraExternalLabels must be an object"):
+        nvcf_helper.nvcf_helper_deploy_function(
+            funcid="test-id",
+            version="test-version",
+            backend="test-backend",
+            gpu="test-gpu",
+            instance="test-instance",
+            data_file=str(tmp_file),
+            min_instances=1,
+            max_instances=2,
+            max_concurrency=3,
+        )
+
+    mock_ncg_client.post.assert_not_called()
+
+
+def test_nvcf_helper_deploy_function_refreshes_generated_labels(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
+    """Generated NVCF labels should match the final deployment while preserving custom labels."""
+    mock_ncg_client = MagicMock()
+    mock_ncg_client.post.return_value = NVCFResponse(
+        {"status": 200, "deployment": {"id": "test-id", "version": "test-version"}}
+    )
+
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    nvcf_helper = NvcfHelper(url="", nvcf_url="", key="", org="test-org", team="", timeout=15)
+    nvcf_helper.ncg_api_hdl = mock_ncg_client
+
+    tmp_file = tmp_path / "test-data.json"
+    with Path.open(tmp_file, "w") as f:
+        json.dump(
+            {
+                "configuration": {
+                    "replicas": 1,
+                    "metrics": {
+                        "extraExternalLabels": {
+                            "backend": "stale-backend",
+                            "regions": "stale-region",
+                            "availability_zones": "stale-az",
+                            "customer": "test-customer",
+                        }
+                    },
+                },
+                "clusters": ["payload-backend"],
+                "regions": ["payload-region"],
+                "availabilityZones": ["payload-az"],
+            },
+            f,
+        )
+
+    nvcf_helper.nvcf_helper_deploy_function(
+        funcid="test-id",
+        version="test-version",
+        backend="cli-backend",
+        gpu="test-gpu",
+        instance="test-instance",
+        data_file=str(tmp_file),
+        min_instances=1,
+        max_instances=2,
+        max_concurrency=3,
+    )
+
+    spec = mock_ncg_client.post.call_args.kwargs["data"]["deploymentSpecifications"][0]
+    labels = spec["configuration"]["metrics"]["extraExternalLabels"]
+    assert labels["backend"] == "payload-backend"
+    assert labels["regions"] == "payload-region"
+    assert labels["availability_zones"] == "payload-az"
+    assert labels["customer"] == "test-customer"
+    assert labels["function_id"] == "test-id"
+    assert labels["version_id"] == "test-version"
+    assert labels["gpu"] == "test-gpu"
+    assert labels["org"] == "test-org"
+
+
+def test_nvcf_helper_deploy_function_preserves_identity_labels_without_replacements(
+    monkeypatch: MonkeyPatch, tmp_path: Path
+) -> None:
+    """Operator identity labels remain when the helper has no replacement value."""
+    mock_ncg_client = MagicMock()
+    mock_ncg_client.post.return_value = NVCFResponse(
+        {"status": 200, "deployment": {"id": "test-id", "version": "test-version"}}
+    )
+
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    nvcf_helper = NvcfHelper(url="", nvcf_url="", key="", org="", team="", timeout=15)
+    nvcf_helper.ncg_api_hdl = mock_ncg_client
+
+    tmp_file = tmp_path / "test-data.json"
+    with Path.open(tmp_file, "w") as f:
+        json.dump(
+            {
+                "configuration": {
+                    "metrics": {
+                        "extraExternalLabels": {
+                            "function_id": "stale-function",
+                            "version_id": "stale-version",
+                            "gpu": "stale-gpu",
+                            "org": "stale-org",
+                            "customer": "test-customer",
+                        }
+                    }
+                }
+            },
+            f,
+        )
+
+    nvcf_helper.nvcf_helper_deploy_function(
+        funcid="test-id",
+        version="test-version",
+        backend=None,
+        gpu="",
+        instance="test-instance",
+        data_file=str(tmp_file),
+        min_instances=1,
+        max_instances=2,
+        max_concurrency=3,
+    )
+
+    spec = mock_ncg_client.post.call_args.kwargs["data"]["deploymentSpecifications"][0]
+    labels = spec["configuration"]["metrics"]["extraExternalLabels"]
+    assert labels == {
+        "customer": "test-customer",
+        "function_id": "test-id",
+        "version_id": "test-version",
+        "gpu": "stale-gpu",
+        "org": "stale-org",
+    }
+
+
 def test_nvcf_helper_deploy_function_with_data(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
     """Test that nvcf_helper_deploy_function returns the expected dictionary on success.
 
@@ -645,9 +790,12 @@ def test_nvcf_helper_deploy_function_with_data(monkeypatch: MonkeyPatch, tmp_pat
                     "metrics": {
                         "extraExternalLabels": {
                             "backend": "test-backend",
+                            "cluster": "test-cluster",
+                            "customer": "test-customer",
                             "function_id": "test-id",
                             "version_id": "test-version",
                             "gpu": "test-gpu",
+                            "mgmt_owner": "test-owner",
                             "org": "test-org",
                         }
                     },
@@ -687,10 +835,13 @@ def test_nvcf_helper_deploy_function_with_data(monkeypatch: MonkeyPatch, tmp_pat
                     "metrics": {
                         "extraExternalLabels": {
                             "backend": "test-backend",
+                            "cluster": "test-cluster",
+                            "customer": "test-customer",
                             "function_id": "test-id",
                             "version_id": "test-version",
                             "gpu": "test-gpu",
-                            "org": "",
+                            "mgmt_owner": "test-owner",
+                            "org": "test-org",
                             "regions": "test-region",
                             "availability_zones": "test-availability-zone",
                         }

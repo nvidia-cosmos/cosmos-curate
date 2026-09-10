@@ -163,6 +163,18 @@ def test_execution_mode_default_is_auto() -> None:
     assert args.execution_mode == "AUTO"
 
 
+def test_profile_tracing_sampling_default_is_one() -> None:
+    """No flag -> sample every trace.
+
+    The decision is made once at the trace root and inherited by the whole run,
+    so a fractional default drops entire runs rather than thinning spans within
+    one -- leaving tracing enabled but usually producing nothing to look at.
+    """
+    parser = _common_parser()
+    args = parser.parse_args([])
+    assert args.profile_tracing_sampling == 1.0
+
+
 def test_xenna_streaming_scheduler_flag_is_kebab_case() -> None:
     """The auto-derived flag follows the field-name -> kebab-case convention."""
     parser = _common_parser()

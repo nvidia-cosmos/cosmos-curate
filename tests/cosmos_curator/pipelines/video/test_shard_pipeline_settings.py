@@ -26,6 +26,7 @@ from cosmos_curator.pipelines.common_pipeline_settings import (
     composite_to_namespace,
     sync_common_from_namespace,
 )
+from cosmos_curator.pipelines.video import sharding_pipeline
 from cosmos_curator.pipelines.video.shard_pipeline_settings import ShardPipelineSettings
 from cosmos_curator.pipelines.video.sharding_pipeline import _setup_parser
 
@@ -215,6 +216,36 @@ def test_composite_to_namespace_matches_common_and_shard_fields() -> None:
     assert ns.limit == settings.common.limit == 5
     assert ns.input_clip_path == "/data/clips"
     assert ns.perf_profile == settings.common.perf_profile
+
+
+def test_shard_preserves_normalized_tracing_opt_out_through_composite_scope(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A normalized shard invoke can opt out of deployment-level tracing."""
+    monkeypatch.setenv("COSMOS_CURATOR_PROFILE_TRACING", "true")
+    parser = _shard_parser()
+    args = parser.parse_args(
+        [
+            "--input-clip-path",
+            "/data/clips",
+            "--output-dataset-path",
+            "/data/out",
+            "--no-perf-profile",
+        ],
+    )
+    args.observability_env_defaults_applied = True
+    profiling_args_seen: list[argparse.Namespace] = []
+    monkeypatch.setattr(
+        sharding_pipeline,
+        "_shard",
+        lambda _settings, profiling_args: profiling_args_seen.append(profiling_args),
+    )
+
+    sharding_pipeline.shard(args)
+
+    assert len(profiling_args_seen) == 1
+    assert profiling_args_seen[0].profile_tracing is False
+    assert profiling_args_seen[0].perf_profile is False
 
 
 @pytest.mark.parametrize(

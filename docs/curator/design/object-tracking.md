@@ -115,9 +115,9 @@ onto a grid you specify:
   timestamp index.
 - `make_ts_grid(start_ns, end_ns, sample_rate_hz)` builds a target sampling grid at the
   rate you want (e.g. 10 frames/sec).
-- `SamplingSpec(grid, SamplingPolicy(tolerance_ns=...))` pairs the grid with a tolerance
-  (how far a real frame may be from a requested grid time and still count).
-- `sensor.sample(spec)` yields batches where, for each row `i`: `frames[i]` is the
+- `SamplingSpec(grid)` carries the target grid, and `NearestTimestampPolicy(max_delta_ns=...)`
+  supplies the tolerance explicitly at sampling time.
+- `sensor.sample(spec, policy=policy)` yields batches where, for each row `i`: `frames[i]` is the
   decoded frame, `sensor_timestamps_ns[i]` is its **real** timestamp, and
   `align_timestamps_ns[i]` is the grid time it was matched to.
 
@@ -132,8 +132,8 @@ A 20-second clip recorded at a nominal 30 fps, but with unevenly spaced frames (
 with real cameras), tracked at `--sam3-target-fps 10`:
 
 1. **Decode + sample.** `make_ts_grid(start_ns=0, end_ns=20_000_000_000, sample_rate_hz=10)`
-   builds 200 target times (`0.0s, 0.1s, ... 19.9s`), wrapped in a `SamplingSpec` with a
-   small tolerance. `sensor.sample(spec)` returns ~200 frames; for each, it picks the
+   builds 200 target times (`0.0s, 0.1s, ... 19.9s`), wrapped in a `SamplingSpec` and
+   paired with `NearestTimestampPolicy(max_delta_ns=...)`. `sensor.sample(spec, policy=policy)` returns ~200 frames; for each, it picks the
    real frame nearest the target time and reports that frame's **true** timestamp. For
    target `1.0s`, if the nearest real frame was shown at `1.013s`, you get it tagged
    `1.013s`, not `1.0s`.

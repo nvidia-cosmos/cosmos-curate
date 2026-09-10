@@ -67,7 +67,7 @@ from benchmarks.secrets import _get_bearer_token, _get_secrets_from_env
         ),
     ],
 )
-def test_get_secrets_from_env(  # noqa: PLR0913
+def test_get_secrets_from_env(
     mock_getenv: MagicMock,
     mock_environ: MagicMock,
     env_vars: dict[str, str],

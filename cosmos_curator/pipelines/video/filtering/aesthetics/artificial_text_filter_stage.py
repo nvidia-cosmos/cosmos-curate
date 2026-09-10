@@ -161,6 +161,7 @@ class ArtificialTextFilterStage(CuratorStage):
                     clip.has_artificial_text = has_artificial
                     clip.artificial_text_segments = segments if has_artificial else None
                     if has_artificial:
+                        clip.extracted_frames.drop()
                         video.filtered_clips.append(clip)
                         video.clip_stats.num_filtered_by_artificial_text += 1
                         if self._verbose:

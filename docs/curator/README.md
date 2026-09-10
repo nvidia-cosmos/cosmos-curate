@@ -9,6 +9,7 @@ This directory collects documentation for Cosmos Curator. It is organized by the
 ## Guides
 
 - [Pipeline Design Guide](guides/pipeline-design.md) - build or modify curator pipelines.
+- [Curate Runbook](guides/curate-runbook.md) - run the Curate selection leg (fuse, cluster, dedup, balance).
 - [Stage Replay Guide](guides/stage-replay.md) - debug stages in isolation.
 - [Interactive Slurm Development Guide](guides/slurm-interactive.md) - iterate from an interactive Slurm allocation.
 - [Profiling Guide](guides/profiling.md) - collect and inspect CPU and memory profiles.
@@ -31,21 +32,27 @@ This directory collects documentation for Cosmos Curator. It is organized by the
 
 - [Cosmos Curator Next](design/curator-next.md) - agent-friendly toolkit direction centered on reusable components and
   maintained reference recipes.
+- [Curator Next Video Split](design/curator-next-video-split.md) - fixed-stride CPU transcoding with S3 media and Lance
+  metadata.
+- [Curator Next Video Captioning](design/curator-next-video-captioning.md) - checkpointed Qwen3.8 inference and
+  fragment-atomic Lance enrichment.
+- [Curator Next Incremental Curation](design/curator-next-incremental-curation.md) - a canonical Lance clip table that
+  grows through split fragments and dynamically added curation columns.
 - [Captioning Approaches](design/captioning-approaches.md) - comparison of captioning architectures.
-- [Deprecation and Default Changes](design/deprecation.md) - proposed cleanup of legacy features and large-run defaults.
 - [Multi-Camera Design](design/multicam.md) - multi-camera data model and implementation plan.
-- [Pixi Environment Refactor Design](design/pixi-environments.md) - developer and runtime environment boundaries.
+- [Multimodal AV Pipeline Design](design/multimodal-av-pipeline.md) - Lance-backed aligned multiview AV clip
+  contract with camera, IMU, GPS/GNSS features, and curation outputs.
 - [Release Versioning Design](design/release-versioning.md) - tag-derived release and package versioning.
 - [Ray Data Design](design/ray-data.md) - Ray Data direction and implementation notes.
 - [Ray Data Captioning Design](design/ray-data-captioning.md) - Qwen captioning through Ray Data LLM.
-- [Ray Data Migration Plan](design/ray-data-migration.md) - migration scope, target contract, and validation plan
-  for the Ray Data video workflow.
 - [Split Comparison — Module Architecture](design/split-comparison.md) - module DAG and architecture for the Lance-based split-output comparison.
 - [Sensor Library Design](design/sensor-library.md) - sensor data model and API direction.
 - [Efficient Sparse Video Decode](design/sensor-library-efficient-video-decode.md) - efficient decode strategy for sampled video.
 - [Data Integrity Design](design/data-integrity-design.md) - architecture, v1 API, and phased delivery plan for the sensor data-integrity framework.
 - [Data Integrity Metrics](design/data-integrity-metrics.md) - initial metric catalog for sensor data-integrity checks.
+- [Data Integrity Pipeline](design/data-integrity-pipeline.md) - Ray Data recipe running the data-integrity metrics across many sessions into one store.
 - [Orca Agentic Curation](design/orca.md) - agentic orchestration direction for large-scale curation.
+- [Managed Ray Clusters for Curator Pipelines on Slurm](design/curator-next-slurm-ray.md) - run-scoped Ray clusters built from independent Slurm jobs.
 - [Schema-Validated Pipeline Configs](design/pipeline-configs.md) - Ray Data config input contract and implementation plan.
 - [Slim Image Design](design/slim-image.md) - slim container image design and rollout plan.
 - [Speed-of-Light Design](design/speed-of-light.md) - captioning throughput measurement and optimization direction.

@@ -1,0 +1,197 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Arrow schemas for the data-integrity store.
+
+Four kinds of dataset, described in full in
+``docs/curator/design/data-integrity-store-schema.md``:
+
+* ``stream.lance`` -- one row per stream a run touched, *including* ones that could
+  not be opened. A stream that fails to open produces no measurements, so without
+  this dataset the broken stream would vanish from the store entirely.
+* ``measurements/<metric>.lance`` -- one row per stream, one dataset per metric,
+  with the measured fields as native typed columns.
+* ``evaluation.lance`` -- one row per policy x stream x metric. The one tall
+  dataset, because verdicts have a uniform shape whatever produced them.
+* ``run.lance`` -- one row per *finished* run. Written last, so it is what makes a
+  run's rows visible; see :func:`~.store.commit_run`.
+
+Measurement columns are typed rather than packed into a JSON payload so that
+``NaN`` needs no encoding: JSON cannot represent it, but Arrow stores it natively
+as a float64 bit pattern and keeps null in a separate validity bitmap. That gives
+three distinct states for free -- null (the metric never ran), ``NaN`` (it ran and
+the value is undefined), and a real value -- where a JSON payload would need a
+hand-written sentinel contract and would quietly degrade the middle one into the
+first.
+
+Every metric column is nullable regardless of whether the measurement itself can
+produce a null, because a "never ran" row carries the identity columns and nothing
+else. ``InstrumentSpec.fields`` is what records whether a null is a value the
+metric can legitimately produce.
+"""
+
+import pyarrow as pa  # type: ignore[import-untyped]
+
+from cosmos_curator.core.sensors.data_integrity.instruments import (
+    INSTRUMENTS,
+    FieldKind,
+    FieldSpec,
+    InstrumentSpec,
+)
+
+#: Bumped when the layout of the store as a whole changes (a dataset added, moved,
+#: or renamed). Per-metric schema changes are visible in the dataset's own schema,
+#: which Lance records, so they do not need a number here.
+STORE_SCHEMA_VERSION = 1
+
+STREAM_DATASET = "stream.lance"
+EVALUATION_DATASET = "evaluation.lance"
+RUN_DATASET = "run.lance"
+MEASUREMENTS_DIR = "measurements"
+MANIFEST_NAME = "manifest.json"
+
+# Microseconds, not nanoseconds: this is wall-clock provenance ("when did we write
+# this row"), not the sample timeline, which stays int64 ns in its own columns.
+_TIMESTAMP = pa.timestamp("us", tz="UTC")
+
+_ARROW_TYPES = {
+    FieldKind.INT: pa.int64(),
+    FieldKind.FLOAT: pa.float64(),
+    FieldKind.BOOL: pa.bool_(),
+}
+
+
+def metric_dataset_path(metric_name: str) -> str:
+    """Build the store-relative path of one metric's dataset."""
+    return f"{MEASUREMENTS_DIR}/{metric_name}.lance"
+
+
+STREAM_SCHEMA: pa.Schema = pa.schema(
+    [
+        # Identity. stream_id is the dedup key; source is the readable form of the
+        # same thing and is deliberately not a key (see identity.py).
+        pa.field("stream_id", pa.string(), nullable=False),
+        pa.field("run_id", pa.string(), nullable=False),
+        pa.field("created_at", _TIMESTAMP, nullable=False),
+        # Session context. Null for a single-stream run, which is the only structural
+        # difference between what di-check and di-session write.
+        pa.field("session_id", pa.string()),
+        pa.field("session_path", pa.string()),
+        pa.field("locator_namespace", pa.string(), nullable=False),
+        pa.field("source", pa.string(), nullable=False),
+        pa.field("relative_key", pa.string()),
+        pa.field("selector_type", pa.string(), nullable=False),
+        pa.field("selector_value", pa.string(), nullable=False),
+        # Content identity, for the staleness question the other signals cannot see:
+        # the code is unchanged but the bytes behind the path were replaced. Free --
+        # the HEAD that fills these is already issued for the progress display.
+        pa.field("content_etag", pa.string()),
+        pa.field("content_size_bytes", pa.int64()),
+        pa.field("content_last_modified", _TIMESTAMP),
+        # Sensor-level facts. Nullable both because an errored stream has none and
+        # because they are video-shaped: an IMU or GPS stream has no codec.
+        pa.field("codec_name", pa.string()),
+        pa.field("has_bframes", pa.bool_()),
+        pa.field("num_samples", pa.int64()),
+        pa.field("start_ns", pa.int64()),
+        pa.field("end_ns", pa.int64()),
+        pa.field("expected_hz", pa.float64()),
+        pa.field("expected_hz_source", pa.string()),
+        # Non-null means the source could not be read; this stream has no rows in any
+        # metric dataset.
+        pa.field("error", pa.string()),
+    ]
+)
+
+EVALUATION_SCHEMA: pa.Schema = pa.schema(
+    [
+        pa.field("stream_id", pa.string(), nullable=False),
+        # run_id is who wrote this verdict; measurement_run_id is whose facts were
+        # judged. Equal on the first pass, different after a re-judge, so
+        # "run_id <> measurement_run_id" isolates re-evaluated rows.
+        pa.field("run_id", pa.string(), nullable=False),
+        pa.field("measurement_run_id", pa.string(), nullable=False),
+        pa.field("policy_id", pa.string(), nullable=False),
+        pa.field("thresholds_json", pa.string(), nullable=False),
+        pa.field("created_at", _TIMESTAMP, nullable=False),
+        pa.field("session_path", pa.string()),
+        pa.field("source", pa.string(), nullable=False),
+        pa.field("metric_name", pa.string(), nullable=False),
+        # The single verdict column. An earlier draft also carried the kernel's
+        # PASS/FAIL as a separate column, but CheckStatus is derived from it, so the
+        # two could never disagree and only invited the question of which to filter on.
+        pa.field("check_status", pa.string(), nullable=False),
+        # Null together when nothing was judged, which is what makes it structurally
+        # impossible to store a verdict for a measurement that was never taken.
+        pa.field("margin", pa.float64()),
+        pa.field("threshold", pa.float64()),
+        pa.field("reason", pa.string()),
+        pa.field("instrument_version", pa.int32(), nullable=False),
+    ]
+)
+
+RUN_SCHEMA: pa.Schema = pa.schema(
+    [
+        # The presence of a row *is* the statement: a run whose rows are all written
+        # commits itself here, and one that died partway through never gets a row, so
+        # readers can tell a finished run from an abandoned one without a status flag.
+        pa.field("run_id", pa.string(), nullable=False),
+        # When the run's rows are stamped, versus when it finished. The gap between
+        # them is how long the run took to write.
+        pa.field("created_at", _TIMESTAMP, nullable=False),
+        pa.field("committed_at", _TIMESTAMP, nullable=False),
+        # Which entry point wrote it: "di-check", "di-session", "di-reevaluate", or
+        # "data-integrity" for the Ray Data pipeline, which writes many sessions per run.
+        pa.field("tool", pa.string(), nullable=False),
+        pa.field("session_path", pa.string()),
+        pa.field("policy_id", pa.string(), nullable=False),
+        # Null for a re-evaluation, which writes verdicts without touching a stream.
+        pa.field("num_streams", pa.int64()),
+        pa.field("store_schema_version", pa.int32(), nullable=False),
+    ]
+)
+
+#: Carried by every metric dataset ahead of that metric's own columns. Named
+#: explicitly (rather than reusing a slice of STREAM_SCHEMA) because these are the
+#: columns a metric row needs to stand on its own: the dedup key, the run that wrote
+#: it, and the version of the code that produced the numbers.
+MEASUREMENT_IDENTITY_FIELDS: list[pa.Field] = [
+    pa.field("stream_id", pa.string(), nullable=False),
+    pa.field("run_id", pa.string(), nullable=False),
+    pa.field("created_at", _TIMESTAMP, nullable=False),
+    pa.field("session_path", pa.string()),
+    pa.field("source", pa.string(), nullable=False),
+    pa.field("instrument_version", pa.int32(), nullable=False),
+    # Three states, not two: true / false = the metric ran and its result is
+    # defined / undefined; null = the metric never ran (no usable expected rate), in
+    # which case every metric column below is null too.
+    pa.field("is_defined", pa.bool_()),
+]
+
+MEASUREMENT_IDENTITY_NAMES: tuple[str, ...] = tuple(field.name for field in MEASUREMENT_IDENTITY_FIELDS)
+
+
+def _metric_field(spec: FieldSpec) -> pa.Field:
+    """Translate one declared measurement field into an Arrow field."""
+    return pa.field(spec.name, _ARROW_TYPES[spec.kind])
+
+
+def measurement_schema(spec: InstrumentSpec) -> pa.Schema:
+    """Build one metric's Arrow schema: the shared identity prefix plus its own fields."""
+    return pa.schema([*MEASUREMENT_IDENTITY_FIELDS, *(_metric_field(field) for field in spec.fields)])
+
+
+#: Every metric's schema, by metric name.
+MEASUREMENT_SCHEMAS: dict[str, pa.Schema] = {spec.name: measurement_schema(spec) for spec in INSTRUMENTS}

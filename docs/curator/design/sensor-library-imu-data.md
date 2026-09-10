@@ -1,10 +1,11 @@
 # Sensor Library IMU Data Design
 
-This note documents the design rationale for the first generic IMU data
-structure in the Cosmos Curator Sensor Library. `ImuData` is implemented in
-`cosmos_curator/core/sensors/data/imu_data.py`. This note does not define
-`ImuSensor`, IMU parsing, preintegration, bias correction, calibration, or
-coordinate transforms.
+This note documents the generic raw and preintegrated IMU data structures in
+the Cosmos Curator Sensor Library. `ImuData` stores decoded point samples;
+`PreintegratedImuData` stores derived interval deltas. The current
+implementation also includes an MCAP-backed `ImuSensor`, an eager
+preintegration engine, and a grid-aligned `PreintegratedImuSensor`. Calibration,
+rig transforms, and egomotion state estimation remain separate concerns.
 
 ## Implemented Data Model
 
@@ -123,9 +124,15 @@ class ImuData:
     linear_acceleration_valid: npt.NDArray[np.bool_] | None = None
     orientation_valid: npt.NDArray[np.bool_] | None = None
 
+    angular_velocity_bias_rad_s: npt.NDArray[np.float64] | None = None
+    linear_acceleration_bias_m_s2: npt.NDArray[np.float64] | None = None
+    angular_velocity_bias_valid: npt.NDArray[np.bool_] | None = None
+    linear_acceleration_bias_valid: npt.NDArray[np.bool_] | None = None
+
     host_timestamps_ns: npt.NDArray[np.int64] | None = None
     sequence_counter: npt.NDArray[np.uint64] | None = None
     temperature_c: npt.NDArray[np.float64] | None = None
+    temperature_valid: npt.NDArray[np.bool_] | None = None
 ```
 
 ### Required Fields
@@ -148,9 +155,41 @@ class ImuData:
 | `angular_velocity_valid` | `np.bool_` | `(N, 3)` | unitless | Optional per-axis validity mask. |
 | `linear_acceleration_valid` | `np.bool_` | `(N, 3)` | unitless | Optional per-axis validity mask. |
 | `orientation_valid` | `np.bool_` | `(N,)` | unitless | Optional row-level orientation validity. |
+| `angular_velocity_bias_rad_s` | `np.float64` | `(N, 3)` | rad/s | Optional gyroscope bias estimate in x/y/z order. |
+| `linear_acceleration_bias_m_s2` | `np.float64` | `(N, 3)` | m/s^2 | Optional accelerometer bias estimate in x/y/z order. |
+| `angular_velocity_bias_valid` | `np.bool_` | `(N, 3)` | unitless | Per-axis gyroscope-bias validity; paired with the bias values. |
+| `linear_acceleration_bias_valid` | `np.bool_` | `(N, 3)` | unitless | Per-axis accelerometer-bias validity; paired with the bias values. |
 | `host_timestamps_ns` | `np.int64` | `(N,)` | ns | Optional host/container receive timestamps, distinct from source sensor measurement timestamps. |
 | `sequence_counter` | `np.uint64` | `(N,)` | unitless | Optional source sequence counter when available. |
 | `temperature_c` | `np.float64` | `(N,)` | deg C | Optional IMU temperature. |
+| `temperature_valid` | `np.bool_` | `(N,)` | unitless | Optional row-level temperature validity; paired with `temperature_c`. |
+
+### Protobuf YAML Mapping
+
+`ImuSensor` requires a sensor-owned YAML mapping for MCAP protobuf schemas. The [`imu.proto` reference schema](../../../cosmos_curator/core/sensors/schemas/imu.proto) and [`imu_protobuf_mapping.yaml`](../../../cosmos_curator/core/sensors/examples/imu_protobuf_mapping.yaml) are an exact pair. Use the mapping unchanged for that message, or adapt its source paths and units, and provide it as a `Path` together with the customer topic and schema name. Sensor timestamp, angular velocity, and linear acceleration are required; omitted vector validity defaults to true. In YAML, the per-message destination is named `align_timestamp_ns` (singular); the sensor batches those values into `ImuData.align_timestamps_ns` (plural). It defaults to the singular `sensor_timestamp_ns` mapping, which similarly becomes `ImuData.sensor_timestamps_ns`, but an integration may explicitly map a stable host or MCAP clock when sensor timestamps repeat or are otherwise unsuitable for alignment.
+
+A mapping includes `host_timestamps_ns` and `sequence_counter` only when
+`host_timestamp_ns` and `sequence_counter` are mapped. Mapping `temperature_c`
+includes both temperature arrays; if `temperature_valid` is omitted, its values
+default to true. Omitting `temperature_c` leaves both temperature arrays as
+`None`. Bias value mappings similarly control whether their value and validity
+arrays are present, and omitted bias validity defaults to true. A bias validity
+mapping without its paired value is rejected. Populated and empty windows use
+the same optional-array presence.
+
+```python
+from pathlib import Path
+
+sensor = ImuSensor(
+    source,
+    topic="/vehicle/imu",
+    schema_name="vendor.ImuEnvelope",
+    protobuf_mapping=Path("imu_protobuf_mapping.yaml"),
+)
+```
+
+Before pipeline execution, smoke-test the mapping with the
+[standalone protobuf mapping validator](sensor-library.md#validate-a-mapping-before-pipeline-execution).
 
 ### Timestamp Semantics
 
@@ -166,8 +205,9 @@ only exposes a single frame timestamp, the parser may map that timestamp to
 
 `host_timestamps_ns` is optional receive-time metadata. For DriveWorks, it maps
 to `dwIMUFrame.hostTimestamp` when that signal is valid. It should not replace
-`sensor_timestamps_ns` for alignment unless a parser explicitly documents that
-the source has no separate sensor measurement time.
+`sensor_timestamps_ns` for alignment by default. An integration may explicitly
+choose a stable host clock when the sensor clock repeats or is unsuitable, but
+must document that policy.
 
 Keep timestamp quality, time-sync status, timestamp-format enums, and the
 original units/source field names in parser-specific metadata unless multiple
@@ -185,7 +225,7 @@ needs to consume it generically:
 - calibration counters
 - timestamp quality/format metadata
 - magnetometer, heading, and GNSS/INS fused navigation outputs
-- offsets, bias estimates, and bias covariance
+- source-specific bias quality codes, bias timestamps without defined estimate-time semantics, and bias covariance
 - angular acceleration / gyroscope acceleration
 
 Parsers can preserve these in parser-specific result types or sidecar metadata
@@ -193,15 +233,19 @@ until that compatibility and downstream need are clear.
 
 ## Validity Representation
 
-Use the proposed boolean validity-mask fields instead of NaNs for generic
-validity. These fields are `angular_velocity_valid`,
-`linear_acceleration_valid`, and `orientation_valid`. Required vector arrays
+Use boolean validity-mask fields instead of source-specific status codes for
+generic validity. These fields include `angular_velocity_valid`,
+`linear_acceleration_valid`, `orientation_valid`,
+`angular_velocity_bias_valid`, and `linear_acceleration_bias_valid`. Required vector arrays
 should have concrete finite values for rows marked valid. Optional measurements
 should be `None` when unavailable for the whole batch. If a field is available
 but only some rows or axes are valid, include the corresponding validity mask.
-Do not add generic status arrays in the first `ImuData`; keep source-specific
-quality/status values in parser-specific metadata until a generic consumer
-needs them.
+Do not add raw measurement-quality or timestamp-quality arrays to `ImuData`;
+their integer encodings are source-specific. Keep those values in the source
+protobuf or parser-specific metadata until a source-neutral quality contract
+and explicit per-source translations are defined. Bias-estimate timestamps are
+also deferred: a sample timestamp must not be relabeled as the estimate time of
+a bias that may have been computed earlier.
 
 This avoids overloading floating-point values with data-quality semantics and
 matches DriveWorks' explicit validity model more closely than NaN-only
@@ -263,7 +307,7 @@ Follow the existing pattern from `CameraData`: attach shared batch-length
 validation after all required fields have been set, and expose read-only views
 without mutating caller-owned arrays.
 
-## Related Structures
+## Undecoded IMU Data
 
 Do not add a separate undecoded IMU payload type immediately. If one is needed
 later, avoid names such as `RawImuData` because "raw" is ambiguous, and be
@@ -275,17 +319,132 @@ been parsed into SI-unit IMU measurements. Decoded source-sample streams can
 use `ImuData` with identity alignment timestamps, while aligned streams can use
 the same type with reference-grid timestamps.
 
-Consider a separate `PreintegratedImuData` only when a consumer needs interval
-integration. That type should not be a small extension of `ImuData`; it needs
-fields such as:
+## Implemented Stateful Preintegration
 
-- `start_timestamps_ns` and `exclusive_end_timestamps_ns`
-- `delta_rotation_quat_xyzw`
-- `delta_velocity_m_s`
-- `delta_position_m`
-- integration covariance
-- bias values used for integration
-- sample count and integration duration
+`PreintegratedImuData` is a separate immutable structure-of-arrays contract
+because interval deltas do not have point-sample semantics. For a complete
+alignment grid, row zero is an invalid, zero-duration identity. Every later row
+aligned to `t_i` represents the causal interval `[t_{i-1}, t_i)`. A sliced
+window may begin with a valid row whose interval start precedes the first
+alignment timestamp retained in that slice.
+
+The public output includes:
+
+- exact external-clock `align_interval_start_timestamps_ns` and
+  `align_interval_end_timestamps_ns` bounds
+- converted sensor-clock endpoints and physical `integration_duration_ns`
+- `delta_rotation_quat_xyzw`, `delta_velocity_m_s`, and `delta_position_m`
+- the gyroscope and accelerometer bias values used, with per-axis availability
+- total, used, and rejected source-sample counts
+- maximum observed source-sample gap
+- interval validity and an `ImuIntegrationInvalidReason` bit mask
+
+`preintegrate_imu(imu_data, align_timestamps_ns)` performs midpoint SO(3)
+integration for the complete requested grid. The requested grid and raw
+`ImuData.align_timestamps_ns` share the external reference-clock domain. Their
+paired raw sensor timestamps convert each requested boundary into the IMU
+clock. Measurement interpolation, segment `dt`, duration, bias averaging,
+and maximum-gap reporting then use only that physical
+sensor timeline. Adjacent intervals reuse a boundary measurement for
+interpolation but do not duplicate elapsed time.
+
+For each sensor-time segment, the engine averages endpoint angular velocity to
+form the SO(3) rotation increment. It rotates the left acceleration with the
+segment's starting orientation and the right acceleration with the ending
+orientation, then averages those two vectors in the common interval-start
+frame. Velocity and position use that conventional endpoint-frame midpoint
+force.
+
+Sensor endpoints are represented as integer nanoseconds. After align-to-sensor
+conversion rounds an endpoint, measurement values, biases, and validity
+recompute their interpolation fraction from that same rounded sensor
+coordinate. This keeps every boundary payload consistent with the timestamp
+used for physical integration.
+
+Recording-wide preparation normalizes measurement validity, replaces invalid
+bias axes with zero, and computes bias-corrected gyroscope and accelerometer
+arrays once. Each interval then locates contiguous source slices and
+interpolates only its two boundaries. Interior rows are assembled from NumPy
+array slices rather than per-point Python interpolation.
+
+Measurements and valid biases come entirely from `ImuData`. The correction
+rule is `corrected = measurement - bias`. An unavailable bias axis uses zero
+correction and remains marked unavailable in the output; unavailable bias does
+not by itself invalidate an interval. Invalid measurements, missing boundary
+support, or fewer than two usable supporting samples do invalidate an interval.
+Raw sensor timestamps may repeat because `ImuData` permits a nondecreasing
+sensor clock. A repeated timestamp invalidates only external-grid intervals
+whose support contains the zero-duration segment, using
+`NON_INCREASING_SENSOR_TIME`; later intervals resume when sensor time advances.
+No external alignment row is dropped.
+
+Deltas are expressed in the interval's starting IMU frame. Accelerometer values
+remain specific force: preintegration does not apply a world gravity vector,
+initial pose, initial velocity, or rig extrinsics. Those belong to a future
+egomotion estimator.
+
+`PreintegratedImuSensor` wraps an `ImuSensor`. On demand it decodes the MCAP
+topic and prepares recording-wide validity, bias-availability, and
+bias-corrected arrays once. It then preintegrates each nonempty output window
+only when that window is emitted. `SamplingWindow` remains an output-batching
+mechanism, not an IMU episode boundary.
+
+The external pipeline may call `reset_pose()` to request a new episode. The
+request is forward-only and survives empty output windows. The first row of the
+next nonempty batch is the canonical invalid zero-duration identity row with
+`FIRST_ALIGNMENT`; no valid interval crosses that caller-defined boundary. In
+the absence of a reset, each later nonempty batch prepends the final emitted
+alignment timestamp from the preceding batch for integration, then emits only
+the current window's rows. Emitted nonempty alignment timestamps must therefore
+be strictly increasing; overlapping or decreasing preintegrated output is
+rejected even after `reset_pose()`, though other sensor types may use
+overlapping windows.
+
+Boundary interpolation may use decoded observations outside the output window
+or caller-defined episode, while the integrated interval itself never crosses a
+reset boundary.
+
+The lifecycle is:
+
+1. decodes the complete MCAP IMU topic once with `ImuSensor.read_all()`
+2. prepares and caches recording-wide arrays once
+3. preintegrates each emitted nonempty window from current episode state
+4. yields rows whose `align_timestamps_ns` equal `window.timestamps_ns`
+
+This stateful lifecycle makes the derived sensor compatible with `SensorGroup`,
+avoids repeating high-rate decoding and preparation, and lets a pipeline choose
+episode boundaries while it consumes output.
+
+`read_all()` requires mapped `ImuData.align_timestamps_ns` to be globally
+strictly increasing across the complete recording so external boundaries can
+be mapped unambiguously. Its sensor timestamps remain nondecreasing; duplicate
+sensor times are handled per interval as described above.
+
+`PreintegratedImuSensor` produces derived rows exactly on the supplied grid.
+`NearestTimestampPolicy` is not supported by preintegrated IMU sampling in the
+current policy-routing contract, so it does not constrain the distance to the
+raw rows used for interpolation. Consumers should use
+`max_inter_sample_gap_ns` to assess source support until an
+integration-specific gap policy is introduced.
+
+```python
+from cosmos_curator.core.sensors.sampling.policy import NoSamplingPolicy
+
+raw_imu = ImuSensor(
+    source,
+    topic="/imu",
+    schema_name="vendor.ImuMessage",
+    protobuf_mapping=Path("imu_protobuf_mapping.yaml"),
+)
+imu = PreintegratedImuSensor(raw_imu)
+
+for batch in imu.sample(spec, policy=NoSamplingPolicy()):
+    consume_preintegrated_intervals(batch)
+    if begins_new_pose_episode(batch):
+        imu.reset_pose()
+```
+
+## Future Windowed IMU Data
 
 Consider an `ImuWindowData` or ragged source-sample window structure only if
 downstream pipelines need all high-rate decoded IMU source samples attached to
@@ -293,14 +452,22 @@ each lower-rate alignment row.
 
 ## Implementation Status
 
-The implementation adds:
+The implementation includes:
 
 1. `cosmos_curator/core/sensors/data/imu_data.py`, with an attrs-based
    `ImuData` class matching this design note.
-2. Shared validation helpers in `cosmos_curator/core/sensors/utils/validation.py`
-   for finite `float64` arrays and 1-D `uint64` arrays.
-3. Tests under `tests/cosmos_curator/core/sensors/data/test_imu_data.py` and
-   `tests/cosmos_curator/core/sensors/utils/test_validation.py`.
+2. `cosmos_curator/core/sensors/data/preintegrated_imu_data.py`, with the
+   interval-delta, quality, and bias contract.
+3. `cosmos_curator/core/sensors/preintegration/imu_preintegrator.py`, with
+   recording-wide preparation, boundary interpolation, contiguous slicing, and
+   midpoint SO(3) integration.
+4. `cosmos_curator/core/sensors/sensors/preintegrated_imu_sensor.py`, with
+   full-recording decode/integration caching and exact window slicing.
+5. Shared batch-shape, dtype, quaternion, and covariance validation helpers in
+   `cosmos_curator/core/sensors/utils/validation.py`.
+6. Contract, analytic integration, boundary, bias, covariance, eager-cache,
+   generic MCAP, and `SensorGroup` tests under
+   `tests/cosmos_curator/core/sensors/`.
 
 DriveWorks 6.0.9 documentation was reviewed as part of this design. The
 implementation keeps `sensor_timestamps_ns` as the canonical selected source
@@ -318,12 +485,14 @@ angular velocity, linear acceleration, or temperature.
 - Should parser-specific status fields such as DriveWorks quality, alignment,
   and time-sync values live in sidecar metadata, a typed optional status
   structure, or a future per-parser subclass?
-- Should the first IMU sensor implementation use nearest-neighbor, previous,
-  interpolation, or interval aggregation when sampling onto a lower-rate
-  reference grid?
 - Do downstream consumers need all decoded IMU source samples per aligned
   camera/lidar row soon enough to justify an `ImuWindowData` structure in the
   future implementation phase?
+- Which calibrated noise-density and bias-random-walk models should a future
+  egomotion estimator require in addition to per-sample covariance?
+- How should initial pose, velocity, gravity, rig extrinsics, and GPS-derived
+  state updates be represented when preintegrated deltas are consumed by
+  egomotion?
 
 ## References
 

@@ -17,9 +17,28 @@
 import numpy as np
 import numpy.typing as npt
 
+from cosmos_curator.core.sensors.exceptions import AlignmentError, AlignmentFailureReason
 from cosmos_curator.core.sensors.sampling.grid import SamplingWindow
-from cosmos_curator.core.sensors.sampling.policy import SamplingPolicy
+from cosmos_curator.core.sensors.sampling.policy import NearestTimestampPolicy
 from cosmos_curator.core.sensors.utils.validation import require_strictly_increasing
+
+# Flips the sign bit, which maps int64 onto uint64 in the same order: INT64_MIN
+# to 0 and INT64_MAX to 2**64 - 1.
+_SIGN_BIT = np.uint64(0x8000000000000000)
+
+
+def _distance_ns(left: npt.NDArray[np.int64], right: npt.NDArray[np.int64]) -> npt.NDArray[np.uint64]:
+    """Return ``|left - right|`` elementwise, exactly, however far apart they are.
+
+    Subtracting int64 wraps once two timestamps are more than int64 apart, which
+    makes the furthest candidate look adjacent and selects it. Ordering survives
+    the move to uint64, and a difference between two uint64 values always fits in
+    one, so the answer is exact without leaving numpy for Python integers -- which
+    measured 18x slower on a window and 98x on a timeline.
+    """
+    unsigned_left = np.ascontiguousarray(left).view(np.uint64) ^ _SIGN_BIT
+    unsigned_right = np.ascontiguousarray(right).view(np.uint64) ^ _SIGN_BIT
+    return np.where(unsigned_left > unsigned_right, unsigned_left - unsigned_right, unsigned_right - unsigned_left)
 
 
 def find_closest_indices(canonical: npt.NDArray[np.int64], grid: npt.NDArray[np.int64]) -> npt.NDArray[np.int64]:
@@ -30,8 +49,6 @@ def find_closest_indices(canonical: npt.NDArray[np.int64], grid: npt.NDArray[np.
 
     This is a low-level nearest-neighbour helper only. It does not apply any
     sampling-window semantics or restrict ``canonical`` by timestamp range.
-    Callers that need window-local matching must filter ``canonical`` before
-    calling this function.
 
     Args:
         canonical: The canonical timestamps to sample from. Must be strictly
@@ -66,7 +83,7 @@ def find_closest_indices(canonical: npt.NDArray[np.int64], grid: npt.NDArray[np.
     # Compare distances to left and right neighbors
     left = canonical[closest_idx]
     right = canonical[right_idx]
-    right_closest = np.abs(grid - right) < np.abs(grid - left)
+    right_closest = _distance_ns(grid, right) < _distance_ns(grid, left)
     closest_idx[right_closest] = right_idx[right_closest]
 
     return closest_idx.astype(np.int64)
@@ -76,26 +93,31 @@ def sample_window_indices(
     canonical: npt.NDArray[np.int64],
     window: SamplingWindow,
     *,
-    policy: SamplingPolicy | None = None,
+    policy: NearestTimestampPolicy,
     dedup: bool = True,
 ) -> tuple[npt.NDArray[np.int64], npt.NDArray[np.int64]]:
     """Sample ``canonical`` using one window from ``grid`` and return indices into ``canonical``.
 
-    Window-local semantics
-    ----------------------
-    This function treats ``grid`` as one sampling window emitted by
+    Window semantics
+    ----------------
+    This function treats ``window`` as one sampling window emitted by
     :class:`~cosmos_curator.core.sensors.sampling.grid.SamplingGrid`.
 
     - ``window.timestamps_ns`` are the reference timestamps that belong to the current
-      half-open window.
+      half-open window, and therefore the rows this call produces.
     - ``window.exclusive_end_ns`` is the exclusive right boundary marker.
-    - Eligible canonical timestamps are restricted to the same half-open
-      interval ``[window.timestamps_ns[0], window.exclusive_end_ns)``.
 
-    In other words, this function performs nearest-neighbour matching only
-    within the current window. Canonical timestamps outside the window are
-    ignored, even if one of them would be closer in absolute time to a
-    reference timestamp in ``window.timestamps_ns``.
+    The window bounds choose reference timestamps. They do **not** restrict which
+    canonical timestamps may serve them: every timestamp in ``canonical`` is
+    eligible for every reference timestamp, and matching is plain
+    nearest-neighbour. A window is a batching choice, so letting it filter
+    ``canonical`` would make the selected data depend on ``stride_ns`` and
+    ``duration_ns``.
+
+    Reach is bounded by ``policy.max_delta_ns``, not by any span. Callers that
+    can only materialise part of the timeline -- a forward-only decoder, say --
+    bound it further by what they pass in ``canonical``; one observation beyond
+    each window edge is enough to reproduce whole-timeline selection exactly.
 
     Return value semantics
     ----------------------
@@ -110,9 +132,9 @@ def sample_window_indices(
             strictly increasing.
         window: One strictly increasing sampling window. window.exclusive_end_ns
             is an exclusive right boundary marker and is not sampled.
-        policy: Optional sampling policy. When provided, each matched canonical
-            timestamp must be within ``policy.tolerance_ns`` of its reference
-            grid timestamp.
+        policy: Nearest-timestamp policy. When ``policy.max_delta_ns`` is not
+            ``None``, each matched canonical timestamp must be within that
+            maximum delta of its reference grid timestamp.
         dedup: Whether to deduplicate repeated canonical picks. When True,
             repeated matches are collapsed and ``counts[i]`` records how many
             reference timestamps mapped to ``canonical[indices[i]]``.
@@ -123,83 +145,63 @@ def sample_window_indices(
         - ``indices`` are indices into the original ``canonical`` array.
         - ``counts`` records multiplicity for each returned canonical index.
 
-        If there are no eligible canonical timestamps in the current window,
-        returns two empty ``int64`` arrays.
+        With ``dedup=False`` there is one index per reference timestamp. If the
+        window carries no reference timestamps, returns two empty ``int64``
+        arrays.
 
     Raises:
         ValueError: If ``canonical`` is empty.
         ValueError: If ``canonical`` is not strictly increasing.
         ValueError: If ``window.timestamps_ns`` is not strictly increasing.
-        ValueError: If ``policy`` is provided and any matched canonical
-            timestamp exceeds ``policy.tolerance_ns`` from its reference
-            timestamp.
+        TypeError: If ``policy`` is not a ``NearestTimestampPolicy``.
+        AlignmentError: With reason ``TOLERANCE_EXCEEDED`` if ``policy.max_delta_ns``
+            is not ``None`` and any matched canonical timestamp exceeds it from its
+            reference timestamp.
 
     """
+    if not isinstance(policy, NearestTimestampPolicy):
+        msg = f"policy must be NearestTimestampPolicy, got {type(policy).__name__}"  # type: ignore[unreachable]
+        raise TypeError(msg)
+
     if len(canonical) < 1:
         msg = "canonical must be non-empty"
         raise ValueError(msg)
 
     require_strictly_increasing("canonical", canonical)
 
-    if len(window) < 1:
+    # A window with no reference timestamps produces no rows. `len(window)` is
+    # `len(window.timestamps_ns)`, so this is the only emptiness check needed.
+    if len(window) == 0:
         return np.empty(0, dtype=np.int64), np.empty(0, dtype=np.int64)
 
-    # `grid[-1]` is the exclusive boundary marker for the half-open interval.
-    # The actual reference timestamps to sample in this window are `grid[:-1]`.
     active_grid = window.timestamps_ns
 
-    # If the current window contains only the boundary marker, there are no
-    # reference timestamps to sample.
-    if len(active_grid) == 0:
-        return np.empty(0, dtype=np.int64), np.empty(0, dtype=np.int64)
+    # The window bounds deliberately do not filter `canonical`. They say which
+    # reference timestamps belong to this batch, not which observations may serve
+    # them. Filtering here would make selection depend on stride_ns/duration_ns,
+    # which are a batching choice.
+    indices = find_closest_indices(canonical, active_grid)
 
-    # Build a boolean mask selecting only canonical timestamps that are
-    # eligible for this window.
-    #
-    # Window-local contract:
-    #   eligible canonical timestamps are those in [grid[0], grid[-1])
-    eligible_mask = (canonical >= window.timestamps_ns[0]) & (canonical < window.exclusive_end_ns)
-
-    # Convert the mask into integer indices into the ORIGINAL canonical array.
-    # We keep these indices so that after matching on the filtered subset, we
-    # can map the results back to original-array coordinates for the caller.
-    eligible_indices = np.nonzero(eligible_mask)[0]
-
-    # Pull out just the in-window canonical timestamps for nearest-neighbour
-    # matching.
-    eligible_canonical = canonical[eligible_indices]
-
-    # No eligible canonical timestamps means this sensor has no data in the
-    # current window, so return an empty result rather than sampling from a
-    # neighbouring window.
-    if len(eligible_canonical) == 0:
-        return np.empty(0, dtype=np.int64), np.empty(0, dtype=np.int64)
-
-    # Perform nearest-neighbour matching against ONLY the eligible canonical
-    # timestamps from this window.
-    #
-    # Important:
-    #   `local_indices` are indices into `eligible_canonical`, not into the
-    #   caller's original `canonical` array.
-    local_indices = find_closest_indices(eligible_canonical, active_grid)
-
-    # Map the subset-local indices back to indices into the ORIGINAL canonical
-    # array, so callers can use them to index sidecar arrays that share the
-    # same layout as `canonical`.
-    indices = eligible_indices[local_indices]
-
-    if policy is not None:
+    if policy.max_delta_ns is not None:
         deltas = np.abs(canonical[indices] - active_grid)
-        if np.any(deltas > policy.tolerance_ns):
+        if np.any(deltas > policy.max_delta_ns):
             worst_idx = int(deltas.argmax())
             max_delta = int(deltas[worst_idx])
             grid_ts = int(active_grid[worst_idx])
             canonical_ts = int(canonical[indices[worst_idx]])
             msg = (
-                f"tolerance_ns={policy.tolerance_ns} exceeded: "
+                f"max_delta_ns={policy.max_delta_ns} exceeded: "
                 f"max delta was {max_delta} ns for grid={grid_ts}, canonical={canonical_ts}"
             )
-            raise ValueError(msg)
+            # No sensor id is available here; SensorGroup stamps its configured one.
+            raise AlignmentError(
+                AlignmentFailureReason.TOLERANCE_EXCEEDED,
+                msg,
+                align_timestamps_ns=active_grid,
+                sensor_timestamps_ns=canonical[indices],
+                delta_ns=max_delta,
+                max_delta_ns=policy.max_delta_ns,
+            )
 
     if dedup:
         # Collapse repeated matches of the same canonical timestamp. The counts

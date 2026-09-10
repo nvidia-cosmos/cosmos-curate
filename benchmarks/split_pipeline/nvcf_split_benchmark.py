@@ -28,10 +28,99 @@ from benchmarks.secrets import KratosSecrets, NvcfSecrets, S3Secrets
 from benchmarks.summary import make_caption_quality_metrics, make_summary_metrics
 from cosmos_curator.client.nvcf_cli.ncf.launcher.nvcf_driver import _get_s3_config_str
 from cosmos_curator.client.nvcf_cli.ncf.launcher.nvcf_function import NvcfFunction, NvcfFunctionAlreadyDeployedError
+from cosmos_curator.pipelines.video.captioning.caption_quality_flags import (
+    DEFAULT_CAPTION_QUALITY_THRESHOLDS,
+    CaptionQualityThresholdConfig,
+)
 
 # Qwen's default temp is 0.000001
 DEFAULT_BENCHMARK_VLLM_SAMPLING_TEMPERATURE = 0.000001
 XENNA_STREAMING_SCHEDULER_CHOICES = ("FRAGMENTATION_BASED", "SATURATION_AWARE")
+OTLP_CA_CERT_PATH = "/etc/curator-otlp/certs/ca.crt"
+
+
+def _json_str_map(raw_value: str | None) -> dict[str, str]:
+    """Parse a JSON object with string values."""
+    if not raw_value:
+        return {}
+    try:
+        parsed = json.loads(raw_value)
+    except json.JSONDecodeError as err:
+        msg = "observability labels must be valid JSON"
+        raise ValueError(msg) from err
+    if not isinstance(parsed, dict):
+        msg = "observability labels must be a JSON object"
+        raise TypeError(msg)
+    labels: dict[str, str] = {}
+    for key, value in parsed.items():
+        if not isinstance(key, str) or not key or not isinstance(value, str) or not value:
+            msg = "observability labels must be a JSON object with non-empty string keys and values"
+            raise TypeError(msg)
+        labels[key] = value
+    return labels
+
+
+def _merge_observability_labels(configuration: dict[str, Any], labels: dict[str, str]) -> None:
+    """Attach low-cardinality site labels to chart metrics."""
+    if not labels:
+        return
+    metrics = configuration.setdefault("metrics", {})
+    existing_labels = metrics.get("extraExternalLabels", {})
+    if not isinstance(existing_labels, dict):
+        msg = "configuration.metrics.extraExternalLabels must be an object"
+        raise TypeError(msg)
+    metrics["extraExternalLabels"] = {
+        **{key: value for key, value in existing_labels.items() if value},
+        **labels,
+    }
+
+
+def _benchmark_observability_labels(
+    *,
+    captioning_algorithm: str,
+    caption: int,
+    splitting_algorithm: str,
+    num_nodes: int,
+    custom_labels: dict[str, str],
+) -> dict[str, str]:
+    """Build low-cardinality labels that identify one benchmark scenario."""
+    return {
+        **custom_labels,
+        "captioning_algorithm": captioning_algorithm,
+        "caption_enabled": str(bool(caption)).lower(),
+        "splitting_algorithm": splitting_algorithm,
+        "num_nodes": str(num_nodes),
+    }
+
+
+def _configure_otlp_observability(  # noqa: PLR0913
+    deploy_data: dict[str, Any],
+    endpoint: str,
+    labels: dict[str, str],
+    *,
+    enable_metrics: bool,
+    enable_traces: bool,
+    enable_logs: bool,
+    nvcf_mtls: bool,
+) -> None:
+    """Enable selected Helm-chart OTLP signals for benchmark deploy data."""
+    configuration = deploy_data["configuration"]
+    otlp = configuration.setdefault("otlp", {})
+    otlp["endpoint"] = endpoint
+    if nvcf_mtls:
+        otlp["extractNVCFSecrets"] = True
+        otlp.setdefault("tls", {})["caPath"] = OTLP_CA_CERT_PATH
+
+    if enable_metrics:
+        metrics = configuration.setdefault("metrics", {})
+        metrics.setdefault("otlp", {})["enabled"] = True
+    if enable_traces:
+        tracing_otlp = configuration.setdefault("tracing", {}).setdefault("otlp", {})
+        tracing_otlp["enabled"] = True
+    if enable_logs:
+        configuration.setdefault("logging", {}).setdefault("otlp", {})["enabled"] = True
+
+    _merge_observability_labels(configuration, labels)
 
 
 class RetryableBenchmarkAttemptError(RuntimeError):
@@ -48,6 +137,16 @@ def _split_image(image: str) -> tuple[str, str]:
         msg = f"image must be a full image reference with tag: {image}"
         raise ValueError(msg)
     return image_repository, image_tag
+
+
+def _caption_quality_threshold_values(config: CaptionQualityThresholdConfig) -> dict[str, int | float]:
+    """Serialize effective caption-quality thresholds for invoke args and metrics."""
+    return {
+        "caption_quality_length_floor_words": config.length_floor_words,
+        "caption_quality_length_ceiling_words": config.length_ceiling_words,
+        "caption_quality_repeated_trigram_min_count": config.repeated_trigram_min_count,
+        "caption_quality_near_duplicate_jaccard_threshold": config.near_duplicate_jaccard_threshold,
+    }
 
 
 def _log_retryable_attempt_failure(retry_state: tenacity.RetryCallState) -> None:
@@ -354,8 +453,15 @@ def nvcf_split_benchmark(  # noqa: PLR0913
     metrics_path: str | None,
     max_attempts: int,
     post_active_settle_seconds: int,
+    otlp_endpoint: str | None,
+    observability_labels: dict[str, str],
     *,
+    caption_quality_thresholds: CaptionQualityThresholdConfig,
     clip_re_chunk_size: int,
+    enable_otlp_metrics: bool,
+    enable_otlp_traces: bool,
+    enable_otlp_logs: bool,
+    otlp_nvcf_mtls: bool,
     qwen_use_fp8_weights: bool,
     report_metrics_to_kratos: bool,
     vllm_sampling_temperature: float,
@@ -380,10 +486,36 @@ def nvcf_split_benchmark(  # noqa: PLR0913
     with (template_dir / "invoke.json").open() as f:
         invoke_data = json.load(f)
 
+    caption_quality_threshold_values = _caption_quality_threshold_values(caption_quality_thresholds)
+
     # Update deploy configuration
     deploy_data["configuration"]["image"]["repository"] = image_repository
     deploy_data["configuration"]["image"]["tag"] = image_tag
     deploy_data["configuration"]["metrics"]["remoteWrite"]["endpoint"] = metrics_endpoint
+    if enable_otlp_metrics or enable_otlp_traces or enable_otlp_logs:
+        normalized_otlp_endpoint = otlp_endpoint.strip() if otlp_endpoint else ""
+        if not normalized_otlp_endpoint:
+            msg = "OTLP endpoint is required when enabling OTLP observability."
+            raise ValueError(msg)
+        if not normalized_otlp_endpoint.startswith(("http://", "https://")):
+            msg = "OTLP endpoint must start with http:// or https://."
+            raise ValueError(msg)
+        labels = _benchmark_observability_labels(
+            captioning_algorithm=captioning_algorithm,
+            caption=caption,
+            splitting_algorithm=splitting_algorithm,
+            num_nodes=num_nodes,
+            custom_labels=observability_labels,
+        )
+        _configure_otlp_observability(
+            deploy_data,
+            normalized_otlp_endpoint,
+            labels,
+            enable_metrics=enable_otlp_metrics,
+            enable_traces=enable_otlp_traces,
+            enable_logs=enable_otlp_logs,
+            nvcf_mtls=otlp_nvcf_mtls,
+        )
 
     # Update invoke configuration
     invoke_data["args"].update(
@@ -399,6 +531,7 @@ def nvcf_split_benchmark(  # noqa: PLR0913
             "vllm_sampling_temperature": vllm_sampling_temperature,
             "vllm_use_inflight_batching": vllm_use_inflight_batching,
             "xenna_streaming_scheduler": xenna_streaming_scheduler,
+            **caption_quality_threshold_values,
         }
     )
 
@@ -500,6 +633,7 @@ aws_region = {s3_secrets.aws_region}
                 "output_path": s3_output_prefix,
                 "vllm_sampling_temperature": vllm_sampling_temperature,
                 "xenna_streaming_scheduler": xenna_streaming_scheduler,
+                **caption_quality_threshold_values,
             },
             kratos_secrets=kratos_secrets,
             kratos_metrics_endpoint=kratos_metrics_endpoint,
@@ -507,7 +641,7 @@ aws_region = {s3_secrets.aws_region}
         )
 
 
-def _parse_args() -> argparse.Namespace:
+def _parse_args() -> argparse.Namespace:  # noqa: PLR0915
     parser = argparse.ArgumentParser(description="Run benchmark tests on NVCF cluster.")
     parser.add_argument("--num-nodes", type=int, default=1, help="Number of nodes to use.")
     parser.add_argument("--caption", type=int, default=0, help="Whether to use captioning for the benchmark.")
@@ -638,6 +772,30 @@ def _parse_args() -> argparse.Namespace:
         help="Temperature for vLLM sampling in benchmark invoke args.",
     )
     parser.add_argument(
+        "--caption-quality-length-floor-words",
+        type=int,
+        default=DEFAULT_CAPTION_QUALITY_THRESHOLDS.length_floor_words,
+        help="Flag captions with fewer words than this value.",
+    )
+    parser.add_argument(
+        "--caption-quality-length-ceiling-words",
+        type=int,
+        default=DEFAULT_CAPTION_QUALITY_THRESHOLDS.length_ceiling_words,
+        help="Flag captions with more words than this value.",
+    )
+    parser.add_argument(
+        "--caption-quality-repeated-trigram-min-count",
+        type=int,
+        default=DEFAULT_CAPTION_QUALITY_THRESHOLDS.repeated_trigram_min_count,
+        help="Flag captions when any trigram occurs at least this many times.",
+    )
+    parser.add_argument(
+        "--caption-quality-near-duplicate-jaccard-threshold",
+        type=float,
+        default=DEFAULT_CAPTION_QUALITY_THRESHOLDS.near_duplicate_jaccard_threshold,
+        help="Flag adjacent captions at or above this word-set Jaccard similarity.",
+    )
+    parser.add_argument(
         "--xenna-streaming-scheduler",
         type=str,
         required=False,
@@ -659,6 +817,40 @@ def _parse_args() -> argparse.Namespace:
         default=30,
         help="Seconds to wait after deployment reaches ACTIVE before invoking.",
     )
+    parser.add_argument(
+        "--enable-otlp-metrics",
+        action="store_true",
+        help="Enable Helm chart OTLP metrics export in addition to Prometheus remote-write.",
+    )
+    parser.add_argument(
+        "--enable-otlp-traces",
+        action="store_true",
+        help="Enable Helm chart OTLP tracing for the benchmark deployment.",
+    )
+    parser.add_argument(
+        "--enable-otlp-logs",
+        action="store_true",
+        help="Enable Helm chart OTLP log collection for the benchmark deployment.",
+    )
+    parser.add_argument(
+        "--otlp-endpoint",
+        type=str,
+        required=False,
+        default=None,
+        help="OTLP/HTTP base endpoint used when any OTLP signal is enabled.",
+    )
+    parser.add_argument(
+        "--otlp-nvcf-mtls",
+        action="store_true",
+        help="Use the NVCF-extracted client certificate, key, and CA for OTLP.",
+    )
+    parser.add_argument(
+        "--observability-labels-json",
+        type=str,
+        required=False,
+        default=None,
+        help="Additional low-cardinality observability labels as a JSON object with string values.",
+    )
     args = parser.parse_args()
     if args.image:
         if args.image_repository or args.image_tag:
@@ -669,6 +861,21 @@ def _parse_args() -> argparse.Namespace:
             parser.error(str(e))
     elif not args.image_repository or not args.image_tag:
         parser.error("either --image or both --image-repository and --image-tag are required.")
+
+    try:
+        args.observability_labels = _json_str_map(args.observability_labels_json)
+    except (TypeError, ValueError) as e:
+        parser.error(str(e))
+
+    try:
+        args.caption_quality_thresholds = CaptionQualityThresholdConfig(
+            length_floor_words=args.caption_quality_length_floor_words,
+            length_ceiling_words=args.caption_quality_length_ceiling_words,
+            repeated_trigram_min_count=args.caption_quality_repeated_trigram_min_count,
+            near_duplicate_jaccard_threshold=args.caption_quality_near_duplicate_jaccard_threshold,
+        )
+    except ValueError as e:
+        parser.error(str(e))
     return args
 
 
@@ -738,7 +945,14 @@ def main() -> None:
         metrics_path=args.metrics_path,
         max_attempts=args.max_attempts,
         post_active_settle_seconds=args.post_active_settle_seconds,
+        otlp_endpoint=args.otlp_endpoint,
+        observability_labels=args.observability_labels,
+        caption_quality_thresholds=args.caption_quality_thresholds,
         report_metrics_to_kratos=args.report_metrics_to_kratos,
+        enable_otlp_metrics=args.enable_otlp_metrics,
+        enable_otlp_traces=args.enable_otlp_traces,
+        enable_otlp_logs=args.enable_otlp_logs,
+        otlp_nvcf_mtls=args.otlp_nvcf_mtls,
         clip_re_chunk_size=args.clip_re_chunk_size,
         qwen_use_fp8_weights=args.qwen_use_fp8_weights,
         vllm_sampling_temperature=args.vllm_sampling_temperature,

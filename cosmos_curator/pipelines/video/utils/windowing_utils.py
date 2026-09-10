@@ -241,7 +241,7 @@ def _extract_mp4_frame_window(
             "-an",
             str(tmp_file),
         ]
-        subprocess.check_call(command)  # noqa: S603
+        subprocess.check_call(command, stdin=subprocess.DEVNULL)  # noqa: S603
         return tmp_file.read_bytes()
 
 

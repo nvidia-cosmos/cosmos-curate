@@ -15,7 +15,26 @@
 """Global pytest configuration."""
 
 import os
+import pathlib
+
+import pytest
 
 # Memray report readers may use debuginfod for native symbol lookup when
 # this is inherited from the host, which can make profiling tests hang.
 os.environ["DEBUGINFOD_URLS"] = ""
+
+
+@pytest.fixture(scope="session")
+def repo_root(pytestconfig: pytest.Config) -> pathlib.Path:
+    """Return the checkout root, to pin the working directory of a spawned interpreter.
+
+    Owned here rather than restated per test file because every import-purity
+    probe depends on the same non-obvious asymmetry: ``python -c`` puts the
+    child's working directory first on its ``sys.path``, while ``pythonpath = .``
+    in ``pytest.ini`` anchors only the PARENT to the rootdir. A child left on an
+    inherited working directory therefore resolves ``cosmos_curator`` to whatever
+    copy that directory exposes - an installed one, in a checkout-plus-install
+    environment - so a probe that does not pass this as ``cwd`` can report on
+    code nobody edited.
+    """
+    return pytestconfig.rootpath

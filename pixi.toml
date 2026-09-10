@@ -6,8 +6,8 @@ platforms = [
     "linux-64",
     "linux-aarch64",
     "osx-arm64",
-    { name = "linux-64-cuda", platform = "linux-64", cuda = "13.0.2", glibc = "2.35" },
-    { name = "linux-aarch64-cuda", platform = "linux-aarch64", cuda = "13.0.2", glibc = "2.35" },
+    { name = "linux-64-cuda", platform = "linux-64", cuda = "13.0.3", glibc = "2.35" },
+    { name = "linux-aarch64-cuda", platform = "linux-aarch64", cuda = "13.0.3", glibc = "2.35" },
 ]
 version = "1.0.0"
 
@@ -28,14 +28,14 @@ azure-identity = "*"
 azure-storage-blob = "*"
 cattrs = "*"
 easydict = "*"
-fastapi = ">=0.115,<0.137" # vLLM 0.24 requires fastapi[standard]<0.137
+fastapi = ">=0.115,<0.137" # NVCF imports FastAPI directly; vLLM 0.27 requires fastapi[standard]<0.137
 huggingface_hub = "*"
 jinja2 = "*"
 loguru = "*"
 mcap = ">=1.3.1,<2.0.0"
 numpy = ">2,<2.3" # OpenCV requires >=2; numba 0.61.x requires <2.3
 nvidia-ml-py = "*"
-nvtx = "*"
+nvtx = "==0.2.15" # vllm==0.27.1 depends on nvtx==0.2.15
 openssl = ">=3.6.2,<4.0a0" # default env: bin/openssl (e.g. CVE-2026-28386 fixed in 3.6.2+)
 pandas = "*"
 pyarrow = ">=23.0.1" # CVE-2026-25087: require patched Arrow floor
@@ -59,14 +59,15 @@ uvicorn = "*"
 websockets = "<16" # google-genai requires websockets<16
 
 [feature.core.pypi-dependencies]
-cosmos-xenna = "==0.5.5"
+cosmos-xenna = "==0.5.11"
+foxglove-schemas-protobuf = "*"
 google-genai = ">=1.59.0" # conda-forge package is too old
 ngcsdk = "*" # not available on conda-forge
 pillow = ">=12.2.0"  # CVE-2026-40192: patched in Pillow 12.2.0+ (core PyPI dep)
 pyasn1 = ">=0.6.3" # CVE remediation: require 0.6.3+ (fixes vs vulnerable 0.6.2 in default/core envs)
 pylance = ">=0.39.0" # conda-forge package is too old
 pulp = "*" # conda-forge package is too old
-ray = { version = "==2.56.0", extras = ["default", "data"] } # conda-forge package pulls in an old version of protobuf
+ray = { version = "==2.58.0", extras = ["default", "data"] } # conda-forge package pulls in an old version of protobuf
 webdataset = "*" # conda-forge package pulls in pytorch
 
 [feature.core.tasks]
@@ -127,8 +128,8 @@ matplotlib = "*"
 mypy = "==2.1.0"
 openai = "*"
 pandas-stubs = "*"
-torch = "==2.11.0"
-torchvision = "==0.26.0"
+torch = "==2.13.0"
+torchvision = "==0.28.0"
 twine = "==6.1.0"
 types-aiofiles = "*"
 types-boto3 = "*"
@@ -149,7 +150,7 @@ channels = ["conda-forge", "nvidia"]
 platforms = ["linux-64-cuda", "linux-aarch64-cuda"]
 
 [feature.runtime.dependencies]
-cuda-libraries-dev = "==13.0.2"
+cuda-libraries-dev = "==13.0.3"
 gpustat = "*"
 libgl = "*" # PaddleOCR/OpenCV image paths need libGL.so.1
 pycountry = "*"
@@ -157,21 +158,16 @@ pycountry = "*"
 [feature.runtime.pypi-dependencies]
 cbor2 = ">=5.9" # CVE remediation: cbor2 5.9+ (default env; fixes vs vulnerable 5.8.x)
 cvcuda-cu13 = "*" # not available on conda-forge
-# Keep CUDA Python tooling aligned with torch's cuda-toolkit==13.0.2.
+# Keep CUDA Python tooling aligned with torch's cuda-toolkit==13.0.3.
 cuda-bindings = "==13.0.*"
 cuda-python = "==13.0.*"
 nvidia-cuda-cccl = "==13.0.*"
 nvidia-cuda-crt = "==13.0.*"
 PyNvVideoCodec = ">=2.0.4,<2.1" # not available on conda-forge - pinned for ffmpeg vulns
 timm = "*" # conda-forge package pulls in torchvision, which is behind
-torch = "==2.11.0"
-torchvision = "==0.26.0"
-vllm = "==0.24.0" # not available on conda-forge
-# Cosmos3 Generator Transfer (StyleTransferStage) runs IN-PROCESS via vLLM-Omni's
-# offline `Omni` API; the 0.24 line carries the transfer-control video-to-video path
-# and hard-requires the matching vllm==0.24 above. Lives in runtime (not a dedicated
-# env) so the style-transfer stage runs in default alongside the other GPU stages.
-vllm-omni = "==0.24.0" # not available on conda-forge
+torch = "==2.13.0"
+torchvision = "==0.28.0"
+vllm = "==0.27.1" # not available on conda-forge
 paddlepaddle = { version = "==3.2.*", index = "https://www.paddlepaddle.org.cn/packages/stable/cpu/"} # CPU-only; no CUDA runtime conflict with torch (unlike paddlepaddle-gpu)
 paddleocr = "==2.10.*"
 
@@ -185,7 +181,7 @@ cuda-nvrtc-static = "13.0.*"
 cuda-cupti = "13.0.*"
 cuda-cuobjdump = "13.0.*"
 cuda-nvdisasm = "13.0.*"
-triton = "==3.6.0"
+triton = "==3.7.1"
 
 [feature.runtime.target.linux-aarch64.pypi-dependencies]
 # Add available NVIDIA CUDA runtime wheels for aarch64 to match linux-64 installs.
@@ -206,6 +202,13 @@ nvidia-nccl-cu13 = "*"
 nvidia-nvjitlink = "*"
 nvidia-nvshmem-cu13 = "*"
 nvidia-nvtx = "*"
+
+# Cosmos3 Generator Transfer runs in-process through vLLM-Omni's offline `Omni`
+# API. Keep it out of the shared runtime feature: its large, transfer-specific
+# dependency tree (including openai-whisper) is needed only by StyleTransferStage.
+[feature.vllm-omni.pypi-dependencies]
+# TODO: Replace with stable vllm-omni 0.27.x once published.
+vllm-omni = "==0.27.0rc1" # not available on conda-forge; latest vLLM 0.27-aligned release
 
 [feature.cuml]
 channels = ["nvidia"]
@@ -235,19 +238,19 @@ pyasn1 = ">=0.6.3" # CVE remediation: pyasn1 0.6.3+ (cuml env; same floor as cor
 pylance = ">=0.39.0" # conda-forge package is too old
 
 [feature.transformers.dependencies]
-transformers = ">=5.11.0,<6.0.0" # vLLM 0.24 + native Cosmos3 support require recent Transformers v5
+transformers = ">=5.11.0,<6.0.0" # vLLM 0.27 + native Cosmos3 support require recent Transformers v5
 
 [feature.transformers.pypi-dependencies]
 # sentence-transformers pulls torch; keep torch's CUDA bindings on the 13.0 line.
 cuda-bindings = "==13.0.*"
-sentence-transformers = "*" # caption-embedding loader used by split-comparison MetadataStage (BGE small-en-v1.5); installed via PyPI to avoid conda-forge's pytorch downgrade pulling torch back to 2.10.0 and clashing with our pinned torch==2.11.0
+sentence-transformers = "*" # caption-embedding loader used by split-comparison MetadataStage (BGE small-en-v1.5); installed via PyPI to avoid conda-forge's pytorch downgrade pulling torch back to 2.10.0 and clashing with our pinned torch==2.13.0
 
 # SeedVR2 super-resolution dependencies.
 # SeedVR's own requirements.txt pins old versions (e.g. diffusers==0.29.1,
 # transformers==4.38.2) but the inference code works fine with newer releases.
 # We use unpinned versions to avoid conflicts with other environments.
 [feature.seedvr.dependencies]
-cuda-libraries-dev = "==13.0.2"
+cuda-libraries-dev = "==13.0.3"
 einops = "*"
 omegaconf = "*"
 
@@ -337,3 +340,4 @@ model-download = ["linux", "core", "tracing"]
 paddle-ocr = ["linux", "core", "media", "paddle-ocr", "tracing", "profiling"]
 seedvr = ["core", "runtime", "media", "transformers", "seedvr", "tracing", "profiling"]
 sam3 = ["core", "runtime", "media", "sam3", "tracing", "profiling"]
+style-transfer = ["core", "runtime", "media", "transformers", "vllm-omni", "tracing", "profiling"]

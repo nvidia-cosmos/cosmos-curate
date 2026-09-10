@@ -1,0 +1,52 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+//
+// Reference schema paired with core/sensors/examples/egotrajectory_protobuf_mapping.yaml.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+syntax = "proto3";
+
+package cosmos_curator.sensors.egotrajectory.v1;
+
+// One time-stamped sensor-native pose in a clip-local ENU world frame.
+message EgotrajectorySample {
+  // Source-measurement time in Unix nanoseconds.
+  uint64 sensor_timestamp_ns = 1;
+  // Recorder/host clock time in Unix nanoseconds. This is optional at the
+  // mapping level: omit its mapping when a source does not provide host time.
+  // A mapped but omitted proto3 scalar decodes as 0.
+  uint64 host_timestamp_ns = 2;
+  // Monotonically increasing source sequence number. This is optional at the
+  // mapping level: omit its mapping when a source does not provide a sequence.
+  // A mapped but omitted proto3 scalar decodes as 0.
+  uint64 sequence_counter = 3;
+
+  // Exactly 16 double values in row-major order:
+  //
+  // [ R00 R01 R02 tx ]
+  // [ R10 R11 R12 ty ]
+  // [ R20 R21 R22 tz ]
+  // [ 0   0   0   1  ]
+  //
+  // This is T_worldENU_from_sensorBody: it transforms a homogeneous point
+  // from the producing sensor body into the clip-local ENU world.
+  // As a proto3 repeated numeric field, this is packed on the wire.
+  repeated double transform_world_enu_from_sensor_body = 4;
+
+  // True when the 4x4 was derived from finite in-range position and attitude
+  // about a valid local ENU anchor. False means the sample is preserved for
+  // timeline continuity but the transform is an identity placeholder and must
+  // not be trusted (GPS/IMU-style keep-and-mask).
+  bool pose_valid = 5;
+}

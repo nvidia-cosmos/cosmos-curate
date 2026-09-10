@@ -13,7 +13,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Storage Utilities."""
+"""Storage Utilities.
+
+Every helper here takes a local string as a bare filesystem path. ``read_bytes``
+(and ``read_text``, which delegates to it), ``path_exists``, and ``StorageWriter``
+additionally resolve the ``file://`` form that
+``cosmos_curator.next.utils.storage.artifact_uri`` records for durable local
+artifacts. The remaining helpers do not - including ``read_json_file``, which
+converts the string itself rather than delegating - and would read such a string
+as the relative path ``file:/...``. Route a new local-string entry point through
+``_local_path_from_uri`` to join the first group; a consumer that re-derives a
+local path from ``StorageWriter.base_path`` must do the same, because the
+property returns the unresolved constructor string.
+"""
 
 import contextlib
 import hashlib
@@ -23,6 +35,7 @@ import pathlib
 import re
 import shutil
 import tempfile
+import urllib.parse
 from collections.abc import Generator, Mapping
 from typing import IO, Any
 
@@ -80,6 +93,50 @@ def get_storage_client(
     return None
 
 
+def list_child_directories(path: str | pathlib.Path) -> list[str]:
+    """List the immediate child directory names of a local path.
+
+    ``DirEntry.is_dir`` follows symlinks, so a symlinked child counts. That is
+    deliberate, but it has a consequence worth knowing about: a drop directory
+    carrying the common ``latest -> child-a`` convention yields both ``latest``
+    and ``child-a``. Callers deduplicate by name, not by target, so the same
+    directory is processed twice under two names.
+
+    Skipping symlinks would remove that duplicate, but it would also break the
+    equally common layout where every child is a symlink into content-addressed
+    storage. Neither rule is right for both, so the behavior follows the
+    filesystem and the choice is left to how the path is laid out. This
+    divergence has no S3 analogue, where a prefix cannot alias another.
+
+    A dangling symlink is excluded rather than reported, because ``is_dir`` is
+    false for one; a child whose mount is not yet ready is therefore silently
+    absent rather than failing the caller.
+
+    Args:
+        path: The directory whose immediate children to list.
+
+    Returns:
+        The child directory names, in whatever order the filesystem reports.
+
+    Raises:
+        FileNotFoundError: If *path* does not exist.
+        NotADirectoryError: If *path* names a file instead of a directory.
+
+    """
+    # ``scandir`` rather than ``iterdir``: it carries the directory bit from the
+    # single readdir syscall instead of rebuilding a Path and stat-ing each child,
+    # which matters on a network filesystem holding millions of entries.
+    try:
+        with os.scandir(path) as entries:
+            return [entry.name for entry in entries if entry.is_dir()]
+    except FileNotFoundError as exc:
+        msg = f"Path does not exist: {path}"
+        raise FileNotFoundError(msg) from exc
+    except NotADirectoryError as exc:
+        msg = f"Path is not a directory: {path}"
+        raise NotADirectoryError(msg) from exc
+
+
 def get_lance_storage_options(path: str, *, profile_name: str = "default") -> dict[str, str] | None:
     """Build storage options for Lance based on configured profiles."""
     if is_s3path(path):
@@ -135,6 +192,36 @@ def path_to_prefix(path: str) -> StoragePrefix:
     raise ValueError(error_msg)
 
 
+def _local_path_from_uri(location: str) -> pathlib.Path:
+    """Return a local ``Path`` for a bare filesystem path or a ``file://`` URI.
+
+    ``file://`` is a legitimate local-URI form: ``robot_action_split`` records
+    artifact URIs via ``Path.as_uri()``. Without this, a ``file:///x`` string
+    would be read as the literal path ``file:/x`` and fail. Empty and
+    ``localhost`` authorities are accepted (the authority is matched
+    case-insensitively per RFC 3986); any other scheme or authority is left for
+    ``pathlib`` to handle so an unsupported URI still surfaces as a normal
+    filesystem error rather than being silently mangled.
+
+    Args:
+        location: A bare local path or a ``file://`` URI.
+
+    Returns:
+        The corresponding local filesystem path.
+
+    """
+    try:
+        parsed = urllib.parse.urlparse(location)
+    except ValueError:
+        # urlparse rejects some strings that are legal filesystem paths (a
+        # bracketed authority such as "//host[0]/share" reads as a malformed
+        # IPv6 URL). Those are not file:// URIs, so hand them to pathlib.
+        return pathlib.Path(location)
+    if parsed.scheme == "file" and parsed.netloc.lower() in ("", "localhost"):
+        return pathlib.Path(urllib.parse.unquote(parsed.path))
+    return pathlib.Path(location)
+
+
 def read_bytes(
     filepath: StoragePrefix | pathlib.Path | str,
     client: StorageClient | None = None,
@@ -151,9 +238,11 @@ def read_bytes(
         The file contents as bytes.
 
     """
-    # Convert string paths to the appropriate type
+    # Convert string paths to the appropriate type. A local string may be a bare
+    # path or a file:// URI (see _local_path_from_uri); remote strings become a
+    # StoragePrefix handled by the client below.
     if isinstance(filepath, str):
-        filepath = path_to_prefix(filepath) if is_remote_path(filepath) else pathlib.Path(filepath)
+        filepath = path_to_prefix(filepath) if is_remote_path(filepath) else _local_path_from_uri(filepath)
 
     # Handle remote storage paths
     if isinstance(filepath, StoragePrefix):
@@ -230,9 +319,12 @@ def path_exists(
         True if the path exists, False otherwise.
 
     """
-    # Convert string paths to the appropriate type
+    # Convert string paths to the appropriate type. A local string may be a bare
+    # path or a file:// URI (see _local_path_from_uri), matching read_bytes: a
+    # caller must get the same answer from both for the same string, or an
+    # existence gate would report an object that read_bytes can read as missing.
     if isinstance(path, str):
-        path = path_to_prefix(path) if is_remote_path(path) else pathlib.Path(path)
+        path = path_to_prefix(path) if is_remote_path(path) else _local_path_from_uri(path)
 
     if isinstance(path, StoragePrefix):
         if client is None:
@@ -814,7 +906,10 @@ class StorageWriter:
                 resolves to *base_path* itself (single-file pattern).
 
         """
-        base = pathlib.Path(self._base_path)
+        # A local base_path may be a bare path or a file:// URI (see
+        # _local_path_from_uri), matching read_bytes and path_exists: the write
+        # target and the readers must resolve the same string identically.
+        base = _local_path_from_uri(self._base_path)
         dest = base / sub_path if sub_path is not None else base
         dest.parent.mkdir(parents=True, exist_ok=True)
         return dest
@@ -1157,12 +1252,21 @@ class StorageWriter:
 
 
 def get_smart_open_client_params(client: StorageClient) -> dict[str, Any]:
-    """Return smart_open-compatible ``client_params`` for a ``StorageClient``.
+    """Return smart_open-compatible transport parameters for a ``StorageClient``.
 
-    The returned dict can be passed directly to
-    ``cosmos_curator.core.sensors.utils.io.open_data_source`` (or ``open_file``)
-    as ``client_params=``, bridging the storage-client abstraction to the
-    ``smart_open`` transport layer.
+    The returned mapping is ``{"transport_params": {"client": <backend SDK client>}}``,
+    so it is unpacked into ``smart_open.open`` rather than handed to a Curator API::
+
+        with smart_open.open(uri, "rb", **get_smart_open_client_params(client)) as stream:
+            index, metadata = make_index_and_metadata(stream)
+
+    Reusing the client the caller already built is what keeps the read on the same
+    credentials as the rest of the pipeline's storage access.
+
+    The sensor library is not part of this bridge and must not learn about it:
+    ``cosmos_curator.core.sensors.utils.io.open_data_source`` / ``open_file`` take
+    ``(src, mode)`` and accept an already-opened ``BinaryIO``, which is what the
+    stream above is.
     """
     if isinstance(client, s3_client.S3Client):
         return {"transport_params": {"client": client.s3}}
@@ -1182,6 +1286,46 @@ def get_smart_open_params(output_root: str, *, profile_name: str | None = None) 
     profile_name = profile_name or "default"
     client = get_storage_client(output_root, profile_name=profile_name)
     return get_smart_open_client_params(client) if client is not None else {}
+
+
+def _raw_backend_key(url: str) -> str:
+    """Return a backend key read off ``url``'s verbatim text, for an unparseable authority.
+
+    Splits where the URI parser would, but on the raw string: the parser DELETES
+    tab, CR, and LF, so a value it has already rejected cannot be normalized and
+    re-parsed here. A value carrying no ``://`` keys on itself - there is no
+    narrower authority to share an entry with.
+    """
+    scheme, separator, remainder = url.partition("://")
+    if not separator:
+        return url
+    return f"{scheme}://{remainder.split('/', 1)[0]}"
+
+
+def backend_key(url: str) -> str:
+    """Return the cache key identifying which backend serves ``url``.
+
+    Client and transport-parameter resolution is per backend rather than per
+    object, so a caller reading many URLs memoizes the resolution under this key.
+    Deriving it from each URL is what keeps a mixed-backend input correct: where
+    URLs for several backends reach one reader, a single cached entry would route
+    later reads through another backend's client. A bare path and a ``file://``
+    URL collapse to one key, there being no distinct backend between them.
+
+    Total by construction: callers key per row, so one malformed URL must cost its
+    own row rather than the batch it arrived in. An authority the URI parser
+    rejects therefore falls back to the raw scheme-and-authority text, which stays
+    correct as a key - two URLs share it only when that text is identical, so no
+    scheme and no host is ever conflated - while giving up the entry it would have
+    shared with the same authority spelled parseably.
+    """
+    try:
+        parsed = urllib.parse.urlparse(url)
+    except ValueError:
+        return _raw_backend_key(url)
+    if parsed.scheme in ("", "file"):
+        return "file"
+    return f"{parsed.scheme}://{parsed.netloc}"
 
 
 def is_missing_object_error(exc: BaseException) -> bool:

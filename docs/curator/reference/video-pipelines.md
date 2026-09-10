@@ -160,7 +160,7 @@ cosmos-curator local launch \
 > provided under `examples/osmo/` (`split_config.json`, `shard_config.json`,
 > `dedup_config.json`). See the [End User Guide](../../client/end-user-guide.md#configuration-files) for details.
 
-**Options for Input/Output**
+#### Options for Input/Output
 
 - `--input-video-path`: path on local disk or `s3://` bucket that contains videos.
 - `--input-presigned-s3-url`: presigned **HTTPS** URL that points to a ZIP file on S3. Cosmos Curator will download, extract, and treat the extracted directory as `input_video_path`. Use this when you cannot expose the entire bucket but can issue a single presigned URL.
@@ -188,11 +188,12 @@ In case you want the output to be in a different S3 bucket than the input, you c
 - `--output-s3-profile-name`: profile name for `output_clip_path`;
 - `--input-video-list-s3-profile-name`: profile name for `input_video_list_json_path`.
 
-**Options for Functionality**
+#### Options for Functionality
 
 - `--limit`: how many videos to process
 - `--no-generate-embeddings`: disables InterVideo2/Cosmos-Embed1 embedding generation; use `"generate_embeddings": false` in API endpoint.
 - `--embedding-algorithm`: specifies embedding model, available options are `cosmos-embed1-224p`, `cosmos-embed1-336p`, `cosmos-embed1-448p`, `internvideo2` (default), and `openai` (requires an OpenAI-compatible endpoint; see [Use an OpenAI-Compatible Endpoint for Embedding](../../client/end-user-guide.md#use-an-openai-compatible-endpoint-for-embedding)). The `cosmos-embed1-*` suffix selects the input resolution; 224p is faster with 256-dim vectors, while 336p/448p are slower but score higher on retrieval/classification benchmarks and produce 768-dim vectors.
+- `--embedding-sampling-fps`: initial candidate-frame extraction rate used by embedding. The default is `2.0`, preserving existing behavior. This does not change encoded clip FPS, captioning sampling, or a model's fixed input-frame count. See [Embedding Frame Sampling](#embedding-frame-sampling).
 - `--no-generate-captions`: disables VLM captioning; use `"generate_captions": false` in API endpoint.
 - `--no-caption-quality-stats`: disables the run-level `caption_quality_stats.json` artifact; use `"caption_quality_stats_enabled": false` in API endpoint.
 - `--no-caption-quality-flags`: disables heuristic caption-quality flag annotations in per-clip metadata.
@@ -209,7 +210,19 @@ In case you want the output to be in a different S3 bucket than the input, you c
 - `--captioning-window-size`: captioning window size, defaults to 256 frames.
 - `--captioning-max-output-tokens`: max output tokens for captioning, default to 8192.
 
-**Options for Performance**
+##### Embedding Frame Sampling
+
+Use `--embedding-sampling-fps` to control how densely candidate frames are initially extracted for embedding, independently of captioning.
+
+**Example — Full Eight-Second Cosmos-Embed1 Clips:** For a full eight-second constant-frame-rate clip created with `--splitting-algorithm fixed-stride --fixed-stride-split-duration 8`, setting the rate to `1` typically materializes about eight initial candidate frames instead of about sixteen at the default `2.0`. Cosmos-Embed1 still consumes eight model frames, so the model input is unchanged; the difference is fewer intermediate candidate frames and a smaller logical payload. This does not establish a retrieval-quality improvement, an equivalent physical-memory reduction, or guaranteed codec decode savings.
+
+Cosmos-Embed1 and InternVideo2 retain their existing frame preparation and short-clip fallback behavior. When either backend receives fewer candidates than its required model-frame count, its frame-creation stage re-extracts from the encoded clip at successively doubled target rates, capped at 20 FPS. Lower initial sampling can therefore increase the chance of re-decoding short, partial, variable-frame-rate, or irregular-timestamp clips. An OpenAI-compatible backend instead sends every selected candidate, so the setting directly affects its request frame count and payload size.
+
+When aesthetics is enabled, exact signature matches share frames, distinct signatures use separate entries, and distinct requested rates that truncate to the same integer milli-FPS signature are rejected. See [Shared Clip Frame Extraction](split-pipeline-stages.md#shared-clip-frame-extraction).
+
+Other rates and clip durations are accepted subject to configuration validation. Exact candidate counts depend on clip boundaries, source cadence and timestamps, re-extraction, and backend frame-selection behavior. Check representative clips for your configuration.
+
+#### Options for Performance
 
 - `--transnetv2-gpus-per-worker`: number of fractional GPUs per work for `TransNetV2` stage; default to `0.25` targeting 48GB GPU.
 - `--motion-score-gpus-per-worker`: same as above for `MotionFilter` stage; default to `0.5` targeting 48GB GPU.
@@ -225,7 +238,7 @@ Each CPU-heavy stage also exposes a `--*-cpus-per-worker` flag. Defaults are tun
 - `--clip-extraction-cpus-per-worker` (default `3.0`): CPUs per worker allocated to clip frame extraction, which also exports the motion vectors used by motion filtering.
 - `--vllm-prepare-num-cpus-per-worker` (default `3.0`): CPUs per worker for `VllmPrepStage`.
 
-**Running on CPU-constrained hosts**
+##### Running on CPU-Constrained Hosts
 
 The per-stage CPU defaults above are tuned for server-class machines and, combined with the headroom that Ray reserves for the node manager, can over-subscribe CPU-limited workstations and cause the pipeline to fail to schedule. If you see an error that the pipeline cannot allocate enough CPUs, lower the per-stage `--*-cpus-per-worker` flags until the total fits your host. For example, the following combination runs the split pipeline on an 8-core, 1-GPU machine:
 

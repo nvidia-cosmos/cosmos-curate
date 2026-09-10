@@ -23,13 +23,13 @@ authors = [
 ]
 license = "Apache-2.0"
 license-files = ["LICENSE"]
-# Pixi environments pin Python 3.13; package metadata still allows existing
-# Python 3.12 host-side CLI environments until compatibility actually breaks.
-requires-python = ">=3.12,<3.14"
+# Pixi environments and standalone client installs share the Python 3.13 baseline.
+requires-python = ">=3.13,<3.14"
 dependencies = [
     "attrs",
     "click>=8.4.1",
     "fabric>=3.2.2,<4.0.0",
+    "foxglove-schemas-protobuf",
     "huggingface_hub",
     "jinja2",
     "loguru",
@@ -51,7 +51,6 @@ dependencies = [
     "urllib3>=1.26.18,<3"
 ]
 classifiers = [
-    "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Operating System :: OS Independent",
     "Intended Audience :: Developers",
@@ -73,22 +72,9 @@ requires = ["setuptools==80.7.1", "setuptools-scm[simple]>=8", "jinja2>=3.1.6", 
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.package-data]
-# Ship non-Python data files inside the wheel. Needed so that runtime
-# ``importlib.resources`` lookups (e.g. prompt templates used by
-# ``PerEventCaptionStage``) keep working when the package is installed from a
-# built wheel rather than from the source tree.
-"cosmos_curator" = [
-    "client/slurm_cli/sbatch.sh.j2",
-    "pipelines/video/captioning/prompts/*.md",
-    "core/sensors/examples/*.yaml",
-    "core/sensors/schemas/*.proto",
-    "configs/*.json",
-    "models/configs/*.json",
-]
-"cosmos_curator.client.view_cli" = [
-    "clip_viewer_webdocs/*",
-    "clip_viewer_webdocs/images/*",
-]
+# Non-editable builds stage the complete package tree, so retain every
+# non-Python asset without maintaining a second file manifest here.
+"cosmos_curator" = ["**/*"]
 
 [tool.setuptools_scm]
 local_scheme = "no-local-version"
@@ -103,6 +89,8 @@ target-version = "py313"
 line-length = 120
 indent-width = 4
 exclude = [
+    # Markdown formatting is experimental in Ruff and requires preview mode.
+    "*.md",
     "build/",
     "dist/",
     "cosmos-xenna/",
@@ -119,8 +107,13 @@ select = ["ALL"]
 extend-select = ["I"]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**/*.py" = ["INP001", "SLF001", "PLR2004"]
+"tests/**/*.py" = ["INP001", "SLF001", "PLR2004", "PLR0913"]
 "cosmos_curator/pipelines/video/super_resolution/inference_seedvr2_window.py" = ["ALL"]
+
+# Uploaded into a Slurm run directory and run by a node's own python3. See the onnode package docstring for why
+# this floor exists; do not raise it to match the project.
+[tool.ruff.per-file-target-version]
+"cosmos_curator/client/slurm_cli/managed_ray/onnode/*.py" = "py38"
 
 [tool.ruff.lint.isort]
 known-first-party = ["cosmos_curator", "cosmos_xenna"]
@@ -183,14 +176,20 @@ module = [
     "ngcsdk",
     "pyarrow",
     "pyarrow.*",
+    "scipy.ndimage",
+    "scipy.spatial.transform",
     "registry.api.image",
     "registry.api.models",
     "vllm",
     "vllm.*",
     "vllm_omni",
     "vllm_omni.*",
+    "av",
+    "av.*",
     "google.protobuf",
     "google.protobuf.*",
+    "foxglove_schemas_protobuf",
+    "foxglove_schemas_protobuf.*",
 ]
 ignore_missing_imports = true
 

@@ -34,15 +34,16 @@ from cosmos_curator.core.sensors.data.camera_data import MotionVectorData, Motio
 from cosmos_curator.core.sensors.data.extrinsics import SensorExtrinsics
 from cosmos_curator.core.sensors.data.intrinsics import CameraIntrinsics
 from cosmos_curator.core.sensors.data.video import VideoIndex, VideoMetadata
+from cosmos_curator.core.sensors.exceptions import AlignmentError, AlignmentFailureReason
 from cosmos_curator.core.sensors.sampling.grid import SamplingWindow
-from cosmos_curator.core.sensors.sampling.policy import SamplingPolicy
+from cosmos_curator.core.sensors.sampling.policy import NearestTimestampPolicy, NoSamplingPolicy
 from cosmos_curator.core.sensors.sampling.spec import SamplingSpec
 from cosmos_curator.core.sensors.sensors.camera_sensor import CameraSensor
 from cosmos_curator.core.sensors.utils.video import GpuVideoDecodeConfig, VideoDecodeConfig
 from tests.cosmos_curator.core.sensors.test_utils import make_sampling_grid
 
 
-def _make_video_index_and_metadata(  # noqa: PLR0913
+def _make_video_index_and_metadata(
     *,
     pts_ns: list[int],
     pts_stream: list[int],
@@ -211,7 +212,7 @@ def test_sample_yields_empty_camera_data_for_empty_windows(synthetic_video: io.B
 
     # Build a reference grid from real PTS values with a deliberate gap in the middle.
     # Using only actual PTS values keeps every nearest-neighbour delta at exactly 0,
-    # so tolerance_ns=0 (the default) is satisfied without special-casing.
+    # so max_delta_ns=0 is satisfied without special-casing.
     #
     # Layout for a 10-frame 30fps video (pts[i] ≈ i * 33ms):
     #   first cluster : pts[0..2]  ≈ [0, 33, 66ms]
@@ -233,7 +234,7 @@ def test_sample_yields_empty_camera_data_for_empty_windows(synthetic_video: io.B
     spec = SamplingSpec(grid=grid)
 
     n_windows = sum(1 for _ in grid)
-    results = list(sensor.sample(spec))
+    results = list(sensor.sample(spec, policy=NearestTimestampPolicy()))
 
     # One result per window — index i always maps to start_ns + i * stride_ns.
     assert len(results) == n_windows
@@ -261,13 +262,120 @@ def test_sample_boundary_timestamp_belongs_to_next_window(synthetic_video: io.By
         ),
     )
 
-    batches = list(sensor.sample(spec))
+    batches = list(sensor.sample(spec, policy=NearestTimestampPolicy()))
     assert len(batches) == 2
 
     np.testing.assert_array_equal(batches[0].align_timestamps_ns, pts[:3])
     np.testing.assert_array_equal(batches[1].align_timestamps_ns, pts[3:6])
     np.testing.assert_array_equal(batches[0].sensor_timestamps_ns, pts[:3])
     np.testing.assert_array_equal(batches[1].sensor_timestamps_ns, pts[3:6])
+
+
+@pytest.mark.parametrize("origin_ns", [1_000, -1_000, np.int32(1_000), np.uint64(1_000)])
+def test_camera_sensor_origin_pins_the_first_frame_and_carries_the_rest_with_it(
+    origin_ns: int,
+    patch_camera_sensor_dependencies: Callable[..., None],
+) -> None:
+    """``origin_ns`` states where the first frame lands, not how far to shift it.
+
+    This index starts at 100 ns rather than zero, which is what separates the two
+    readings: adding ``origin_ns`` would report the first frame at
+    ``origin_ns + 100``. A caller holding a capture timeline knows when recording
+    started, not what the container chose to call that instant, so the sensor
+    subtracts its own first PTS. Stream-native PTS are untouched, because decode
+    planning and seeking still speak the container's timeline.
+    """
+    index, metadata = _make_video_index_and_metadata(
+        pts_ns=[100, 200, 300],
+        pts_stream=[100, 200, 300],
+        is_keyframe=[True, False, False],
+        is_discard=[False, False, False],
+        kf_pts_ns=[100],
+        kf_pts_stream=[100],
+    )
+
+    def fake_make_index_and_metadata(
+        source: object,
+        stream_idx: int = 0,
+        index_method: object = None,
+        **_kwargs: object,
+    ) -> tuple[VideoIndex, VideoMetadata]:
+        del source, stream_idx, index_method
+        return index, metadata
+
+    def fake_decode(decode_plan: list[tuple[int, list[tuple[int, int]]]]) -> npt.NDArray[np.uint8]:
+        frame_count = sum(count for _, group in decode_plan for _, count in group)
+        return np.zeros((frame_count, metadata.height, metadata.width, 3), dtype=np.uint8)
+
+    def fake_decoder_open(
+        source: object,
+        stream_idx: int = 0,
+        config: object = None,
+        stats: object = None,
+        **_kwargs: object,
+    ) -> _FakeDecoder:
+        del source, stream_idx, config, stats
+        return _FakeDecoder(time_base=index.time_base, decode_fn=fake_decode)
+
+    patch_camera_sensor_dependencies(
+        make_index_and_metadata_fn=fake_make_index_and_metadata,
+        decoder_open_fn=fake_decoder_open,
+    )
+
+    normalized_origin_ns = int(origin_ns)
+    sensor = CameraSensor(b"not-used", origin_ns=origin_ns)
+    shifted_pts_ns = np.array([0, 100, 200], dtype=np.int64) + normalized_origin_ns
+    grid_timestamps_ns = np.append(shifted_pts_ns, shifted_pts_ns[-1] + 1)
+    grid = make_sampling_grid(grid_timestamps_ns, stride_ns=1_000, duration_ns=1_000)
+
+    batch = next(sensor.sample(SamplingSpec(grid=grid), policy=NearestTimestampPolicy(max_delta_ns=0)))
+
+    assert sensor.start_ns == normalized_origin_ns
+    # The offset the origin resolved to, which is the origin less the container's
+    # own first PTS of 100 -- not the origin itself.
+    assert sensor.timestamp_offset_ns == normalized_origin_ns - 100
+    assert type(sensor.timestamp_offset_ns) is int
+    np.testing.assert_array_equal(sensor.video_index.pts_ns, shifted_pts_ns)
+    np.testing.assert_array_equal(sensor.video_index.kf_pts_ns, shifted_pts_ns[:1])
+    np.testing.assert_array_equal(sensor.timestamps_ns, shifted_pts_ns)
+    assert sensor.start_ns == int(shifted_pts_ns[0])
+    assert sensor.end_ns == int(shifted_pts_ns[-1])
+    np.testing.assert_array_equal(next(sensor.stream_timestamps()), shifted_pts_ns)
+    np.testing.assert_array_equal(batch.align_timestamps_ns, shifted_pts_ns)
+    np.testing.assert_array_equal(batch.sensor_timestamps_ns, shifted_pts_ns)
+    np.testing.assert_array_equal(batch.pts_stream, np.array([100, 200, 300], dtype=np.int64))
+
+    assert index.timestamp_offset_ns == 0
+    np.testing.assert_array_equal(index.pts_ns, np.array([100, 200, 300], dtype=np.int64))
+
+
+@pytest.mark.parametrize(
+    "origin_ns",
+    [
+        True,
+        np.bool_(True),  # noqa: FBT003
+        1.5,
+        "1",
+        np.iinfo(np.int64).max + 1,
+        np.uint64(np.iinfo(np.int64).max + 1),
+    ],
+)
+def test_camera_sensor_rejects_an_invalid_origin_before_indexing(
+    origin_ns: object,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unusable origin must fail before the video source is indexed."""
+
+    def fail_to_index(*_args: object, **_kwargs: object) -> tuple[VideoIndex, VideoMetadata]:
+        pytest.fail("CameraSensor must validate origin_ns before indexing")
+
+    monkeypatch.setattr(
+        "cosmos_curator.core.sensors.sensors.camera_sensor.make_index_and_metadata",
+        fail_to_index,
+    )
+
+    with pytest.raises(ValueError, match="origin_ns"):
+        CameraSensor(b"not-used", origin_ns=origin_ns)  # type: ignore[arg-type]
 
 
 def test_sample_singleton_window_is_boundary_only() -> None:
@@ -291,7 +399,7 @@ def test_sample_singleton_window_is_boundary_only() -> None:
     sensor = CameraSensor(buf.getvalue())
     spec = SamplingSpec(grid=make_sampling_grid(sensor.timestamps_ns, stride_ns=1, duration_ns=1))
 
-    batches = list(sensor.sample(spec))
+    batches = list(sensor.sample(spec, policy=NearestTimestampPolicy()))
     assert len(batches) == 1
     assert batches[0].align_timestamps_ns.shape == (0,)
     assert batches[0].sensor_timestamps_ns.shape == (0,)
@@ -311,7 +419,7 @@ def test_camera_sensor_does_not_close_caller_owned_binaryio(synthetic_video: io.
         ),
     )
 
-    batches = list(sensor.sample(spec))
+    batches = list(sensor.sample(spec, policy=NearestTimestampPolicy()))
 
     assert batches
     assert not synthetic_video.closed
@@ -324,7 +432,16 @@ def test_camera_sensor_rejects_unsupported_decode_config(synthetic_video: io.Byt
     spec = SamplingSpec(grid=make_sampling_grid(sensor.timestamps_ns[:2], stride_ns=1, duration_ns=1))
 
     with pytest.raises(ValueError, match="unsupported decode_config"):
-        next(sensor.sample(spec))
+        next(sensor.sample(spec, policy=NearestTimestampPolicy()))
+
+
+def test_camera_sensor_rejects_no_sampling_policy(synthetic_video: io.BytesIO) -> None:
+    """CameraSensor accepts only NearestTimestampPolicy."""
+    sensor = CameraSensor(synthetic_video.getvalue())
+    spec = SamplingSpec(grid=make_sampling_grid(sensor.timestamps_ns[:2], stride_ns=1, duration_ns=1))
+
+    with pytest.raises(TypeError, match="CameraSensor requires NearestTimestampPolicy"):
+        next(sensor.sample(spec, policy=NoSamplingPolicy()))
 
 
 def test_camera_sensor_uses_only_displayable_frames(
@@ -391,7 +508,7 @@ def test_camera_sensor_uses_only_displayable_frames(
             duration_ns=1_000,
         )
     )
-    batches = list(sensor.sample(spec))
+    batches = list(sensor.sample(spec, policy=NearestTimestampPolicy()))
 
     assert len(batches) == 1
     np.testing.assert_array_equal(batches[0].align_timestamps_ns, np.array([100, 200, 300], dtype=np.int64))
@@ -493,7 +610,7 @@ def test_camera_sensor_passes_window_to_sample_window_indices(
         duration_ns=1_000,
     )
 
-    batches = list(sensor.sample(SamplingSpec(grid=grid)))
+    batches = list(sensor.sample(SamplingSpec(grid=grid), policy=NearestTimestampPolicy()))
 
     assert len(batches) == 1
     assert len(sampling_calls) == 1
@@ -564,7 +681,7 @@ def test_camera_sensor_expands_repeated_picks_into_aligned_rows(
         duration_ns=1_000,
     )
 
-    batch = next(sensor.sample(SamplingSpec(grid=grid)))
+    batch = next(sensor.sample(SamplingSpec(grid=grid), policy=NearestTimestampPolicy()))
 
     np.testing.assert_array_equal(batch.align_timestamps_ns, np.array([100, 200, 300], dtype=np.int64))
     np.testing.assert_array_equal(batch.sensor_timestamps_ns, np.array([10, 10, 30], dtype=np.int64))
@@ -641,78 +758,9 @@ def test_camera_sensor_populates_decoder_motion_vectors(
         duration_ns=1_000,
     )
 
-    batch = next(sensor.sample(SamplingSpec(grid=grid)))
+    batch = next(sensor.sample(SamplingSpec(grid=grid), policy=NearestTimestampPolicy()))
 
     assert batch.motion_vectors is motion_vectors
-
-
-def test_camera_sensor_returns_empty_when_window_has_no_displayable_matches(
-    patch_camera_sensor_dependencies: Callable[..., None],
-) -> None:
-    """A non-empty reference window can still produce an empty sampled payload."""
-    index, metadata = _make_video_index_and_metadata(
-        pts_ns=[100, 200, 300],
-        pts_stream=[10, 20, 30],
-        is_keyframe=[True, False, False],
-        is_discard=[False, False, False],
-        kf_pts_ns=[100],
-        kf_pts_stream=[10],
-    )
-    decode_calls: list[list[tuple[int, list[tuple[int, int]]]]] = []
-
-    def fake_make_index_and_metadata(
-        source: object,
-        stream_idx: int = 0,
-        index_method: object = None,
-        **_kwargs: object,
-    ) -> tuple[VideoIndex, VideoMetadata]:
-        del source, stream_idx, index_method
-        return index, metadata
-
-    def _decode_with_capture(decode_plan: list[tuple[int, list[tuple[int, int]]]]) -> npt.NDArray[np.uint8]:
-        decode_calls.append(decode_plan)
-        return np.empty((0, metadata.height, metadata.width, 3), dtype=np.uint8)
-
-    def fake_decoder_open(
-        source: object,
-        stream_idx: int = 0,
-        config: object = None,
-        stats: object = None,
-        **_kwargs: object,
-    ) -> _FakeDecoder:
-        del source, stream_idx, config, stats
-        return _FakeDecoder(time_base=index.time_base, decode_fn=_decode_with_capture)
-
-    def fake_sample_window_indices(
-        canonical: npt.NDArray[np.int64],
-        grid: npt.NDArray[np.int64],
-        *,
-        policy: object = None,
-        dedup: bool = True,
-    ) -> tuple[npt.NDArray[np.int64], npt.NDArray[np.int64]]:
-        del canonical, grid, policy, dedup
-        return np.array([], dtype=np.int64), np.array([], dtype=np.int64)
-
-    patch_camera_sensor_dependencies(
-        make_index_and_metadata_fn=fake_make_index_and_metadata,
-        decoder_open_fn=fake_decoder_open,
-        sample_window_indices_fn=fake_sample_window_indices,
-    )
-
-    sensor = CameraSensor(b"not-used")
-    grid = make_sampling_grid(
-        timestamps_ns=np.array([150, 250, 350], dtype=np.int64),
-        stride_ns=1_000,
-        duration_ns=1_000,
-    )
-
-    batch = next(sensor.sample(SamplingSpec(grid=grid)))
-
-    assert batch.align_timestamps_ns.shape == (0,)
-    assert batch.sensor_timestamps_ns.shape == (0,)
-    assert batch.pts_stream.shape == (0,)
-    assert batch.frames.shape == (0, 2, 2, 3)
-    assert decode_calls == []
 
 
 def test_camera_sensor_propagates_extrinsics_to_sampled_batches(
@@ -774,7 +822,7 @@ def test_camera_sensor_propagates_extrinsics_to_sampled_batches(
         duration_ns=1_000,
     )
 
-    batch = next(sensor.sample(SamplingSpec(grid=grid)))
+    batch = next(sensor.sample(SamplingSpec(grid=grid), policy=NearestTimestampPolicy()))
 
     assert batch.extrinsics is extrinsics
 
@@ -837,7 +885,7 @@ def test_camera_sensor_defaults_extrinsics_to_none(
         duration_ns=1_000,
     )
 
-    batch = next(sensor.sample(SamplingSpec(grid=grid)))
+    batch = next(sensor.sample(SamplingSpec(grid=grid), policy=NearestTimestampPolicy()))
 
     assert batch.extrinsics is None
 
@@ -901,7 +949,7 @@ def test_camera_sensor_preserves_provided_intrinsics(
         duration_ns=1_000,
     )
 
-    batch = next(sensor.sample(SamplingSpec(grid=grid)))
+    batch = next(sensor.sample(SamplingSpec(grid=grid), policy=NearestTimestampPolicy()))
 
     assert batch.intrinsics is intrinsics
 
@@ -964,7 +1012,7 @@ def test_camera_sensor_defaults_intrinsics_to_none(
         duration_ns=1_000,
     )
 
-    batch = next(sensor.sample(SamplingSpec(grid=grid)))
+    batch = next(sensor.sample(SamplingSpec(grid=grid), policy=NearestTimestampPolicy()))
 
     assert batch.intrinsics is None
 
@@ -992,16 +1040,6 @@ def test_camera_sensor_empty_batches_preserve_extrinsics(
         del source, stream_idx, index_method
         return index, metadata
 
-    def fake_sample_window_indices(
-        canonical: npt.NDArray[np.int64],
-        grid: npt.NDArray[np.int64],
-        *,
-        policy: object = None,
-        dedup: bool = True,
-    ) -> tuple[npt.NDArray[np.int64], npt.NDArray[np.int64]]:
-        del canonical, grid, policy, dedup
-        return np.array([], dtype=np.int64), np.array([], dtype=np.int64)
-
     def fake_decoder_open(
         source: object,
         stream_idx: int = 0,
@@ -1012,25 +1050,31 @@ def test_camera_sensor_empty_batches_preserve_extrinsics(
         del source, stream_idx, config, stats
         return _FakeDecoder(
             time_base=index.time_base,
-            decode_fn=lambda decode_plan: np.empty((0, metadata.height, metadata.width, 3), dtype=np.uint8),  # noqa: ARG005
+            decode_fn=lambda decode_plan: np.zeros(
+                (sum(count for _, targets in decode_plan for _, count in targets), metadata.height, metadata.width, 3),
+                dtype=np.uint8,
+            ),
         )
 
     patch_camera_sensor_dependencies(
         make_index_and_metadata_fn=fake_make_index_and_metadata,
         decoder_open_fn=fake_decoder_open,
-        sample_window_indices_fn=fake_sample_window_indices,
     )
 
     sensor = CameraSensor(b"not-used", extrinsics=extrinsics)
+    # Windows advance by 1000 ns from 150, so only the first holds a reference
+    # timestamp; every later window is empty and yields the cached empty batch.
     grid = make_sampling_grid(
-        timestamps_ns=np.array([150, 250], dtype=np.int64),
+        timestamps_ns=np.array([150, 5_150], dtype=np.int64),
         stride_ns=1_000,
         duration_ns=1_000,
     )
 
-    empty0 = next(sensor.sample(SamplingSpec(grid=grid)))
+    batches = list(sensor.sample(SamplingSpec(grid=grid), policy=NearestTimestampPolicy()))
+    empty0 = batches[1]
     empty1 = sensor._get_empty_camera_data()
 
+    assert len(empty0.align_timestamps_ns) == 0
     assert empty0.extrinsics is extrinsics
     assert empty1.extrinsics is extrinsics
     assert empty0 is empty1
@@ -1059,16 +1103,6 @@ def test_camera_sensor_empty_batches_preserve_intrinsics(
         del source, stream_idx, index_method
         return index, metadata
 
-    def fake_sample_window_indices(
-        canonical: npt.NDArray[np.int64],
-        grid: npt.NDArray[np.int64],
-        *,
-        policy: object = None,
-        dedup: bool = True,
-    ) -> tuple[npt.NDArray[np.int64], npt.NDArray[np.int64]]:
-        del canonical, grid, policy, dedup
-        return np.array([], dtype=np.int64), np.array([], dtype=np.int64)
-
     def fake_decoder_open(
         source: object,
         stream_idx: int = 0,
@@ -1079,25 +1113,31 @@ def test_camera_sensor_empty_batches_preserve_intrinsics(
         del source, stream_idx, config, stats
         return _FakeDecoder(
             time_base=index.time_base,
-            decode_fn=lambda decode_plan: np.empty((0, metadata.height, metadata.width, 3), dtype=np.uint8),  # noqa: ARG005
+            decode_fn=lambda decode_plan: np.zeros(
+                (sum(count for _, targets in decode_plan for _, count in targets), metadata.height, metadata.width, 3),
+                dtype=np.uint8,
+            ),
         )
 
     patch_camera_sensor_dependencies(
         make_index_and_metadata_fn=fake_make_index_and_metadata,
         decoder_open_fn=fake_decoder_open,
-        sample_window_indices_fn=fake_sample_window_indices,
     )
 
     sensor = CameraSensor(b"not-used", intrinsics=intrinsics)
+    # Windows advance by 1000 ns from 150, so only the first holds a reference
+    # timestamp; every later window is empty and yields the cached empty batch.
     grid = make_sampling_grid(
-        timestamps_ns=np.array([150, 250], dtype=np.int64),
+        timestamps_ns=np.array([150, 5_150], dtype=np.int64),
         stride_ns=1_000,
         duration_ns=1_000,
     )
 
-    empty0 = next(sensor.sample(SamplingSpec(grid=grid)))
+    batches = list(sensor.sample(SamplingSpec(grid=grid), policy=NearestTimestampPolicy()))
+    empty0 = batches[1]
     empty1 = sensor._get_empty_camera_data()
 
+    assert len(empty0.align_timestamps_ns) == 0
     assert empty0.intrinsics is intrinsics
     assert empty1.intrinsics is intrinsics
     assert empty0 is empty1
@@ -1146,9 +1186,13 @@ def test_camera_sensor_propagates_sampling_policy_failures(
         dedup: bool = True,
     ) -> tuple[npt.NDArray[np.int64], npt.NDArray[np.int64]]:
         del canonical, grid, dedup
-        assert isinstance(policy, SamplingPolicy)
-        msg = "tolerance_ns=5 exceeded: max delta was 10 ns for grid=200, canonical=190"
-        raise ValueError(msg)
+        assert isinstance(policy, NearestTimestampPolicy)
+        raise AlignmentError(
+            AlignmentFailureReason.TOLERANCE_EXCEEDED,
+            "max_delta_ns=5 exceeded: max delta was 10 ns for grid=200, canonical=190",
+            delta_ns=10,
+            max_delta_ns=5,
+        )
 
     patch_camera_sensor_dependencies(
         make_index_and_metadata_fn=fake_make_index_and_metadata,
@@ -1163,11 +1207,39 @@ def test_camera_sensor_propagates_sampling_policy_failures(
             stride_ns=1_000,
             duration_ns=1_000,
         ),
-        policy=SamplingPolicy(tolerance_ns=5),
     )
 
-    with pytest.raises(ValueError, match="tolerance_ns=5 exceeded"):
-        next(sensor.sample(spec))
+    # The decoder context manager must not swallow or re-wrap what the sampler raised.
+    # This says nothing about the tolerance rule itself — the fake supplied the
+    # error. See test_camera_sensor_real_tolerance_failure_raises_alignment_error.
+    with pytest.raises(AlignmentError, match="max_delta_ns=5 exceeded"):
+        next(sensor.sample(spec, policy=NearestTimestampPolicy(max_delta_ns=5)))
+
+
+def test_camera_sensor_real_tolerance_failure_raises_alignment_error(synthetic_video: io.BytesIO) -> None:
+    """Drive a real decode through a genuine tolerance failure, with nothing patched.
+
+    The fixture's frames land on 0, 33_333_333, 66_666_666 ns. The reference
+    timestamp sits halfway between the first two, so whichever neighbour is
+    selected is ~16.7 ms away — far outside a 1 ms tolerance. The window is wide
+    enough to keep a neighbour eligible, so the failure is a genuine tolerance
+    rejection rather than an empty batch.
+    """
+    sensor = CameraSensor(synthetic_video.getvalue())
+    between_frames_ns = 16_666_666
+    grid = make_sampling_grid(
+        timestamps_ns=np.array([between_frames_ns, 50_000_000], dtype=np.int64),
+        stride_ns=50_000_000,
+        duration_ns=50_000_000,
+    )
+
+    with pytest.raises(AlignmentError) as caught:
+        next(sensor.sample(SamplingSpec(grid=grid), policy=NearestTimestampPolicy(max_delta_ns=1_000_000)))
+
+    assert caught.value.reason is AlignmentFailureReason.TOLERANCE_EXCEEDED
+    assert caught.value.max_delta_ns == 1_000_000
+    assert caught.value.delta_ns is not None
+    assert caught.value.delta_ns > 1_000_000
 
 
 def test_camera_sensor_uses_display_pts_stream_sidecar_alignment(
@@ -1228,7 +1300,7 @@ def test_camera_sensor_uses_display_pts_stream_sidecar_alignment(
         duration_ns=1_000,
     )
 
-    batch = next(sensor.sample(SamplingSpec(grid=grid)))
+    batch = next(sensor.sample(SamplingSpec(grid=grid), policy=NearestTimestampPolicy()))
 
     np.testing.assert_array_equal(batch.pts_stream, np.array([10, 30], dtype=np.int64))
     np.testing.assert_array_equal(batch.sensor_timestamps_ns, np.array([10, 30], dtype=np.int64))
@@ -1271,6 +1343,7 @@ def test_camera_sensor_public_properties(
     assert sensor.has_bframes is False
 
 
+@pytest.mark.env("default")
 def test_camera_sensor_sample_supports_gpu_decode_config(
     patch_camera_sensor_dependencies: Callable[..., None],
     monkeypatch: pytest.MonkeyPatch,
@@ -1324,7 +1397,7 @@ def test_camera_sensor_sample_supports_gpu_decode_config(
         )
     )
 
-    batch = next(sensor.sample(spec))
+    batch = next(sensor.sample(spec, policy=NearestTimestampPolicy()))
 
     assert len(gpu_open_calls) == 1
     assert gpu_open_calls[0][0] == b"not-used"

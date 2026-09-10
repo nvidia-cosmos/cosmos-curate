@@ -28,6 +28,7 @@ from mcap.records import Channel, Schema
 from cosmos_curator.core.sensors.data.extrinsics import SensorExtrinsics
 from cosmos_curator.core.sensors.data.imu_data import ImuData
 from cosmos_curator.core.sensors.sampling.grid import SamplingWindow
+from cosmos_curator.core.sensors.sampling.policy import NoSamplingPolicy, require_no_sampling_policy
 from cosmos_curator.core.sensors.sampling.spec import SamplingSpec
 from cosmos_curator.core.sensors.types.types import DataSource
 from cosmos_curator.core.sensors.utils.mcap import (
@@ -315,13 +316,17 @@ class ImuSensor:
         """Read all IMU samples whose message time overlaps one sampling window."""
         return self._read_messages(reader, int(window.start_ns), int(window.exclusive_end_ns))
 
+    def supports_sampling_policy(self, policy: object) -> bool:
+        """Return whether this sensor can sample with *policy*."""
+        return isinstance(policy, NoSamplingPolicy)
+
     def read_all(self) -> ImuData:
         """Decode every message on the configured IMU topic into one batch."""
         with self._mcap.open_reader() as reader:
             self._resolve_message_class(reader)
             return self._read_messages(reader, self.start_ns, self.end_ns + 1)
 
-    def sample(self, spec: SamplingSpec) -> Generator[ImuData]:
+    def sample(self, spec: SamplingSpec, *, policy: NoSamplingPolicy) -> Generator[ImuData]:
         """Yield raw IMU sample batches for each sampling window.
 
         Each yielded batch contains the MCAP messages whose ``log_time`` falls
@@ -329,6 +334,7 @@ class ImuSensor:
         copies the mapped sensor timestamp unless the mapping explicitly supplies
         ``align_timestamp_ns`` from another clock.
         """
+        require_no_sampling_policy(policy, sensor_name=type(self).__name__)
         with self._mcap.open_reader() as reader:
             self._resolve_message_class(reader)
             for window in spec.grid:

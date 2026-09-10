@@ -2,11 +2,11 @@
 
 ## Summary
 
-This document defines the architecture for building Cosmos Curator pipelines on Ray Data as an alternative execution
-engine alongside Cosmos-Xenna. Ray Data pipelines are **implemented separately** from Xenna pipelines — no shared
-orchestration, no adapter layers, no bridge code. Each Ray Data pipeline is written idiomatically using Ray Data's
-native primitives (`with_column`, `map`, `flat_map`, `map_batches`), while Xenna pipelines continue to run unchanged.
-The two engines may coexist long-term, with each used where it fits best.
+This document captures the Ray Data execution architecture used by Cosmos Curator. Curator Next uses Ray Data as its
+primary data-parallel execution and composition layer, with new work developed as recipe-owned vertical slices using Ray
+Data's native primitives (`with_column`, `map`, `flat_map`, `map_batches`). The deprecated
+`cosmos_curator.pipelines.ray_data` package remains available during transition but is not the extension point for new
+work. Xenna pipelines continue to run independently until explicitly transitioned.
 
 ## Why Ray Data
 
@@ -219,22 +219,12 @@ Ray Data rows.
 See [Ray Data Captioning Design](ray-data-captioning.md) for the detailed architecture, tradeoffs, and known technical
 debt.
 
-### Video workflow migration scope
+### Curator Next direction
 
-The broad architecture in this document supports long-term coexistence between Ray Data and Xenna, but the current video
-split workflow has a narrower migration decision: Ray Data is the priority implementation path for retained split,
-caption, filtering, embedding, semantic dedup, and shard-dataset workloads. Xenna remains the production fallback until
-each retained workflow clears the cutover criteria in the migration plan.
-
-See [Ray Data Migration Plan](ray-data-migration.md) for the retained workflow contract, checklist, validation plan,
-cutover gates, and rollback policy. That plan owns workflow priority; this document owns the general Ray Data execution
-architecture.
-
-### Long-term outlook
-
-If Ray Data proves to be the better engine for all pipelines, the Xenna dependency could eventually be removed. But
-both engines may coexist long-term outside the retained video migration scope; the separate implementation approach
-supports either outcome for workflows that do not have their own cutover plan.
+[Curator Next](curator-next.md) uses Ray Data as its primary data-parallel execution layer. New work develops as
+recipe-owned vertical slices rather than as a feature-for-feature migration of Xenna pipelines or continued expansion of
+`cosmos_curator.pipelines.ray_data`. Existing pipelines move into the Curator Next incubation namespace only through
+explicit transition work.
 
 ---
 
@@ -258,31 +248,3 @@ as a `map_batches` kwarg. This is the same `PixiRuntimeEnv` already used by the 
   which columns they read. Absent this, stages always see the full block; a stage that ignores a large `video_bytes`
   column still pays for it to cross any non-fused operator boundary in its input. Worth filing an upstream feature
   request once the use case is well-exercised.
-
----
-
-## Task List
-
-- [x] `hello_ray_data_pipeline.py`: Standalone Ray Data hello-world pipeline using expressions and `map_batches`
-- [x] Ray Data video splitting pipeline MVP (fixed-stride split + transcode + write + per-clip JSON metadata)
-- [x] `summary.json` output for the splitting pipeline (driver-side aggregation via `take_all()`;
-  avoids the `groupby` shuffle's per-node CPU reservation in the streaming DAG)
-- [x] Ray Data captioning via Ray Data LLM + vLLM
-- [ ] Retained split-workflow filtering, especially LLM/VLM semantic filtering and video-type classification
-- [ ] Ray Data embedding output for retained split runs
-- [ ] Ray Data semantic dedup over Lance embeddings
-- [ ] Ray Data shard dataset workflow consuming Lance metadata/captions, clip-media locations, and dedup decisions
-- [ ] Per-clip transcode failure reporting: surface failed clips with error info in per-video metadata and
-  `summary.json` instead of silently dropping them
-- [ ] Retry policy for transient I/O failures: bounded retries on `read_video` and clip-write stages (S3 throttles,
-  network blips), using Ray Data's `retry_exceptions` where applicable
-- [ ] Pipeline resume / idempotency: skip videos whose output manifest already exists on rerun, or checkpoint to
-  Lance/Parquet between stages for partial recovery
-- [ ] Poison-pill quarantine: drop videos that fail repeatedly rather than failing the whole pipeline; record them in
-  a quarantine list consumable by downstream triage
-- [ ] Structured error telemetry: per-stage error counters aligned with `summary.json`'s aggregate fields; per-video
-  and per-clip error fields mirroring Xenna's `video.errors` / `clip.errors`
-- [ ] Refactor existing pipeline utilities/helpers to work for both engines where applicable
-- [ ] Multi-node model download for Ray Data pipelines
-- [ ] Performance comparison between Xenna and Ray Data for the same retained workloads, using the baselines defined in
-  the migration plan

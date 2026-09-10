@@ -21,9 +21,6 @@ import ray
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
-# Default per-node concurrency cap for IO-bound Ray Data work.
-DEFAULT_IO_SLOTS_PER_NODE = 16
-
 # Substring patterns matched against ``"ClassName: message"`` (via
 # ``ray._common.retry.format_exception``) to decide whether a map function
 # error is transient and worth retrying. Class-name substrings avoid

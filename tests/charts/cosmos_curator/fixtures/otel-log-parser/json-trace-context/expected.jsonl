@@ -1,0 +1,2 @@
+{"body":"json warning","attributes":{"curator.log.parser":"json","lineno":42,"name":"cosmos_curator.example"},"time_unix_nano":"1785420100123000064","severity_number":13,"severity_text":"WARNING","trace_id":"1234567890abcdef1234567890abcdef","span_id":"1234567890abcdef"}
+{"body":"malformed trace context","attributes":{"curator.log.parser":"json","lineno":46,"name":"cosmos_curator.example","span_id":"not-a-span","trace_id":"not-a-trace-id"},"time_unix_nano":"1785420100456000000","severity_number":9,"severity_text":"INFO"}

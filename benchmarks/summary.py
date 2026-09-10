@@ -20,6 +20,7 @@ from typing import Any, TypeGuard
 
 _CAPTION_QUALITY_SCHEMA_VERSION = 1
 _CAPTION_STATUS_KEYS = ("success", "truncated", "blocked", "error", "skipped")
+_CAPTION_QUALITY_FLAG_KEYS = ("flag_length_outlier", "flag_repetition", "flag_near_duplicate")
 
 
 def video_hours_per_day_per_gpu(
@@ -55,7 +56,7 @@ def _caption_quality_absent_metrics() -> dict[str, Any]:
     return {"caption_quality_stats_present": 0}
 
 
-def make_caption_quality_metrics(stats: object | None) -> dict[str, Any]:
+def make_caption_quality_metrics(stats: object | None) -> dict[str, Any]:  # noqa: PLR0911
     """Flatten caption_quality_stats.json counters into benchmark metrics."""
     if not isinstance(stats, dict):
         return _caption_quality_absent_metrics()
@@ -72,12 +73,17 @@ def make_caption_quality_metrics(stats: object | None) -> dict[str, Any]:
     empty_caption_count = stats.get("empty_caption_count")
     sentinel_caption_count = stats.get("sentinel_caption_count")
     caption_status_counts = stats.get("caption_status_counts")
+    caption_quality_flags_evaluated_count = stats.get("caption_quality_flags_evaluated_count")
+    caption_quality_flag_counts = stats.get("caption_quality_flag_counts")
     if (
         not _is_non_negative_int(caption_windows_checked)
         or not _is_non_negative_int(empty_caption_count)
         or not _is_non_negative_int(sentinel_caption_count)
         or not isinstance(caption_status_counts, dict)
         or set(caption_status_counts) != set(_CAPTION_STATUS_KEYS)
+        or not _is_non_negative_int(caption_quality_flags_evaluated_count)
+        or not isinstance(caption_quality_flag_counts, dict)
+        or set(caption_quality_flag_counts) != set(_CAPTION_QUALITY_FLAG_KEYS)
     ):
         return _caption_quality_absent_metrics()
 
@@ -92,6 +98,13 @@ def make_caption_quality_metrics(stats: object | None) -> dict[str, Any]:
         caption_status_values[status_key] = status_count
         caption_status_total += status_count
 
+    caption_quality_flag_metrics: dict[str, Any] = {}
+    for flag_key in _CAPTION_QUALITY_FLAG_KEYS:
+        flag_count = caption_quality_flag_counts[flag_key]
+        if not _is_non_negative_int(flag_count) or flag_count > caption_quality_flags_evaluated_count:
+            return _caption_quality_absent_metrics()
+        caption_quality_flag_metrics[flag_key] = flag_count
+
     if (
         caption_status_total != caption_windows_checked
         or empty_caption_count + sentinel_caption_count
@@ -103,6 +116,8 @@ def make_caption_quality_metrics(stats: object | None) -> dict[str, Any]:
         "caption_quality_stats_present": 1,
         "caption_windows_checked": caption_windows_checked,
         **caption_status_metrics,
+        "caption_quality_flags_evaluated_count": caption_quality_flags_evaluated_count,
+        **caption_quality_flag_metrics,
         "empty_caption_count": empty_caption_count,
         "sentinel_caption_count": sentinel_caption_count,
     }

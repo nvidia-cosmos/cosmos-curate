@@ -76,7 +76,7 @@ def nvcf_function() -> NvcfFunction:
         ),
     ],
 )
-def test_nvcf_function_init(  # noqa: PLR0913
+def test_nvcf_function_init(
     funcid: str,
     version: str,
     key: str,
@@ -165,7 +165,7 @@ def test_nvcf_function_undeploy_private(mock_undeploy: MagicMock, nvcf_function:
     ],
 )
 @patch.object(NvcfFunction, "nvcf_helper_get_deployment_detail")
-def test_nvcf_function_get_status(  # noqa: PLR0913
+def test_nvcf_function_get_status(
     mock_get_detail: MagicMock,
     nvcf_function: NvcfFunction,
     mock_return: dict[str, str] | None,
@@ -205,7 +205,7 @@ def test_nvcf_function_get_status(  # noqa: PLR0913
     ],
 )
 @patch.object(NvcfFunction, "nvcf_helper_invoke_wait_retry_function")
-def test_nvcf_function_invoke(  # noqa: PLR0913
+def test_nvcf_function_invoke(
     mock_invoke: MagicMock,
     nvcf_function: NvcfFunction,
     tmp_path: Path,
@@ -244,7 +244,7 @@ def test_nvcf_function_invoke(  # noqa: PLR0913
 @patch.object(NvcfFunction, "_deploy")
 @patch.object(NvcfFunction, "_undeploy")
 @patch("time.sleep")
-def test_nvcf_function_deploy_context_manager_success(  # noqa: PLR0913
+def test_nvcf_function_deploy_context_manager_success(
     mock_sleep: MagicMock,
     mock_undeploy: MagicMock,
     mock_deploy: MagicMock,
@@ -306,7 +306,7 @@ def test_nvcf_function_deploy_context_manager_already_deployed(
 @patch.object(NvcfFunction, "_deploy")
 @patch.object(NvcfFunction, "_undeploy")
 @patch("time.sleep")
-def test_nvcf_function_deploy_context_manager_with_exception(  # noqa: PLR0913
+def test_nvcf_function_deploy_context_manager_with_exception(
     mock_sleep: MagicMock,  # noqa: ARG001  (ensures time.sleep is not called)
     mock_undeploy: MagicMock,
     mock_deploy: MagicMock,
@@ -344,7 +344,7 @@ def test_nvcf_function_deploy_context_manager_with_exception(  # noqa: PLR0913
 @patch.object(NvcfFunction, "_deploy")
 @patch.object(NvcfFunction, "_undeploy")
 @patch("time.sleep")
-def test_nvcf_function_deploy_context_manager_deployment_timeout(  # noqa: PLR0913
+def test_nvcf_function_deploy_context_manager_deployment_timeout(
     # patches
     mock_sleep: MagicMock,
     mock_undeploy: MagicMock,  # noqa: ARG001  (ensures NvcfFunction._undeploy is not called)

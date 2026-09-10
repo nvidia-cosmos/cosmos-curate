@@ -28,79 +28,52 @@ else:
 
 AttrsValidator = Callable[[object, AttrsAttribute, Any], None]
 
+INT64_MIN = int(np.iinfo(np.int64).min)
+INT64_MAX = int(np.iinfo(np.int64).max)
+
 _QUATERNION_COLUMNS = 4
 _QUATERNION_NORM_TOLERANCE = 1e-6
 _COVARIANCE_TOLERANCE = 1e-9
 
 
-def _require_1d_int64(name: str, values: npt.NDArray[np.int64]) -> None:
-    """Raise if *values* is not a 1-D ``int64`` array."""
+def require_1d(name: str, values: npt.NDArray[Any], dtype: npt.DTypeLike) -> None:
+    """Raise if *values* is not a 1-D array with the expected dtype."""
+    expected = np.dtype(dtype)
     if values.ndim != 1:
         msg = f"{name} must be 1-D, got ndim={values.ndim}"
         raise ValueError(msg)
-    if values.dtype != np.int64:
-        msg = f"{name} must have dtype int64, got {values.dtype}"
+    if values.dtype != expected:
+        msg = f"{name} must have dtype {expected.name}, got {values.dtype}"
         raise ValueError(msg)
 
 
-def _require_1d_bool(name: str, values: npt.NDArray[np.bool_]) -> None:
-    """Raise if *values* is not a 1-D ``bool`` array."""
-    if values.ndim != 1:
-        msg = f"{name} must be 1-D, got ndim={values.ndim}"
-        raise ValueError(msg)
-    if values.dtype != np.bool_:
-        msg = f"{name} must have dtype bool, got {values.dtype}"
-        raise ValueError(msg)
+def dtype_array(dtype: npt.DTypeLike) -> AttrsValidator:
+    """Build an attrs validator for a 1-D array with *dtype*."""
+
+    def _validator(
+        _instance: object,
+        attribute: AttrsAttribute,
+        value: npt.NDArray[Any],
+    ) -> None:
+        require_1d(attribute.name, value, dtype)
+
+    return _validator
 
 
-def _require_1d_uint8(name: str, values: npt.NDArray[np.uint8]) -> None:
-    """Raise if *values* is not a 1-D ``uint8`` array."""
-    if values.ndim != 1:
-        msg = f"{name} must be 1-D, got ndim={values.ndim}"
-        raise ValueError(msg)
-    if values.dtype != np.uint8:
-        msg = f"{name} must have dtype uint8, got {values.dtype}"
-        raise ValueError(msg)
-
-
-def _require_1d_uint16(name: str, values: npt.NDArray[np.uint16]) -> None:
-    """Raise if *values* is not a 1-D ``uint16`` array."""
-    if values.ndim != 1:
-        msg = f"{name} must be 1-D, got ndim={values.ndim}"
-        raise ValueError(msg)
-    if values.dtype != np.uint16:
-        msg = f"{name} must have dtype uint16, got {values.dtype}"
-        raise ValueError(msg)
-
-
-def _require_1d_uint32(name: str, values: npt.NDArray[np.uint32]) -> None:
-    """Raise if *values* is not a 1-D ``uint32`` array."""
-    if values.ndim != 1:
-        msg = f"{name} must be 1-D, got ndim={values.ndim}"
-        raise ValueError(msg)
-    if values.dtype != np.uint32:
-        msg = f"{name} must have dtype uint32, got {values.dtype}"
-        raise ValueError(msg)
-
-
-def _require_1d_uint64(name: str, values: npt.NDArray[np.uint64]) -> None:
-    """Raise if *values* is not a 1-D ``uint64`` array."""
-    if values.ndim != 1:
-        msg = f"{name} must be 1-D, got ndim={values.ndim}"
-        raise ValueError(msg)
-    if values.dtype != np.uint64:
-        msg = f"{name} must have dtype uint64, got {values.dtype}"
-        raise ValueError(msg)
-
-
-def _require_1d_float32(name: str, values: npt.NDArray[np.float32]) -> None:
-    """Raise if *values* is not a 1-D ``float32`` array."""
-    if values.ndim != 1:
-        msg = f"{name} must be 1-D, got ndim={values.ndim}"
-        raise ValueError(msg)
-    if values.dtype != np.float32:
-        msg = f"{name} must have dtype float32, got {values.dtype}"
-        raise ValueError(msg)
+int64_array = dtype_array(np.int64)
+bool_array = dtype_array(np.bool_)
+uint8_array = dtype_array(np.uint8)
+uint16_array = dtype_array(np.uint16)
+uint32_array = dtype_array(np.uint32)
+uint64_array = dtype_array(np.uint64)
+float64_array = dtype_array(np.float64)
+optional_int64_array = attrs.validators.optional(int64_array)
+optional_bool_array = attrs.validators.optional(bool_array)
+optional_uint8_array = attrs.validators.optional(uint8_array)
+optional_uint16_array = attrs.validators.optional(uint16_array)
+optional_uint32_array = attrs.validators.optional(uint32_array)
+optional_uint64_array = attrs.validators.optional(uint64_array)
+optional_float64_array = attrs.validators.optional(float64_array)
 
 
 def require_finite_float64_array(name: str, values: npt.NDArray[np.float64]) -> None:
@@ -244,7 +217,7 @@ def strictly_increasing_int64_array(
     value: npt.NDArray[np.int64],
 ) -> None:
     """Attrs validator for a 1-D strictly increasing ``int64`` array."""
-    _require_1d_int64(attribute.name, value)
+    require_1d(attribute.name, value, np.int64)
     require_strictly_increasing(attribute.name, value)
 
 
@@ -254,62 +227,8 @@ def nondecreasing_int64_array(
     value: npt.NDArray[np.int64],
 ) -> None:
     """Attrs validator for a 1-D nondecreasing ``int64`` array."""
-    _require_1d_int64(attribute.name, value)
+    require_1d(attribute.name, value, np.int64)
     require_nondecreasing(attribute.name, value)
-
-
-def int64_array(
-    instance: object,  # noqa: ARG001
-    attribute: AttrsAttribute,
-    value: npt.NDArray[np.int64],
-) -> None:
-    """Attrs validator for a 1-D ``int64`` array."""
-    _require_1d_int64(attribute.name, value)
-
-
-def bool_array(
-    instance: object,  # noqa: ARG001
-    attribute: AttrsAttribute,
-    value: npt.NDArray[np.bool_],
-) -> None:
-    """Attrs validator for a 1-D ``bool`` array."""
-    _require_1d_bool(attribute.name, value)
-
-
-def uint8_array(
-    instance: object,  # noqa: ARG001
-    attribute: AttrsAttribute,
-    value: npt.NDArray[np.uint8],
-) -> None:
-    """Attrs validator for a 1-D ``uint8`` array."""
-    _require_1d_uint8(attribute.name, value)
-
-
-def uint16_array(
-    instance: object,  # noqa: ARG001
-    attribute: AttrsAttribute,
-    value: npt.NDArray[np.uint16],
-) -> None:
-    """Attrs validator for a 1-D ``uint16`` array."""
-    _require_1d_uint16(attribute.name, value)
-
-
-def uint32_array(
-    instance: object,  # noqa: ARG001
-    attribute: AttrsAttribute,
-    value: npt.NDArray[np.uint32],
-) -> None:
-    """Attrs validator for a 1-D ``uint32`` array."""
-    _require_1d_uint32(attribute.name, value)
-
-
-def uint64_array(
-    instance: object,  # noqa: ARG001
-    attribute: AttrsAttribute,
-    value: npt.NDArray[np.uint64],
-) -> None:
-    """Attrs validator for a 1-D ``uint64`` array."""
-    _require_1d_uint64(attribute.name, value)
 
 
 def finite_float64_array(
@@ -327,7 +246,7 @@ def finite_float32_vector(
     value: npt.NDArray[np.float32],
 ) -> None:
     """Attrs validator for a finite 1-D ``float32`` array."""
-    _require_1d_float32(attribute.name, value)
+    require_1d(attribute.name, value, np.float32)
     require_finite_float32_array(attribute.name, value)
 
 
@@ -353,41 +272,28 @@ def optional_finite_float32_vector(
     """Attrs validator for an optional finite 1-D ``float32`` array."""
     if value is None:
         return
-    _require_1d_float32(attribute.name, value)
+    require_1d(attribute.name, value, np.float32)
     require_finite_float32_array(attribute.name, value)
 
 
-def optional_bool_array(
-    instance: object,  # noqa: ARG001
-    attribute: AttrsAttribute,
-    value: npt.NDArray[np.bool_] | None,
+def require_finite_or_marked_invalid(
+    name: str,
+    values: npt.NDArray[np.float64],
+    validity: npt.NDArray[np.bool_] | None,
 ) -> None:
-    """Attrs validator for an optional 1-D ``bool`` array."""
-    if value is None:
+    """Allow non-finite values only when a matching validity mask entry is false."""
+    if validity is not None and validity.shape != values.shape:
+        msg = f"{name} validity mask must have shape {values.shape}, got {validity.shape}"
+        raise ValueError(msg)
+    nonfinite = ~np.isfinite(values)
+    if not np.any(nonfinite):
         return
-    _require_1d_bool(attribute.name, value)
-
-
-def optional_uint8_array(
-    instance: object,  # noqa: ARG001
-    attribute: AttrsAttribute,
-    value: npt.NDArray[np.uint8] | None,
-) -> None:
-    """Attrs validator for an optional 1-D ``uint8`` array."""
-    if value is None:
-        return
-    _require_1d_uint8(attribute.name, value)
-
-
-def optional_uint16_array(
-    instance: object,  # noqa: ARG001
-    attribute: AttrsAttribute,
-    value: npt.NDArray[np.uint16] | None,
-) -> None:
-    """Attrs validator for an optional 1-D ``uint16`` array."""
-    if value is None:
-        return
-    _require_1d_uint16(attribute.name, value)
+    if validity is None:
+        msg = f"{name} must contain only finite values when no validity mask is provided"
+        raise ValueError(msg)
+    if np.any(nonfinite & validity):
+        msg = f"{name} non-finite values require matching validity mask entries to be false"
+        raise ValueError(msg)
 
 
 def nonempty_str(

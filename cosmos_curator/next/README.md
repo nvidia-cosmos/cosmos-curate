@@ -12,4 +12,8 @@ into namespaces named for durable responsibilities through an explicit transitio
 Existing pipelines remain available during the transition. The Xenna stage model is not the Curator Next programming
 model.
 
+Coding agents and contributors starting a new recipe should first read the
+[Curator Next agent guidelines](AGENTS.md). They capture the current recipe-first working agreement, implementation
+constraints, and managed-Ray qualification criteria while the longer-term design remains in flux.
+
 See [Cosmos Curator Next](../../docs/curator/design/curator-next.md) for the design direction.

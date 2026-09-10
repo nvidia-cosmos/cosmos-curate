@@ -17,10 +17,12 @@
 
 import json
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from cosmos_curator.next.core.config import apply_dotted_overrides
 
 _YAML_SUFFIXES = frozenset({".yaml", ".yml"})
 _MODEL_CONFIG = ConfigDict(frozen=True, strict=True, extra="forbid")
@@ -158,7 +160,36 @@ class RobotActionSplitExecutionConfig(BaseModel):
     )
     cut_attempts: int = Field(default=3, ge=1)
     media_write_attempts: int = Field(default=3, ge=1)
+    storage_attempts: int = Field(default=3, ge=1, description="Retries for an idempotent Lance fragment append.")
+    clips_per_publish_batch: int = Field(
+        default=8_000,
+        ge=1,
+        description=(
+            "Successful clip rows buffered before staging and committing one Lance fragment. "
+            "Bounds recomputation on a crash and sizes fragments for downstream Ray Data parallelism."
+        ),
+    )
     progress: bool = False
+    tmp_dir: str | None = Field(
+        default=None,
+        description=(
+            "Base directory for temporary chunk MP4 files during cutting. "
+            "Defaults to the system temp dir (typically /tmp on Linux). "
+            "Set to a path with more space (e.g. /config/tmp, backed by the "
+            "workspace Lustre mount) when running many parallel Ray Data workers "
+            "that would otherwise exhaust node-local /tmp."
+        ),
+    )
+    ray_data: bool = Field(
+        default=True,
+        description=(
+            "Use Ray Data flat_map for parallel clip cutting (default). "
+            "When true, ray.init connects to an existing cluster (address='auto' in managed "
+            "Slurm-Ray jobs, local single-node otherwise). Workers process batches in parallel; "
+            "each worker downloads its own chunk copy. Set false to fall back to the sequential "
+            "single-threaded loop, e.g. for debugging."
+        ),
+    )
 
 
 class ResolvedRobotActionSplitConfig(BaseModel):
@@ -208,26 +239,6 @@ def resolve_config(
     if not isinstance(loaded, dict):
         msg = f"Config file must contain a mapping at the top level, got {type(loaded).__name__}: {path}"
         raise TypeError(msg)
-    raw: dict[str, object] = loaded
-    for override in overrides:
-        if "=" not in override:
-            msg = f"Override must have the form 'path.to.key=value', got {override!r}"
-            raise ValueError(msg)
-        key_path, _, value_str = override.partition("=")
-        if not key_path:
-            msg = f"Override has an empty key path: {override!r}"
-            raise ValueError(msg)
-        keys = key_path.split(".")
-        if any(not k for k in keys):
-            msg = f"Override path {key_path!r} contains an empty segment"
-            raise ValueError(msg)
-        value = yaml.safe_load(value_str)
-        node: dict[str, object] = raw
-        for k in keys[:-1]:
-            child = node.setdefault(k, {})
-            if not isinstance(child, dict):
-                msg = f"Override path {key_path!r} passes through a non-dict at {k!r}"
-                raise TypeError(msg)
-            node = child
-        node[keys[-1]] = value
+    raw: dict[str, Any] = loaded
+    apply_dotted_overrides(raw, overrides)
     return ResolvedRobotActionSplitConfig.model_validate(raw)

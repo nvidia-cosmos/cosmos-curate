@@ -71,6 +71,33 @@ xenna_streaming_scheduler_args=()
 if [[ -n "${NVCF_SPLIT_BENCHMARK_XENNA_STREAMING_SCHEDULER:-}" ]]; then
   xenna_streaming_scheduler_args=(--xenna-streaming-scheduler "${NVCF_SPLIT_BENCHMARK_XENNA_STREAMING_SCHEDULER}")
 fi
+otlp_observability_args=()
+otlp_observability_enabled=false
+if [[ "${NVCF_SPLIT_BENCHMARK_OTLP_METRICS_ENABLED:-False}" == "True" ]]; then
+  otlp_observability_args+=(--enable-otlp-metrics)
+  otlp_observability_enabled=true
+fi
+if [[ "${NVCF_SPLIT_BENCHMARK_OTLP_TRACES_ENABLED:-False}" == "True" ]]; then
+  otlp_observability_args+=(--enable-otlp-traces)
+  otlp_observability_enabled=true
+fi
+if [[ "${NVCF_SPLIT_BENCHMARK_OTLP_LOGS_ENABLED:-False}" == "True" ]]; then
+  otlp_observability_args+=(--enable-otlp-logs)
+  otlp_observability_enabled=true
+fi
+if [[ "${otlp_observability_enabled}" == true ]]; then
+  if [[ -z "${OTLP_ENDPOINT_URL:-}" ]]; then
+    echo "ERROR: OTLP_ENDPOINT_URL must be set when any benchmark OTLP signal is enabled" >&2
+    exit 1
+  fi
+  otlp_observability_args+=(--otlp-endpoint "${OTLP_ENDPOINT_URL}")
+  if [[ "${NVCF_SPLIT_BENCHMARK_OTLP_NVCF_MTLS_ENABLED:-True}" == "True" ]]; then
+    otlp_observability_args+=(--otlp-nvcf-mtls)
+  fi
+  if [[ -n "${OBSERVABILITY_EXTRA_LABELS_JSON:-}" ]]; then
+    otlp_observability_args+=(--observability-labels-json "${OBSERVABILITY_EXTRA_LABELS_JSON}")
+  fi
+fi
 IFS=', ' read -ra _caption_list        <<< "${NVCF_SPLIT_BENCHMARK_CAPTIONS:-${CAPTION:-1}}"
 IFS=', ' read -ra _captioning_algorithm_list <<< "${NVCF_SPLIT_BENCHMARK_MODELS:-qwen}"
 IFS=', ' read -ra _num_nodes_list      <<< "${NVCF_SPLIT_BENCHMARK_NUM_NODES:-${NUM_NODES_LIST:-4 2}}"
@@ -112,6 +139,7 @@ for captioning_algorithm in "${_captioning_algorithm_list[@]}"; do
           --max-concurrency 2 \
           "${vllm_sampling_temperature_args[@]}" \
           "${xenna_streaming_scheduler_args[@]}" \
+          "${otlp_observability_args[@]}" \
           --kratos-metrics-endpoint "${PERF_KRATOS_METRICS_ENDPOINT}" \
           --kratos-bearer-url "${PERF_KRATOS_BEARER_URL}" \
           --limit "${LIMIT_INPUT_VIDEOS}" \

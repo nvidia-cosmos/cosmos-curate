@@ -18,7 +18,7 @@
 For each clip, this stage runs Cosmos3 Generator Transfer (in-process via
 vLLM-Omni) to produce a restyled clip that follows a spatial control signal
 derived from the source while matching the text prompt. It mirrors
-``SuperResolutionStage``: GPU stage in the default env, per-clip error isolation.
+``SuperResolutionStage``: dedicated GPU environment, per-clip error isolation.
 
 Unlike SR (which replaces ``clip.encoded_data`` in place), style transfer writes
 the restyled clip to a separate ``clip.style_transfer_video`` field so downstream

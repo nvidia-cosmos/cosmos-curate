@@ -21,8 +21,8 @@ The blocks below are appended in this order:
 | 2 | Split | Always, using `--splitting-algorithm` |
 | 3 | Transcode | Always |
 | 4 | Super-resolution | `--super-resolution` |
-| 5 | Motion filter | `--motion-filter enable` or `score-only`. The CameraSensor clip frame extraction (block 6) is inserted just before this stage, with motion-vector export on, to feed it motion vectors. |
-| 6 | Shared clip frame extraction | Embeddings are enabled, `--aesthetic-threshold` is set, or `--motion-filter` is enabled. When motion filtering is enabled it runs early (before block 5) with motion-vector export and also serves aesthetics/embeddings, so the clip is decoded once; otherwise it runs here. |
+| 5 | Shared clip frame extraction | Embeddings are enabled, `--aesthetic-threshold` is set, or `--motion-filter` is enabled. When motion filtering is enabled, it also exports motion vectors for block 6. |
+| 6 | Motion filter | `--motion-filter enable` or `score-only`. Uses motion vectors exported by block 5. |
 | 7 | Aesthetic filter | `--aesthetic-threshold` is set |
 | 8 | Artificial text filter | `--artificial-text-filter` |
 | 9 | VLM semantic filter | `--vlm-filter enable` or `score-only` |
@@ -78,6 +78,26 @@ The blocks below are appended in this order:
 | Output | Replaces or updates clip MP4 bytes with the super-resolved version. |
 | Cost notes | GPU-heavy; currently scheduled as one worker per node. |
 
+### Shared Clip Frame Extraction
+
+| Item | Details |
+|---|---|
+| Stage | `ClipFrameExtractionStage` |
+| Code | [`clipping/clip_frame_extraction_stages.py`](../../../cosmos_curator/pipelines/video/clipping/clip_frame_extraction_stages.py) |
+| Main flags | `--clip-extraction-target-res`, `--clip-extraction-cpus-per-worker`, `--embedding-sampling-fps` |
+| Purpose | Decodes sampled RGB frames from the transcoded clip bytes for downstream stages that can share the same extracted frames. |
+| Output | Populates `clip.extracted_frames` with frame arrays keyed by extraction signature. |
+| Runs when | At least one downstream consumer needs shared frames. Aesthetics requests 1 FPS; embedding requests `--embedding-sampling-fps` (default: 2 FPS). Matching signatures share one frame entry; otherwise, one entry is materialized for each signature. Integer rates may reuse one LCM sampling pass, while combinations containing fractional rates may be sampled separately. Distinct requested rates that would produce the same serialized signature are rejected. |
+
+The target-rate portion of a signature is integer milli-FPS, produced by truncating `target_fps * 1000`. When
+aesthetics is enabled, these configurations illustrate the resulting rules:
+
+- Aesthetics at 1.0 FPS and embedding at 2.0 FPS use distinct entries, and each consumer releases its own frames.
+- Aesthetics and embedding both at exactly 1.0 FPS intentionally share one entry. Aesthetics reads it without
+  removing it so embedding can consume it later.
+- Aesthetics at 1.0 FPS and embedding at 1.0005 FPS request distinct rates that serialize to the same signature, so
+  pipeline assembly rejects the configuration.
+
 ### Motion Filter
 
 | Item | Details |
@@ -85,19 +105,9 @@ The blocks below are appended in this order:
 | Stages | `MotionFilterStage` (motion vectors exported upstream by `ClipFrameExtractionStage`) |
 | Code | [`filtering/motion/motion_filter_stages.py`](../../../cosmos_curator/pipelines/video/filtering/motion/motion_filter_stages.py), built by [`motion_builders.py`](../../../cosmos_curator/pipelines/video/filtering/motion/motion_builders.py) |
 | Main flags | `--motion-filter`, `--motion-global-mean-threshold`, `--motion-per-patch-min-256-threshold`, `--motion-decode-target-fps`, `--motion-decode-target-duration-ratio`, `--motion-score-gpus-per-worker`, `--motion-score-batch-size` |
-| Purpose | Detects clips with too little motion. Motion vectors are exported by the CameraSensor `ClipFrameExtractionStage` (the single decode path); the score stage computes global and per-patch motion metrics and either filters clips or records scores only. |
+| Purpose | Detects clips with too little motion. Motion vectors are exported by the CameraSensor `ClipFrameExtractionStage`; the score stage computes global and per-patch motion metrics and either filters clips or records scores only. |
 | Output | Sets `clip.motion_score_global_mean` and `clip.motion_score_per_patch_min_256`; in `enable` mode, low-motion clips move to `filtered_clips`. |
-
-### Shared Clip Frame Extraction
-
-| Item | Details |
-|---|---|
-| Stage | `ClipFrameExtractionStage` |
-| Code | [`clipping/clip_frame_extraction_stages.py`](../../../cosmos_curator/pipelines/video/clipping/clip_frame_extraction_stages.py) |
-| Main flags | `--clip-extraction-target-res`, `--clip-extraction-cpus-per-worker` |
-| Purpose | Decodes sampled RGB frames from the transcoded clip bytes for downstream stages that can share the same extracted frames. |
-| Output | Populates `clip.extracted_frames` with frame arrays keyed by extraction signature. |
-| Runs when | At least one downstream consumer needs shared frames. Aesthetic filtering uses 1 FPS. Embedding uses 2 FPS. If both are enabled, both signatures are extracted. When motion filtering is enabled, this stage runs early with motion-vector export on and also serves aesthetics/embeddings, so the clip is decoded once. |
+| Frame ownership | Passing clips and clips retained by `score-only` keep any shared extracted frames for downstream consumers. Rejected clips release the complete map before moving to `filtered_clips`. |
 
 ### Aesthetic Filter
 
@@ -108,6 +118,7 @@ The blocks below are appended in this order:
 | Main flags | `--aesthetic-threshold`, `--aesthetic-reduction`, `--aesthetic-gpus-per-worker` |
 | Purpose | Scores visual quality using sampled frames and filters clips below the configured threshold. |
 | Output | Sets `clip.aesthetic_score`; filtered clips move to `filtered_clips`. |
+| Frame ownership | When aesthetics and embedding resolve to the same extraction signature, passing clips retain that shared entry for embedding. Otherwise, aesthetics consumes its own entry normally. Rejected clips release the complete extracted-frame map immediately. |
 
 ### Artificial Text Filter
 
@@ -118,6 +129,7 @@ The blocks below are appended in this order:
 | Main flags | `--artificial-text-filter`, `--artificial-text-frame-interval`, `--artificial-text-detection-use-cpu`, `--no-artificial-text-corner-detection`, `--ignore-artificial-text-corner-region` |
 | Purpose | Detects stable overlay or post-production text, such as subtitles, logos, watermarks, and other artificial text that may be undesirable in training clips. |
 | Output | Sets `clip.has_artificial_text` and `clip.artificial_text_segments`; matching clips move to `filtered_clips`. |
+| Frame ownership | This filter does not consume the shared extracted-frame entry. Passing clips retain it for embedding; rejected clips release the complete map before moving to `filtered_clips`. |
 | Cost notes | Can run on GPU with the Paddle OCR environment, or on CPU with `--artificial-text-detection-use-cpu`. |
 
 ### VLM Semantic Filter
@@ -129,6 +141,7 @@ The blocks below are appended in this order:
 | Main flags | `--vlm-filter`, `--vlm-filter-categories`, `--vlm-filter-endpoint`, `--vlm-filter-model-variant`, `--vlm-filter-rejection-threshold` |
 | Purpose | Uses a VLM to reject clips by semantic criteria, for example categories of content the user does not want in a dataset. `score-only` records the model result without filtering. |
 | Output | Adds filter windows and model responses to metadata; in filtering mode, rejected clips move to `filtered_clips` with `clip.qwen_rejection_stage = "semantic"`. |
+| Frame ownership | Passing clips and clips retained by `score-only` keep extracted frames for embedding. Rejected clips release the complete map before moving to `filtered_clips`. |
 | Backend notes | `--vlm-filter-endpoint local` runs local vLLM. `openai` calls an OpenAI-compatible endpoint configured under `openai.filter`. `gemini` calls Gemini. |
 
 ### Video Classifier
@@ -140,6 +153,7 @@ The blocks below are appended in this order:
 | Main flags | `--video-classifier`, `--video-classifier-allow`, `--video-classifier-block`, `--video-classifier-use-custom-categories`, `--video-classifier-endpoint` |
 | Purpose | Classifies clips into video types and applies allow/block logic. This is useful when users want broad media-type filtering without writing a custom semantic prompt. |
 | Output | Sets `clip.qwen_type_classification`; rejected clips move to `filtered_clips` with `clip.qwen_rejection_stage = "classifier"`. |
+| Frame ownership | Passing clips retain extracted frames for embedding. Rejected clips release the complete map before moving to `filtered_clips`. |
 | Category notes | By default it uses the built-in media taxonomy. With `--video-classifier-use-custom-categories`, the allow/block lists define the taxonomy presented to the model. |
 
 ### Embedding
@@ -148,8 +162,10 @@ The blocks below are appended in this order:
 |---|---|
 | Stages | `InternVideo2FrameCreationStage` + `InternVideo2EmbeddingStage`, `CosmosEmbed1FrameCreationStage` + `CosmosEmbed1EmbeddingStage`, or `OpenAIEmbeddingStage` |
 | Code | [`embedding/embedding_builders.py`](../../../cosmos_curator/pipelines/video/embedding/embedding_builders.py) |
-| Main flags | `--no-generate-embeddings`, `--embedding-algorithm`, `--embedding-gpus-per-worker`, `--embedding-batch-size`, `--openai-embedding-*` |
+| Main flags | `--no-generate-embeddings`, `--embedding-algorithm`, `--embedding-sampling-fps`, `--embedding-gpus-per-worker`, `--embedding-batch-size`, `--openai-embedding-*` |
 | Purpose | Produces one vector embedding per clip for search, retrieval, and semantic deduplication. |
+| Frame sampling | `--embedding-sampling-fps` controls initial candidate-frame extraction only. It does not change encoded clip FPS, captioning sampling, or backend model-frame counts. OpenAI-compatible embedding sends every selected candidate; Cosmos-Embed1 and InternVideo2 retain their existing frame preparation. |
+| Frame ownership | Embedding is the final pipeline block that reads shared frames. Its frame-consuming stage releases the map on every handled exit, including successful consumption. Propagating exceptions retain it; no downstream stage owns it. |
 | Output | Populates `clip.intern_video_2_embedding`, `clip.cosmos_embed1_embedding`, or `clip.openai_embedding`; the writer can emit per-clip pickles, grouped parquet, and optional Lance output. |
 | Backend notes | `internvideo2` is the default. `cosmos-embed1-224p`, `cosmos-embed1-336p`, and `cosmos-embed1-448p` select Cosmos-Embed1 variants. `openai` calls an OpenAI-compatible embedding endpoint. |
 

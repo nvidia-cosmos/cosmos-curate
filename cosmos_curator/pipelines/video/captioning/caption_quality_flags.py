@@ -24,29 +24,46 @@ from collections.abc import Iterable, Sequence
 from itertools import pairwise
 from typing import TYPE_CHECKING
 
+import attrs
+
 if TYPE_CHECKING:
     from cosmos_curator.pipelines.video.utils.data_model import Window
 
 type _EvaluableCaption = tuple["Window", str, list[str]]
 
-LENGTH_FLOOR_WORDS = 4
-
-# Conservative runaway-output guard, not a calibrated "long caption" threshold.
-# Keeps ceiling semantics for pathological generation while avoiding false positives
-# on legitimately verbose captions.
-LENGTH_CEILING_WORDS = 1024
 TRIGRAM_SIZE = 3
 REPEATED_WORD_SHARE_THRESHOLD = 0.5
 REPEATED_WORD_DOMINANCE_MIN_TOTAL_WORDS = 6
-# Keep trigram detection conservative: long structured captions can repeat
-# benign phrasing from function words, list structure, and domain terms.
-REPEATED_TRIGRAM_MIN_COUNT = 5
 LOW_UNIQUE_WORD_RATIO_THRESHOLD = 0.4
 LOW_UNIQUE_WORD_RATIO_MIN_TOTAL_WORDS = 8
-NEAR_DUPLICATE_JACCARD_THRESHOLD = 0.9
 # Near-duplicate checks use word-set Jaccard, intentionally ignoring order and multiplicity.
 
 _EVALUABLE_CAPTION_STATUSES = frozenset({"success", "truncated"})
+
+
+@attrs.define(frozen=True)
+class CaptionQualityThresholdConfig:
+    """Operator-configurable thresholds for caption quality flags."""
+
+    length_floor_words: int = attrs.field(default=4, validator=attrs.validators.ge(0))
+    # Conservative runaway-output guard, not a calibrated "long caption" threshold.
+    length_ceiling_words: int = attrs.field(default=1024)
+    # Keep trigram detection conservative: long structured captions can repeat benign phrasing.
+    repeated_trigram_min_count: int = attrs.field(default=5, validator=attrs.validators.ge(2))
+    near_duplicate_jaccard_threshold: float = attrs.field(
+        default=0.9,
+        validator=attrs.validators.and_(attrs.validators.gt(0), attrs.validators.le(1)),
+    )
+
+    @length_ceiling_words.validator
+    def _validate_length_ceiling_words(self, _attribute: "attrs.Attribute[int]", value: int) -> None:
+        minimum = max(self.length_floor_words, 1)
+        if value < minimum:
+            msg = f"length_ceiling_words must be at least {minimum}"
+            raise ValueError(msg)
+
+
+DEFAULT_CAPTION_QUALITY_THRESHOLDS = CaptionQualityThresholdConfig()
 
 
 def _normalize_caption_text(text: str) -> str:
@@ -55,24 +72,24 @@ def _normalize_caption_text(text: str) -> str:
     return normalized.rstrip(string.punctuation).strip()
 
 
-def _is_length_outlier(words: Sequence[str]) -> bool:
-    return len(words) < LENGTH_FLOOR_WORDS or len(words) > LENGTH_CEILING_WORDS
+def _is_length_outlier(words: Sequence[str], thresholds: CaptionQualityThresholdConfig) -> bool:
+    return len(words) < thresholds.length_floor_words or len(words) > thresholds.length_ceiling_words
 
 
-def _has_repeated_trigram(words: Sequence[str]) -> bool:
+def _has_repeated_trigram(words: Sequence[str], thresholds: CaptionQualityThresholdConfig) -> bool:
     if len(words) < TRIGRAM_SIZE:
         return False
     trigrams = Counter(tuple(words[index : index + TRIGRAM_SIZE]) for index in range(len(words) - TRIGRAM_SIZE + 1))
-    return any(count >= REPEATED_TRIGRAM_MIN_COUNT for count in trigrams.values())
+    return any(count >= thresholds.repeated_trigram_min_count for count in trigrams.values())
 
 
-def _has_repetition(words: Sequence[str]) -> bool:
+def _has_repetition(words: Sequence[str], thresholds: CaptionQualityThresholdConfig) -> bool:
     if len(words) >= REPEATED_WORD_DOMINANCE_MIN_TOTAL_WORDS:
         _, most_common_count = Counter(words).most_common(1)[0]
         if most_common_count / len(words) >= REPEATED_WORD_SHARE_THRESHOLD:
             return True
 
-    if _has_repeated_trigram(words):
+    if _has_repeated_trigram(words, thresholds):
         return True
 
     if len(words) >= LOW_UNIQUE_WORD_RATIO_MIN_TOTAL_WORDS:
@@ -97,8 +114,12 @@ def _is_near_duplicate(
     left_words: Sequence[str],
     right_text: str,
     right_words: Sequence[str],
+    thresholds: CaptionQualityThresholdConfig,
 ) -> bool:
-    return left_text == right_text or _jaccard_similarity(left_words, right_words) >= NEAR_DUPLICATE_JACCARD_THRESHOLD
+    return (
+        left_text == right_text
+        or _jaccard_similarity(left_words, right_words) >= thresholds.near_duplicate_jaccard_threshold
+    )
 
 
 def _get_evaluable_caption(window: "Window", model_variant: str) -> tuple[str, list[str]] | None:
@@ -116,7 +137,11 @@ def _get_evaluable_caption(window: "Window", model_variant: str) -> tuple[str, l
     return normalized, normalized.split()
 
 
-def apply_caption_quality_flags(window_groups: Iterable[Sequence["Window"]], model_variant: str) -> None:
+def apply_caption_quality_flags(
+    window_groups: Iterable[Sequence["Window"]],
+    model_variant: str,
+    thresholds: CaptionQualityThresholdConfig = DEFAULT_CAPTION_QUALITY_THRESHOLDS,
+) -> None:
     """Apply heuristic caption quality flags to grouped caption windows in place.
 
     This is a captioning-path post-processing utility rather than a standalone
@@ -139,8 +164,8 @@ def apply_caption_quality_flags(window_groups: Iterable[Sequence["Window"]], mod
                 continue
 
             normalized_text, words = caption
-            window.flag_length_outlier = _is_length_outlier(words)
-            window.flag_repetition = _has_repetition(words)
+            window.flag_length_outlier = _is_length_outlier(words, thresholds)
+            window.flag_repetition = _has_repetition(words, thresholds)
             window.flag_near_duplicate = False
             evaluable[original_index] = (window, normalized_text, words)
 
@@ -153,6 +178,6 @@ def apply_caption_quality_flags(window_groups: Iterable[Sequence["Window"]], mod
 
             left_window, left_text, left_words = left
             right_window, right_text, right_words = right
-            if _is_near_duplicate(left_text, left_words, right_text, right_words):
+            if _is_near_duplicate(left_text, left_words, right_text, right_words, thresholds):
                 left_window.flag_near_duplicate = True
                 right_window.flag_near_duplicate = True

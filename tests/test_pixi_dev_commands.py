@@ -25,6 +25,7 @@ substitutes for running the commands themselves. They verify that:
   lint tooling is not installed in production containers.
 """
 
+import inspect
 import json
 import re
 import subprocess
@@ -35,6 +36,7 @@ from pathlib import Path
 import yaml
 
 from cosmos_curator.client.image_cli.image_app import _parse_envs
+from cosmos_curator.client.image_cli.image_app import build as build_image
 
 _REPO_ROOT = Path(__file__).parents[1]
 
@@ -70,8 +72,8 @@ def test_workspace_default_feature_is_cross_platform_minimal() -> None:
         "linux-64",
         "linux-aarch64",
         "osx-arm64",
-        {"name": "linux-64-cuda", "platform": "linux-64", "cuda": "13.0.2", "glibc": "2.35"},
-        {"name": "linux-aarch64-cuda", "platform": "linux-aarch64", "cuda": "13.0.2", "glibc": "2.35"},
+        {"name": "linux-64-cuda", "platform": "linux-64", "cuda": "13.0.3", "glibc": "2.35"},
+        {"name": "linux-aarch64-cuda", "platform": "linux-aarch64", "cuda": "13.0.3", "glibc": "2.35"},
     ]
     assert pixi_config["dependencies"] == {"python": "==3.13.14", "pip": "*"}
     assert "pypi-dependencies" not in pixi_config
@@ -84,6 +86,15 @@ def test_workspace_default_feature_is_cross_platform_minimal() -> None:
         "opencv": "opencv-contrib-python",
         "py-opencv": "opencv-python",
     }
+
+
+def test_package_metadata_uses_python_313_baseline() -> None:
+    """Keep standalone wheel support aligned with the canonical Pixi environment."""
+    project_config = tomllib.loads(_read_repo_file("pyproject.toml"))["project"]
+
+    assert project_config["requires-python"] == ">=3.13,<3.14"
+    assert "Programming Language :: Python :: 3.13" in project_config["classifiers"]
+    assert "Programming Language :: Python :: 3.12" not in project_config["classifiers"]
 
 
 def test_tools_environment_declares_cross_platform_repo_tooling() -> None:
@@ -181,8 +192,8 @@ def test_runtime_features_are_separated_from_core() -> None:
     media_dependencies = media_feature["dependencies"]
 
     assert "channels" not in core_feature
-    assert core_pypi_dependencies["cosmos-xenna"] == "==0.5.5"
-    assert core_pypi_dependencies["ray"] == {"version": "==2.56.0", "extras": ["default", "data"]}
+    assert core_pypi_dependencies["cosmos-xenna"] == "==0.5.11"
+    assert core_pypi_dependencies["ray"] == {"version": "==2.58.0", "extras": ["default", "data"]}
     for dependency_name in ("fastapi", "starlette", "uvicorn", "websockets"):
         assert dependency_name in core_dependencies
     for dependency_name in ("google-genai", "webdataset"):
@@ -220,6 +231,26 @@ def test_runtime_features_are_separated_from_core() -> None:
         "tracing",
         "profiling",
     ]
+
+
+def test_vllm_omni_is_isolated_to_style_transfer_environment() -> None:
+    """Verify transfer-only dependencies do not leak into shared runtime environments."""
+    pixi_config = tomllib.loads(_read_repo_file("pixi.toml"))
+    features = pixi_config["feature"]
+
+    assert "vllm-omni" not in features["runtime"]["pypi-dependencies"]
+    assert features["vllm-omni"]["pypi-dependencies"] == {"vllm-omni": "==0.27.0rc1"}
+    assert pixi_config["environments"]["style-transfer"] == [
+        "core",
+        "runtime",
+        "media",
+        "transformers",
+        "vllm-omni",
+        "tracing",
+        "profiling",
+    ]
+    for environment_name in ("default", "seedvr", "sam3"):
+        assert "vllm-omni" not in pixi_config["environments"][environment_name]
 
 
 def test_legacy_transformers_environment_is_model_specific_runtime() -> None:
@@ -272,6 +303,7 @@ def test_distributable_pixi_manifest_is_generated_runtime_subset() -> None:
         "paddle-ocr",
         "seedvr",
         "sam3",
+        "style-transfer",
     }
     for feature_names in pixi_config["environments"].values():
         assert not {"tools", "cluster", "dev"} & set(feature_names)
@@ -280,6 +312,7 @@ def test_distributable_pixi_manifest_is_generated_runtime_subset() -> None:
     assert media_feature["pypi-dependencies"] == {
         "av": "==17.0.0",
         "opencv-python-headless": "*",
+        "cython": "<3.3",
     }
 
 
@@ -444,6 +477,7 @@ def test_slurm_end_to_end_uses_pixi_cluster_for_submit_cli() -> None:
     before_script = _script_lines(slurm_job["before_script"])
     script = _script_lines(slurm_job["script"])
     after_script = _script_lines(slurm_job["after_script"])
+    submit_script = _read_repo_file(".gitlab/scripts/slurm_end_to_end.sh")
     commands = "\n".join([*before_script, *script])
     pixi_cache_index = next(
         index
@@ -467,6 +501,7 @@ def test_slurm_end_to_end_uses_pixi_cluster_for_submit_cli() -> None:
     assert "pip install -e ." not in commands
     assert "source venv/bin/activate" not in commands
     assert "uv venv" not in commands
+    assert '--pixi-envs "default,cuml,legacy-transformers,model-download"' in submit_script
 
     smoke_job = _read_ci_job("slurm_distributable_media_smoke")
     smoke_commands = "\n".join(_script_lines(smoke_job["before_script"]))
@@ -486,6 +521,12 @@ def test_nvcf_split_benchmark_runs_as_package_module() -> None:
     assert 'MAX_ATTEMPTS="${NVCF_SPLIT_BENCHMARK_MAX_ATTEMPTS:-4}"' in script
     assert '--max-attempts "${MAX_ATTEMPTS}"' in script
     assert ci_config["variables"]["NVCF_SPLIT_BENCHMARK_MAX_ATTEMPTS"]["value"] == "4"
+    assert "NVCF_SPLIT_BENCHMARK_OTLP_ENABLED" not in ci_config["variables"]
+    for signal in ("METRICS", "TRACES", "LOGS"):
+        variable = f"NVCF_SPLIT_BENCHMARK_OTLP_{signal}_ENABLED"
+        assert ci_config["variables"][variable]["value"] == "False"
+        assert variable in script
+    assert ci_config["variables"]["NVCF_SPLIT_BENCHMARK_OTLP_NVCF_MTLS_ENABLED"]["value"] == "True"
 
 
 def test_nvcf_helm_deploy_invokes_without_status_logs() -> None:
@@ -503,8 +544,11 @@ def test_nvcf_helm_deploy_invokes_without_status_logs() -> None:
 def test_image_cli_default_envs_do_not_include_dev() -> None:
     """Verify image env parsing does not add the developer tooling environment by default."""
     default_envs = set(_parse_envs(""))
-    configured_runtime_envs = set(_parse_envs("cuml,legacy-transformers,sam3,seedvr"))
+    configured_envs = inspect.signature(build_image).parameters["envs"].default
+    assert isinstance(configured_envs, str)
+    configured_runtime_envs = set(_parse_envs(configured_envs))
 
     for env_name in ("tools", "cluster", "dev"):
         assert env_name not in default_envs
         assert env_name not in configured_runtime_envs
+    assert "style-transfer" in configured_runtime_envs

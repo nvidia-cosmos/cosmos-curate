@@ -53,6 +53,12 @@ run inside each Ray actor.  Tracing operates at the **cluster level**
 via Ray's `_tracing_startup_hook` (see
 [Distributed Tracing Guide](../reference/distributed-tracing.md)).
 
+Tracing is the one backend that can also be enabled without touching
+pipeline arguments: exporting `COSMOS_CURATOR_PROFILE_TRACING=1` in the
+deployment or launcher environment enables it exactly as
+`--profile-tracing` does.  Either source turns tracing on; set the
+variable to `0` for a single run to opt out of a cluster-wide default.
+
 Adding a new per-stage backend requires only local changes inside
 `_ProfilingState` -- no stage code or pipeline wiring changes.
 
@@ -443,7 +449,7 @@ profiling_scope(args)
 |      Creates the true root span (no parent).
 |      Exported immediately so backends receive it first.
 |      +-- propagate_trace_context()
-|          Writes trace_id:span_id to COSMOS_CURATOR_TRACEPARENT.
+|          Writes a W3C traceparent to COSMOS_CURATOR_TRACEPARENT.
 |          Workers inherit this via env var at fork time.
 |
 +-- 8. state.scope("main")

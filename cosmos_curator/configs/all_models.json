@@ -91,6 +91,17 @@
         "precision": "BF16",
         "nvcf_model_id": "cosmos3_super_64b"
     },
+    "dinov2_small": {
+        "model_id": "facebook/dinov2-small",
+        "version": "ed25f3a31f01632728cabb09d1542f84ab7b0056",
+        "filelist": [
+            "config.json",
+            "model.safetensors",
+            "preprocessor_config.json"
+        ],
+        "precision": "FP32",
+        "nvcf_model_id": "dinov2_small"
+    },
     "gpt2": {
         "model_id": "openai-community/gpt2",
         "version": "607a30d783dfa663caf39e06633721c8d4cfcd7e",
@@ -192,6 +203,20 @@
         "filelist": null,
         "precision": "FP8",
         "nvcf_model_id": "qwen3_6_27b_fp8"
+    },
+    "qwen3_8_27b": {
+        "model_id": "Qwen/Qwen3.8-27B",
+        "version": "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0",
+        "filelist": null,
+        "precision": "BF16",
+        "nvcf_model_id": "qwen3_8_27b"
+    },
+    "qwen3_8_27b_fp8": {
+        "model_id": "Qwen/Qwen3.8-27B-FP8",
+        "version": "017b9c7af6b5689d5dd426a76e0bc077eb5ca20a",
+        "filelist": null,
+        "precision": "FP8",
+        "nvcf_model_id": "qwen3_8_27b_fp8"
     },
     "seedvr2_3b": {
         "model_id": "ByteDance-Seed/SeedVR2-3B",

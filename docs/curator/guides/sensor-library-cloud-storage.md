@@ -56,6 +56,7 @@ End-to-end example for S3:
 ```python
 import smart_open
 from cosmos_curator.core.utils.storage import s3_client, storage_utils
+from cosmos_curator.core.sensors.sampling.policy import NearestTimestampPolicy
 from cosmos_curator.core.sensors.sensors.camera_sensor import CameraSensor
 
 client = s3_client.create_s3_client("s3://my-bucket/", profile_name="default")
@@ -63,7 +64,7 @@ transport_params = storage_utils.get_smart_open_client_params(client)
 
 with smart_open.open("s3://my-bucket/path/to/clip.mp4", "rb", **transport_params) as stream:
     sensor = CameraSensor(stream)
-    for batch in sensor.sample(spec):
+    for batch in sensor.sample(spec, policy=NearestTimestampPolicy()):
         ...
 ```
 
@@ -120,8 +121,18 @@ with smart_open.open(uri, "rb", **transport_params) as s2:
   are rejected with a `ValueError` at `open_data_source`. Either wrap them in
   `io.BytesIO`, download to a local `Path`, or use `smart_open` which exposes a
   seekable view backed by HTTP range requests.
-- **Profile discovery differs by backend.** `S3Client` honours
-  `boto3.Session(profile_name=...)` plus the standard AWS credential chain.
+- **Profile discovery differs by backend.** `S3ClientConfig` carries *either*
+  explicit keys *or* an AWS `profile_name`. With a profile name — or with
+  neither — `S3Client` builds a `boto3.Session(profile_name=...)` and so picks up
+  the standard AWS credential chain (`~/.aws/credentials`, `AWS_PROFILE`, env
+  vars, SSO, IMDS); it keeps the session, so those credentials stay refreshable
+  for the life of the client. Curator's own profile file
+  (`${COSMOS_S3_PROFILE_PATH:-/dev/shm/s3_creds_file}`, then NVCF secrets) is a
+  separate path, reached through `s3_client.get_s3_client_config`, which resolves
+  it into explicit keys. `s3_client.resolve_s3_endpoint_url` applies the standard
+  `AWS_ENDPOINT_URL_S3` / `AWS_ENDPOINT_URL` precedence for callers building a
+  config themselves; `get_s3_client_config` deliberately does not consult those
+  variables, so a profile file's `endpoint_url` is used verbatim.
   `AzureClient` reads `${COSMOS_AZURE_PROFILE_PATH:-/dev/shm/azure_creds_file}`
   then falls back to NVCF secrets — there is no AWS-style env-var fallback.
 - **Per-seek HTTP latency dominates on object stores.** `smart_open` issues a

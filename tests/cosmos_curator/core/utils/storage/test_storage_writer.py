@@ -493,6 +493,20 @@ class TestDirectWriteLocal:
 
         assert dest.read_bytes() == "caf\xe9".encode("latin-1")
 
+    def test_write_resolves_a_file_uri_base_path(self, tmp_path: Path) -> None:
+        """A ``file://`` base_path writes to the path it names, not a literal ``file:/`` one.
+
+        Local artifact URIs are recorded in the ``Path.as_uri()`` form, and the
+        readers resolve that scheme. A writer that took the string literally would
+        land the bytes at a relative ``file:/...`` path under the process working
+        directory, where no reader would look for them.
+        """
+        dest = tmp_path / "nested" / "artifact.bin"
+        writer = StorageWriter(dest.as_uri())
+        writer.write(b"uri-payload")
+
+        assert dest.read_bytes() == b"uri-payload"
+
 
 class TestDirectWriteRemote:
     """Tests for direct-write methods (write / write_str) in remote mode.

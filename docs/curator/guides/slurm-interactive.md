@@ -82,7 +82,7 @@ enroot start -w \
   -m "${REPO}":/opt/cosmos-curator \
   -m "${REPO}":"${REPO}" \
   -m "${CACHE_DIR}":/cache \
-  -e CONDA_OVERRIDE_CUDA=13.0.2 \
+  -e CONDA_OVERRIDE_CUDA=13.0.3 \
   -e PIXI_CACHE_DIR=/cache/pixi \
   -e XDG_CACHE_HOME=/cache/xdg \
   -e UV_CACHE_DIR=/cache/uv \
@@ -116,7 +116,8 @@ pixi info --extended | grep "Cache dir"
 If `.pixi/envs` is missing, install the required environments from inside the container:
 
 ```bash
-pixi install --frozen -e default -e cuml -e legacy-transformers -e model-download -e paddle-ocr -e seedvr
+pixi install --frozen -e default -e cuml -e legacy-transformers -e model-download -e paddle-ocr -e seedvr \
+  -e style-transfer
 ```
 
 For active dependency development, omit `--frozen` only when you expect Pixi to update the lockfile. Use `--frozen` when

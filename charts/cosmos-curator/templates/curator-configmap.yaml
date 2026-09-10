@@ -1,3 +1,4 @@
+{{- $customEnv := default (dict) .Values.customEnvVars -}}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -18,8 +19,11 @@ data:
   NVCF_AWS_PROFILE_PATH: {{ .Values.s3.credsPath  }}
   REQUESTS_CA_BUNDLE: "/etc/ssl/certs/ca-certificates.crt"
   PYTHONPATH: {{ include "curator-ray.codeDir" . | quote }}
-  PYTHON_LOG_FORMAT: {{ .Values.logging.format | default "text" | quote }}
-  {{- if .Values.logging.rayBackendJson }}
+  PYTHON_LOG_FORMAT: {{ ternary "json" (.Values.logging.format | default "text") (and .Values.logging.otlp.enabled .Values.logging.otlp.forceJsonFormat) | quote }}
+  {{- if not (hasKey $customEnv "TQDM_DISABLE") }}
+  TQDM_DISABLE: "1"
+  {{- end }}
+  {{- if or .Values.logging.rayBackendJson (and .Values.logging.otlp.enabled .Values.logging.otlp.forceJsonFormat) }}
   RAY_BACKEND_LOG_JSON: "1"
   {{- end }}
   {{- if .Values.modelCacheDir }}
@@ -28,6 +32,7 @@ data:
   {{- if .Values.triton.home }}
   TRITON_HOME: {{ .Values.triton.home | quote }}
   {{- end }}
+{{ include "curator-ray.otlp.appEnv" . | nindent 2 }}
 {{- with .Values.customEnvVars }}
 {{- toYaml . | nindent 2 }}
 {{- end }}

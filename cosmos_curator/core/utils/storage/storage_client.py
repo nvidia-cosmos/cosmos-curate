@@ -21,6 +21,7 @@ with cloud storage systems.
 
 import abc
 import concurrent.futures
+import datetime
 import pathlib
 from typing import TYPE_CHECKING, Any
 
@@ -83,6 +84,39 @@ class StoragePrefix:
         return self.path
 
 
+@attrs.define(frozen=True)
+class StorageStat:
+    """What one metadata lookup says about a single stored object.
+
+    Named for the storage layer rather than for the cloud because the same facts
+    describe a local file: ``os.stat`` supplies the size and the modification time,
+    and only the entity tag has no local analogue. A caller reporting progress over
+    a mix of local paths and cloud URIs then needs one type instead of two.
+
+    Every field is optional because each value is whatever the backend chose to
+    report. Both supported backends do report size and last-modified for an object
+    that exists, so a ``None`` means the store omitted it rather than that the
+    object is absent -- a missing object raises instead of yielding an empty stat.
+
+    Attributes:
+        size_bytes (int | None): Object size as the store reports it.
+        last_modified (datetime.datetime | None): Server-side modification time,
+            timezone-aware.
+        etag (str | None): The backend's entity tag, unquoted so a value recorded
+            through one client compares cleanly against one from another. Treat it
+            as an opaque change token, not a checksum: S3 returns an MD5 for a
+            single-part upload but a ``<hash>-<part-count>`` composite for a
+            multipart one, so identical bytes can carry different tags. A changed
+            tag reliably means something happened; an unchanged tag alongside an
+            unchanged size is good evidence nothing did.
+
+    """
+
+    size_bytes: int | None = attrs.field(default=None)
+    last_modified: datetime.datetime | None = attrs.field(default=None)
+    etag: str | None = attrs.field(default=None)
+
+
 class BackgroundUploader(abc.ABC):
     """Abstract base class for background uploaders.
 
@@ -131,8 +165,46 @@ class StorageClient(abc.ABC):
     """
 
     @abc.abstractmethod
+    def stat(self, dest: StoragePrefix) -> StorageStat:
+        """Return what one metadata lookup says about the object at ``dest``.
+
+        Follows ``os.stat`` semantics: a missing object is an error rather than an
+        empty result, so a caller that wants the metadata never has to guess whether
+        an all-``None`` answer means "absent" or "the store said little". Callers
+        that only want the boolean use :meth:`object_exists`.
+
+        Implementations must NOT wrap the lookup in ``do_with_retries``. The read
+        paths in this package back off for up to 256 seconds, which is right for a
+        transfer that has to succeed but wrong here: absence is a normal answer for
+        this call, so a progress display walking a session's objects would stall for
+        minutes on the first one that is legitimately not there.
+
+        Args:
+            dest: The storage prefix of the object to describe.
+
+        Returns:
+            The metadata the backend reported for the object.
+
+        Raises:
+            FileNotFoundError: If no object exists at ``dest``. Matches
+                ``s3_client.list_child_prefixes``, which reports an absent prefix
+                the same way.
+            TypeError: If ``dest`` is not the prefix type this client handles, such
+                as an ``AzurePrefix`` handed to an ``S3Client``.
+
+        """
+
     def object_exists(self, dest: StoragePrefix) -> bool:
         """Check if an object exists at the specified path.
+
+        Defined in terms of :meth:`stat`, as ``pathlib.Path.exists`` is defined in
+        terms of ``Path.stat``: one lookup answers both questions, so a caller that
+        also wants the size pays for a single round trip rather than two.
+
+        Only "not found" is translated. Anything else -- the 403 a bucket the
+        credentials cannot read answers with, a connection failure -- propagates,
+        because reporting those as "does not exist" turns a permissions problem into
+        silently missing data.
 
         Args:
             dest: The storage prefix of the object to check.
@@ -141,6 +213,11 @@ class StorageClient(abc.ABC):
             bool: True if the object exists, False otherwise.
 
         """
+        try:
+            self.stat(dest)
+        except FileNotFoundError:
+            return False
+        return True
 
     @abc.abstractmethod
     def upload_bytes(self, dest: StoragePrefix, data: "bytes | npt.NDArray[np.uint8]") -> None:
@@ -170,6 +247,30 @@ class StorageClient(abc.ABC):
             chunk_size_bytes: The size of chunks to use for uploading.
 
         """
+
+    def download_to_path(
+        self, uri: StoragePrefix, dest: str | pathlib.Path, chunk_size_bytes: int = DOWNLOAD_CHUNK_SIZE_BYTES
+    ) -> None:
+        """Stream an object to a local file without loading it fully into memory.
+
+        The default implementation falls back to ``download_object_as_bytes``; subclasses
+        should override to use backend-native streaming downloads (e.g. boto3
+        ``download_fileobj``) so that the full file is never held in memory.
+
+        Args:
+            uri: The storage prefix of the object to download.
+            dest: Local file path to write to.
+            chunk_size_bytes: Hint for internal streaming chunk size.
+
+        """
+        dest = pathlib.Path(dest)
+        partial = dest.with_suffix(dest.suffix + ".partial")
+        try:
+            partial.write_bytes(self.download_object_as_bytes(uri, chunk_size_bytes=chunk_size_bytes))
+            partial.replace(dest)
+        except Exception:
+            partial.unlink(missing_ok=True)
+            raise
 
     @abc.abstractmethod
     def download_object_as_bytes(self, uri: StoragePrefix, chunk_size_bytes: int = DOWNLOAD_CHUNK_SIZE_BYTES) -> bytes:
@@ -221,6 +322,67 @@ class StorageClient(abc.ABC):
             A list of dictionaries with object metadata.
 
         """
+
+    @abc.abstractmethod
+    def list_recursive_with_suffixes(
+        self,
+        uri: StoragePrefix,
+        suffixes: tuple[str, ...],
+        limit: int = 0,
+    ) -> list[StoragePrefix]:
+        """List objects under ``uri`` whose key ends in one of ``suffixes``.
+
+        ``limit`` counts matches rather than listed objects, which is the whole point
+        of having this beside :meth:`list_recursive`. That method stops after ``limit``
+        objects of any kind, so a prefix carrying one sidecar file per video hands back
+        half the videos a caller asked for and reports no problem. Both the filter and
+        the cap therefore belong inside the pagination loop: filtering afterwards would
+        turn a request for five videos from a production prefix into a full enumeration
+        of it.
+
+        Stopping early is sound here in a way it is not for
+        ``s3_client.list_child_prefixes``, whose docstring declines a limit for what
+        looks like the opposite reason. That function reads a *delimited* listing whose
+        callers deduplicate and sort the children afterwards, so an early exit there
+        would change which children are selected. This is a flat listing returned in
+        the store's own key order, so the first ``limit`` matches are the same set
+        however many pages it took to find them.
+
+        Args:
+            uri: The storage prefix to list under.
+            suffixes: Non-empty suffixes to match. Compared case-insensitively at both
+                ends, so a caller need not pre-lowercase them.
+            limit: Maximum number of matches to return; ``0`` (the default) means
+                unlimited, as it does for :meth:`list_recursive`.
+
+        Returns:
+            Storage prefixes for the matching objects, in listing order.
+
+        Raises:
+            ValueError: If ``suffixes`` is empty, or contains an empty string. Both
+                defeat the filter silently and in opposite directions:
+                ``str.endswith(())`` is False, so an empty tuple matches nothing at
+                all, while ``str.endswith("")`` is True for every key, so one stray
+                empty element turns a filtered listing into the first ``limit``
+                objects of any type.
+            TypeError: If ``uri`` is not the prefix type this client handles.
+
+        """
+
+    @staticmethod
+    def _lowercased_suffixes(suffixes: tuple[str, ...]) -> tuple[str, ...]:
+        """Validate and normalize the suffix filter shared by every implementation.
+
+        Lowercasing once here rather than per key keeps the comparison in the
+        pagination loop to a single ``str.endswith`` against a tuple.
+        """
+        if not suffixes:
+            error_msg = "suffixes must not be empty; an empty filter would match no objects at all"
+            raise ValueError(error_msg)
+        if any(not suffix for suffix in suffixes):
+            error_msg = "suffixes must not contain an empty string; it would match every object, filtering nothing"
+            raise ValueError(error_msg)
+        return tuple(suffix.lower() for suffix in suffixes)
 
     @abc.abstractmethod
     def upload_file(

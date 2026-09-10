@@ -25,9 +25,13 @@ from cosmos_curator.core.sensors.utils.validation import (
     bool_batch,
     float64_batch,
     nondecreasing_int64_array,
+    optional_bool_array,
+    optional_float64_array,
+    optional_int64_array,
+    optional_uint64_array,
+    require_finite_or_marked_invalid,
     strictly_increasing_int64_array,
     symmetric_psd_covariance_batch,
-    uint64_array,
     unit_quaternion_batch,
 )
 
@@ -68,92 +72,13 @@ class _HasImuBatchFields(Protocol):
     temperature_valid: npt.NDArray[np.bool_] | None
 
 
-def _require_bool_array(name: str, value: npt.NDArray[np.bool_]) -> None:
-    """Raise if ``value`` is not a ``bool`` array."""
-    if value.dtype != np.bool_:
-        msg = f"{name} must have dtype bool, got {value.dtype}"
-        raise ValueError(msg)
-
-
-def _require_int64_vector(name: str, value: npt.NDArray[np.int64]) -> None:
-    """Raise if ``value`` is not a 1-D ``int64`` vector."""
-    if value.ndim != 1:
-        msg = f"{name} must have shape (N,), got shape={value.shape}"
-        raise ValueError(msg)
-    if value.dtype != np.int64:
-        msg = f"{name} must have dtype int64, got {value.dtype}"
-        raise ValueError(msg)
-
-
-def _require_float64_array(name: str, value: npt.NDArray[np.float64]) -> None:
-    """Raise if ``value`` is not a ``float64`` array."""
-    if value.dtype != np.float64:
-        msg = f"{name} must have dtype float64, got {value.dtype}"
-        raise ValueError(msg)
-
-
-def _require_float64_vector(name: str, value: npt.NDArray[np.float64]) -> None:
-    """Raise if ``value`` is not a 1-D ``float64`` vector."""
-    if value.ndim != 1:
-        msg = f"{name} must have shape (N,), got shape={value.shape}"
-        raise ValueError(msg)
-    _require_float64_array(name, value)
-
-
-def _optional_row_validity_mask(
-    _instance: object,
-    attribute: AttrsAttribute,
-    value: npt.NDArray[np.bool_] | None,
-) -> None:
-    """Validate optional row-level validity masks with shape ``(N,)``."""
-    if value is None:
-        return
-    if value.ndim != 1:
-        msg = f"{attribute.name} must have shape (N,), got shape={value.shape}"
-        raise ValueError(msg)
-    _require_bool_array(attribute.name, value)
-
-
-def _optional_int64_vector(
-    _instance: object,
-    attribute: AttrsAttribute,
-    value: npt.NDArray[np.int64] | None,
-) -> None:
-    """Validate optional 1-D ``int64`` arrays."""
-    if value is None:
-        return
-    _require_int64_vector(attribute.name, value)
-
-
-def _optional_uint64_vector(
-    instance: object,
-    attribute: AttrsAttribute,
-    value: npt.NDArray[np.uint64] | None,
-) -> None:
-    """Validate optional 1-D ``uint64`` arrays."""
-    if value is None:
-        return
-    uint64_array(instance, attribute, value)
-
-
-def _optional_float64_vector(
-    _instance: object,
-    attribute: AttrsAttribute,
-    value: npt.NDArray[np.float64] | None,
-) -> None:
-    """Validate optional 1-D ``float64`` arrays."""
-    if value is None:
-        return
-    _require_float64_vector(attribute.name, value)
-
-
 def _optional_temperature_valid(
     instance: _HasImuBatchFields,
     attribute: AttrsAttribute,
     value: npt.NDArray[np.bool_] | None,
 ) -> None:
     """Validate optional temperature validity mask."""
-    _optional_row_validity_mask(instance, attribute, value)
+    optional_bool_array(instance, attribute, value)
     if value is not None and instance.temperature_c is None:
         msg = "temperature_valid requires temperature_c"
         raise ValueError(msg)
@@ -165,7 +90,7 @@ def _optional_orientation_valid(
     value: npt.NDArray[np.bool_] | None,
 ) -> None:
     """Validate optional orientation validity mask."""
-    _optional_row_validity_mask(instance, attribute, value)
+    optional_bool_array(instance, attribute, value)
     if value is not None and instance.orientation_quat_xyzw is None:
         msg = "orientation_valid requires orientation_quat_xyzw"
         raise ValueError(msg)
@@ -195,49 +120,32 @@ def _optional_linear_acceleration_bias_valid(
         raise ValueError(msg)
 
 
-def _require_finite_or_marked_invalid(
-    name: str,
-    values: npt.NDArray[np.float64],
-    validity: npt.NDArray[np.bool_] | None,
-) -> None:
-    """Allow non-finite values only when a matching validity mask is false."""
-    nonfinite = ~np.isfinite(values)
-    if not np.any(nonfinite):
-        return
-    if validity is None:
-        msg = f"{name} must contain only finite values when no validity mask is provided"
-        raise ValueError(msg)
-    if np.any(nonfinite & validity):
-        msg = f"{name} non-finite values require matching validity mask entries to be false"
-        raise ValueError(msg)
-
-
 def _raw_value_finiteness(
     instance: _HasImuBatchFields,
     _attribute: object,
     _value: object,
 ) -> None:
     """Validate raw IMU payload values against their validity masks."""
-    _require_finite_or_marked_invalid(
+    require_finite_or_marked_invalid(
         "angular_velocity_rad_s",
         instance.angular_velocity_rad_s,
         instance.angular_velocity_valid,
     )
-    _require_finite_or_marked_invalid(
+    require_finite_or_marked_invalid(
         "linear_acceleration_m_s2",
         instance.linear_acceleration_m_s2,
         instance.linear_acceleration_valid,
     )
     if instance.temperature_c is not None:
-        _require_finite_or_marked_invalid("temperature_c", instance.temperature_c, instance.temperature_valid)
+        require_finite_or_marked_invalid("temperature_c", instance.temperature_c, instance.temperature_valid)
     if instance.angular_velocity_bias_rad_s is not None:
-        _require_finite_or_marked_invalid(
+        require_finite_or_marked_invalid(
             "angular_velocity_bias_rad_s",
             instance.angular_velocity_bias_rad_s,
             instance.angular_velocity_bias_valid,
         )
     if instance.linear_acceleration_bias_m_s2 is not None:
-        _require_finite_or_marked_invalid(
+        require_finite_or_marked_invalid(
             "linear_acceleration_bias_m_s2",
             instance.linear_acceleration_bias_m_s2,
             instance.linear_acceleration_bias_valid,
@@ -374,19 +282,17 @@ class ImuData:
     host_timestamps_ns: npt.NDArray[np.int64] | None = attrs.field(
         default=None,
         converter=as_optional_readonly_view,
-        validator=_optional_int64_vector,
+        validator=optional_int64_array,
     )
     sequence_counter: npt.NDArray[np.uint64] | None = attrs.field(
         default=None,
         converter=as_optional_readonly_view,
-        validator=_optional_uint64_vector,
+        validator=optional_uint64_array,
     )
     temperature_c: npt.NDArray[np.float64] | None = attrs.field(
         default=None,
         converter=as_optional_readonly_view,
-        validator=attrs.validators.and_(
-            _optional_float64_vector,
-        ),
+        validator=optional_float64_array,
     )
     # temperature_valid is last so cross-field validators see every optional array.
     temperature_valid: npt.NDArray[np.bool_] | None = attrs.field(

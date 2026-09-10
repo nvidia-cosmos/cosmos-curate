@@ -31,6 +31,10 @@ from cosmos_curator.models.vllm_model_ids import _VLLM_MODELS
 from cosmos_curator.models.vllm_sentinels import VLLM_UNKNOWN_CAPTION
 from cosmos_curator.pipelines.common.model_constraints import PreprocessMode
 from cosmos_curator.pipelines.video.captioning import vllm_caption_stage
+from cosmos_curator.pipelines.video.captioning.caption_quality_flags import (
+    DEFAULT_CAPTION_QUALITY_THRESHOLDS,
+    CaptionQualityThresholdConfig,
+)
 from cosmos_curator.pipelines.video.captioning.vllm_caption_stage import _scatter_captions
 from cosmos_curator.pipelines.video.utils.data_model import (
     Clip,
@@ -328,7 +332,7 @@ def test_free_vllm_inputs_clears_inputs_and_optionally_mp4(*, keep_mp4: bool) ->
 @pytest.mark.parametrize("model_variant", VALID_VARIANTS)
 @patch("cosmos_curator.pipelines.video.captioning.vllm_caption_stage.windowing_utils.make_windows_for_video")
 @patch("cosmos_curator.pipelines.video.captioning.vllm_caption_stage.make_model_inputs")
-def test_prep_windows_model_input_assignment(  # noqa: PLR0913
+def test_prep_windows_model_input_assignment(
     mock_make_model_inputs: MagicMock,
     mock_make_windows: MagicMock,
     model_variant: str,
@@ -466,6 +470,7 @@ def _process_caption_stage_with_quality_patch(
     monkeypatch: pytest.MonkeyPatch,
     *,
     caption_quality_flags_enabled: bool = True,
+    caption_quality_thresholds: CaptionQualityThresholdConfig = DEFAULT_CAPTION_QUALITY_THRESHOLDS,
     use_filter_windows: bool = False,
 ) -> tuple[MagicMock, SplitPipeTask]:
     """Run VllmCaptionStage.process_data with mocked inference and return the quality mock."""
@@ -473,6 +478,7 @@ def _process_caption_stage_with_quality_patch(
     stage = vllm_caption_stage.VllmCaptionStage(
         vllm_config=VllmConfig(model_variant="qwen"),
         caption_quality_flags_enabled=caption_quality_flags_enabled,
+        caption_quality_thresholds=caption_quality_thresholds,
         use_filter_windows=use_filter_windows,
     )
     stage._llm = object()  # type: ignore[attr-defined]
@@ -499,10 +505,22 @@ def test_process_data_applies_caption_quality_flags_when_enabled(monkeypatch: py
     quality_mock.assert_called_once()
     window_groups, model_variant = quality_mock.call_args.args
     assert model_variant == "qwen"
+    assert quality_mock.call_args.kwargs == {"thresholds": DEFAULT_CAPTION_QUALITY_THRESHOLDS}
     assert len(window_groups) == 1
     assert len(window_groups[0]) == 1
     # Object identity: quality flagging mutates the actual Window, not a copy.
     assert window_groups[0][0] is task.video.clips[0].windows[0]
+
+
+def test_process_data_forwards_caption_quality_thresholds(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Enabled subject-caption runs should forward the configured threshold policy."""
+    thresholds = CaptionQualityThresholdConfig(length_floor_words=7)
+    quality_mock, _ = _process_caption_stage_with_quality_patch(
+        monkeypatch,
+        caption_quality_thresholds=thresholds,
+    )
+
+    assert quality_mock.call_args.kwargs == {"thresholds": thresholds}
 
 
 def test_process_data_skips_caption_quality_flags_when_disabled(monkeypatch: pytest.MonkeyPatch) -> None:

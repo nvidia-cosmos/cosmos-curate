@@ -21,7 +21,7 @@ from cosmos_curator.core.sensors.sampling.spec import SamplingSpec
 
 
 def test_sampling_spec_instantiation() -> None:
-    """SamplingSpec can be constructed with only a grid, defaulting policy to None."""
+    """SamplingSpec contains the shared sampling grid only."""
     grid = SamplingGrid(
         timestamps_ns=np.array([0], dtype=np.int64),
         start_ns=0,
@@ -31,4 +31,3 @@ def test_sampling_spec_instantiation() -> None:
     )
     spec = SamplingSpec(grid=grid)
     assert spec.grid is grid
-    assert spec.policy is None

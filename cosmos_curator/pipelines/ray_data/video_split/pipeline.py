@@ -40,12 +40,12 @@ from cosmos_curator.core.utils.pixi_runtime_envs import ray_data_gpu_runtime_env
 from cosmos_curator.core.utils.storage.storage_utils import get_files_relative, get_full_path, get_storage_client
 from cosmos_curator.pipelines.common.model_constraints import PreprocessMode
 from cosmos_curator.pipelines.ray_data._runtime import (
-    DEFAULT_IO_SLOTS_PER_NODE,
     capped_slots_for_items,
     configure_ray_data_progress,
     configure_ray_data_stability,
     live_ray_node_count,
 )
+from cosmos_curator.pipelines.ray_data.constants import DEFAULT_IO_SLOTS_PER_NODE
 from cosmos_curator.pipelines.ray_data.video_split._clip_transcoder import make_transcode_fn
 from cosmos_curator.pipelines.ray_data.video_split._clip_writer import make_write_fn
 from cosmos_curator.pipelines.ray_data.video_split._fixed_stride_splitter import make_split_fn

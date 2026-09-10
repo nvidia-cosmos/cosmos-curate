@@ -13,19 +13,34 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Run-only entrypoint for config-backed pipelines inside runtime environments."""
+"""Run-only entrypoint for config-backed pipelines inside runtime environments.
+
+This module owns the process exit status and derives it entirely from whether
+preparation or the prepared run raised::
+
+    0  the run returned; its payload (--json) or message is on stdout
+    2  a config fault in either mode, and a run fault under --json. Reported on
+       stderr - as {"ok": false, "error": "invalid"|"runtime", "message": ...}
+       under --json, as one plain line without it
+    1  a run fault without --json, where the exception re-raises as an ordinary
+       traceback
+
+A kind that published its work but still owes more therefore reports it by
+raising, which costs the summary: under --json the error object REPLACES the
+payload rather than joining it, so stdout stays empty. The two cannot both be had
+without a third outcome here, which no caller has yet needed.
+"""
 
 import json
-from collections.abc import Callable
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Annotated, NoReturn, Protocol
+from typing import Annotated, NoReturn
 
 import typer
 from pydantic import ValidationError
 from typer import Argument, Option
 
-from cosmos_curator.client.pipeline_cli.pipeline_config import PipelineName, load_pipeline_kind
+from cosmos_curator.client.pipeline_cli.builtin_pipeline_kinds import BUILTIN_PIPELINE_KINDS
+from cosmos_curator.client.pipeline_cli.pipeline_config import load_pipeline_kind_name
 
 
 def main(
@@ -39,8 +54,8 @@ def main(
 ) -> None:
     """Run a pipeline from a JSON/YAML config."""
     try:
-        kind = load_pipeline_kind(config)
-        run_pipeline = _RUNTIME_BUILDERS[kind](config, set_overrides=set_overrides or [])
+        pipeline_kind = BUILTIN_PIPELINE_KINDS.get(load_pipeline_kind_name(config))
+        run_pipeline = pipeline_kind.prepare_run(config, set_overrides=set_overrides or [])
     except (OSError, TypeError, ValueError, ValidationError) as exc:
         _fail("invalid", exc, json_output=json_output)
 
@@ -55,103 +70,6 @@ def main(
         typer.echo(json.dumps(output.json_payload, indent=2))
     else:
         typer.echo(output.message)
-
-
-@dataclass(frozen=True)
-class _RuntimeOutput:
-    json_payload: dict[str, object]
-    message: str
-
-
-class _RuntimeBuilder(Protocol):
-    def __call__(self, config: Path, *, set_overrides: list[str]) -> Callable[[], _RuntimeOutput]: ...
-
-
-def _run_video_split(
-    config: Path,
-    *,
-    set_overrides: list[str],
-) -> Callable[[], _RuntimeOutput]:
-    from cosmos_curator.pipelines.ray_data.video_split.config import resolve_video_split_config  # noqa: PLC0415
-
-    resolution = resolve_video_split_config(config, overrides=set_overrides)
-
-    def run() -> _RuntimeOutput:
-        from cosmos_curator.pipelines.ray_data.video_split.pipeline import run_config  # noqa: PLC0415
-
-        clips_written = run_config(resolution.config)
-        return _RuntimeOutput(
-            json_payload={"clips_written": clips_written},
-            message=f"Wrote {clips_written} clip(s)",
-        )
-
-    return run
-
-
-def _run_caption_judge(
-    config: Path,
-    *,
-    set_overrides: list[str],
-) -> Callable[[], _RuntimeOutput]:
-    from cosmos_curator.pipelines.ray_data.caption_judge.config import resolve_caption_judge_config  # noqa: PLC0415
-
-    resolved_config = resolve_caption_judge_config(config, overrides=set_overrides)
-
-    def run() -> _RuntimeOutput:
-        from cosmos_curator.pipelines.ray_data.caption_judge.driver import run_caption_judge_pipeline  # noqa: PLC0415
-        from cosmos_curator.pipelines.ray_data.caption_judge.report_io import write_report  # noqa: PLC0415
-
-        report = run_caption_judge_pipeline(config=resolved_config)
-        report_path = write_report(
-            report,
-            resolved_config.output.report_path,
-            report_format=resolved_config.output.report_format,
-        )
-        status = "PASSED" if report.passed else "FAILED"
-        return _RuntimeOutput(
-            json_payload={
-                "passed": report.passed,
-                "issues": report.issues.num_rows,
-                "windows_judged": report.stats.windows_judged,
-                "report_path": report_path,
-            },
-            message=(
-                f"{status} caption judge: {report.issues.num_rows} issues, "
-                f"{report.stats.windows_judged} judged windows, report: {report_path}"
-            ),
-        )
-
-    return run
-
-
-def _run_robot_action_split(
-    config: Path,
-    *,
-    set_overrides: list[str],
-) -> Callable[[], _RuntimeOutput]:
-    from cosmos_curator.next.recipes.robot_action_split.config import resolve_config  # noqa: PLC0415
-
-    resolved_config = resolve_config(config, overrides=set_overrides)
-
-    def run() -> _RuntimeOutput:
-        from cosmos_curator.next.recipes.robot_action_split.pipeline import run as _run  # noqa: PLC0415
-
-        summary = _run(str(config), config=resolved_config)
-        succeeded = summary.get("succeeded", 0)
-        failed = summary.get("failed", 0)
-        return _RuntimeOutput(
-            json_payload=summary,
-            message=f"robot-action-split: {succeeded} clip(s) succeeded, {failed} failed",
-        )
-
-    return run
-
-
-_RUNTIME_BUILDERS: dict[PipelineName, _RuntimeBuilder] = {
-    "video_split": _run_video_split,
-    "caption_judge": _run_caption_judge,
-    "robot_action_split": _run_robot_action_split,
-}
 
 
 def _fail(code: str, exc: Exception, *, json_output: bool) -> NoReturn:

@@ -175,7 +175,7 @@ def test_find_closest_indices(src: NDArray[np.float32], dst: NDArray[np.float32]
         ),
     ],
 )
-def test_sample_closest(  # noqa: PLR0913
+def test_sample_closest(
     src: NDArray[np.float32],
     sample_rate: float,
     start: float | None,

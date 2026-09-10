@@ -26,8 +26,13 @@ them the same ``PYTHON_LOG_FORMAT`` toggle used by ``cosmos_xenna.utils.python_l
   stream as the Ray pipeline logs, matching Ray's field names lets a single
   log-shipper mapping parse, sort, and correlate every source.
 
-This module deliberately does not import anything from ``cosmos_xenna`` so the
-launcher scripts stay lightweight and xenna remains self-contained.
+When distributed tracing is also enabled, OTel's logging instrumentation stamps
+``trace_id`` / ``span_id`` / ``trace_sampled`` onto records emitted inside a span
+(see ``core/utils/infra/tracing_hook.py``); those fields are passed through here.
+
+This module deliberately does not import anything from ``cosmos_xenna`` -- nor from
+OpenTelemetry -- so the launcher scripts stay lightweight and xenna remains
+self-contained.
 """
 
 import itertools
@@ -59,6 +64,11 @@ def _replica_from_pod_name(pod: str) -> str:
     return tail if sep and tail.isdigit() else ""
 
 
+# Trace-correlation attributes stamped onto records by OTel's logging
+# instrumentation. Absent unless tracing is enabled and a span is active.
+_SPAN_FIELDS = ("trace_id", "span_id", "trace_sampled")
+
+
 class StructuredJsonFormatter(logging.Formatter):
     """Format stdlib ``LogRecord`` objects as flat, Ray-aligned JSON lines.
 
@@ -67,7 +77,9 @@ class StructuredJsonFormatter(logging.Formatter):
     ``run_id`` / ``seq``) that Ray's ``JSONFormatter`` produces for pipeline logs, so
     one log-shipper mapping can parse, sort, and correlate launcher and pipeline logs
     together. Identity fields are read once from the environment; ``seq`` is a
-    gap-free per-process counter that tiebreaks equal timestamps.
+    gap-free per-process counter that tiebreaks equal timestamps. Trace-correlation
+    fields (``trace_id`` / ``span_id`` / ``trace_sampled``) are emitted only when
+    present on the record.
     """
 
     def __init__(self) -> None:
@@ -98,6 +110,12 @@ class StructuredJsonFormatter(logging.Formatter):
             "run_id": self._run_id,
             "seq": next(self._seq),
         }
+        # Omit span fields entirely when untraced: an absent key keeps log UIs from
+        # rendering a link to a nonexistent trace.
+        for field in _SPAN_FIELDS:
+            value = getattr(record, field, None)
+            if value is not None:
+                payload[field] = value
         if record.exc_info:
             payload["exception"] = self.formatException(record.exc_info)
         return json.dumps(payload, default=str)

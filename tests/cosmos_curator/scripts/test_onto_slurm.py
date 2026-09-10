@@ -15,6 +15,7 @@
 """Test the start_ray module."""
 
 import builtins
+import json
 import os
 import socket
 import subprocess
@@ -151,6 +152,7 @@ class TestRayConfig:
             "RAY_DASHBOARD_AGENT_GRPC_PORT",
             "RAY_RUNTIME_ENV_AGENT_PORT",
             "XENNA_RAY_METRICS_PORT",
+            "COSMOS_CURATOR_RAY_IO_SLOTS_PER_NODE",
         ]:
             if var in os.environ:
                 monkeypatch.delenv(var)
@@ -165,6 +167,7 @@ class TestRayConfig:
         assert config.dashboard_agent_grpc_port == _RAY_DASHBOARD_AGENT_GRPC_PORT
         assert config.runtime_env_agent_port == _RAY_RUNTIME_ENV_AGENT_PORT
         assert config.metrics_export_port == _RAY_METRICS_EXPORT_PORT
+        assert config.io_slots_per_node == 16
 
     def test_from_env_with_custom_values(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Test from_env with custom values.
@@ -181,6 +184,7 @@ class TestRayConfig:
         monkeypatch.setenv("RAY_DASHBOARD_AGENT_GRPC_PORT", "7890")
         monkeypatch.setenv("RAY_RUNTIME_ENV_AGENT_PORT", "1245")
         monkeypatch.setenv("XENNA_RAY_METRICS_PORT", "6789")
+        monkeypatch.setenv("COSMOS_CURATOR_RAY_IO_SLOTS_PER_NODE", "9")
         config = RayConfig.from_env()
 
         assert config.gcs_server_port == 1234
@@ -191,6 +195,7 @@ class TestRayConfig:
         assert config.dashboard_agent_grpc_port == 7890
         assert config.runtime_env_agent_port == 1245
         assert config.metrics_export_port == 6789
+        assert config.io_slots_per_node == 9
 
 
 class TestGetRayCommand:
@@ -278,6 +283,7 @@ class TestGetRayCommand:
         if head_node:
             assert f"{head_node}:{config.gcs_server_port}" in command
             assert host_name in command
+        assert json.loads(command[command.index("--resources") + 1]) == {"curator_io": config.io_slots_per_node}
 
 
 class StreamOutputTestCase(TypedDict):

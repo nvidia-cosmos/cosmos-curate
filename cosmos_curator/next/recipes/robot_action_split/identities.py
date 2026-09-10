@@ -15,26 +15,32 @@
 
 """Stable SHA-256 identifiers for ``robot-action-split`` entities."""
 
-import hashlib
-import json
-from typing import Any
-
 from cosmos_curator.next.recipes.robot_action_split.contracts import ACTION_CONTRACT_VERSION, MEDIA_CONTRACT_VERSION
-
-
-def _digest(value: Any) -> str:  # noqa: ANN401
-    payload = json.dumps(value, allow_nan=False, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
-    return hashlib.sha256(payload.encode()).hexdigest()
+from cosmos_curator.next.utils.identity import canonical_digest
 
 
 def make_source_id(dataset_root_uri: str) -> str:
     """Identify a dataset root under the immutable-normalized-URI contract."""
-    return _digest(dataset_root_uri.rstrip("/"))
+    return canonical_digest(dataset_root_uri.rstrip("/"))
 
 
 def make_span_group_id(source_id: str, episode_id: str, subtask_index: int, frame_start: int) -> str:
-    """Identify one logical subtask span; shared across all camera views."""
-    return _digest(
+    """Identify one logical subtask span; shared across all camera views.
+
+    Deliberately omits ``frame_end``: two discovery runs over the same
+    ``(source_id, episode_id, subtask_index, frame_start)`` are expected to
+    agree on where the span ends too, since span boundaries are derived
+    deterministically from the same immutable source parquet (see
+    ``make_source_id``'s immutable-normalized-URI contract). If that
+    assumption is ever violated — e.g. an upstream parquet revision that
+    changes a subtask's end frame while its start frame is unchanged — this
+    identity would not detect it, since recovery only diffs by ``clip_id``,
+    not by re-comparing span geometry the way ``video_split.recovery`` does
+    for its stored source fields. Tracked as a known limitation rather than
+    fixed here, since it is a pre-existing property of this identity, not
+    something this change introduced.
+    """
+    return canonical_digest(
         {
             "episode_id": episode_id,
             "frame_start": frame_start,
@@ -50,7 +56,7 @@ def make_action_id(span_group_id: str, action_format: str, source_dataset: str) 
     Encodes the span identity, serialization format, dataset spec, and action
     contract version so that a change in any of these produces a new action ID.
     """
-    return _digest(
+    return canonical_digest(
         {
             "action_contract_version": ACTION_CONTRACT_VERSION,
             "action_format": action_format,
@@ -75,4 +81,4 @@ def make_clip_id(span_group_id: str, view_name: str, video_bitrate: str, *, sour
     }
     if source_is_multiview:
         payload["view_name"] = view_name
-    return _digest(payload)
+    return canonical_digest(payload)

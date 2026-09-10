@@ -62,7 +62,7 @@ CONTAINER_ENV=(
   "PIXI_CACHE_DIR=/pixi-cache"
   "PIXI_CACHE_REPODATA_DIR=/config/project/.pixi/cache/repodata"
   "PIXI_CACHE_PYPI_MAPPING_DIR=/config/project/.pixi/cache/conda-pypi-mapping"
-  "CONDA_OVERRIDE_CUDA=13.0.2"
+  "CONDA_OVERRIDE_CUDA=13.0.3"
 )
 CONTAINER_ENV_STR=$(IFS=, ; echo "${CONTAINER_ENV[*]}")
 
@@ -78,6 +78,8 @@ submit_cmd=(
   --container-image "${BUILD_IMAGE_NAME_SBATCH}"
   --container-mounts "${MOUNTS_STR}"
   --environment "${CONTAINER_ENV_STR}"
+  # Driver/stages, cuML dedup, InternVideo2 embeddings, and the model-download Ray actor.
+  --pixi-envs "default,cuml,legacy-transformers,model-download"
   --job-name "${JOB_NAME}"
   --log-dir "${LOG_DIR}"
   --time "02:00:00"

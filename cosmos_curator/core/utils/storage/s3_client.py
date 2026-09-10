@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -19,13 +19,14 @@ with S3-compatible object storage systems, including chunked downloads and uploa
 """
 
 import configparser
+import contextlib
 import io
 import os
 import pathlib
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     import numpy as np
@@ -34,12 +35,12 @@ if TYPE_CHECKING:
 import attrs
 import boto3
 from boto3.s3.transfer import TransferConfig
+from botocore.client import BaseClient
 from botocore.config import Config as BotoConfig
 from botocore.exceptions import ClientError
 from loguru import logger
 from tqdm import tqdm
 
-from cosmos_curator.core.cf.nvcf_utils import NVCF_SECRETS_PATH, get_secrets_from_nvcf_secret_store
 from cosmos_curator.core.utils.environment import S3_PROFILE_PATH
 from cosmos_curator.core.utils.storage.storage_client import (
     DOWNLOAD_CHUNK_SIZE_BYTES,
@@ -48,8 +49,16 @@ from cosmos_curator.core.utils.storage.storage_client import (
     BaseClientConfig,
     StorageClient,
     StoragePrefix,
+    StorageStat,
     is_storage_path,
 )
+
+# S3 accepts a key whose UTF-8 encoding is at most 1024 bytes and imposes no charset
+# rule beyond that. The budget is in bytes, not characters.
+MAX_S3_KEY_LENGTH_BYTES = 1024
+# Legal in a key, rejected only in a human-authored config value: see the rationale in
+# ``validate_configured_s3_location``.
+_KEY_GLOB_CHARACTERS = ("*", "?")
 
 
 @attrs.define
@@ -62,6 +71,13 @@ class S3ClientConfig(BaseClientConfig):
         endpoint_url (str): S3 endpoint URL.
         region (str): AWS region (default: "").
         aws_session_token (str | None): AWS session token (default: None).
+        profile_name (str | None): AWS profile name, honoured only when no explicit
+            credentials are supplied. It names a section of the standard AWS
+            configuration (``~/.aws/credentials``, ``AWS_CONFIG_FILE``), not of
+            Curator's own ``COSMOS_S3_PROFILE_PATH`` file: that file is parsed by
+            :func:`get_s3_client_config`, which resolves it into explicit keys and so
+            takes the branch above. Naming a profile rather than resolving it here is
+            what keeps the resulting client's credentials refreshable.
 
     """
 
@@ -71,6 +87,7 @@ class S3ClientConfig(BaseClientConfig):
     aws_session_token: str | None = attrs.field(default=None)
     endpoint_url: str | None = attrs.field(default=None)
     region: str | None = attrs.field(default=None)
+    profile_name: str | None = attrs.field(default=None)
 
 
 @attrs.define
@@ -103,11 +120,25 @@ class S3Prefix(StoragePrefix):
             error_msg = f"Invalid S3 bucket name: {bucket}"
             raise ValueError(error_msg)
 
-        # Validate object key characters and length: allow letters, digits, dot, hyphen, underscore, slash, space;
-        # max 1024 chars
-        if key and not re.match(r"^[A-Za-z0-9.\-_/ ,]{1,1024}$", key):
-            error_msg = f"Invalid S3 object key: {key}"
+        # Length is S3's only real constraint on a key, so it is the only one checked.
+        # A character allowlist rejected keys that work in the store today -- Hive-style
+        # ``run=2026-08-01/`` partitions among them -- and adding one character at a time
+        # only moves the wall, since ``+``, ``:``, ``@`` and ``(`` are equally legal.
+        # S3 spends the budget on the UTF-8 encoding, so a key of multibyte characters
+        # runs out sooner than its character count suggests; measuring characters here
+        # would accept keys the SDK then rejects.
+        key_length_bytes = len(key.encode("utf-8"))
+        if key_length_bytes > MAX_S3_KEY_LENGTH_BYTES:
+            error_msg = f"Invalid S3 object key: exceeds {MAX_S3_KEY_LENGTH_BYTES} bytes ({key_length_bytes})"
             raise ValueError(error_msg)
+
+        # Glob metacharacters are deliberately *not* rejected here. They are legal key
+        # characters and objects really are named ``a*foo``, so a type that addresses
+        # an object store has to represent them -- both listing paths below build an
+        # S3Prefix out of keys the store returned, and refusing one would abort the
+        # whole enumeration over a single object. The mistyped-wildcard case that does
+        # warrant rejection is a human-authored config value, which
+        # ``validate_configured_s3_location`` handles.
 
     @property
     def bucket(self) -> str:
@@ -128,6 +159,68 @@ class S3Prefix(StoragePrefix):
 
         """
         return f"s3://{self.bucket}/{self.prefix}"
+
+
+def validate_configured_s3_location(location: str) -> None:
+    """Validate an S3 URI that a human wrote into a config file.
+
+    Deliberately stricter than :class:`S3Prefix`, and the extra strictness belongs
+    here rather than in the type because the two validate different populations.
+    ``S3Prefix`` is built from keys the store hands back, where ``*`` and ``?`` are
+    ordinary characters in an object that genuinely exists. A configured prefix
+    carrying one is a mistyped shell glob instead: nothing in the read path expands
+    a wildcard, so S3 accepts the request, matches zero objects, and the run
+    succeeds having processed nothing. That silent no-op is the failure this catches,
+    and catching it at ``cosmos-curator pipeline validate`` costs nothing.
+
+    Args:
+        location: The ``s3://`` URI to validate.
+
+    Raises:
+        ValueError: If the bucket or key is invalid, or the key contains ``*`` or
+            ``?``.
+
+    """
+    prefix = S3Prefix(location)
+    if any(char in prefix.prefix for char in _KEY_GLOB_CHARACTERS):
+        error_msg = (
+            f"Invalid S3 object key: {prefix.prefix} contains a glob metacharacter (* or ?), which is not expanded"
+        )
+        raise ValueError(error_msg)
+
+
+def make_s3_session(config: S3ClientConfig) -> boto3.Session:
+    """Build the boto3 session ``config`` describes, without an S3 service client.
+
+    Split out of :class:`S3Client` for callers that need credential and region
+    resolution but issue no request. ``storage_cli.get_lance_storage_options`` is the
+    one in tree: it freezes the chain's answer into options for Lance's own object
+    store, so a service client built for it is measurable work with no user.
+
+    Args:
+        config: Credentials, profile and region to resolve from. ``endpoint_url`` is
+            not read here -- it applies to a service client, not to a session.
+
+    Returns:
+        A session whose credentials stay refreshable, rather than frozen keys: a
+        long-running job outlives the SSO or instance credentials it started with.
+
+    """
+    if config.aws_access_key_id is not None:
+        # region_name must be passed explicitly: supplying credentials bypasses
+        # boto3's profile lookup, so the profile's `region` is otherwise ignored
+        # and botocore falls back to us-east-1. None keeps boto3's own resolution.
+        return boto3.Session(
+            aws_access_key_id=config.aws_access_key_id,
+            aws_secret_access_key=config.aws_secret_access_key,
+            aws_session_token=config.aws_session_token,
+            region_name=config.region,
+        )
+    # ``profile_name=None`` is exactly what a bare ``boto3.Session()`` does, so one call
+    # covers both a named AWS profile and no profile at all, and the chain
+    # (``~/.aws/credentials``, ``AWS_PROFILE``, the environment, SSO, an instance role)
+    # resolves it. ``region_name=None`` likewise defers to the profile and environment.
+    return boto3.Session(profile_name=config.profile_name, region_name=config.region)
 
 
 class S3Client(StorageClient):
@@ -157,43 +250,56 @@ class S3Client(StorageClient):
             connect_timeout=config.operation_timeout_s,
             read_timeout=config.operation_timeout_s,
         )
-        # If creds are set, specify them
-        if config.aws_access_key_id is not None:
-            self.session = boto3.Session(
-                aws_access_key_id=config.aws_access_key_id,
-                aws_secret_access_key=config.aws_secret_access_key,
-                aws_session_token=config.aws_session_token,
-            )
-            self.s3 = self.session.client("s3", endpoint_url=config.endpoint_url, config=boto_config)
-        # If omitted, rely on boto3 intrinsic parsing of AWS_CONFIG_FILE
-        else:
-            logger.warning("This should not happen in current implementation")
-            self.session = boto3.Session()
-            self.s3 = self.session.client("s3", config=boto_config)
-
+        self.session = make_s3_session(config)
+        self.s3 = self.session.client("s3", endpoint_url=config.endpoint_url, config=boto_config)
         self.can_overwrite = config.can_overwrite
         self.can_delete = config.can_delete
 
-    def object_exists(self, dest: StoragePrefix) -> bool:
-        """Check if an object exists at the specified S3 URI.
+    def stat(self, dest: StoragePrefix) -> StorageStat:
+        """Return what one ``HeadObject`` says about the object at ``dest``.
+
+        This is the request ``object_exists`` has always issued and thrown away; the
+        response it already had is now returned, so a caller that needs the size gets
+        it for the round trip it was making anyway.
+
+        Deliberately not wrapped in ``do_with_retries`` -- see
+        :meth:`StorageClient.stat` for why absence must answer promptly.
 
         Args:
-            dest (S3Prefix): The S3 prefix of the object to check.
+            dest (S3Prefix): The S3 prefix of the object to describe.
 
         Returns:
-            bool: True if the object exists, False otherwise.
+            Size, last-modified and entity tag as the store reported them.
+
+        Raises:
+            FileNotFoundError: If no object exists at ``dest``.
+            ClientError: For any other store error, notably the ``403`` returned for a
+                bucket the credentials cannot read. Only the literal ``404`` that a
+                HeadObject answers with is translated: a HEAD carries no body for
+                botocore to read a richer code out of, so an S3-compatible store that
+                replies ``NoSuchKey`` or ``NotFound`` instead surfaces raw. Callers
+                depend on that to tell such a store apart from AWS itself.
 
         """
-        assert isinstance(dest, S3Prefix)
+        if not isinstance(dest, S3Prefix):
+            error_msg = f"S3Client requires an S3Prefix, got {type(dest).__name__}: {dest}"
+            raise TypeError(error_msg)
         try:
-            self.s3.head_object(Bucket=dest.bucket, Key=dest.prefix)
+            head = self.s3.head_object(Bucket=dest.bucket, Key=dest.prefix)
         except ClientError as e:
             if e.response["Error"]["Code"] == "404":
-                return False
+                error_msg = f"Object does not exist: {dest.path}"
+                raise FileNotFoundError(error_msg) from e
             # If it's not a 404 error, re-raise the exception
             raise
-        else:
-            return True
+        size = head.get("ContentLength")
+        etag = head.get("ETag")
+        return StorageStat(
+            size_bytes=int(size) if size is not None else None,
+            last_modified=head.get("LastModified"),
+            # boto3 hands the tag back quoted, as it appears on the wire.
+            etag=str(etag).strip('"') if etag is not None else None,
+        )
 
     def upload_bytes(self, dest: StoragePrefix, data: "bytes | npt.NDArray[np.uint8]") -> None:
         """Upload binary data to the specified S3 prefix.
@@ -234,18 +340,73 @@ class S3Client(StorageClient):
         """
         self.upload_bytes(S3Prefix(uri), data)
 
+    def download_to_path(
+        self, uri: StoragePrefix, dest: str | Path, chunk_size_bytes: int = DOWNLOAD_CHUNK_SIZE_BYTES
+    ) -> None:
+        """Stream an S3 object to a local file using boto3 multipart download.
+
+        Uses ``download_fileobj`` with a ``TransferConfig`` so large files are
+        streamed in parallel chunks rather than buffered entirely in memory.
+        The download is atomic: data is written to ``dest + ".partial"`` and
+        renamed to ``dest`` only on success, so a failed or interrupted download
+        never leaves a truncated file that a subsequent caller could mistake for
+        a complete one.
+        """
+        assert isinstance(uri, S3Prefix)
+        dest = Path(dest)
+        partial = dest.with_suffix(dest.suffix + ".partial")
+        try:
+            with partial.open("wb") as fout:
+                self.s3.download_fileobj(
+                    uri.bucket,
+                    uri.prefix,
+                    fout,
+                    Config=TransferConfig(multipart_threshold=chunk_size_bytes, max_concurrency=10),
+                )
+            partial.replace(dest)
+        except Exception:
+            partial.unlink(missing_ok=True)
+            raise
+
     def download_object_as_bytes(self, uri: StoragePrefix, chunk_size_bytes: int = DOWNLOAD_CHUNK_SIZE_BYTES) -> bytes:
-        """Download an object as bytes from the specified S3 prefix.
+        """Download an object as bytes, by the transfer shape its size warrants.
+
+        ``chunk_size_bytes`` is the multipart threshold and so also the branch point.
+        Below it one ``get_object`` both measures and delivers, since the response
+        reports ``ContentLength`` before the body is consumed. At or above it the
+        managed transfer's parallel ranged GETs take over, at the cost of an extra
+        round trip for the size probe. An object whose response omits
+        ``ContentLength`` is unmeasured and takes the managed path.
+
+        Both paths return identical bytes, but they are NOT exception-type
+        equivalent: a missing object raises ``NoSuchKey`` here and a ``404``
+        ``ClientError`` from the managed transfer's internal HeadObject, and the
+        managed transfer may surface its own wrapper types besides. A caller that
+        retries broadly - as ``do_with_retries`` does - behaves the same on either
+        path; a caller that narrows to its own exception tuple cannot assume the two
+        paths agree on which type it will see, and has to cover both. The managed
+        transfer additionally retries a mid-stream failure in place; the small path
+        leaves that class to the caller's own retry wrapper.
 
         Args:
             uri (S3Prefix): The S3 prefix of the object to download.
-            chunk_size_bytes (int): The size of chunks to use for downloading.
+            chunk_size_bytes (int): Multipart threshold, and so also the size at or
+                above which this hands over to the managed transfer.
 
         Returns:
             bytes: The object's content as bytes.
 
         """
         assert isinstance(uri, S3Prefix)
+        response = self.s3.get_object(Bucket=uri.bucket, Key=uri.prefix)
+        # A response that omits ContentLength leaves the object unmeasured, so it
+        # takes the managed-transfer path rather than being read blind.
+        content_length = response.get("ContentLength")
+        with contextlib.closing(response["Body"]) as body:
+            if content_length is not None and content_length < chunk_size_bytes:
+                return cast("bytes", body.read())
+        # The probe's stream is discarded unread and nothing from it is reused: the
+        # managed transfer below re-resolves the size itself via HeadObject.
         fileobj = io.BytesIO()
         self.s3.download_fileobj(
             uri.bucket,
@@ -284,6 +445,64 @@ class S3Client(StorageClient):
         for obj in objects:
             path = f"s3://{uri.bucket}/{obj['Key']}"
             results.append(S3Prefix(path))
+        return results
+
+    def list_child_prefixes(self, uri: StoragePrefix) -> list[str]:
+        """List the immediate child prefix names under ``uri``, without descending.
+
+        Convenience wrapper over :func:`list_child_prefixes` for callers that
+        already hold an ``S3Client``, which is every in-tree caller.
+
+        Args:
+            uri: The S3 prefix whose children to list.
+
+        Returns:
+            The child prefix names, without a trailing delimiter.
+
+        """
+        assert isinstance(uri, S3Prefix)
+        return list_child_prefixes(self.s3, bucket=uri.bucket, prefix=uri.prefix)
+
+    def list_recursive_with_suffixes(
+        self,
+        uri: StoragePrefix,
+        suffixes: tuple[str, ...],
+        limit: int = 0,
+    ) -> list[StoragePrefix]:
+        """List objects under ``uri`` matching ``suffixes``, stopping at ``limit`` matches.
+
+        Both the filter and the cap sit inside the pagination loop, so a small ``limit``
+        against a huge prefix fetches only the pages it takes to fill it. See
+        :meth:`StorageClient.list_recursive_with_suffixes` for why counting matches
+        rather than listed objects is the point, and why the early exit that
+        :func:`list_child_prefixes` declines is sound for a flat listing.
+
+        Args:
+            uri (S3Prefix): The S3 prefix to list under.
+            suffixes: Non-empty suffixes to match, compared case-insensitively.
+            limit: Maximum number of matches; ``0`` (the default) means unlimited.
+
+        Returns:
+            S3 prefixes for the matching objects, in listing order.
+
+        Raises:
+            ValueError: If ``suffixes`` is empty.
+
+        """
+        if not isinstance(uri, S3Prefix):
+            error_msg = f"S3Client requires an S3Prefix, got {type(uri).__name__}: {uri}"
+            raise TypeError(error_msg)
+        lowered = self._lowercased_suffixes(suffixes)
+        results: list[StoragePrefix] = []
+        paginator = self.s3.get_paginator("list_objects_v2")
+        for page in paginator.paginate(Bucket=uri.bucket, Prefix=uri.prefix):
+            for obj in page.get("Contents", []):
+                key = obj["Key"]
+                if not key.lower().endswith(lowered):
+                    continue
+                results.append(S3Prefix(f"s3://{uri.bucket}/{key}"))
+                if 0 < limit <= len(results):
+                    return results
         return results
 
     def list_recursive(self, s3_prefix: StoragePrefix, limit: int = 0) -> list[dict[str, Any]]:
@@ -331,14 +550,13 @@ class S3Client(StorageClient):
             error_msg = f"Object {remote_path.path} already exists and overwriting is not allowed."
             raise ValueError(error_msg)
 
-        logger.info(f"Uploading {local_path} to {remote_path}")
         self.s3.upload_file(
             local_path,
             remote_path.bucket,
             remote_path.prefix,
             Config=TransferConfig(multipart_threshold=chunk_size, max_concurrency=10),
         )
-        logger.info(f"Upload complete: {remote_path}")
+        logger.trace(f"Uploaded {local_path} to {remote_path}")
 
     def sync_remote_to_local(
         self,
@@ -486,6 +704,109 @@ class S3BackgroundUploader(BackgroundUploader):
         self.client.upload_file(str(local_path), remote_prefix, self.chunk_size_bytes)  # type: ignore[attr-defined]
 
 
+def list_child_prefixes(s3_client: BaseClient, *, bucket: str, prefix: str) -> list[str]:
+    """List child prefixes with a delimited listing so the store does the scoping.
+
+    A recursive listing would return every object beneath every child, which is
+    unusable when a prefix holds millions of them. ``Delimiter="/"`` makes S3
+    collapse each child into one ``CommonPrefixes`` entry instead, and leaves
+    loose objects sitting directly under the prefix in ``Contents``, where they
+    are correctly ignored.
+
+    The boto3 client is supplied by the caller rather than built here, so that
+    listing uses the same credentials as the reads that follow it. Every in-tree
+    caller now holds an ``S3Client`` and reaches this through
+    :meth:`S3Client.list_child_prefixes`; the free function stays for a caller
+    that holds a boto3 client and no ``S3Client`` around it.
+
+    No limit is accepted. A caller that caps its selection should do so after
+    deduplicating and sorting, since stopping the listing early would change
+    which children are selected rather than just how many pages are fetched.
+
+    Args:
+        s3_client: A boto3 S3 client, however the caller chose to build it.
+        bucket: The bucket to list.
+        prefix: The key prefix whose immediate children to list. Trailing
+            delimiters are normalized, and an empty prefix lists the bucket root.
+
+    Returns:
+        The child prefix names, without a trailing delimiter, in listing order.
+
+    Raises:
+        FileNotFoundError: If the prefix holds no keys at all. S3 answers a
+            listing of a nonexistent prefix with 200 and no keys, so a typo is
+            otherwise indistinguishable from an empty result and the caller
+            would proceed with nothing without ever reporting an error.
+
+    """
+    listing_key = f"{prefix.rstrip('/')}/" if prefix else ""
+
+    children: list[str] = []
+    prefix_exists = False
+    paginator = s3_client.get_paginator("list_objects_v2")
+    for page in paginator.paginate(Bucket=bucket, Prefix=listing_key, Delimiter="/"):
+        common_prefixes = page.get("CommonPrefixes", [])
+        prefix_exists = prefix_exists or bool(common_prefixes) or bool(page.get("Contents"))
+        for common_prefix in common_prefixes:
+            child = common_prefix["Prefix"][len(listing_key) :].rstrip("/")
+            if child:
+                children.append(child)
+
+    if not prefix_exists:
+        msg = f"Prefix does not exist or contains no objects: s3://{bucket}/{listing_key}"
+        raise FileNotFoundError(msg)
+    return children
+
+
+def resolve_s3_endpoint_url(explicit: str | None = None, *, profile_endpoint_url: str | None = None) -> str | None:
+    """Resolve which S3 endpoint URL to use, or ``None`` for boto3's default AWS endpoint.
+
+    boto3 does not read the ``endpoint_url`` that the ``awscli_plugin_endpoint`` plugin
+    nests under the ``s3`` / ``s3api`` sections of ``~/.aws/config`` -- that is a
+    CLI-only plugin feature -- so an S3-compatible store reachable only through such a
+    profile has to be told its endpoint here.
+
+    Resolution order, first non-empty value winning:
+
+    1. ``explicit`` -- typically an ``--endpoint-url`` CLI argument
+    2. ``AWS_ENDPOINT_URL_S3`` -- the standard AWS SDK S3-specific variable
+    3. ``AWS_ENDPOINT_URL`` -- the standard AWS SDK all-services variable
+    4. ``profile_endpoint_url`` -- what a profile file said, supplied by the caller
+    5. ``None`` -- boto3's default AWS endpoint
+
+    Levels 2 and 3 are not merely a reimplementation of what boto3 already does with
+    those variables for a client built with ``endpoint_url=None``. They are here so the
+    precedence against level 4 is explicit -- boto3 never sees a Curator profile file --
+    and so consumers that are not boto3 clients, notably Lance's object store, resolve
+    the same endpoint the S3 client would.
+
+    The profile-file value arrives as an argument instead of being read here, which is
+    what keeps :func:`get_s3_client_config` returning the Curator profile file's
+    ``endpoint_url`` verbatim for its existing callers. Folding the environment
+    variables into that factory would let an ``AWS_ENDPOINT_URL`` exported for some
+    unrelated tool silently redirect every pipeline whose credentials come from
+    ``COSMOS_S3_PROFILE_PATH`` -- which is every deployed one. A caller that does want
+    the environment to outrank a profile file passes that file's value in.
+
+    Args:
+        explicit: An endpoint the caller was told to use, which outranks everything.
+        profile_endpoint_url: An endpoint read from a profile file, consulted only
+            after the environment.
+
+    Returns:
+        The endpoint URL to hand to ``session.client("s3", endpoint_url=...)``, or
+        ``None`` to leave boto3 on the default AWS endpoint.
+
+    """
+    candidates = (
+        explicit,
+        os.getenv("AWS_ENDPOINT_URL_S3"),
+        os.getenv("AWS_ENDPOINT_URL"),
+        profile_endpoint_url,
+    )
+    return next((candidate for candidate in candidates if candidate), None)
+
+
 def _make_s3_client_config(
     profile_path: pathlib.Path,
     profile_name: str = "default",
@@ -562,6 +883,14 @@ def get_s3_client_config(
         S3ClientConfig: An initialized S3ClientConfig instance.
 
     """
+    # Deferred because ``nvcf_utils`` imports ``ray`` at module scope, and ray is absent from the
+    # client-only ``tools`` environment. Importing it here keeps the rest of this module -- notably
+    # ``S3Prefix``, which is pure string validation -- usable from the CLI without a ray install.
+    from cosmos_curator.core.cf.nvcf_utils import (  # noqa: PLC0415
+        NVCF_SECRETS_PATH,
+        get_secrets_from_nvcf_secret_store,
+    )
+
     if S3_PROFILE_PATH.exists():
         # first try s3 profile
         return _make_s3_client_config(

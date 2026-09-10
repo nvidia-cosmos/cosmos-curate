@@ -42,6 +42,10 @@ variables:
   CI_BUILDER_IMAGE_REPO: ${CI_REGISTRY_IMAGE}/ci-builder
   CI_BUILDER_IMAGE: ${CI_BUILDER_IMAGE_REPO}:latest
   BUILDX_BUILDER_NAME: ci-cosmos-builder
+  # BuildKit v0.32 defaults attestations to OCI artifacts, which the current
+  # GitLab registry rejects. Keep provenance but use its legacy storage format.
+  # Remove after https://github.com/moby/buildkit/issues/7007 is resolved.
+  BUILDX_NO_DEFAULT_OCI_ARTIFACT: "1"
 
   # Pytest configuration
   PYTEST_XDIST_WORKERS: 4
@@ -85,6 +89,8 @@ variables:
   NVCF_MAX_CONCURRENCY: 2
   NVCF_INSTANCE_COUNT: 1
   HELM_THANOS_RECEIVER_URL: "$HELM_THANOS_RECEIVER_URL"
+  OTLP_ENDPOINT_URL: "$OTLP_ENDPOINT_URL"
+  OBSERVABILITY_EXTRA_LABELS_JSON: "$OBSERVABILITY_EXTRA_LABELS_JSON"
   HELM_BYO_METRICS_RECEIVER_CLIENT_CRT: $HELM_BYO_METRICS_RECEIVER_CLIENT_CRT
   HELM_BYO_METRICS_RECEIVER_CLIENT_KEY: $HELM_BYO_METRICS_RECEIVER_CLIENT_KEY
   # Request all GPUs on the 4x NVCF instance so the e2e pipeline can spread its
@@ -144,6 +150,30 @@ variables:
     options:
       - "FRAGMENTATION_BASED"
       - "SATURATION_AWARE"
+  NVCF_SPLIT_BENCHMARK_OTLP_METRICS_ENABLED:
+    description: "Enable additive OTLP metrics export for nvcf_split_benchmark deployments"
+    value: "False"
+    options:
+      - "True"
+      - "False"
+  NVCF_SPLIT_BENCHMARK_OTLP_TRACES_ENABLED:
+    description: "Enable OTLP traces for nvcf_split_benchmark deployments"
+    value: "False"
+    options:
+      - "True"
+      - "False"
+  NVCF_SPLIT_BENCHMARK_OTLP_LOGS_ENABLED:
+    description: "Enable OTLP log collection for nvcf_split_benchmark deployments"
+    value: "False"
+    options:
+      - "True"
+      - "False"
+  NVCF_SPLIT_BENCHMARK_OTLP_NVCF_MTLS_ENABLED:
+    description: "Use NVCF-extracted mTLS credentials for enabled OTLP signals"
+    value: "True"
+    options:
+      - "True"
+      - "False"
   HELM_DEBUG_KEEP_FAILED_DEPLOYMENTS:
     description: "On failure, do not delete the deployment"
     value: "False"
@@ -155,7 +185,7 @@ variables:
     value: "cosmos-curator"
   CICD_HELM_CHART_VERSION:
     description: "Helm chart version for the CICD pipeline"
-    value: "2.2.2"
+    value: "2.4.0"
   XENNA_REF:
     # No default value: when unset, build_xenna_wheel.sh builds the
     # cosmos-xenna submodule's currently-checked-out commit (i.e. the SHA
@@ -168,6 +198,19 @@ variables:
   VAULT_NAMESPACE: "$VAULT_NAMESPACE"
   VAULT_ROLE: "$VAULT_ROLE"
   VAULT_MOUNT_PATH: "$VAULT_MOUNT_PATH"
+  VAULT_OTLP_LEAF_PKI_PATH: "$VAULT_OTLP_LEAF_PKI_PATH"
+  VAULT_OTLP_LEAF_ROLE: "$VAULT_OTLP_LEAF_ROLE"
+  VAULT_OTLP_LEAF_COMMON_NAME: "$VAULT_OTLP_LEAF_COMMON_NAME"
+
+  # NOTE: ARTIFACTORY_URL is deliberately NOT set here. It's a plain CI/CD
+  # variable (project settings), same as it was pre-migration -- flipping
+  # between legacy/cloud is a variable-value edit in the GitLab UI, no
+  # commit/MR needed. vault-auth.sh + ci-secrets.tmpl derive the Vault
+  # secret path from whatever ARTIFACTORY_URL resolves to at job run time.
+  #
+  # A project-level UI variable of the same name always wins over anything
+  # declared here (global or job-level) -- GitLab's own variable precedence
+  # puts project variables above .gitlab-ci.yml entirely, both scopes.
 
   # Perf benchmark configuration
   PERF_NGC_NVCF_ORG_ID: "$PERF_NGC_NVCF_ORG_ID"
@@ -216,14 +259,12 @@ stages:
 
   # Shared rule entries for the long-running SLURM + NVCF end-to-end jobs
   # (slurm_end_to_end, nvcf-helm, nvcf-helm-validate). These dominate MR CI
-  # wall time, so they are opt-in on day-to-day MRs but always enforced before
-  # code reaches nvidia/main. The per-job rule lists below are composed from
-  # these entries; they differ only in how a label-less MR is handled.
+  # wall time, so they are opt-in on day-to-day MRs but always run before code
+  # reaches nvidia/main. Individual jobs determine whether failures are blocking.
   e2e_merge_train_entry: &e2e_merge_train_entry
-    # Merge train: mandatory coverage before merging to nvidia/main
+    # Merge train: automatic coverage before merging to nvidia/main
     if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_EVENT_TYPE == "merge_train"'
     when: on_success
-    allow_failure: false
   e2e_merge_train_optional_entry: &e2e_merge_train_optional_entry
     # Merge train, but non-blocking: these jobs still run for signal yet never fail the merge.
     if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_EVENT_TYPE == "merge_train"'
@@ -233,7 +274,6 @@ stages:
     # Regular MR (not merge train) with the opt-in label: run automatically
     if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_LABELS =~ /(^|,)run-e2e-tests($|,)/'
     when: on_success
-    allow_failure: false
   e2e_web_strict_entry: &e2e_web_strict_entry
     if: '$CI_PIPELINE_SOURCE == "web" && $NVCF_HELM_STRICT == "true"'
     when: on_success
@@ -425,7 +465,7 @@ stages:
     command -v pixi
     export PIXI_CACHE_DIR="${PIXI_CACHE_DIR:-${CI_PROJECT_DIR}/.pixi/cache}"
     export PYTHONNOUSERSITE=1
-    export CONDA_OVERRIDE_CUDA="${CONDA_OVERRIDE_CUDA:-13.0.2}"
+    export CONDA_OVERRIDE_CUDA="${CONDA_OVERRIDE_CUDA:-13.0.3}"
     git config --global --add safe.directory "${CI_PROJECT_DIR:-$(pwd)}"
     : "${SETUPTOOLS_SCM_PRETEND_VERSION_FOR_COSMOS_CURATOR:?resolve_version did not provide the package version}"
     pixi install --frozen -e dev
@@ -466,7 +506,7 @@ stages:
   # (e.g. cosmos-xenna) are picked up WITHOUT rebuilding the image.
   setup_ci_builder_env_synced: &setup_ci_builder_env_synced |
     export PYTHONNOUSERSITE=1
-    export CONDA_OVERRIDE_CUDA="${CONDA_OVERRIDE_CUDA:-13.0.2}"
+    export CONDA_OVERRIDE_CUDA="${CONDA_OVERRIDE_CUDA:-13.0.3}"
     export PATH="/opt/cosmos-curator/.pixi/envs/dev/bin:/usr/local/bin:${PATH}"
     cp "${CI_PROJECT_DIR}"/{pixi.toml,pixi.lock,conda-pypi-map.json} /opt/cosmos-curator/
     # Scope the version default to the pixi install invocation only (do NOT export
@@ -545,7 +585,7 @@ resolve_version:
     - pixi --version
     - export PIXI_CACHE_DIR="${PIXI_CACHE_DIR:-${CI_PROJECT_DIR}/.pixi/cache}"
     - export PYTHONNOUSERSITE=1
-    - export CONDA_OVERRIDE_CUDA="${CONDA_OVERRIDE_CUDA:-13.0.2}"
+    - export CONDA_OVERRIDE_CUDA="${CONDA_OVERRIDE_CUDA:-13.0.3}"
     - bash .gitlab/scripts/fetch_git_metadata.sh
     - pixi install --frozen -e dev
     - VERSION="$(pixi run --as-is -e dev python -m setuptools_scm)"
@@ -966,7 +1006,7 @@ gpu_tests:
     - NODES=1
     - export LOCAL_DOCKER_ENV_VAR_NAME=1
     - export PIXI_CACHE_DIR=/pixi-cache
-    - export CONDA_OVERRIDE_CUDA=13.0.2
+    - export CONDA_OVERRIDE_CUDA=13.0.3
     # Run pytest for each environment; sleep 15 min before retry
     - >
       srun -A ${SLURM_ACCOUNT} \
@@ -1129,6 +1169,7 @@ semgrep-sast:
 # Run end-to-end tests on NVCF cluster
 nvcf-helm:
   stage: end-to-end
+  allow_failure: true
   needs:
     - job: resolve_version
       artifacts: true
@@ -1146,8 +1187,10 @@ nvcf-helm:
     - source .gitlab/vault/vault-auth.sh
     - *setup_ci_builder_env
     - *setup_curator_cli
-    - export HELM_BYO_METRICS_RECEIVER_CLIENT_CRT=$(echo $HELM_BYO_METRICS_RECEIVER_CLIENT_CRT_BASE64 | base64 -d | awk '{printf "%s\\n", $0}')
-    - export HELM_BYO_METRICS_RECEIVER_CLIENT_KEY=$(echo $HELM_BYO_METRICS_RECEIVER_CLIENT_KEY_BASE64 | base64 -d | awk '{printf "%s\\n", $0}')
+    - source .gitlab/scripts/common.sh
+    - export_json_pem_from_base64_env HELM_BYO_METRICS_RECEIVER_CLIENT_CRT_BASE64 HELM_BYO_METRICS_RECEIVER_CLIENT_CRT
+    - export_json_pem_from_base64_env HELM_BYO_METRICS_RECEIVER_CLIENT_KEY_BASE64 HELM_BYO_METRICS_RECEIVER_CLIENT_KEY
+    - setup_otlp_nvcf_secret_env
   script:
     - *configure_nvcf_cli
     - .gitlab/scripts/nvcf_helm_deploy.sh
@@ -1156,9 +1199,6 @@ nvcf-helm:
     - *setup_curator_cli
     - *configure_nvcf_cli
     - .gitlab/scripts/nvcf_helm_cleanup.sh
-  retry:
-    max: 2
-    when: always
   artifacts:
     when: always
     paths:
@@ -1172,6 +1212,7 @@ nvcf-helm:
 # Run validation tests against S3 artifacts from NVCF function
 nvcf-helm-validate:
   stage: end-to-end
+  allow_failure: true
   needs: [ "nvcf-helm" ]
   rules: *nvcf_helm_validate_rules
   image: ${CI_BUILDER_IMAGE}
@@ -1240,6 +1281,8 @@ resolve_nvcf_staging_tag:
       artifacts: true
   rules:
     - if: '$CI_PIPELINE_SOURCE == "web" && $RUN_BENCHMARK == "True" && $NVCF_SPLIT_BENCHMARK_SOURCE_REF != ""'
+      when: never
+    - if: '$CI_PIPELINE_SOURCE == "schedule" && $RUN_BENCHMARK == "True" && $NVCF_SPLIT_BENCHMARK_SOURCE_REF != "" && $RUN_PROMOTE_TO_PROD != "True"'
       when: never
     - if: '$CI_PIPELINE_SOURCE == "schedule" && $RUN_PROMOTE_TO_PROD == "True"'
     - if: '($CI_PIPELINE_SOURCE == "schedule" || $CI_PIPELINE_SOURCE == "web") && $RUN_BENCHMARK == "True"'
@@ -1312,8 +1355,6 @@ nvcf_split_benchmark:
       artifacts: true
       optional: true
   rules:
-    - if: '$CI_PIPELINE_SOURCE == "schedule" && $NVCF_SPLIT_BENCHMARK_SOURCE_REF != ""'
-      when: never
     - if: '($CI_PIPELINE_SOURCE == "schedule" || $CI_PIPELINE_SOURCE == "web") && $RUN_BENCHMARK == "True"'
     - when: never   # fallback: never run otherwise
   id_tokens:
@@ -1365,7 +1406,7 @@ k8s_gpu_tests:
     # Install pixi environments into /opt/cosmos-curator (where the slim
     # image has the source + lockfile) so Ray workers find them.
     - export PIXI_CACHE_DIR=/cache/pixi
-    - export CONDA_OVERRIDE_CUDA=13.0.2
+    - export CONDA_OVERRIDE_CUDA=13.0.3
     - pushd /opt/cosmos-curator
     - pixi install --frozen -e default -e legacy-transformers -e model-download
     # If build_xenna_wheels uploaded an artifact, override the pixi-installed

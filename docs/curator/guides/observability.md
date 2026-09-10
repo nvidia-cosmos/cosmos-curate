@@ -15,6 +15,7 @@
     - [Elasticsearch / log-shipper recommendations](#elasticsearch--log-shipper-recommendations)
     - [Worker log forwarding (`log_to_driver`)](#worker-log-forwarding-log_to_driver)
     - [Ray backend (C++) logs](#ray-backend-c-logs)
+    - [OTLP log sidecar](#otlp-log-sidecar)
   - [Performance Metrics](#performance-metrics)
   - [Grafana Dashboard](#grafana-dashboard)
   - [Deployment](#deployment)
@@ -348,6 +349,9 @@ carry Ray's job/worker context:
 | `pid` | `os.getpid()` | Process id |
 | `run_id` | `CURATOR_RUN_ID` env | Run/request id (NVCF request id on NVCF) |
 | `seq` | per-process counter | Gap-free monotonic tiebreaker |
+| `trace_id` | active OTel span | 32-char lowercase-hex id of the enclosing trace. Only when tracing is enabled **and** a span is active; otherwise the key is absent |
+| `span_id` | active OTel span | 16-char lowercase-hex id of the span that emitted the line (same conditions as `trace_id`) |
+| `trace_sampled` | active OTel span | Boolean: whether the trace was sampled, i.e. whether the backend actually retained it |
 | `job_id`, `worker_id`, `node_id`, `task_*` | Ray | Ray context (Ray lines only) |
 
 All identity/order fields (`pod`, `replica`, `pid`, `run_id`, `seq`) are top-level in
@@ -355,6 +359,25 @@ every source, and Ray's `JSONFormatter` surfaces them alongside its own context.
 logger `name` is requested from Ray via `additional_log_standard_attrs=["name"]` so
 Ray lines match the fallback/launcher schema (older Ray without that parameter simply
 omits `name`).
+
+### Span correlation fields
+
+Running with `--profile-tracing` on top of `PYTHON_LOG_FORMAT=json` stamps `trace_id`,
+`span_id`, and `trace_sampled` onto every record created while a span is active — no
+extra toggle. Records emitted outside a span carry none of the three keys, so a log UI
+never renders a link to a trace that does not exist.
+
+Both halves are settable purely from the environment, so correlation can be turned on
+for a whole deployment rather than per invocation: `PYTHON_LOG_FORMAT=json` plus
+`COSMOS_CURATOR_PROFILE_TRACING=1`, both forwarded into the container by the local and
+Slurm launchers. Set `COSMOS_CURATOR_PROFILE_TRACING=0` for a single run to opt out of a
+cluster-wide default.
+
+Turning `trace_id` into a clickable link to the trace is a function of your log backend
+and is not configured from this repo — the mechanism differs enough between stacks that
+there is no portable recipe. See the
+**[Distributed Tracing reference](../reference/distributed-tracing.md)** for how to
+enable tracing and export spans to a collector.
 
 ### Elasticsearch / log-shipper recommendations
 
@@ -391,6 +414,33 @@ backend logs. To emit backend logs as JSON, set `logging.rayBackendJson: true` i
 chart (writes `RAY_BACKEND_LOG_JSON=1` to the curator ConfigMap) or export
 `RAY_BACKEND_LOG_JSON=1` yourself. Ray reads this env var natively; the curator/xenna
 code never sets or overrides it.
+
+### OTLP log sidecar
+
+On Helm/NVCF deployments, the chart can run an OpenTelemetry Collector sidecar on
+each StatefulSet pod to export Ray log files to a generic OTLP logs endpoint while
+leaving stdout/stderr logs unchanged for the platform log indexer:
+
+```yaml
+logging:
+  format: json
+  rayBackendJson: true
+  otlp:
+    enabled: true
+otlp:
+  endpoint: "https://otlp.example.com"
+  extractNVCFSecrets: true
+```
+
+The sidecar tails `/tmp/ray/session_*/logs/*.log`, `*.out`, and `*.err`, parses
+JSON-looking lines, and preserves non-JSON lines as text. By default it also copies
+the chart's metrics external labels into OTLP log resource attributes, so NVCF-provided
+metadata such as `function_id`, `version_id`, `gpu`, and `org` is available on log
+records.
+
+See the [Helm chart README](../../../charts/cosmos-curator/README.md#logging)
+and [NVCF guide](../../client/nvcf-guide.md#create-a-function) for the full mTLS
+secret configuration.
 
 ## Performance Metrics
 
@@ -479,6 +529,21 @@ the [Helm chart](../../../charts/cosmos-curator/README.md) provided includes a [
 which can scrape the metrics endpoint and [remote-write](https://prometheus.io/docs/specs/prw/remote_write_spec/)
 to a [Thanos-like](https://thanos.io/) endpoint.
 
+The Helm chart has three independent metrics export paths:
+
+- `metrics.remoteWrite.*`: the chart-managed collector scrapes curator/Ray
+  Prometheus metrics and exports them to Prometheus remote write.
+- `metrics.otlp.*`: the chart-managed collector scrapes the same Prometheus
+  metrics and exports them to OTLP metrics.
+- `metrics.otlpPush.*`: the curator container pushes in-pipeline metrics
+  directly to OTLP and does not use the chart-managed collector.
+
+`metrics.remoteWrite.enabled` and `metrics.otlp.enabled` can be enabled at the
+same time. In that mode, the chart-managed collector scrapes the Ray Prometheus
+endpoint and fans the same metric stream out to both exporters. Remote write uses
+`metrics.remoteWrite.certPath` / `keyPath`; collector OTLP uses the shared
+`otlp.tls.*` certificate paths.
+
 The relevant configurable entries in the chart can be found in [values.yaml](../../../charts/cosmos-curator/values.yaml):
 
 ```yaml
@@ -488,6 +553,16 @@ metrics:
     endpoint: ...
     certPath: ...
     keyPath: ...
+```
+
+Direct in-container OTLP metrics push uses the shared top-level OTLP transport:
+
+```yaml
+metrics:
+  otlpPush:
+    enabled: true
+otlp:
+  endpoint: "https://otlp.example.com"
 ```
 
 Do note that current version of the Helm chart will need some tweaks to work on vanilla Kubernetes clusters.

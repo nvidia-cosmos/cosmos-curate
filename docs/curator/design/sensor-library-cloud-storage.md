@@ -41,15 +41,15 @@ the validation gap is empirical, not architectural.
 
 ## Validation Harness
 
-`cosmos_curator/core/sensors/scripts/cloud_io_benchmark.py` exposes two
+`benchmarks/sensors/cloud_io_benchmark.py` exposes two
 subcommands:
 
 ```bash
-python -m cosmos_curator.core.sensors.scripts.cloud_io_benchmark index \
+python -m benchmarks.sensors.cloud_io_benchmark index \
   --source <local | s3:// | az://> \
   [--reference-source <local-path>] [--skip-full-demux]
 
-python -m cosmos_curator.core.sensors.scripts.cloud_io_benchmark sample \
+python -m benchmarks.sensors.cloud_io_benchmark sample \
   --source <local | s3:// | az://> \
   --target-fps <f> --duration-s <s> \
   [--reference-source <local-path>]
@@ -125,7 +125,7 @@ Not measured. The obvious "truncate to N bytes" approach corrupts the
 container before the header-index branch is reached. A reliable fixture
 (fragmented MP4 with `frag_keyframe+empty_moov`, or MKV without cues) is
 captured as a follow-up. Behavior in code is well-defined: `FROM_HEADER`
-raises `_HeaderIndexUnavailableError` and `make_index_and_metadata`
+raises `HeaderIndexUnavailableError` and `make_index_and_metadata`
 silently falls back to `FULL_DEMUX` unless `allow_header_fallback=False`.
 
 ## Limitations
@@ -253,16 +253,16 @@ S3_PROF=<prof>
 LOCAL=/tmp/cloud-fixtures
 
 for fixture in faststart nonfaststart; do
-  python -m cosmos_curator.core.sensors.scripts.cloud_io_benchmark index \
+  python -m benchmarks.sensors.cloud_io_benchmark index \
       --source $LOCAL/$fixture.mp4
-  python -m cosmos_curator.core.sensors.scripts.cloud_io_benchmark index \
+  python -m benchmarks.sensors.cloud_io_benchmark index \
       --source $S3_BASE/$fixture.mp4 --s3-profile-name $S3_PROF \
       --reference-source $LOCAL/$fixture.mp4
 done
 
-python -m cosmos_curator.core.sensors.scripts.cloud_io_benchmark sample \
+python -m benchmarks.sensors.cloud_io_benchmark sample \
     --source $LOCAL/faststart.mp4 --target-fps 1 --duration-s 10
-python -m cosmos_curator.core.sensors.scripts.cloud_io_benchmark sample \
+python -m benchmarks.sensors.cloud_io_benchmark sample \
     --source $S3_BASE/faststart.mp4 --s3-profile-name $S3_PROF \
     --target-fps 1 --duration-s 10 \
     --reference-source $LOCAL/faststart.mp4

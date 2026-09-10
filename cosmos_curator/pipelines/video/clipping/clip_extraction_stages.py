@@ -415,8 +415,12 @@ class ClipTranscodingStage(CuratorStage):
 
         # run ffmpeg command
         try:
+            # stdin must be detached. FFmpeg polls stdin for interactive keypresses when it is a
+            # TTY, and Ray 2.57 puts each worker in its own process group, which is a background
+            # group with respect to the launcher's TTY. The read then raises SIGTTIN and stops
+            # FFmpeg outright -- no error, no CPU, and no timeout on this call to break the wait.
             output = subprocess.check_output(  # noqa: S603
-                command, cwd=working_dir, stderr=subprocess.STDOUT
+                command, cwd=working_dir, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL
             )
             if output and self._ffmpeg_verbose:
                 logger.warning(f"ffmpeg output: {output.decode('utf-8')}")
@@ -547,7 +551,7 @@ def _get_videos_durations(videos: list[Video]) -> list[float]:
 
     """
 
-    # Note: this is technically not correct, see CVC-690 for more details.
+    # Note: this is technically not correct.
     # The correct duration is the difference between the last and first
     # timestamps. However, this decision was made early in development, and
     # correcting the behavior may be more complicated than expected.

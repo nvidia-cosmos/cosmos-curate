@@ -84,7 +84,7 @@ def _install_apex_shim() -> None:
     ``apex.normalization.FusedRMSNorm`` / ``FusedLayerNorm``.  The SeedVR
     README provides pre-built apex wheels, but only for Python 3.9/3.10 +
     torch 2.4.0 + CUDA 12.1/12.4 — incompatible with our environment
-    (Python 3.12 + torch 2.10 + CUDA 13.0).  Building apex from source
+    (Python 3.13 + torch 2.11 + CUDA 13.0).  Building apex from source
     requires CUDA compilation that is fragile and slow.  Since modern
     PyTorch already ships functionally equivalent fused kernels
     (``torch.nn.RMSNorm``, ``torch.nn.LayerNorm``), we inject a shim

@@ -18,6 +18,7 @@ import shlex
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
 from _pytest.monkeypatch import MonkeyPatch
 from typer.testing import CliRunner
 
@@ -182,7 +183,7 @@ def test_slurm_shell_command_uses_srun_and_live_source_mounts(  # noqa: PLR0915
     assert subprocess_env["UV_CACHE_DIR"] == "/cache/rattler/cache/uv-cache"
     assert subprocess_env["TORCH_HOME"] == "/cache/torch"
     assert subprocess_env["TRITON_HOME"] == "/cache/triton"
-    assert subprocess_env["CONDA_OVERRIDE_CUDA"] == "13.0.2"
+    assert subprocess_env["CONDA_OVERRIDE_CUDA"] == "13.0.3"
     assert subprocess_env["EXTRA"] == "value"
     assert subprocess_env["HOST_ONLY"] == "host-value"
     assert "PIXI_PROJECT_MANIFEST" not in subprocess_env
@@ -883,6 +884,8 @@ def test_import_image_uses_enroot_defaults(tmp_path: Path, monkeypatch: MonkeyPa
     assert "--account=env_account" in srun_cmd
     assert "--partition=cpu" in srun_cmd
     assert "--job-name=cosmos_curator_import_image" in srun_cmd
+    assert "--cpus-per-task=16" in srun_cmd
+    assert "--mem=64G" in srun_cmd
     assert str(output_dir / "cosmos-curator+1.0.0.sqsh") in srun_cmd
     assert "docker://nvcr.io/nvidia/cosmos-curator:1.0.0" in srun_cmd
     assert any('mkdir -p "$ENROOT_CACHE_PATH" "$ENROOT_DATA_PATH"' in arg for arg in srun_cmd)
@@ -911,6 +914,10 @@ def test_import_image_accepts_custom_output_and_no_overwrite(tmp_path: Path) -> 
                 "--output-filename",
                 "cosmos-curator_hello-world.sqsh",
                 "--no-overwrite",
+                "-c",
+                "8",
+                "--mem",
+                "32G",
             ],
         )
 
@@ -918,7 +925,30 @@ def test_import_image_accepts_custom_output_and_no_overwrite(tmp_path: Path) -> 
     srun_cmd = mock_call.call_args.args[0]
     assert "Imported dockerd://cosmos-curator:hello-world" in result.output
     assert str(output_dir / "cosmos-curator_hello-world.sqsh") in result.output
+    assert "--cpus-per-task=8" in srun_cmd
+    assert "--mem=32G" in srun_cmd
     assert not any('rm -f -- "$1"' in arg for arg in srun_cmd)
+
+
+@pytest.mark.parametrize(
+    ("options", "error_message"),
+    [
+        (["--cpus-per-task", "0"], "--cpus-per-task must be at least 1"),
+        (["--mem", "0"], "--mem must be a positive Slurm size"),
+        (["--mem", "64 GB"], "--mem must be a positive Slurm size"),
+    ],
+)
+def test_import_image_rejects_invalid_resources(options: list[str], error_message: str) -> None:
+    """Reject resource requests that Slurm cannot interpret safely."""
+    with patch(f"{SLURM_MODULE_NAME}.subprocess.call") as mock_call:
+        result = runner.invoke(
+            cosmos_curator,
+            ["slurm", "import-image", "cosmos-curator:1.0.0", *options],
+        )
+
+    assert result.exit_code != 0
+    assert error_message in result.output
+    mock_call.assert_not_called()
 
 
 def test_import_image_remote_login_expands_default_output_dir_with_cluster_username() -> None:

@@ -56,6 +56,12 @@ def _make_caption_quality_stats() -> dict[str, Any]:
             "error": 1,
             "skipped": 0,
         },
+        "caption_quality_flags_evaluated_count": 3,
+        "caption_quality_flag_counts": {
+            "flag_length_outlier": 1,
+            "flag_repetition": 2,
+            "flag_near_duplicate": 0,
+        },
         "empty_caption_count": 1,
         "sentinel_caption_count": 2,
     }
@@ -112,6 +118,10 @@ def test_make_caption_quality_metrics_flattens_valid_stats() -> None:
         "caption_status_blocked": 1,
         "caption_status_error": 1,
         "caption_status_skipped": 0,
+        "caption_quality_flags_evaluated_count": 3,
+        "flag_length_outlier": 1,
+        "flag_repetition": 2,
+        "flag_near_duplicate": 0,
         "empty_caption_count": 1,
         "sentinel_caption_count": 2,
     }
@@ -181,6 +191,9 @@ def test_make_caption_quality_metrics_rejects_empty_sentinel_over_ok_status_coun
         ("empty_caption_count", True),
         ("empty_caption_count", 1.5),
         ("sentinel_caption_count", -1),
+        ("caption_quality_flags_evaluated_count", True),
+        ("caption_quality_flags_evaluated_count", "3"),
+        ("caption_quality_flags_evaluated_count", -1),
     ],
 )
 def test_make_caption_quality_metrics_rejects_bad_top_level_counters(counter_key: str, counter_value: object) -> None:
@@ -197,6 +210,55 @@ def test_make_caption_quality_metrics_rejects_bad_status_counter(status_count: o
     stats["caption_status_counts"]["success"] = status_count
 
     assert make_caption_quality_metrics(stats) == {"caption_quality_stats_present": 0}
+
+
+@pytest.mark.parametrize(
+    "flag_counts",
+    [
+        None,
+        [],
+        {"flag_length_outlier": 1, "flag_repetition": 2},
+        {
+            "flag_length_outlier": 1,
+            "flag_repetition": 2,
+            "flag_near_duplicate": 0,
+            "unknown": 0,
+        },
+    ],
+)
+def test_make_caption_quality_metrics_rejects_bad_flag_map(flag_counts: object) -> None:
+    """Reject missing or malformed caption quality flag counter maps."""
+    stats = {**_make_caption_quality_stats(), "caption_quality_flag_counts": flag_counts}
+
+    assert make_caption_quality_metrics(stats) == {"caption_quality_stats_present": 0}
+
+
+@pytest.mark.parametrize("flag_count", [True, "1", -1, 4])
+def test_make_caption_quality_metrics_rejects_bad_flag_counter(flag_count: object) -> None:
+    """Reject invalid flag numerators and values above the evaluated denominator."""
+    stats = _make_caption_quality_stats()
+    stats["caption_quality_flag_counts"]["flag_length_outlier"] = flag_count
+
+    assert make_caption_quality_metrics(stats) == {"caption_quality_stats_present": 0}
+
+
+def test_make_caption_quality_metrics_accepts_disabled_zero_flag_counts() -> None:
+    """A disabled producer should remain valid with a zero denominator and numerators."""
+    stats = _make_caption_quality_stats()
+    stats["caption_quality_flags_evaluated_count"] = 0
+    stats["caption_quality_flag_counts"] = {
+        "flag_length_outlier": 0,
+        "flag_repetition": 0,
+        "flag_near_duplicate": 0,
+    }
+
+    metrics = make_caption_quality_metrics(stats)
+
+    assert metrics["caption_quality_stats_present"] == 1
+    assert metrics["caption_quality_flags_evaluated_count"] == 0
+    assert metrics["flag_length_outlier"] == 0
+    assert metrics["flag_repetition"] == 0
+    assert metrics["flag_near_duplicate"] == 0
 
 
 @pytest.mark.parametrize(

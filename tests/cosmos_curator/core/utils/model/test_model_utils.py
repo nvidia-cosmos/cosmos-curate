@@ -48,10 +48,12 @@ def mock_rclone_copy(monkeypatch: pytest.MonkeyPatch) -> None:
         capture_output: bool,
         text: bool,
         check: bool,
+        stdin: int,
     ) -> SimpleNamespace:
         assert capture_output is True
         assert text is True
         assert check is True
+        assert stdin == subprocess.DEVNULL
         assert cmd[0:3] == ["rclone", "copy", "--progress"]
 
         ignore_existing = "--ignore-existing" in cmd
@@ -548,8 +550,8 @@ def test_copy_model_weights_raises_when_rclone_missing(monkeypatch: pytest.Monke
     dest = tmp_path / "dest"
     source.mkdir()
 
-    def fake_run(cmd: list[str], *, capture_output: bool, text: bool, check: bool) -> None:
-        del cmd, capture_output, text, check
+    def fake_run(cmd: list[str], *, capture_output: bool, text: bool, check: bool, stdin: int) -> None:
+        del cmd, capture_output, text, check, stdin
         raise FileNotFoundError
 
     monkeypatch.setattr(model_utils.subprocess, "run", fake_run)
@@ -563,8 +565,8 @@ def test_copy_model_weights_raises_when_rclone_fails(monkeypatch: pytest.MonkeyP
     dest = tmp_path / "dest"
     source.mkdir()
 
-    def fake_run(cmd: list[str], *, capture_output: bool, text: bool, check: bool) -> None:
-        del capture_output, text, check
+    def fake_run(cmd: list[str], *, capture_output: bool, text: bool, check: bool, stdin: int) -> None:
+        del capture_output, text, check, stdin
         raise subprocess.CalledProcessError(returncode=3, cmd=cmd, stderr="copy failed")
 
     monkeypatch.setattr(model_utils.subprocess, "run", fake_run)

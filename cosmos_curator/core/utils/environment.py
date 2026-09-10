@@ -24,6 +24,14 @@ import pathlib
 LOCAL_DOCKER_ENV_VAR_NAME = "COSMOS_CURATOR_LOCAL_DOCKER_JOB"
 SLURM_RAY_ENV_VAR_NAME = "COSMOS_CURATOR_RAY_SLURM_JOB"
 
+# Curator-owned Ray clusters advertise one logical token for each concurrent
+# source-level IO operation the node should accept. Tasks request one token;
+# because Ray resources are node-local, capacity follows elastic workers
+# without taking a one-time snapshot of the cluster size.
+CURATOR_IO_RESOURCE_NAME = "curator_io"
+CURATOR_IO_SLOTS_PER_NODE_ENV_VAR = "COSMOS_CURATOR_RAY_IO_SLOTS_PER_NODE"
+DEFAULT_CURATOR_IO_SLOTS_PER_NODE = 16
+
 # Where pipeline code is located.
 CONTAINER_PATHS_CODE_DIR = pathlib.Path("/opt/cosmos-curator")
 
@@ -51,7 +59,11 @@ MODEL_WEIGHTS_PREFIX = "s3://your_bucket_name/model_weights/"
 
 # S3 & Azure credentials
 S3_PROFILE_PATH = pathlib.Path(os.getenv("COSMOS_S3_PROFILE_PATH", "/dev/shm/s3_creds_file"))  # noqa: S108
-AZURE_PROFILE_PATH = pathlib.Path(os.getenv("COSMOS_AZURE_PROFILE_PATH", "/dev/shm/azure_creds_file"))  # noqa: S108
+# Named separately from the resolved path so that a caller re-reading
+# COSMOS_AZURE_PROFILE_PATH at runtime has a default to fall back to that is not itself
+# an import-time reading of that variable.
+DEFAULT_AZURE_PROFILE_PATH = pathlib.Path("/dev/shm/azure_creds_file")  # noqa: S108
+AZURE_PROFILE_PATH = pathlib.Path(os.getenv("COSMOS_AZURE_PROFILE_PATH", str(DEFAULT_AZURE_PROFILE_PATH)))
 
 # Local S3 credentials file path.
 LOCAL_AWS_CREDENTIALS_FILE = pathlib.Path("~/.aws/credentials").expanduser()

@@ -184,7 +184,7 @@ def test_order_video_paths(
         ),
     ],
 )
-def test_multi_cam_session_to_split_task(  # noqa: PLR0913
+def test_multi_cam_session_to_split_task(
     tmp_path: Path,
     session_name: str,
     create_files: list[str] | None,

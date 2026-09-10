@@ -1,0 +1,42 @@
+schema_version: 1
+kind: robot-action-split
+input:
+  uris:
+    # S3 or local path to the dataset root (dir containing data/, meta/, videos/).
+    # Inside the container /config/ maps to the configured workspace_path on the cluster.
+    - s3://your-bucket/path/to/lerobot_dataset/
+  # source_dataset must be registered in cosmos_curator/next/media/action_binary.py.
+  # Keys are the exact GCS/S3 folder names of each dataset; they map to the
+  # ActionBinarySpec that defines the action field layout for .bin encoding.
+  # If your dataset is not listed, add "<your-folder-name>": "<spec>" to
+  # ACTION_BINARY_SPEC_BY_DATASET before running.
+  source_dataset: feb_08_500hr_lerobot_no_bframes
+  # Caps the number of source chunk MP4s discovered, NOT the number of output
+  # clips — each chunk file can contain many spans (subtask segments). On one
+  # production mecka dataset, limit: 1 alone produced 805 clips, so a small
+  # limit here can still yield a much larger clip count than expected.
+  # Remove entirely for a full run.
+  limit: 10
+split:
+  min_duration_s: 4.0
+  max_duration_s: 20.0
+  skip_labels:
+    - no action
+    - no actions
+  skip_label_prefixes:
+    - hold
+    - adjust
+  skip_label_substrings:
+    - idle
+  max_keep_per_description: 3
+  dedup_prefer_min_s: 5.0
+output:
+  media_root: s3://your-bucket/output/lerobot-clips/
+  lance_uri: s3://your-bucket/output/lerobot-clips/lance/clips.lance
+  action_format: bin
+  video_bitrate: 2M
+execution:
+  discovery_workers: 4
+  max_segments_per_batch: 50
+  cut_attempts: 3
+  storage_profile: default

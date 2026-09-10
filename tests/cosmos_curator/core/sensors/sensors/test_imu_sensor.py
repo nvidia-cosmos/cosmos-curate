@@ -21,6 +21,7 @@ import pytest
 from google.protobuf import descriptor_pb2
 from google.protobuf.message import Message
 
+from cosmos_curator.core.sensors.sampling.policy import NearestTimestampPolicy, NoSamplingPolicy
 from cosmos_curator.core.sensors.sensors.imu_sensor import DEFAULT_TOPIC, ImuSensor
 from tests.cosmos_curator.core.sensors.test_utils import (
     McapSample,
@@ -198,7 +199,7 @@ def _vendor_imu_payload(*, turnrate: tuple[float, ...] = (0.1, 0.2, 0.3)) -> byt
     return message.SerializeToString()
 
 
-def _customer_imu_payload(  # noqa: PLR0913
+def _customer_imu_payload(
     *,
     sensor_timestamp_ns: int,
     host_timestamp_ns: int,
@@ -239,7 +240,7 @@ def _sample(sensor_timestamp_ns: int, sequence_counter: int) -> McapSample:
     )
 
 
-def _write_customer_imu_mcap(  # noqa: PLR0913
+def _write_customer_imu_mcap(
     path: Path,
     samples: list[McapSample],
     *,
@@ -307,7 +308,7 @@ def test_imu_sensor_reads_reference_schema_with_checked_in_mapping(tmp_path: Pat
         ],
     )
 
-    batch = next(_reference_imu_sensor(path).sample(one_window_spec(100, 300)))
+    batch = next(_reference_imu_sensor(path).sample(one_window_spec(100, 300), policy=NoSamplingPolicy()))
 
     np.testing.assert_array_equal(batch.align_timestamps_ns, np.array([100, 200], dtype=np.int64))
     np.testing.assert_array_equal(batch.sensor_timestamps_ns, np.array([100, 200], dtype=np.int64))
@@ -324,6 +325,16 @@ def test_imu_sensor_reads_reference_schema_with_checked_in_mapping(tmp_path: Pat
     np.testing.assert_array_equal(batch.sequence_counter, np.array([10, 11], dtype=np.uint64))
     np.testing.assert_allclose(batch.temperature_c, np.array([47.0, 48.0]))
     np.testing.assert_array_equal(batch.temperature_valid, np.array([True, True], dtype=np.bool_))
+
+
+def test_imu_sensor_rejects_nearest_timestamp_policy(tmp_path: Path) -> None:
+    """Raw IMU sampling only accepts the explicit no-op sampling policy."""
+    path = tmp_path / "reference_imu.mcap"
+    _write_reference_imu_mcap(path, [McapSample(log_time_ns=100, data=_reference_imu_payload(100))])
+    sensor = _reference_imu_sensor(path)
+
+    with pytest.raises(TypeError, match="ImuSensor requires NoSamplingPolicy"):
+        next(sensor.sample(one_window_spec(100, 200), policy=NearestTimestampPolicy()))
 
 
 def test_imu_reference_mapping_preserves_invalid_values_and_masks(tmp_path: Path) -> None:
@@ -347,7 +358,7 @@ def test_imu_reference_mapping_preserves_invalid_values_and_masks(tmp_path: Path
         ],
     )
 
-    batch = next(_reference_imu_sensor(path).sample(one_window_spec(100, 200)))
+    batch = next(_reference_imu_sensor(path).sample(one_window_spec(100, 200), policy=NoSamplingPolicy()))
 
     assert np.isnan(batch.angular_velocity_rad_s[0, 0])
     assert not batch.angular_velocity_valid[0, 0]
@@ -364,7 +375,7 @@ def test_imu_reference_mapping_empty_window_preserves_optional_arrays(tmp_path: 
     path = tmp_path / "reference_empty_window.mcap"
     _write_reference_imu_mcap(path, [McapSample(log_time_ns=100, data=_reference_imu_payload(100))])
 
-    batch = next(_reference_imu_sensor(path).sample(one_window_spec(200, 300)))
+    batch = next(_reference_imu_sensor(path).sample(one_window_spec(200, 300), policy=NoSamplingPolicy()))
 
     assert batch.align_timestamps_ns.shape == (0,)
     assert batch.angular_velocity_rad_s.shape == (0, 3)
@@ -390,7 +401,7 @@ def test_imu_sensor_rejects_duplicate_mapped_align_timestamps(tmp_path: Path) ->
     )
 
     with pytest.raises(ValueError, match="strictly increasing align_timestamp_ns"):
-        next(sensor.sample(one_window_spec(100, 200)))
+        next(sensor.sample(one_window_spec(100, 200), policy=NoSamplingPolicy()))
 
 
 def test_imu_sensor_read_all_rejects_recording_wide_duplicate_alignment(tmp_path: Path) -> None:
@@ -439,7 +450,8 @@ def test_imu_sensor_custom_mapping_uses_sensor_owned_target(tmp_path: Path) -> N
     )
     batch = next(
         ImuSensor(path, schema_name=_CUSTOMER_IMU_SCHEMA_NAME, protobuf_mapping=mapping).sample(
-            one_window_spec(100, 200)
+            one_window_spec(100, 200),
+            policy=NoSamplingPolicy(),
         )
     )
     np.testing.assert_array_equal(batch.align_timestamps_ns, np.array([100], dtype=np.int64))
@@ -471,8 +483,8 @@ def test_imu_sensor_custom_mapping_preserves_optional_absence_for_all_windows(tm
     _write_customer_imu_mcap(path, [_sample(sensor_timestamp_ns=100, sequence_counter=1)])
     sensor = ImuSensor(path, schema_name=_CUSTOMER_IMU_SCHEMA_NAME, protobuf_mapping=_custom_mapping())
 
-    populated = next(sensor.sample(one_window_spec(100, 200)))
-    empty = next(sensor.sample(one_window_spec(200, 300)))
+    populated = next(sensor.sample(one_window_spec(100, 200), policy=NoSamplingPolicy()))
+    empty = next(sensor.sample(one_window_spec(200, 300), policy=NoSamplingPolicy()))
     for batch in (populated, empty):
         assert batch.host_timestamps_ns is None
         assert batch.sequence_counter is None
@@ -522,7 +534,7 @@ def test_imu_sensor_custom_mapping_reports_malformed_payload_context(tmp_path: P
     sensor = ImuSensor(path, schema_name=_CUSTOMER_IMU_SCHEMA_NAME, protobuf_mapping=_custom_mapping())
 
     with pytest.raises(ValueError, match=r"failed to parse IMU protobuf message on topic '/imu'"):
-        next(sensor.sample(one_window_spec(100, 200)))
+        next(sensor.sample(one_window_spec(100, 200), policy=NoSamplingPolicy()))
 
 
 def test_imu_sensor_custom_mapping_rejects_out_of_range_sequence(tmp_path: Path) -> None:
@@ -534,7 +546,8 @@ def test_imu_sensor_custom_mapping_rejects_out_of_range_sequence(tmp_path: Path)
     with pytest.raises(ValueError, match="sequence_counter values must be present and fit uint64"):
         next(
             ImuSensor(path, schema_name=_CUSTOMER_IMU_SCHEMA_NAME, protobuf_mapping=mapping).sample(
-                one_window_spec(100, 200)
+                one_window_spec(100, 200),
+                policy=NoSamplingPolicy(),
             )
         )
 
@@ -592,7 +605,7 @@ def test_imu_sensor_maps_nested_repeated_customer_schema(tmp_path: Path) -> None
     )
     sensor = ImuSensor(path, schema_name="vendor.ImuEnvelope", protobuf_mapping=_nested_repeated_mapping())
 
-    batch = next(sensor.sample(one_window_spec(100, 200)))
+    batch = next(sensor.sample(one_window_spec(100, 200), policy=NoSamplingPolicy()))
     np.testing.assert_array_equal(batch.sensor_timestamps_ns, np.array([2_000], dtype=np.int64))
     np.testing.assert_allclose(batch.angular_velocity_rad_s, np.array([[0.1, 0.2, 0.3]]))
     np.testing.assert_allclose(batch.linear_acceleration_m_s2, np.array([[1.0, 2.0, 9.8]]))
@@ -607,7 +620,7 @@ def test_imu_sensor_maps_nested_repeated_customer_schema(tmp_path: Path) -> None
     np.testing.assert_allclose(batch.temperature_c, np.array([47.5]))
     np.testing.assert_array_equal(batch.temperature_valid, np.array([True]))
 
-    empty = next(sensor.sample(one_window_spec(200, 300)))
+    empty = next(sensor.sample(one_window_spec(200, 300), policy=NoSamplingPolicy()))
     assert empty.angular_velocity_bias_rad_s is not None
     assert empty.angular_velocity_bias_rad_s.shape == (0, 3)
     assert empty.linear_acceleration_bias_m_s2 is not None
@@ -636,7 +649,9 @@ def test_imu_sensor_defaults_mapped_bias_validity_to_true(tmp_path: Path) -> Non
     del fields["linear_acceleration_bias_valid"]
 
     batch = next(
-        ImuSensor(path, schema_name="vendor.ImuEnvelope", protobuf_mapping=mapping).sample(one_window_spec(100, 200))
+        ImuSensor(path, schema_name="vendor.ImuEnvelope", protobuf_mapping=mapping).sample(
+            one_window_spec(100, 200), policy=NoSamplingPolicy()
+        )
     )
 
     np.testing.assert_array_equal(batch.angular_velocity_bias_valid, np.ones((1, 3), dtype=np.bool_))
@@ -655,7 +670,7 @@ def test_imu_sensor_rejects_repeated_vector_with_wrong_length(tmp_path: Path) ->
     sensor = ImuSensor(path, schema_name="vendor.ImuEnvelope", protobuf_mapping=_nested_repeated_mapping())
 
     with pytest.raises(ValueError, match=r"angular_velocity_rad_s.*expected 3 values"):
-        next(sensor.sample(one_window_spec(100, 200)))
+        next(sensor.sample(one_window_spec(100, 200), policy=NoSamplingPolicy()))
 
 
 def test_imu_sensor_exposes_mcap_topic_timeline_with_mapping(tmp_path: Path) -> None:
@@ -701,7 +716,7 @@ def test_imu_sensor_empty_window_yields_mapped_empty_data(tmp_path: Path) -> Non
         protobuf_mapping=_custom_mapping(),
     )
 
-    batch = next(sensor.sample(one_window_spec(200, 300)))
+    batch = next(sensor.sample(one_window_spec(200, 300), policy=NoSamplingPolicy()))
 
     assert batch.align_timestamps_ns.shape == (0,)
     assert batch.sensor_timestamps_ns.shape == (0,)
@@ -726,7 +741,7 @@ def test_imu_sensor_rejects_missing_mapped_topic(tmp_path: Path) -> None:
     )
 
     with pytest.raises(ValueError, match="no MCAP channel found for topic '/imu'"):
-        next(sensor.sample(one_window_spec(100, 200)))
+        next(sensor.sample(one_window_spec(100, 200), policy=NoSamplingPolicy()))
 
 
 def test_imu_sensor_rejects_wrong_mapped_schema_name(tmp_path: Path) -> None:
@@ -740,7 +755,7 @@ def test_imu_sensor_rejects_wrong_mapped_schema_name(tmp_path: Path) -> None:
     )
 
     with pytest.raises(ValueError, match="expected MCAP schema"):
-        next(sensor.sample(one_window_spec(100, 200)))
+        next(sensor.sample(one_window_spec(100, 200), policy=NoSamplingPolicy()))
 
 
 def test_imu_sensor_rejects_non_protobuf_mapped_channel(tmp_path: Path) -> None:
@@ -760,4 +775,4 @@ def test_imu_sensor_rejects_non_protobuf_mapped_channel(tmp_path: Path) -> None:
     )
 
     with pytest.raises(ValueError, match="expected protobuf channel"):
-        next(sensor.sample(one_window_spec(100, 200)))
+        next(sensor.sample(one_window_spec(100, 200), policy=NoSamplingPolicy()))

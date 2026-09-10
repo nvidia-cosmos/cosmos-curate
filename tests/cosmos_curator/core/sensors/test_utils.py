@@ -28,6 +28,13 @@ from mcap.writer import CompressionType, Writer
 from cosmos_curator.core.sensors.sampling.grid import SamplingGrid
 from cosmos_curator.core.sensors.sampling.spec import SamplingSpec
 
+# Time origins for sampling tests. These pin origin invariance: at wall-clock epoch magnitudes
+# adjacent float64 values are ~238 ns apart, so any code that routes an absolute nanosecond
+# timestamp through a float64 loses detail here that survives near zero.
+ZERO_ORIGIN_NS = 0
+EPOCH_ROUND_NS = 1_700_000_000_000_000_000
+EPOCH_ODD_NS = 1_700_000_000_123_456_789
+
 _PROTO_SCALAR_TYPES = {
     "bool": descriptor_pb2.FieldDescriptorProto.TYPE_BOOL,
     "double": descriptor_pb2.FieldDescriptorProto.TYPE_DOUBLE,
@@ -75,8 +82,11 @@ def protobuf_descriptor_set_from_proto(proto_path: Path) -> descriptor_pb2.FileD
     message_descriptor = file_descriptor.message_type.add()
     message_descriptor.name = message_match.group(1)
 
-    field_pattern = re.compile(r"^\s*(\w+)\s+([A-Za-z_]\w*)\s*=\s*(\d+)\s*;$", flags=re.MULTILINE)
-    for field_type, field_name, field_number in field_pattern.findall(message_match.group(2)):
+    field_pattern = re.compile(
+        r"^\s*(?:(repeated)\s+)?(\w+)\s+([A-Za-z_]\w*)\s*=\s*(\d+)\s*;$",
+        flags=re.MULTILINE,
+    )
+    for repeated, field_type, field_name, field_number in field_pattern.findall(message_match.group(2)):
         try:
             descriptor_type = _PROTO_SCALAR_TYPES[field_type]
         except KeyError as e:
@@ -85,7 +95,11 @@ def protobuf_descriptor_set_from_proto(proto_path: Path) -> descriptor_pb2.FileD
         field = message_descriptor.field.add()
         field.name = field_name
         field.number = int(field_number)
-        field.label = descriptor_pb2.FieldDescriptorProto.LABEL_OPTIONAL
+        field.label = (
+            descriptor_pb2.FieldDescriptorProto.LABEL_REPEATED
+            if repeated
+            else descriptor_pb2.FieldDescriptorProto.LABEL_OPTIONAL
+        )
         field.type = descriptor_type
 
     return descriptor_set
@@ -102,7 +116,7 @@ def protobuf_message_class(
     return cast("type[Message]", message_factory.GetMessageClass(pool.FindMessageTypeByName(message_name)))
 
 
-def write_protobuf_mcap(  # noqa: PLR0913
+def write_protobuf_mcap(
     path: Path,
     samples: list[McapSample],
     *,

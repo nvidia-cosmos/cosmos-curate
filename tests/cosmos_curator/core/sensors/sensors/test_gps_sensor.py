@@ -19,9 +19,12 @@ from pathlib import Path
 import numpy as np
 import pytest
 import yaml
+from foxglove_schemas_protobuf.LocationFix_pb2 import LocationFix
 from google.protobuf import descriptor_pb2
+from google.protobuf.descriptor import FileDescriptor
 from google.protobuf.message import Message
 
+from cosmos_curator.core.sensors.sampling.policy import NearestTimestampPolicy, NoSamplingPolicy
 from cosmos_curator.core.sensors.sensors.gps_sensor import DEFAULT_TOPIC, GpsSensor
 from tests.cosmos_curator.core.sensors.test_utils import (
     McapSample,
@@ -38,6 +41,10 @@ _REFERENCE_GPS_MAPPING_PATH = (
     _REPO_ROOT / "cosmos_curator" / "core" / "sensors" / "examples" / "gps_protobuf_mapping.yaml"
 )
 _REFERENCE_GPS_PROTO_PATH = _REPO_ROOT / "cosmos_curator" / "core" / "sensors" / "schemas" / "gps.proto"
+_FOXGLOVE_LOCATION_FIX_SCHEMA_NAME = "foxglove.LocationFix"
+_FOXGLOVE_LOCATION_FIX_MAPPING_PATH = (
+    _REPO_ROOT / "cosmos_curator" / "core" / "sensors" / "examples" / "foxglove_location_fix_protobuf_mapping.yaml"
+)
 
 _CUSTOM_TOPIC = "/vendor/gps"
 _CUSTOM_GPS_SCHEMA_NAME = "vendor.gps.Envelope"
@@ -55,6 +62,23 @@ _CUSTOM_GPS_PROTO_FIELDS = (
 def _reference_gps_descriptor_set() -> descriptor_pb2.FileDescriptorSet:
     """Build the descriptor set for the checked-in reference GPS schema."""
     return protobuf_descriptor_set_from_proto(_REFERENCE_GPS_PROTO_PATH)
+
+
+def _foxglove_location_fix_descriptor_set() -> descriptor_pb2.FileDescriptorSet:
+    """Build LocationFix's embedded protobuf descriptor dependency closure."""
+    descriptor_set = descriptor_pb2.FileDescriptorSet()
+    added_file_names: set[str] = set()
+
+    def add_file_and_dependencies(file_descriptor: FileDescriptor) -> None:
+        if file_descriptor.name in added_file_names:
+            return
+        for dependency in file_descriptor.dependencies:
+            add_file_and_dependencies(dependency)
+        file_descriptor.CopyToProto(descriptor_set.file.add())
+        added_file_names.add(file_descriptor.name)
+
+    add_file_and_dependencies(LocationFix.DESCRIPTOR.file)
+    return descriptor_set
 
 
 def _reference_gps_payload(sensor_timestamp_ns: int, **overrides: object) -> bytes:
@@ -150,7 +174,7 @@ def _custom_gps_message_class() -> type[Message]:
     return protobuf_message_class(_custom_gps_file_descriptor_set(), _CUSTOM_GPS_SCHEMA_NAME)
 
 
-def _custom_gps_payload(  # noqa: PLR0913
+def _custom_gps_payload(
     *,
     sensor_time_us: int,
     lat: float = 47.1,
@@ -188,7 +212,7 @@ def _custom_gps_mapping(**extra_fields: object) -> dict[str, object]:
     }
 
 
-def _write_custom_gps_mcap(  # noqa: PLR0913
+def _write_custom_gps_mcap(
     path: Path,
     samples: list[McapSample],
     *,
@@ -231,7 +255,7 @@ def test_gps_sensor_reads_reference_schema_with_checked_in_mapping(tmp_path: Pat
         ],
     )
 
-    batch = next(_reference_gps_sensor(path).sample(one_window_spec(100, 300)))
+    batch = next(_reference_gps_sensor(path).sample(one_window_spec(100, 300), policy=NoSamplingPolicy()))
 
     np.testing.assert_array_equal(batch.align_timestamps_ns, np.array([100, 200], dtype=np.int64))
     np.testing.assert_array_equal(batch.sensor_timestamps_ns, np.array([100, 200], dtype=np.int64))
@@ -241,6 +265,80 @@ def test_gps_sensor_reads_reference_schema_with_checked_in_mapping(tmp_path: Pat
     np.testing.assert_allclose(batch.altitude_m, np.array([500.0, 501.0]))
     np.testing.assert_array_equal(batch.position_valid, np.ones((2, 3), dtype=np.bool_))
     np.testing.assert_array_equal(batch.satellites_used, np.array([12, 14], dtype=np.uint32))
+
+
+def test_gps_sensor_reads_foxglove_location_fix_with_yaml_mapping(tmp_path: Path) -> None:
+    """A descriptor-embedded valid-only LocationFix should map without parser changes."""
+    path = tmp_path / "foxglove_location_fix.mcap"
+    first = LocationFix(latitude=37.402255555555556, longitude=-122.25870916666666, altitude=79.14180564880371)
+    second = LocationFix(latitude=37.4023, longitude=-122.2588, altitude=79.2)
+    _write_custom_gps_mcap(
+        path,
+        [
+            McapSample(log_time_ns=1_696_434_428_000_000_000, data=first.SerializeToString()),
+            McapSample(log_time_ns=1_696_434_429_000_000_000, data=second.SerializeToString()),
+        ],
+        topic=DEFAULT_TOPIC,
+        schema_name=_FOXGLOVE_LOCATION_FIX_SCHEMA_NAME,
+        schema_data=_foxglove_location_fix_descriptor_set().SerializeToString(),
+    )
+
+    sensor = GpsSensor(
+        path,
+        topic=DEFAULT_TOPIC,
+        schema_name=_FOXGLOVE_LOCATION_FIX_SCHEMA_NAME,
+        protobuf_mapping=_FOXGLOVE_LOCATION_FIX_MAPPING_PATH,
+    )
+    batch = next(
+        sensor.sample(
+            one_window_spec(1_696_434_428_000_000_000, 1_696_434_430_000_000_000),
+            policy=NoSamplingPolicy(),
+        )
+    )
+
+    np.testing.assert_array_equal(
+        batch.sensor_timestamps_ns,
+        np.array([1_696_434_428_000_000_000, 1_696_434_429_000_000_000], dtype=np.int64),
+    )
+    np.testing.assert_array_equal(batch.align_timestamps_ns, batch.sensor_timestamps_ns)
+    np.testing.assert_allclose(batch.latitude_deg, np.array([37.402255555555556, 37.4023]))
+    np.testing.assert_allclose(batch.longitude_deg, np.array([-122.25870916666666, -122.2588]))
+    np.testing.assert_allclose(batch.altitude_m, np.array([79.14180564880371, 79.2]))
+    np.testing.assert_array_equal(batch.position_valid, np.ones((2, 3), dtype=np.bool_))
+    assert all(
+        value is None
+        for value in (
+            batch.position_covariance_enu_m2,
+            batch.velocity_enu_m_s,
+            batch.velocity_valid,
+            batch.fix_type,
+            batch.satellites_used,
+            batch.satellites_used_valid,
+            batch.horizontal_accuracy_m,
+            batch.horizontal_accuracy_m_valid,
+            batch.vertical_accuracy_m,
+            batch.vertical_accuracy_m_valid,
+            batch.hdop,
+            batch.hdop_valid,
+            batch.vdop,
+            batch.vdop_valid,
+            batch.pdop,
+            batch.pdop_valid,
+            batch.host_timestamps_ns,
+            batch.utc_timestamps_ns,
+            batch.sequence_counter,
+        )
+    )
+
+
+def test_gps_sensor_rejects_nearest_timestamp_policy(tmp_path: Path) -> None:
+    """GPS sampling only accepts the explicit no-op sampling policy."""
+    path = tmp_path / "reference_gps.mcap"
+    _write_reference_gps_mcap(path, [McapSample(log_time_ns=100, data=_reference_gps_payload(100))])
+    sensor = _reference_gps_sensor(path)
+
+    with pytest.raises(TypeError, match="GpsSensor requires NoSamplingPolicy"):
+        next(sensor.sample(one_window_spec(100, 200), policy=NearestTimestampPolicy()))
 
 
 def test_gps_reference_mapping_preserves_fully_invalid_optional_arrays(tmp_path: Path) -> None:
@@ -263,7 +361,7 @@ def test_gps_reference_mapping_preserves_fully_invalid_optional_arrays(tmp_path:
         ],
     )
 
-    batch = next(_reference_gps_sensor(path).sample(one_window_spec(100, 200)))
+    batch = next(_reference_gps_sensor(path).sample(one_window_spec(100, 200), policy=NoSamplingPolicy()))
 
     np.testing.assert_array_equal(batch.position_valid, np.array([[False, False, False]], dtype=np.bool_))
     np.testing.assert_allclose(batch.hdop, np.array([0.8]))
@@ -292,7 +390,7 @@ def test_gps_reference_mapping_preserves_partial_optional_validity(tmp_path: Pat
         ],
     )
 
-    batch = next(_reference_gps_sensor(path).sample(one_window_spec(100, 300)))
+    batch = next(_reference_gps_sensor(path).sample(one_window_spec(100, 300), policy=NoSamplingPolicy()))
 
     np.testing.assert_allclose(batch.hdop, np.array([0.8, 99.0]))
     np.testing.assert_array_equal(batch.hdop_valid, np.array([True, False], dtype=np.bool_))
@@ -327,7 +425,7 @@ def test_gps_reference_mapping_preserves_invalid_raw_measurements(tmp_path: Path
         ],
     )
 
-    batch = next(_reference_gps_sensor(path).sample(one_window_spec(100, 200)))
+    batch = next(_reference_gps_sensor(path).sample(one_window_spec(100, 200), policy=NoSamplingPolicy()))
 
     assert np.isnan(batch.latitude_deg[0])
     np.testing.assert_allclose(batch.longitude_deg, np.array([181.0]))
@@ -364,7 +462,7 @@ def test_gps_sensor_reads_custom_schema_with_external_yaml_mapping(tmp_path: Pat
         schema_name=_CUSTOM_GPS_SCHEMA_NAME,
         protobuf_mapping=mapping_path,
     )
-    batch = next(sensor.sample(one_window_spec(10_000_000, 30_000_000)))
+    batch = next(sensor.sample(one_window_spec(10_000_000, 30_000_000), policy=NoSamplingPolicy()))
 
     np.testing.assert_array_equal(batch.align_timestamps_ns, np.array([100_000, 200_000], dtype=np.int64))
     np.testing.assert_array_equal(batch.sensor_timestamps_ns, np.array([100_000, 200_000], dtype=np.int64))
@@ -377,7 +475,7 @@ def test_gps_sensor_reads_custom_schema_with_external_yaml_mapping(tmp_path: Pat
     assert batch.host_timestamps_ns is None
     assert batch.satellites_used is None
 
-    empty_batch = next(sensor.sample(one_window_spec(30_000_000, 40_000_000)))
+    empty_batch = next(sensor.sample(one_window_spec(30_000_000, 40_000_000), policy=NoSamplingPolicy()))
 
     assert empty_batch.hdop is not None
     assert empty_batch.hdop.shape == (0,)
@@ -398,7 +496,7 @@ def test_gps_sensor_custom_mapping_reports_malformed_payload(tmp_path: Path) -> 
     )
 
     with pytest.raises(ValueError, match=r"failed to parse GPS protobuf message on topic .*gps"):
-        next(sensor.sample(one_window_spec(100, 200)))
+        next(sensor.sample(one_window_spec(100, 200), policy=NoSamplingPolicy()))
 
 
 def test_gps_sensor_custom_mapping_can_use_mcap_logtime(tmp_path: Path) -> None:
@@ -420,7 +518,7 @@ def test_gps_sensor_custom_mapping_can_use_mcap_logtime(tmp_path: Path) -> None:
             sensor_timestamp_ns={"from": "$mcap.logtime", "type": "timestamp", "unit": "ns"}
         ),
     )
-    batch = next(sensor.sample(one_window_spec(10_000_000, 30_000_000)))
+    batch = next(sensor.sample(one_window_spec(10_000_000, 30_000_000), policy=NoSamplingPolicy()))
 
     np.testing.assert_array_equal(batch.sensor_timestamps_ns, np.array([10_000_000, 20_000_000], dtype=np.int64))
     np.testing.assert_array_equal(batch.align_timestamps_ns, np.array([10_000_000, 20_000_000], dtype=np.int64))
@@ -472,8 +570,8 @@ def test_gps_sensor_custom_mapping_host_presence_matches_empty_windows(
         protobuf_mapping=_custom_gps_mapping(**host_mapping),
     )
 
-    non_empty_batch = next(sensor.sample(one_window_spec(10_000_000, 20_000_000)))
-    empty_batch = next(sensor.sample(one_window_spec(20_000_000, 30_000_000)))
+    non_empty_batch = next(sensor.sample(one_window_spec(10_000_000, 20_000_000), policy=NoSamplingPolicy()))
+    empty_batch = next(sensor.sample(one_window_spec(20_000_000, 30_000_000), policy=NoSamplingPolicy()))
 
     if host_mode == "source":
         np.testing.assert_array_equal(non_empty_batch.host_timestamps_ns, np.array([1_000_000]))
@@ -508,7 +606,7 @@ def test_gps_sensor_uses_explicit_mapped_align_timestamp(tmp_path: Path) -> None
         schema_name=_CUSTOM_GPS_SCHEMA_NAME,
         protobuf_mapping=mapping,
     )
-    batch = next(sensor.sample(one_window_spec(10_000_000, 30_000_000)))
+    batch = next(sensor.sample(one_window_spec(10_000_000, 30_000_000), policy=NoSamplingPolicy()))
 
     np.testing.assert_array_equal(batch.align_timestamps_ns, np.array([1_000_000, 2_000_000], dtype=np.int64))
     np.testing.assert_array_equal(batch.sensor_timestamps_ns, np.array([100_000, 200_000], dtype=np.int64))
@@ -532,7 +630,7 @@ def test_gps_sensor_rejects_duplicate_mapped_align_timestamps(tmp_path: Path) ->
     )
 
     with pytest.raises(ValueError, match="strictly increasing align_timestamps_ns"):
-        next(sensor.sample(one_window_spec(10_000_000, 30_000_000)))
+        next(sensor.sample(one_window_spec(10_000_000, 30_000_000), policy=NoSamplingPolicy()))
 
 
 def test_gps_sensor_exposes_mcap_topic_timeline_with_mapping(tmp_path: Path) -> None:
@@ -588,7 +686,7 @@ def test_gps_sensor_empty_window_yields_mapped_empty_data(tmp_path: Path) -> Non
         protobuf_mapping=_custom_gps_mapping(),
     )
 
-    batch = next(sensor.sample(one_window_spec(200, 300)))
+    batch = next(sensor.sample(one_window_spec(200, 300), policy=NoSamplingPolicy()))
 
     assert batch.align_timestamps_ns.shape == (0,)
     assert batch.sensor_timestamps_ns.shape == (0,)
@@ -615,7 +713,7 @@ def test_gps_sensor_rejects_missing_mapped_topic(tmp_path: Path) -> None:
     )
 
     with pytest.raises(ValueError, match="no MCAP channel found for topic '/vendor/gps'"):
-        next(sensor.sample(one_window_spec(100, 200)))
+        next(sensor.sample(one_window_spec(100, 200), policy=NoSamplingPolicy()))
 
 
 def test_gps_sensor_rejects_wrong_mapped_schema_name(tmp_path: Path) -> None:
@@ -634,7 +732,7 @@ def test_gps_sensor_rejects_wrong_mapped_schema_name(tmp_path: Path) -> None:
     )
 
     with pytest.raises(ValueError, match="expected MCAP schema"):
-        next(sensor.sample(one_window_spec(100, 200)))
+        next(sensor.sample(one_window_spec(100, 200), policy=NoSamplingPolicy()))
 
 
 def test_gps_sensor_rejects_non_protobuf_mapped_channel(tmp_path: Path) -> None:
@@ -655,4 +753,4 @@ def test_gps_sensor_rejects_non_protobuf_mapped_channel(tmp_path: Path) -> None:
     )
 
     with pytest.raises(ValueError, match="expected protobuf channel"):
-        next(sensor.sample(one_window_spec(100, 200)))
+        next(sensor.sample(one_window_spec(100, 200), policy=NoSamplingPolicy()))

@@ -22,6 +22,7 @@ from cosmos_curator.core.utils.storage.storage_client import (
     BackgroundUploader,
     StorageClient,
     StoragePrefix,
+    StorageStat,
 )
 
 
@@ -33,9 +34,17 @@ class FakeStorageClient(StorageClient):
         self.objects = dict(objects or {})
         self.last_list_limit: int | None = None
 
-    def object_exists(self, dest: StoragePrefix) -> bool:
-        """Return True if the destination was registered."""
-        return str(dest) in self.objects
+    def stat(self, dest: StoragePrefix) -> StorageStat:
+        """Report the size of a registered object, or raise when it is absent.
+
+        ``last_modified`` and ``etag`` stay ``None``: nothing here writes them, and a
+        stat that reports only a size is a shape both real backends can produce.
+        """
+        try:
+            data = self.objects[str(dest)]
+        except KeyError as exc:
+            raise FileNotFoundError(str(dest)) from exc
+        return StorageStat(size_bytes=len(data))
 
     def upload_bytes(self, dest: StoragePrefix, data: bytes) -> None:
         """Store bytes for later retrieval."""
@@ -71,6 +80,24 @@ class FakeStorageClient(StorageClient):
                 continue
             results.append(storage_utils.path_to_prefix(path))
             if limit and len(results) >= limit:
+                break
+        return results
+
+    def list_recursive_with_suffixes(
+        self,
+        uri: StoragePrefix,
+        suffixes: tuple[str, ...],
+        limit: int = 0,
+    ) -> list[StoragePrefix]:
+        """List registered objects under a prefix whose path ends in one of ``suffixes``."""
+        lowered = self._lowercased_suffixes(suffixes)
+        prefix = str(uri).rstrip("/") + "/"
+        results: list[StoragePrefix] = []
+        for path in sorted(self.objects):
+            if not path.startswith(prefix) or not path.lower().endswith(lowered):
+                continue
+            results.append(storage_utils.path_to_prefix(path))
+            if 0 < limit <= len(results):
                 break
         return results
 

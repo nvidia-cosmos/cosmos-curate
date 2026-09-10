@@ -19,12 +19,15 @@ import pathlib
 import uuid
 from unittest.mock import MagicMock, patch
 
+import numpy as np
 import pytest
 
 from cosmos_curator.core.interfaces.stage_interface import CuratorStageSpec
+from cosmos_curator.pipelines.common import semantic_filter_postprocess
 from cosmos_curator.pipelines.video.captioning.gemini_caption_stage import ApiPrepStage, GeminiCaptionStage
 from cosmos_curator.pipelines.video.captioning.openai_caption_stage import OpenAICaptionStage
 from cosmos_curator.pipelines.video.captioning.vllm_caption_stage import VllmCaptionStage, VllmPrepStage
+from cosmos_curator.pipelines.video.filtering.aesthetics import semantic_filter_stages
 from cosmos_curator.pipelines.video.filtering.aesthetics.aesthetics_builders import (
     VideoClassifierConfig,
     VlmFilterConfig,
@@ -37,6 +40,12 @@ from cosmos_curator.pipelines.video.filtering.aesthetics.semantic_filter_stages 
 from cosmos_curator.pipelines.video.utils.data_model import Clip, Video, VllmSamplingConfig, Window
 
 _GEMINI_LOAD_CONFIG = "cosmos_curator.pipelines.video.captioning.gemini_caption_stage.load_config"
+
+
+def _attach_extracted_frames(clip: Clip) -> None:
+    frames = np.ones((2, 2, 2, 3), dtype=np.uint8)
+    clip.extracted_frames.value = {"sequence-2000": frames}
+    clip.extracted_frames.nbytes = frames.nbytes
 
 
 @pytest.fixture
@@ -278,6 +287,7 @@ def _make_video_with_one_clip_one_window() -> tuple[Video, int]:
         source_video="test.mp4",
         span=(0.0, 5.0),
     )
+    _attach_extracted_frames(clip)
     clip.filter_windows.append(window)
     video = Video(input_video=pathlib.Path("test.mp4"), clips=[clip])
     return video, 0
@@ -356,14 +366,19 @@ def _make_video_three_clips_middle_no_windows() -> Video:
     clips = []
     for i in range(3):
         clip = Clip(uuid=uuid.uuid4(), source_video="test.mp4", span=(float(i * 5), float((i + 1) * 5)))
+        _attach_extracted_frames(clip)
         if i != 1:
             clip.filter_windows.append(Window(start_frame=0, end_frame=124))
         clips.append(clip)
     return Video(input_video=pathlib.Path("test.mp4"), clips=clips)
 
 
-def test_vlm_filtering_stage_middle_clip_no_windows_correct_error_assignment() -> None:
+def test_vlm_filtering_stage_middle_clip_no_windows_correct_error_assignment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Middle clip with no windows must get the error, not the clip after it (index binding fix)."""
+    logger = MagicMock()
+    monkeypatch.setattr(semantic_filter_stages, "logger", logger)
     stage = VllmFilteringStage(model_variant="qwen", user_prompt="slideshow")
     video = _make_video_three_clips_middle_no_windows()
     original_clips = list(video.clips)
@@ -381,10 +396,18 @@ def test_vlm_filtering_stage_middle_clip_no_windows_correct_error_assignment() -
     assert errored.errors.get("qwen") == "all_windows_failed_preparation"
     # Must be the original middle clip, not the clip that followed it.
     assert errored is original_clips[1]
+    assert errored.extracted_frames.resolve() is None
+    assert errored.extracted_frames.nbytes == 0
+    assert all(clip.extracted_frames.resolve() is not None for clip in video.clips)
+    assert "had no successfully mapped windows; added to filtered_clips" in logger.warning.call_args.args[0]
 
 
-def test_vlm_classifier_stage_middle_clip_no_windows_correct_error_assignment() -> None:
+def test_vlm_classifier_stage_middle_clip_no_windows_correct_error_assignment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Middle clip with no windows must get the error, not the clip after it (index binding fix)."""
+    logger = MagicMock()
+    monkeypatch.setattr(semantic_filter_stages, "logger", logger)
     stage = VllmVideoClassifierStage(
         model_variant="qwen",
         custom_categories=True,
@@ -407,10 +430,18 @@ def test_vlm_classifier_stage_middle_clip_no_windows_correct_error_assignment() 
     assert errored.errors.get("qwen") == "all_windows_failed_preparation"
     # Must be the original middle clip, not the clip that followed it.
     assert errored is original_clips[1]
+    assert errored.extracted_frames.resolve() is None
+    assert errored.extracted_frames.nbytes == 0
+    assert all(clip.extracted_frames.resolve() is not None for clip in video.clips)
+    assert "had no successfully mapped windows; added to filtered_clips" in logger.warning.call_args.args[0]
 
 
-def test_vlm_filtering_stage_score_only_middle_clip_no_windows_kept_with_error() -> None:
+def test_vlm_filtering_stage_score_only_middle_clip_no_windows_kept_with_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Score-only semantic filtering should keep errored clips instead of moving them to filtered_clips."""
+    logger = MagicMock()
+    monkeypatch.setattr(semantic_filter_stages, "logger", logger)
     stage = VllmFilteringStage(model_variant="qwen", user_prompt="slideshow", score_only=True)
     video = _make_video_three_clips_middle_no_windows()
     original_clips = list(video.clips)
@@ -425,10 +456,16 @@ def test_vlm_filtering_stage_score_only_middle_clip_no_windows_kept_with_error()
     errored = video.clips[2]
     assert errored.errors.get("qwen") == "all_windows_failed_preparation"
     assert errored is original_clips[1]
+    assert all(clip.extracted_frames.resolve() is not None for clip in video.clips)
+    assert (
+        "had no successfully mapped windows during score-only mode; kept in clips" in logger.warning.call_args.args[0]
+    )
 
 
-def test_vlm_filtering_stage_marks_malformed_model_output_on_window() -> None:
+def test_vlm_filtering_stage_marks_malformed_model_output_on_window(monkeypatch: pytest.MonkeyPatch) -> None:
     """Malformed semantic-filter output should filter the clip and store the error on its window."""
+    logger = MagicMock()
+    monkeypatch.setattr(semantic_filter_postprocess, "logger", logger)
     stage = VllmFilteringStage(model_variant="qwen", user_prompt="slideshow")
     video, clip_idx = _make_video_with_one_clip_one_window()
 
@@ -438,10 +475,15 @@ def test_vlm_filtering_stage_marks_malformed_model_output_on_window() -> None:
     assert len(video.filtered_clips) == 1
     assert video.filtered_clips[0].filter_windows[0].errors.get("qwen") == "malformed_model_output"
     assert video.filtered_clips[0].qwen_rejection_stage == "semantic"
+    assert video.filtered_clips[0].extracted_frames.resolve() is None
+    assert video.filtered_clips[0].extracted_frames.nbytes == 0
+    assert "No JSON object found in output" in logger.error.call_args.args[0]
 
 
-def test_vlm_filtering_stage_malformed_score_only_keeps_clip() -> None:
+def test_vlm_filtering_stage_malformed_score_only_keeps_clip(monkeypatch: pytest.MonkeyPatch) -> None:
     """Malformed semantic-filter output with score_only should keep the clip."""
+    logger = MagicMock()
+    monkeypatch.setattr(semantic_filter_postprocess, "logger", logger)
     stage = VllmFilteringStage(model_variant="qwen", user_prompt="slideshow", score_only=True)
     video, clip_idx = _make_video_with_one_clip_one_window()
 
@@ -450,10 +492,14 @@ def test_vlm_filtering_stage_malformed_score_only_keeps_clip() -> None:
     assert len(video.clips) == 1
     assert len(video.filtered_clips) == 0
     assert video.clips[0].filter_windows[0].errors.get("qwen") == "malformed_model_output"
+    assert video.clips[0].extracted_frames.resolve() is not None
+    assert "No JSON object found in output" in logger.error.call_args.args[0]
 
 
-def test_vlm_classifier_stage_marks_malformed_model_output_on_window() -> None:
+def test_vlm_classifier_stage_marks_malformed_model_output_on_window(monkeypatch: pytest.MonkeyPatch) -> None:
     """Malformed classifier output should filter the clip and store the error on its window."""
+    logger = MagicMock()
+    monkeypatch.setattr(semantic_filter_postprocess, "logger", logger)
     stage = VllmVideoClassifierStage(
         model_variant="qwen",
         custom_categories=True,
@@ -468,6 +514,9 @@ def test_vlm_classifier_stage_marks_malformed_model_output_on_window() -> None:
     assert len(video.filtered_clips) == 1
     assert video.filtered_clips[0].filter_windows[0].errors.get("qwen") == "malformed_model_output"
     assert video.filtered_clips[0].qwen_rejection_stage == "classifier"
+    assert video.filtered_clips[0].extracted_frames.resolve() is None
+    assert video.filtered_clips[0].extracted_frames.nbytes == 0
+    assert "No JSON object found in output" in logger.error.call_args.args[0]
 
 
 def test_qwen_video_classifier_default_categories_empty_not_unclassified() -> None:

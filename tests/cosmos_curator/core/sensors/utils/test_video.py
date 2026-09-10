@@ -36,10 +36,11 @@ from cosmos_curator.core.sensors.utils.video import (
     CpuVideoDecoder,
     GpuVideoDecodeConfig,
     GpuVideoDecoder,
+    HeaderIndexUnavailableError,
     _get_video_index_from_header,
     _has_composition_offset,
-    _HeaderIndexUnavailableError,
     _resolve_auto_index_method,
+    iter_video_frames,
     make_decode_plan,
     make_index_and_metadata,
     open_video_container,
@@ -371,7 +372,7 @@ def test_make_index_and_metadata_from_header_falls_back_to_full_demux() -> None:
         ),
         patch(
             "cosmos_curator.core.sensors.utils.video._get_video_index_from_header",
-            side_effect=_HeaderIndexUnavailableError("retry with FULL_DEMUX"),
+            side_effect=HeaderIndexUnavailableError("retry with FULL_DEMUX"),
         ),
         patch(
             "cosmos_curator.core.sensors.utils.video._get_video_index_full_demux",
@@ -406,10 +407,10 @@ def test_make_index_and_metadata_from_header_can_disable_fallback() -> None:
         ),
         patch(
             "cosmos_curator.core.sensors.utils.video._get_video_index_from_header",
-            side_effect=_HeaderIndexUnavailableError("retry with FULL_DEMUX"),
+            side_effect=HeaderIndexUnavailableError("retry with FULL_DEMUX"),
         ),
         patch("cosmos_curator.core.sensors.utils.video._get_video_index_full_demux") as full_demux,
-        pytest.raises(_HeaderIndexUnavailableError, match="retry with FULL_DEMUX"),
+        pytest.raises(HeaderIndexUnavailableError, match="retry with FULL_DEMUX"),
     ):
         make_index_and_metadata(
             b"",
@@ -723,6 +724,36 @@ def test_video_index_rejects_invalid_array_dtype_or_ndim(
         VideoIndex(**kwargs)
 
 
+@pytest.mark.parametrize(
+    "timestamp_offset_ns",
+    [
+        True,
+        np.bool_(True),  # noqa: FBT003
+        1.5,
+        "1",
+        np.iinfo(np.int64).max + 1,
+        np.uint64(np.iinfo(np.int64).max + 1),
+    ],
+)
+def test_video_index_constructor_rejects_invalid_timestamp_offset(timestamp_offset_ns: object) -> None:
+    """VideoIndex constructor and shift-copy API share offset validation."""
+    kwargs: dict[str, Any] = {
+        "offset": np.array([0], dtype=np.int64),
+        "size": np.array([100], dtype=np.int64),
+        "pts_ns": np.array([0], dtype=np.int64),
+        "pts_stream": np.array([0], dtype=np.int64),
+        "is_keyframe": np.array([True], dtype=np.bool_),
+        "is_discard": np.array([False], dtype=np.bool_),
+        "kf_pts_ns": np.array([0], dtype=np.int64),
+        "kf_pts_stream": np.array([0], dtype=np.int64),
+        "time_base": Fraction(1, 1_000_000_000),
+        "timestamp_offset_ns": timestamp_offset_ns,
+    }
+
+    with pytest.raises(ValueError, match="timestamp_offset_ns"):
+        VideoIndex(**kwargs)
+
+
 def test_video_index_display_view_filters_discard_packets() -> None:
     """VideoIndex should expose a reusable display-frame view."""
     index = VideoIndex(
@@ -751,6 +782,88 @@ def test_video_index_display_view_filters_discard_packets() -> None:
     assert index.display_mask is display_mask_0
     assert index.display_pts_ns is display_pts_ns_0
     assert index.display_pts_stream is display_pts_stream_0
+
+
+def test_video_index_with_timestamp_offset_shifts_only_nanosecond_timeline() -> None:
+    """A timestamp offset must preserve the native PTS axis used for decode."""
+    index = VideoIndex(
+        offset=np.array([0, 10, 20], dtype=np.int64),
+        size=np.array([100, 100, 100], dtype=np.int64),
+        pts_ns=np.array([100, 200, 300], dtype=np.int64),
+        pts_stream=np.array([10, 20, 30], dtype=np.int64),
+        is_keyframe=np.array([True, False, True], dtype=np.bool_),
+        is_discard=np.array([False, True, False], dtype=np.bool_),
+        kf_pts_ns=np.array([100, 300], dtype=np.int64),
+        kf_pts_stream=np.array([10, 30], dtype=np.int64),
+        time_base=Fraction(1, 1_000_000_000),
+        timestamp_offset_ns=np.int32(0),
+    )
+
+    assert index.timestamp_offset_ns == 0
+    assert type(index.timestamp_offset_ns) is int
+
+    shifted = index.with_timestamp_offset(np.int32(-50))
+
+    assert shifted.timestamp_offset_ns == -50
+    assert type(shifted.timestamp_offset_ns) is int
+    np.testing.assert_array_equal(shifted.pts_ns, np.array([50, 150, 250], dtype=np.int64))
+    np.testing.assert_array_equal(shifted.kf_pts_ns, np.array([50, 250], dtype=np.int64))
+    np.testing.assert_array_equal(shifted.display_pts_ns, np.array([50, 250], dtype=np.int64))
+    np.testing.assert_array_equal(shifted.pts_stream, index.pts_stream)
+    np.testing.assert_array_equal(shifted.kf_pts_stream, index.kf_pts_stream)
+    assert shifted.time_base == index.time_base
+
+    assert index.timestamp_offset_ns == 0
+    np.testing.assert_array_equal(index.pts_ns, np.array([100, 200, 300], dtype=np.int64))
+    assert index.with_timestamp_offset(0) is index
+
+
+def test_video_index_rejects_reapplying_timestamp_offset() -> None:
+    """Only a native index may receive a timestamp offset."""
+    index = VideoIndex(
+        offset=np.array([0], dtype=np.int64),
+        size=np.array([100], dtype=np.int64),
+        pts_ns=np.array([0], dtype=np.int64),
+        pts_stream=np.array([0], dtype=np.int64),
+        is_keyframe=np.array([True], dtype=np.bool_),
+        is_discard=np.array([False], dtype=np.bool_),
+        kf_pts_ns=np.array([0], dtype=np.int64),
+        kf_pts_stream=np.array([0], dtype=np.int64),
+        time_base=Fraction(1, 1_000_000_000),
+    )
+
+    shifted_index = index.with_timestamp_offset(1)
+
+    with pytest.raises(ValueError, match="only be applied to a native VideoIndex"):
+        shifted_index.with_timestamp_offset(1)
+
+
+@pytest.mark.parametrize(
+    ("pts_ns", "timestamp_offset_ns"),
+    [
+        ([np.iinfo(np.int64).max - 1, np.iinfo(np.int64).max], np.int64(1)),
+        ([np.iinfo(np.int64).min, np.iinfo(np.int64).min + 1], np.int64(-1)),
+    ],
+)
+def test_video_index_with_timestamp_offset_rejects_int64_overflow(
+    pts_ns: list[int],
+    timestamp_offset_ns: np.int64,
+) -> None:
+    """Timestamp shifting must not silently wrap an int64 timeline."""
+    index = VideoIndex(
+        offset=np.array([0, 10], dtype=np.int64),
+        size=np.array([100, 100], dtype=np.int64),
+        pts_ns=np.array(pts_ns, dtype=np.int64),
+        pts_stream=np.array([10, 20], dtype=np.int64),
+        is_keyframe=np.array([True, False], dtype=np.bool_),
+        is_discard=np.array([False, False], dtype=np.bool_),
+        kf_pts_ns=np.array([pts_ns[0]], dtype=np.int64),
+        kf_pts_stream=np.array([10], dtype=np.int64),
+        time_base=Fraction(1, 1_000_000_000),
+    )
+
+    with pytest.raises(ValueError, match="outside signed int64"):
+        index.with_timestamp_offset(timestamp_offset_ns)
 
 
 def test_video_index_does_not_mutate_caller_owned_arrays() -> None:
@@ -1651,7 +1764,7 @@ def test_make_index_and_metadata_falls_back_to_full_demux_when_header_index_unav
     with (
         patch(
             "cosmos_curator.core.sensors.utils.video._get_video_index_from_header",
-            side_effect=_HeaderIndexUnavailableError(
+            side_effect=HeaderIndexUnavailableError(
                 "stream does not expose header index entries; retry with FULL_DEMUX"
             ),
         ),
@@ -1790,7 +1903,7 @@ def test_resolve_auto_reports_consumed_packets_for_clean_streams(h264_video: Cal
 def _raise_header_unavailable(*_args: object, **_kwargs: object) -> None:
     """Stand in for ``_get_video_index_from_header`` on a stream with no usable header index."""
     msg = "forced for test"
-    raise _HeaderIndexUnavailableError(msg)
+    raise HeaderIndexUnavailableError(msg)
 
 
 def _patch_counting_container_open(monkeypatch: pytest.MonkeyPatch) -> Callable[[], int]:
@@ -1871,7 +1984,7 @@ def test_make_index_and_metadata_auto_propagates_header_error_without_fallback(
         _raise_header_unavailable,
     )
 
-    with pytest.raises(_HeaderIndexUnavailableError, match="forced for test"):
+    with pytest.raises(HeaderIndexUnavailableError, match="forced for test"):
         make_index_and_metadata(
             h264_video(bframes=0),
             index_method=VideoIndexCreationMethod.AUTO,
@@ -2029,3 +2142,68 @@ def test_cpu_video_decoder_all_keyframes_exact_targets(
     assert motion_vectors is None
     for i, pts in enumerate(target_pts_stream):
         np.testing.assert_array_equal(frames[i], expected_by_pts[int(pts)])
+
+
+_DATA = Path(__file__).resolve().parents[3] / "pipelines" / "video" / "data"
+_CLIP = _DATA / "test_clip_10s.mp4"
+_BFRAME_CLIP = _DATA / "test_clip_10s_bframes.mp4"
+
+_FRAME_COUNT = 240
+_HEIGHT = 480
+_WIDTH = 854
+
+
+@pytest.mark.parametrize("clip", [_CLIP, _BFRAME_CLIP], ids=["no_bframes", "bframes"])
+def test_decodes_every_frame_in_ascending_presentation_order(clip: Path) -> None:
+    """A forward-only walk sees every frame, in presentation order, with no index built.
+
+    The B-frame clip is the interesting case: decode order differs from
+    presentation order there, and PyAV reorders for us.
+    """
+    pts_ns = []
+    shapes = set()
+    dtypes = set()
+    for frame_pts_ns, frame in iter_video_frames(clip):
+        pts_ns.append(frame_pts_ns)
+        shapes.add(frame.shape)
+        dtypes.add(frame.dtype)
+
+    assert len(pts_ns) == _FRAME_COUNT
+    assert pts_ns == sorted(pts_ns)
+    assert len(set(pts_ns)) == _FRAME_COUNT
+    assert shapes == {(_HEIGHT, _WIDTH, 3)}
+    assert dtypes == {np.dtype(np.uint8)}
+
+
+def test_accepts_a_caller_owned_stream() -> None:
+    """The decoder takes any ``DataSource``, so callers open their own bytes."""
+    with _CLIP.open("rb") as stream:
+        first_pts_ns, first_frame = next(iter(iter_video_frames(stream)))
+
+    assert first_pts_ns == 0
+    assert first_frame.shape == (_HEIGHT, _WIDTH, 3)
+
+
+def test_a_forward_walk_decodes_with_the_threads_it_was_configured_for() -> None:
+    """Threading is the difference between 2.8s and 10.5s on 4K, so it is not left to default.
+
+    CpuVideoDecoder applies the same two settings; a walk that skipped them
+    decoded single-threaded while the indexed path used four.
+    """
+    seen = {}
+    opened = open_video_container
+
+    @contextmanager
+    def spy(stream: object, *, stream_idx: int = 0) -> Iterator[Any]:
+        with opened(stream, stream_idx=stream_idx) as (container, video_stream):
+            seen["stream"] = video_stream
+            yield container, video_stream
+
+    with patch("cosmos_curator.core.sensors.utils.video.open_video_container", spy):
+        # Held open rather than drained: the settings are read off the live
+        # stream, which a finished walk would have closed.
+        walk = iter_video_frames(_CLIP, 0, CpuVideoDecodeConfig(thread_type="SLICE", thread_count=3))
+        next(iter(walk))
+
+        assert str(seen["stream"].thread_type) == "ThreadType.SLICE"
+        assert seen["stream"].thread_count == 3

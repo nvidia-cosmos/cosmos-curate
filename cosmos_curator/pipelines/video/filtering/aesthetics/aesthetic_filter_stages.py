@@ -37,6 +37,8 @@ from cosmos_curator.pipelines.video.utils.decoder_utils import (
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+AESTHETIC_SAMPLING_FPS = 1.0
+
 
 class AestheticFilterStage(CuratorStage):
     """Stage for filtering video clips based on aesthetic score.
@@ -49,18 +51,20 @@ class AestheticFilterStage(CuratorStage):
         self,
         score_threshold: float,
         reduction: Literal["mean", "min"] = "min",
-        target_fps: float = 1.0,
+        target_fps: float = AESTHETIC_SAMPLING_FPS,
         num_gpus_per_worker: float = 0.25,
         *,
+        preserve_extracted_frames: bool = False,
         verbose: bool = False,
         log_stats: bool = False,
     ) -> None:
         """Calculate aesthetic score over frames for each clip in task.
 
         Attributes:
-            score_threshold: motion score threshold.
+            score_threshold: aesthetic score threshold.
             target_fps: downsampling frames/s used for calculating aesthetic scores.
             reduction: method to reduce the frame-level aesthetic scores.
+            preserve_extracted_frames: whether a downstream consumer shares this frame signature.
             verbose: whether to log aesthetic scores.
             log_stats: whether to log performance stats.
 
@@ -74,6 +78,7 @@ class AestheticFilterStage(CuratorStage):
             target_fps=target_fps,
         ).to_str()
         self._num_gpus_per_worker = num_gpus_per_worker
+        self._preserve_extracted_frames = preserve_extracted_frames
         self._verbose = verbose
         self._log_stats = log_stats
         self._model = CLIPAestheticScorer()
@@ -127,11 +132,10 @@ class AestheticFilterStage(CuratorStage):
     def process_data(self, tasks: list[SplitPipeTask]) -> list[SplitPipeTask] | None:  # type: ignore[override]  # noqa: C901, PLR0912
         """Score each clip's aesthetic quality and filter below threshold.
 
-        Resolves ``extracted_frames``, pops this stage's frame signature from
-        the shared dict, runs the aesthetic model to produce per-frame scores,
-        and reduces them to a single clip score via the configured reduce
-        function (mean or min).  Clips scoring below ``_score_threshold`` are
-        moved to ``video.filtered_clips``.
+        Resolves this stage's frame signature, runs the aesthetic model to
+        produce per-frame scores, and reduces them to a single clip score via
+        the configured reduce function (mean or min). Clips scoring below
+        ``_score_threshold`` are moved to ``video.filtered_clips``.
 
         ::
 
@@ -141,21 +145,19 @@ class AestheticFilterStage(CuratorStage):
               extracted_frames.resolve()
               frames missing for signature? --> score = -1.0, record error
               |
-              frames = ef.pop(signature)  (removes key from shared dict)
+              frames = ef[signature] if a downstream consumer shares it else ef.pop(signature)
               scores = model(frames)
               clip.aesthetic_score = reduce_fn(scores)
               |
-              ef empty? --> extracted_frames.drop()  (last consumer)
-              |
-              score < threshold? --> filtered_clips (removed)
-              score >= threshold? --> passed_clips (kept)
+              score < threshold? --> drop all frames, filtered_clips (removed)
+              score >= threshold? --> passed_clips (retain a shared entry when applicable)
 
         Memory lifecycle:
-            Uses ``ef.pop()`` instead of ``ef[]`` because multiple consumers
-            may share the ``extracted_frames`` dict (keyed by different
-            extraction signatures).  Each consumer pops its own key.  The
-            last consumer to empty the dict triggers ``drop()`` to free the
-            ``LazyData`` wrapper.
+            This stage normally pops its own signature and drops an empty frame
+            map. When a downstream consumer shares the same signature, this
+            stage reads non-destructively so passing clips retain that entry
+            for the downstream consumer. Rejected clips drop the complete map
+            because they do not reach downstream consumers.
 
         Args:
             tasks: Tasks containing videos with clips to score and filter.
@@ -185,13 +187,17 @@ class AestheticFilterStage(CuratorStage):
                         logger.error(error_msg)
                         clip.aesthetic_score = -1.0
                     else:
-                        frames = ef.pop(self._frame_extraction_signature)
+                        if self._preserve_extracted_frames:
+                            frames = ef[self._frame_extraction_signature]
+                        else:
+                            frames = ef.pop(self._frame_extraction_signature)
                         scores = self._model(frames).cpu().numpy()
                         clip.aesthetic_score = float(self._reduce_fn(scores))
-                        if not ef:
+                        if not self._preserve_extracted_frames and not ef:
                             clip.extracted_frames.drop()
 
                 if clip.aesthetic_score < self._score_threshold:
+                    clip.extracted_frames.drop()
                     video.filtered_clips.append(clip)
                     video.clip_stats.num_filtered_by_aesthetic += 1
                     if self._verbose:

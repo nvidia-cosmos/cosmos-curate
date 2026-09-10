@@ -28,6 +28,7 @@ from mcap.records import Channel, Schema
 from cosmos_curator.core.sensors.data.extrinsics import SensorExtrinsics
 from cosmos_curator.core.sensors.data.gps_data import GpsData
 from cosmos_curator.core.sensors.sampling.grid import SamplingWindow
+from cosmos_curator.core.sensors.sampling.policy import NoSamplingPolicy, require_no_sampling_policy
 from cosmos_curator.core.sensors.sampling.spec import SamplingSpec
 from cosmos_curator.core.sensors.types.types import DataSource
 from cosmos_curator.core.sensors.utils.mcap import (
@@ -308,6 +309,10 @@ class GpsSensor:
         """Resolve and cache the GPS message class from the MCAP summary when available."""
         return self._protobuf_resolver.resolve_from_summary(reader, self._topic)
 
+    def supports_sampling_policy(self, policy: object) -> bool:
+        """Return whether this sensor can sample with *policy*."""
+        return isinstance(policy, NoSamplingPolicy)
+
     def _message_class_for_message(self, schema: Schema | None, channel: Channel) -> type[Message]:
         """Resolve the dynamic message class and validate each message channel."""
         return self._protobuf_resolver.message_class_for_message(schema, channel, topic=self._topic)
@@ -347,7 +352,7 @@ class GpsSensor:
             return self._get_empty_gps_data()
         return _gps_data_from_samples(samples, self._mapped_optional_scalar_names)
 
-    def sample(self, spec: SamplingSpec) -> Generator[GpsData]:
+    def sample(self, spec: SamplingSpec, *, policy: NoSamplingPolicy) -> Generator[GpsData]:
         """Yield raw GPS sample batches for each sampling window.
 
         Each yielded batch contains the MCAP messages whose ``log_time`` falls
@@ -355,6 +360,7 @@ class GpsSensor:
         ``align_timestamps_ns`` copies the mapped sensor timestamp rather than
         the sampling grid timestamps.
         """
+        require_no_sampling_policy(policy, sensor_name=type(self).__name__)
         with self._mcap.open_reader() as reader:
             self._resolve_message_class(reader)
             for window in spec.grid:

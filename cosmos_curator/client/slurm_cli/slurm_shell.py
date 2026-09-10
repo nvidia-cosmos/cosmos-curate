@@ -45,6 +45,7 @@ from cosmos_curator.client.slurm_cli.slurm_common import (
     _get_username,
     _infer_curator_path,
     _is_local_host,
+    _is_valid_slurm_memory,
     _merge_mount_specs_by_destination,
     _mount_specs_from_strings,
     _normalize_optional_slurm_directive,
@@ -60,6 +61,8 @@ logger = logging.getLogger(__name__)
 _DEFAULT_IMPORT_IMAGE_DIR = Path("~/container_images")
 _DEFAULT_IMPORT_IMAGE_OUTPUT_FILENAME = Path(_DEFAULT_CONTAINER_IMAGE).name
 _DEFAULT_IMPORT_IMAGE_PARTITION = "cpu"
+_DEFAULT_IMPORT_IMAGE_CPUS_PER_TASK = 16
+_DEFAULT_IMPORT_IMAGE_MEMORY = "64G"
 _DEFAULT_IMPORT_IMAGE_RETRIES = 5
 _DEFAULT_IMPORT_IMAGE_RETRY_DELAY_SECONDS = 5
 _DEFAULT_ENROOT_TEMP_PATH = Path("/") / "tmp"
@@ -153,9 +156,17 @@ def _srun_allocation_args(  # noqa: PLR0913
     num_nodes: int | None,
     exclusive: bool,
     time_limit: str | None,
+    cpus_per_task: int | None = None,
+    memory: str | None = None,
 ) -> list[str]:
     if num_nodes is not None and num_nodes < 1:
         msg = "--nodes must be at least 1"
+        raise typer.BadParameter(msg)
+    if cpus_per_task is not None and cpus_per_task < 1:
+        msg = "--cpus-per-task must be at least 1"
+        raise typer.BadParameter(msg)
+    if memory is not None and not _is_valid_slurm_memory(memory):
+        msg = f"--mem must be a positive Slurm size such as 64G or 65536M, got {memory!r}"
         raise typer.BadParameter(msg)
 
     gres, gpus = _validate_gpu_options(gres=gres, gpus=gpus)
@@ -168,6 +179,8 @@ def _srun_allocation_args(  # noqa: PLR0913
         ("--gres", gres),
         ("--time", time_limit),
         ("--job-name", job_name),
+        ("--cpus-per-task", str(cpus_per_task) if cpus_per_task is not None else None),
+        ("--mem", memory),
     ]
     args.extend(
         f"{flag}={normalized}"
@@ -227,6 +240,8 @@ def _build_import_image_srun_command(  # noqa: PLR0913
     slurm_home_path: Path,
     job_name: str,
     time_limit: str | None,
+    cpus_per_task: int,
+    memory: str,
 ) -> ImportImageCommand:
     if retries < 1:
         msg = "--retries must be at least 1"
@@ -272,6 +287,8 @@ def _build_import_image_srun_command(  # noqa: PLR0913
             num_nodes=1,
             exclusive=False,
             time_limit=time_limit,
+            cpus_per_task=cpus_per_task,
+            memory=memory,
         ),
         "--ntasks=1",
         f"--export={','.join(srun_export_keys)}",
@@ -417,6 +434,23 @@ def import_image_cli(  # noqa: PLR0913
             rich_help_panel="cluster",
         ),
     ] = None,
+    cpus_per_task: Annotated[
+        int,
+        Option(
+            "-c",
+            "--cpus-per-task",
+            help="Number of CPUs allocated to the Enroot import task.",
+            rich_help_panel="cluster",
+        ),
+    ] = _DEFAULT_IMPORT_IMAGE_CPUS_PER_TASK,
+    memory: Annotated[
+        str,
+        Option(
+            "--mem",
+            help="Memory allocated to the import node in Slurm --mem format, for example 64G.",
+            rich_help_panel="cluster",
+        ),
+    ] = _DEFAULT_IMPORT_IMAGE_MEMORY,
     output_dir: Annotated[
         Path,
         Option(
@@ -481,6 +515,8 @@ def import_image_cli(  # noqa: PLR0913
         slurm_home_path=_expand_slurm_user_path(Path("~"), username, is_remote_login_node=is_remote_login_node),
         job_name=job_name,
         time_limit=time,
+        cpus_per_task=cpus_per_task,
+        memory=memory,
     )
 
     typer.echo(f"Importing {import_command.image_uri} to {import_command.output_path}")

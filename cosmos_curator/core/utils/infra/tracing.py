@@ -230,16 +230,23 @@ ENV_OTLP_TRACES_ENDPOINT = "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"
 _ENV_OTLP_ENDPOINT = ENV_OTLP_ENDPOINT
 _ENV_OTLP_TRACES_ENDPOINT = ENV_OTLP_TRACES_ENDPOINT
 
+# Deployment-level equivalent of the ``--profile-tracing`` flag, so tracing can be
+# enabled from Helm values or the launcher environment instead of per-invocation
+# pipeline arguments.
+ENV_PROFILE_TRACING = "COSMOS_CURATOR_PROFILE_TRACING"
+
 # Re-export StatusCode so callers don't need an extra import.
 __all__ = [
     "ENV_OTLP_ENDPOINT",
     "ENV_OTLP_TRACES_ENDPOINT",
+    "ENV_PROFILE_TRACING",
     "SpanAttributeValue",
     "StatusCode",
     "TracedSpan",
     "artifact_id",
     "get_otlp_endpoint",
     "process_tag",
+    "profile_tracing_enabled_via_env",
     "short_hostname",
     "trace_root_anchor",
     "traced",
@@ -327,6 +334,26 @@ def get_otlp_endpoint() -> str:
 
     """
     return os.environ.get(_ENV_OTLP_TRACES_ENDPOINT) or os.environ.get(_ENV_OTLP_ENDPOINT) or ""
+
+
+def profile_tracing_enabled_via_env() -> bool:
+    """Return whether ``COSMOS_CURATOR_PROFILE_TRACING`` requests distributed tracing.
+
+    Accepts ``1`` / ``true`` / ``yes`` / ``on`` (case-insensitive, surrounding
+    whitespace ignored).  Anything else -- including an unset variable and the
+    explicit ``0`` / ``false`` / ``no`` / ``off`` spellings -- means disabled, so
+    tracing stays opt-in.
+
+    Read alongside ``--profile-tracing`` when building the profiling config. For
+    NVCF requests, environment defaults are normalized into the invoke namespace
+    first, and an explicitly supplied invoke value remains authoritative. Set this
+    to ``0`` for a single run to opt out of a cluster-wide default.
+
+    Returns:
+        ``True`` when the variable requests tracing, ``False`` otherwise.
+
+    """
+    return os.environ.get(ENV_PROFILE_TRACING, "").strip().lower() in ("1", "true", "yes", "on")
 
 
 class TracedSpan:

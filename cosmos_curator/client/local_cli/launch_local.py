@@ -37,6 +37,8 @@ from cosmos_curator.client.environment import (
     CONTAINER_PATHS_CODE_DIR,
     CONTAINER_PATHS_COSMOS_CURATOR_CONFIG_FILE,
     CONTAINER_PATHS_DEFAULT_WORKSPACE_DIR,
+    CURATOR_IO_SLOTS_PER_NODE_ENV_VAR,
+    DEFAULT_CURATOR_IO_SLOTS_PER_NODE,
     LOCAL_AWS_CREDENTIALS_FILE,
     LOCAL_AZURE_CREDENTIALS_FILE,
     LOCAL_COSMOS_CURATOR_CONFIG_FILE,
@@ -71,6 +73,7 @@ class LaunchDocker:
     mount_s3_creds: bool
     mount_azure_creds: bool
     extra_volumes: list[str]  # each entry is HOST_PATH:CONTAINER_PATH[:MODE]
+    ray_io_slots_per_node: int
 
 
 # Stable while we use nvidia/cuda:*-devel-ubuntu*: those base images ship a
@@ -179,6 +182,15 @@ def launch(  # noqa: PLR0913
             rich_help_panel="local-docker",
         ),
     ] = "",
+    ray_io_slots_per_node: Annotated[
+        int,
+        Option(
+            "--ray-io-slots-per-node",
+            help="Logical source-IO capacity advertised when the command starts a local Ray node.",
+            rich_help_panel="local-docker",
+            min=1,
+        ),
+    ] = DEFAULT_CURATOR_IO_SLOTS_PER_NODE,
 ) -> None:
     """Launch video-curation pipeline in local docker container.
 
@@ -201,6 +213,7 @@ def launch(  # noqa: PLR0913
         mount_s3_creds=mount_s3_creds,
         mount_azure_creds=mount_azure_creds,
         extra_volumes=_parse_extra_volumes(extra_volumes),
+        ray_io_slots_per_node=ray_io_slots_per_node,
     )
     return _launch_in_docker_container(opts)
 
@@ -343,8 +356,8 @@ def _get_code_mount_strings(opts: LaunchDocker) -> list[str]:
     return code_path_strings
 
 
-# Structured-logging toggles forwarded from the host into the container (when set)
-# so curator/xenna/Ray inside the container honor the same PYTHON_LOG_FORMAT.
+# Structured-logging and tracing toggles forwarded from the host into the container (when
+# set) so curator/xenna/Ray inside the container honor the same PYTHON_LOG_FORMAT.
 _LOG_ENV_VARS_TO_FORWARD = (
     "PYTHON_LOG",
     "PYTHON_LOG_FORMAT",
@@ -352,11 +365,12 @@ _LOG_ENV_VARS_TO_FORWARD = (
     "PYTHON_LOG_RAY_LEVEL",
     "RAY_BACKEND_LOG_JSON",
     "CURATOR_RUN_ID",
+    "COSMOS_CURATOR_PROFILE_TRACING",
 )
 
 
 def _get_log_env_forward_strings() -> list[str]:
-    """Return docker ``-e VAR=value`` args for logging toggles present in the host env."""
+    """Return docker ``-e VAR=value`` args for logging/tracing toggles present in the host env."""
     forward: list[str] = []
     for name in _LOG_ENV_VARS_TO_FORWARD:
         value = os.environ.get(name)
@@ -450,6 +464,11 @@ def _launch_in_docker_container(opts: LaunchDocker) -> None:
         f"{LOCAL_DOCKER_ENV_VAR_NAME}=1",
         "-e",
         "NVCF_REQUEST_STATUS=false",
+        "-e",
+        f"{CURATOR_IO_SLOTS_PER_NODE_ENV_VAR}={opts.ray_io_slots_per_node}",
+        # Replaces the line buffering a pseudo-TTY used to give us; see the -t note below.
+        "-e",
+        "PYTHONUNBUFFERED=1",
     ]
     if opts.docker_network:
         docker_command.append(f"--network={opts.docker_network}")
@@ -470,9 +489,12 @@ def _launch_in_docker_container(opts: LaunchDocker) -> None:
     for vol in opts.extra_volumes:
         docker_command.extend(["-v", vol])
     docker_command.extend(_get_identity_mounts(scratch_home))
+    # Deliberately no "-t": a pseudo-TTY becomes the container's controlling terminal, and Ray
+    # (>=2.57) puts each worker in its own process group. Any child that reads stdin from such a
+    # background group is stopped with SIGTTIN, which silently hangs ffmpeg mid-pipeline. Without a
+    # TTY, job control signals cannot be raised at all.
     docker_command.extend(
         [
-            "-t",
             f"{opts.image_label}",
             "bash",
             "-c",
@@ -481,7 +503,7 @@ def _launch_in_docker_container(opts: LaunchDocker) -> None:
 
     # When pixi environments are bind-mounted from the host (--pixi-path), scripts
     # in .pixi/envs/*/bin/ carry shebangs with the host's absolute path (e.g.
-    # #!/home/user/project/.pixi/envs/default/bin/python3.12) which don't exist
+    # #!/home/user/project/.pixi/envs/default/bin/python3.13) which don't exist
     # inside the container.  Create a symlink so the kernel can resolve them.
     preamble_parts: list[str] = []
     if opts.pixi_path is not None:

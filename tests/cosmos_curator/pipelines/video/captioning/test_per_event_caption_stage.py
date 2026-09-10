@@ -60,7 +60,7 @@ class _FakeInner(SingleInferenceCaptionStage):
     ``side_effect`` to an exception.
     """
 
-    def __init__(  # noqa: PLR0913 - test scaffolding; arg surface mirrors a real CuratorStage
+    def __init__(
         self,
         *,
         response: str = '{"events": [{"event_id": "e0"}]}',

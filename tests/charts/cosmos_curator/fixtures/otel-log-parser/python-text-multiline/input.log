@@ -1,0 +1,4 @@
+2026-07-30 14:02:00,000	ERROR worker.py:99 -- Top level failure
+Traceback (most recent call last):
+  File "worker.py", line 1, in <module>
+RuntimeError: boom

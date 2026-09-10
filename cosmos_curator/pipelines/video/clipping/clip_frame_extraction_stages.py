@@ -28,6 +28,7 @@ from loguru import logger
 from cosmos_curator.core.interfaces.stage_interface import CuratorStage, CuratorStageResource
 from cosmos_curator.core.sensors.sampling.compat import make_decoder_utils_compat_grid
 from cosmos_curator.core.sensors.sampling.grid import SamplingGrid
+from cosmos_curator.core.sensors.sampling.policy import NearestTimestampPolicy
 from cosmos_curator.core.sensors.sampling.spec import SamplingSpec
 from cosmos_curator.core.sensors.sensors.camera_sensor import CameraSensor
 from cosmos_curator.core.sensors.utils.video import CpuVideoDecodeConfig
@@ -149,10 +150,11 @@ class ClipFrameExtractionStage(CuratorStage):
         return reduce(lcm, fps)
 
     def _make_signature(self, fps: float) -> str:
-        return FrameExtractionSignature(
+        signature = FrameExtractionSignature(
             extraction_policy=FrameExtractionPolicy.sequence,
             target_fps=fps,
-        ).to_str()
+        )
+        return signature.to_str()  # type: ignore[no-any-return]
 
     def _use_lcm_fps(self) -> bool:
         return len(self._target_fps) > 1 and all(
@@ -180,7 +182,7 @@ class ClipFrameExtractionStage(CuratorStage):
             decode_config=CpuVideoDecodeConfig(thread_count=self._num_threads),
         )
         spec = self._make_sensor_sampling_spec(sensor, sample_rate_fps, stop_ns=sensor.end_ns)
-        sampled_batches = list(sensor.sample(spec))
+        sampled_batches = list(sensor.sample(spec, policy=NearestTimestampPolicy()))
         if len(sampled_batches) != 1:
             msg = f"Expected exactly one sampled batch, got {len(sampled_batches)}"
             raise RuntimeError(msg)
@@ -228,7 +230,7 @@ class ClipFrameExtractionStage(CuratorStage):
             min_motion_frames=motion_vector_config.min_motion_frames,
         )
         spec = self._make_sensor_sampling_spec(sensor, motion_vector_config.target_fps, stop_ns=stop_ns)
-        sampled_batches = list(sensor.sample(spec))
+        sampled_batches = list(sensor.sample(spec, policy=NearestTimestampPolicy()))
         if len(sampled_batches) != 1:
             msg = f"Expected exactly one sampled batch, got {len(sampled_batches)}"
             raise RuntimeError(msg)
@@ -318,8 +320,8 @@ class ClipFrameExtractionStage(CuratorStage):
                 logger.exception(f"Error extracting frames from clip {clip.uuid}: {e}")
                 clip.errors["frame_extraction"] = "video_decode_failed"
                 # drop the transported buffer, but still attempt motion-vector extraction below from
-                # the in-hand bytes: frame decode and motion export are independent (as the separate
-                # ClipFrameExtractionStage/MotionVectorDecodeStage were pre-CVC-1078), so a frame
+                # the in-hand bytes: frame decode and motion export are independent (as they were
+                # when ClipFrameExtractionStage and MotionVectorDecodeStage were separate), so a frame
                 # failure should still record its own motion_decode outcome rather than be silently
                 # skipped.
                 clip.encoded_data.drop()

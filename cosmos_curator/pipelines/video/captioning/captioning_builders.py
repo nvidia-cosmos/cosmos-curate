@@ -17,6 +17,10 @@
 import attrs
 
 from cosmos_curator.core.interfaces.stage_interface import CuratorStage, CuratorStageSpec
+from cosmos_curator.pipelines.video.captioning.caption_quality_flags import (
+    DEFAULT_CAPTION_QUALITY_THRESHOLDS,
+    CaptionQualityThresholdConfig,
+)
 from cosmos_curator.pipelines.video.captioning.captioning_stages import (
     EnhanceCaptionStage,
     T5StageForSplit,
@@ -132,6 +136,7 @@ class CaptioningConfig:
     inflight_batching: bool = True
     enhance_config: EnhanceCaptionConfig | None = None
     caption_quality_flags_enabled: bool = True
+    caption_quality_thresholds: CaptionQualityThresholdConfig = DEFAULT_CAPTION_QUALITY_THRESHOLDS
     # Number of times the caption stage's setup() may be attempted before the actor pool gives up
     # on a given worker. Each attempt re-spawns the actor (Ray reschedules), which can dodge
     # transient placement issues like a leaked CUDA context squatting on the assigned GPU.
@@ -231,6 +236,7 @@ def _build_captioning_caption_stage(config: CaptioningConfig) -> CuratorStage | 
                     log_stats=config.perf_profile,
                     inflight_batching=config.inflight_batching,
                     caption_quality_flags_enabled=config.caption_quality_flags_enabled,
+                    caption_quality_thresholds=config.caption_quality_thresholds,
                 ),
                 num_setup_attempts_python=config.caption_setup_attempts,
                 # None preserves the default lifetime recycling for all models except the

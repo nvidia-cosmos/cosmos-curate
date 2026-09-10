@@ -108,7 +108,7 @@ def _make_video_for_slice(num_clips: int, clip_chunk_index: int = 0) -> Video:
         (5, 0, 6, 0, 2, None, None, 0, pytest.raises(ValueError, match="out of range")),
     ],
 )
-def test_slice_video_clips(  # noqa: PLR0913
+def test_slice_video_clips(
     num_clips: int,
     start: int,
     end: int,

@@ -18,16 +18,27 @@
 import json
 import subprocess
 import tempfile
+from collections.abc import Sequence
 from dataclasses import dataclass
 from fractions import Fraction
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Protocol
 
 from cosmos_curator.next.media.spans import Span, nanoseconds_to_ffmpeg_timestamp, seconds_to_nanoseconds
 
+_DECODER_THREADS = 1
+_FILTER_THREADS = 1
+
 
 class TranscodeSettings(Protocol):
-    """Structural settings required by the reusable FFmpeg transcoder."""
+    """Structural settings required by the reusable FFmpeg transcoder.
+
+    These are the settings that decide what the output media *is*, which is why
+    callers may fold them into a clip identity. Scheduling knobs that only
+    decide how fast it is produced -- thread counts, timeouts -- are passed
+    separately so they stay out of that identity.
+    """
 
     @property
     def video_encoder(self) -> str:
@@ -44,11 +55,6 @@ class TranscodeSettings(Protocol):
         """Return the optional audio stream handling mode."""
         ...
 
-    @property
-    def encoder_threads(self) -> int:
-        """Return the video encoder thread count."""
-        ...
-
 
 @dataclass(frozen=True)
 class VideoMetadata:
@@ -62,12 +68,53 @@ class VideoMetadata:
     video_codec: str
 
 
-class TranscodeError(RuntimeError):
+class MediaError(RuntimeError):
+    """Base for media failures attributable to one source or clip.
+
+    Callers distinguish these from every other exception: a ``MediaError`` is a
+    data outcome for one item, while anything else is a broken environment or a
+    programming error and should fail the task it happened in.
+    """
+
+
+class TranscodeError(MediaError):
     """Raised when FFmpeg cannot produce one planned clip."""
 
 
-class ProbeError(RuntimeError):
+class ProbeError(MediaError):
     """Raised when FFprobe cannot inspect a source or transcoded clip."""
+
+
+class UnsupportedMediaError(MediaError):
+    """Raised when media is readable but does not satisfy the v1 contract.
+
+    Separate from :class:`ProbeError` because FFprobe answered: the payload is
+    intact and says the media is unusable, so a retry can only produce the same
+    answer.
+    """
+
+
+@lru_cache(maxsize=8)
+def assert_video_encoder_available(encoder: str) -> None:
+    """Fail fast when the requested FFmpeg encoder is absent.
+
+    Memoized so workers can call this per task without re-spawning FFmpeg. The
+    driver-side call only proves the driver's FFmpeg build; a heterogeneous
+    cluster needs the same assertion where the transcoding actually happens.
+    """
+    command = ["ffmpeg", "-hide_banner", "-encoders"]
+    try:
+        result = subprocess.run(  # noqa: S603
+            command, check=True, capture_output=True, timeout=30, stdin=subprocess.DEVNULL
+        )
+    except (subprocess.SubprocessError, FileNotFoundError) as exc:
+        msg = f"Failed to query FFmpeg encoders: {exc}"
+        raise RuntimeError(msg) from exc
+    output = result.stdout.decode("utf-8", errors="replace")
+    if any(len(tokens := line.split(maxsplit=2)) > 1 and tokens[1] == encoder for line in output.splitlines()):
+        return
+    msg = f"FFmpeg does not expose required video encoder {encoder!r}"
+    raise RuntimeError(msg)
 
 
 def probe_video_bytes(video_bytes: bytes) -> VideoMetadata:
@@ -78,8 +125,14 @@ def probe_video_bytes(video_bytes: bytes) -> VideoMetadata:
         return probe_video_path(path)
 
 
-def probe_video_path(path: Path) -> VideoMetadata:
-    """Probe a local media path with FFprobe and integer-nanosecond duration conversion."""
+def probe_video_path(path: Path, *, timeout_s: int = 120) -> VideoMetadata:
+    """Probe a worker-local media path."""
+    return probe_video_source(path, timeout_s=timeout_s)
+
+
+def probe_video_source(source: str | Path, *, timeout_s: int = 120) -> VideoMetadata:
+    """Probe a local path or authenticated range-capable HTTP media source."""
+    source_text = str(source)
     command = [
         "ffprobe",
         "-v",
@@ -88,106 +141,207 @@ def probe_video_path(path: Path) -> VideoMetadata:
         "-show_streams",
         "-of",
         "json",
-        str(path),
     ]
+    if _is_http_source(source_text):
+        command.extend(("-seekable", "1"))
+    command.append(source_text)
     try:
-        result = subprocess.run(command, check=True, capture_output=True, timeout=120)  # noqa: S603
+        result = subprocess.run(  # noqa: S603
+            command, check=True, capture_output=True, timeout=timeout_s, stdin=subprocess.DEVNULL
+        )
     except subprocess.TimeoutExpired as exc:
-        msg = f"FFprobe timed out after {exc.timeout}s on {path}"
+        msg = f"FFprobe timed out after {exc.timeout}s on <source>"
         raise ProbeError(msg) from exc
     except subprocess.CalledProcessError as exc:
-        diagnostic = exc.stderr.decode("utf-8", errors="replace").strip()
+        diagnostic = _redacted_diagnostic(exc.stderr, source_text)
         msg = diagnostic or f"FFprobe exited with status {exc.returncode}"
         raise ProbeError(msg) from exc
-    payload = json.loads(result.stdout)
+    try:
+        payload = json.loads(result.stdout)
+    except json.JSONDecodeError as exc:
+        msg = "FFprobe returned invalid JSON"
+        raise ProbeError(msg) from exc
     if not isinstance(payload, dict):
         msg = "FFprobe returned a non-object payload"
-        raise TypeError(msg)
+        raise UnsupportedMediaError(msg)
     return _metadata_from_ffprobe(payload)
 
 
-def transcode_span(source_bytes: bytes, span: Span, config: TranscodeSettings) -> bytes:
-    """Transcode one logical span to an MP4 using the v1 stream-selection contract."""
+def transcode_span(
+    source_bytes: bytes,
+    span: Span,
+    config: TranscodeSettings,
+    *,
+    encoder_threads: int = 1,
+) -> bytes:
+    """Transcode one logical span from bytes using the v1 media contract."""
     with tempfile.TemporaryDirectory(prefix="curator_next_transcode_") as tmp_dir:
         root = Path(tmp_dir)
         source_path = root / "source"
         clip_path = root / "clip.mp4"
         source_path.write_bytes(source_bytes)
-
-        command = [
-            "ffmpeg",
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-y",
-            "-ss",
-            nanoseconds_to_ffmpeg_timestamp(span.start_ns),
-            "-i",
-            str(source_path),
-            "-t",
-            nanoseconds_to_ffmpeg_timestamp(span.duration_ns),
-            "-map",
-            "0:v:0",
-            "-c:v",
-            config.video_encoder,
-            "-b:v",
-            config.video_bitrate,
-            "-threads",
-            str(config.encoder_threads),
-            "-map",
-            "0:a:0?",
-            "-c:a",
-            config.audio_mode,
-            "-movflags",
-            "+faststart",
-            str(clip_path),
-        ]
-        try:
-            subprocess.run(command, check=True, capture_output=True, timeout=120)  # noqa: S603
-        except subprocess.TimeoutExpired as exc:
-            msg = f"FFmpeg timed out after {exc.timeout}s on {source_path}"
-            raise TranscodeError(msg) from exc
-        except subprocess.CalledProcessError as exc:
-            diagnostic = exc.stderr.decode("utf-8", errors="replace").strip()
-            msg = diagnostic or f"FFmpeg exited with status {exc.returncode}"
-            raise TranscodeError(msg) from exc
-        if not clip_path.exists():
-            msg = "FFmpeg completed without creating the expected MP4"
-            raise TranscodeError(msg)
+        transcode_span_to_path(source_path, clip_path, span, config, encoder_threads=encoder_threads)
         return clip_path.read_bytes()
+
+
+def transcode_span_to_path(  # noqa: PLR0913
+    source: str | Path,
+    destination: Path,
+    span: Span,
+    config: TranscodeSettings,
+    *,
+    encoder_threads: int = 1,
+    timeout_s: int = 120,
+) -> None:
+    """Seek, transcode, and write one span without materializing source bytes in Python."""
+    transcode_spans_to_paths(
+        source,
+        ((span, destination),),
+        config,
+        encoder_threads=encoder_threads,
+        timeout_s=timeout_s,
+    )
+
+
+def transcode_spans_to_paths(
+    source: str | Path,
+    outputs: Sequence[tuple[Span, Path]],
+    config: TranscodeSettings,
+    *,
+    encoder_threads: int = 1,
+    timeout_s: int = 120,
+) -> None:
+    """Transcode several independently seekable spans in one FFmpeg process.
+
+    Decoder and simple-filter parallelism stay single-threaded per clip because
+    the batch already supplies clip-level concurrency. ``encoder_threads`` only
+    controls each output encoder.
+    """
+    jobs = tuple(outputs)
+    if not jobs:
+        msg = "At least one span and destination are required"
+        raise ValueError(msg)
+
+    destinations = tuple(destination for _, destination in jobs)
+    if len(set(destinations)) != len(destinations):
+        msg = "FFmpeg output destinations must be unique"
+        raise ValueError(msg)
+
+    source_text = str(source)
+    for destination in destinations:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.unlink(missing_ok=True)
+
+    command = [
+        "ffmpeg",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-filter_threads",
+        str(_FILTER_THREADS),
+        "-y",
+    ]
+
+    # Repeat the input so every output gets independent input-side seeking.
+    # This is load-bearing for ranged cloud access and avoids decoding the
+    # source from the beginning for every requested span.
+    for span, _ in jobs:
+        command.extend(("-threads", str(_DECODER_THREADS), "-ss", nanoseconds_to_ffmpeg_timestamp(span.start_ns)))
+        if _is_http_source(source_text):
+            command.extend(("-seekable", "1"))
+        command.extend(("-i", source_text))
+
+    for input_index, (span, destination) in enumerate(jobs):
+        command.extend(
+            (
+                "-t",
+                nanoseconds_to_ffmpeg_timestamp(span.duration_ns),
+                "-map",
+                f"{input_index}:v:0",
+                "-c:v",
+                config.video_encoder,
+                "-b:v",
+                config.video_bitrate,
+                "-threads",
+                str(encoder_threads),
+                "-map",
+                f"{input_index}:a:0?",
+                "-c:a",
+                config.audio_mode,
+                "-movflags",
+                "+faststart",
+                str(destination),
+            )
+        )
+
+    try:
+        subprocess.run(  # noqa: S603
+            command, check=True, capture_output=True, timeout=timeout_s, stdin=subprocess.DEVNULL
+        )
+    except subprocess.TimeoutExpired as exc:
+        _remove_destinations(destinations)
+        msg = f"FFmpeg timed out after {exc.timeout}s on <source>"
+        raise TranscodeError(msg) from exc
+    except subprocess.CalledProcessError as exc:
+        _remove_destinations(destinations)
+        diagnostic = _redacted_diagnostic(exc.stderr, source_text)
+        msg = diagnostic or f"FFmpeg exited with status {exc.returncode}"
+        raise TranscodeError(msg) from exc
+
+    missing_count = sum(not destination.is_file() for destination in destinations)
+    if missing_count:
+        _remove_destinations(destinations)
+        msg = f"FFmpeg completed without creating {missing_count} of {len(destinations)} expected MP4s"
+        raise TranscodeError(msg)
+
+
+def _remove_destinations(destinations: Sequence[Path]) -> None:
+    for destination in destinations:
+        destination.unlink(missing_ok=True)
+
+
+def _is_http_source(source: str) -> bool:
+    return source.startswith(("http://", "https://"))
+
+
+def _redacted_diagnostic(stderr: bytes | None, source: str) -> str:
+    diagnostic = (stderr or b"").decode("utf-8", errors="replace").strip()
+    return diagnostic.replace(source, "<source>")
 
 
 def _metadata_from_ffprobe(payload: dict[str, Any]) -> VideoMetadata:
     streams = payload.get("streams")
     if not isinstance(streams, list):
         msg = "FFprobe payload does not contain a streams list"
-        raise TypeError(msg)
+        raise UnsupportedMediaError(msg)
     video_stream = next(
         (stream for stream in streams if isinstance(stream, dict) and stream.get("codec_type") == "video"),
         None,
     )
     if video_stream is None:
         msg = "No video stream found"
-        raise ValueError(msg)
+        raise UnsupportedMediaError(msg)
 
     format_payload = payload.get("format")
     format_duration = format_payload.get("duration") if isinstance(format_payload, dict) else None
-    duration_ns = _first_valid_duration_ns(video_stream.get("duration"), format_duration)
-    frame_rate = _first_valid_frame_rate(video_stream.get("avg_frame_rate"), video_stream.get("r_frame_rate"))
     raw_frame_count = video_stream.get("nb_frames")
-    frame_count = (
-        int(raw_frame_count)
-        if isinstance(raw_frame_count, str) and raw_frame_count.isdigit()
-        else round((duration_ns / 1_000_000_000) * frame_rate)
-    )
-    return VideoMetadata(
-        duration_ns=duration_ns,
-        width=int(video_stream["width"]),
-        height=int(video_stream["height"]),
-        frame_rate=frame_rate,
-        frame_count=frame_count,
-        video_codec=str(video_stream["codec_name"]),
-    )
+    try:
+        return VideoMetadata(
+            duration_ns=_first_valid_duration_ns(video_stream.get("duration"), format_duration),
+            width=int(video_stream["width"]),
+            height=int(video_stream["height"]),
+            frame_rate=_first_valid_frame_rate(video_stream.get("avg_frame_rate"), video_stream.get("r_frame_rate")),
+            # Left unknown rather than estimated from duration and frame rate:
+            # the published column is nullable precisely so a container that
+            # does not carry a frame count says so instead of guessing.
+            frame_count=int(raw_frame_count)
+            if isinstance(raw_frame_count, str) and raw_frame_count.isdigit()
+            else None,
+            video_codec=str(video_stream["codec_name"]),
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        msg = f"FFprobe reported an unusable video stream: {exc}"
+        raise UnsupportedMediaError(msg) from exc
 
 
 def _first_valid_duration_ns(*values: Any) -> int:  # noqa: ANN401
@@ -201,7 +355,7 @@ def _first_valid_duration_ns(*values: Any) -> int:  # noqa: ANN401
         if duration_ns >= 0:
             return duration_ns
     msg = "FFprobe did not report a valid source duration"
-    raise ValueError(msg)
+    raise UnsupportedMediaError(msg)
 
 
 def _first_valid_frame_rate(*values: Any) -> float:  # noqa: ANN401
@@ -215,4 +369,4 @@ def _first_valid_frame_rate(*values: Any) -> float:  # noqa: ANN401
         if rate > 0:
             return float(rate)
     msg = "FFprobe did not report a valid positive frame rate"
-    raise ValueError(msg)
+    raise UnsupportedMediaError(msg)

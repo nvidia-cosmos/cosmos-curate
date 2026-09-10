@@ -16,6 +16,7 @@
 
 import math
 from collections.abc import Iterator
+from fractions import Fraction
 from typing import Any, Protocol
 
 import attrs
@@ -25,6 +26,8 @@ from attrs import validators
 
 from cosmos_curator.core.sensors.utils.helpers import as_readonly_view
 from cosmos_curator.core.sensors.utils.validation import (
+    INT64_MAX,
+    INT64_MIN,
     positive_value,
     strictly_increasing_int64_array,
 )
@@ -54,11 +57,36 @@ def make_ts_grid(
 ) -> tuple[int, int, npt.NDArray[np.int64]]:
     """Make a grid of timestamps in nanoseconds.
 
-    Samples are ``start_ns + k * (1/sample_rate_hz)`` in float space, rounded
-    to int64 nanoseconds. The grid always includes ``start_ns`` and the
-    returned ``timestamps_ns`` is strictly ascending and read-only.
+    Samples are ``start_ns + round(k * step_ns)``, where ``step_ns`` is
+    ``1e9 / sample_rate_hz`` evaluated once in ``float64``. The association
+    matters: ``(k * 1e9) / sample_rate_hz`` rounds once instead of twice and
+    disagrees on a handful of near-ties at rates like 29.97. The origin is an
+    integer and only the *relative* offsets go through a float, so no absolute
+    nanosecond timestamp does, and the grid does not lose precision at
+    epoch-scale origins. The grid always includes ``start_ns`` and
+    the returned ``timestamps_ns`` is strictly ascending and read-only.
+
+    Accuracy: every timestamp is within 1 ns of the exact rational grid, and the
+    deviation does not accumulate along the grid. It is exactly zero when
+    ``1e9 / sample_rate_hz`` is representable in ``float64`` (10, 25, 1000 Hz) and
+    for shorter grids at rates like 30 Hz; isolated 1 ns deviations appear on rates
+    whose exact interval has a large denominator, such as 29.97, after roughly an
+    hour of grid. That is seven orders of magnitude below the sample interval and
+    does not change which source observation a nearest-neighbour lookup selects.
+    The bound holds while offsets stay under 2**53 ns, about 104 days of grid.
+    Past that ``float64`` can no longer represent every integer nanosecond, so
+    deviations grow in proportion to the offset -- roughly 5 ns at 8 years and
+    50 ns at 80 -- and the half-open bracket is no longer guaranteed. Nothing
+    guards against it: such grids are hundreds of times longer than any this is
+    built for, and low sample rates reach them with an unremarkable sample count.
 
     Exactly one of ``end_ns`` and ``exclusive_end_ns`` must be supplied.
+
+    This function constructs a numeric timestamp grid only. It does not inspect
+    sensor data or determine whether the requested bounds are covered by any
+    source observations. Callers are responsible for choosing bounds that are
+    valid for their use case; sensor sampling and alignment code is responsible
+    for determining whether observations can satisfy the returned timestamps.
 
     Inclusive end (``end_ns``):
         ``end_ns`` is the last timestamp to *include*. The grid continues
@@ -92,7 +120,8 @@ def make_ts_grid(
     Raises:
         ValueError: if neither or both of ``end_ns`` and ``exclusive_end_ns``
             are supplied, if ``sample_rate_hz`` is missing or non-positive,
-            if the supplied bound precedes ``start_ns``, or if rounding to
+            if the supplied bound precedes ``start_ns``, if the grid would
+            extend outside signed int64 nanoseconds, or if rounding to
             nanoseconds does not produce a strictly increasing grid.
 
     """
@@ -121,26 +150,65 @@ def make_ts_grid(
         raise ValueError(msg)
 
     sample_interval = 1.0 / sample_rate_hz
-    start = start_ns / 1_000_000_000
-    end = inclusive_end_ns / 1_000_000_000
+    span_s = (inclusive_end_ns - start_ns) / 1_000_000_000
 
     # Calculate the number of samples needed to cover the range, guarding against
-    # floating-point roundoff at exact boundaries
-    intervals_to_end = np.nextafter((end - start) / sample_interval, np.inf)
+    # floating-point roundoff at exact boundaries. The span is a relative
+    # nanosecond count rather than an absolute timestamp, so this stays clear of
+    # the hundreds-of-nanoseconds float64 spacing at epoch scale.
+    intervals_to_end = np.nextafter(span_s / sample_interval, np.inf)
     sample_intervals_to_end = max(2, math.floor(intervals_to_end) + 2)
 
-    # Build the grid of timestamps in float space, then round to int64 nanoseconds
-    timestamps_s = start + np.arange(sample_intervals_to_end, dtype=np.float64) * sample_interval
-    retval = np.round(timestamps_s * 1_000_000_000).astype(np.int64)
+    # Range-check in exact Python arithmetic *before* building anything. Reading the
+    # bound back off the constructed array cannot work: the offsets are int64 and wrap
+    # silently, and np.diff of a wrapped pair wraps back positive, so the
+    # strictly-increasing check below does not catch it either. The two wraps together
+    # would return a grid whose exclusive_end_ns sits below its last timestamp.
+    # Offsets ascend from zero, so the last one bounds the grid.
+    interval_ns = Fraction(1_000_000_000) / Fraction(sample_rate_hz)
+    last_offset_ns = round(interval_ns * (sample_intervals_to_end - 1))
+    last_ns = start_ns + last_offset_ns
+    if not (INT64_MIN <= start_ns <= INT64_MAX and last_offset_ns <= INT64_MAX and INT64_MIN <= last_ns <= INT64_MAX):
+        msg = (
+            "grid extends outside signed int64 nanoseconds, got "
+            f"{start_ns=} last_ns={last_ns} last_offset_ns={last_offset_ns}"
+        )
+        raise ValueError(msg)
+
+    # start_ns is deliberately absent from the arithmetic below: at epoch magnitudes
+    # adjacent float64 values are 256 ns apart, while across a clip-length offset they
+    # are sub-nanosecond. Two properties of this expression also matter, and are pinned
+    # by tests:
+    #
+    #   * Each offset is step_ns * k, computed independently. Accumulating step_ns
+    #     instead (a running sum, np.cumsum) lets rounding error compound: 1132 ns of
+    #     drift over 18 h at 29.97 Hz, against <= 1 ns here.
+    #   * step_ns keeps the interval's fractional part. Pre-rounding it to an integer
+    #     nanosecond step makes every sample inherit all prior truncation -- 36 us per
+    #     hour at 30 Hz -- which pulls the boundary marker below end_ns and breaks the
+    #     half-open contract on spans as ordinary as one second.
+    step_ns = 1_000_000_000.0 / sample_rate_hz
+    offsets_ns = np.round(step_ns * np.arange(sample_intervals_to_end, dtype=np.float64)).astype(np.int64)
+    offsets_ns += np.int64(start_ns)
+    retval = offsets_ns
     if np.any(np.diff(retval) <= 0):
         msg = (
             "sample_rate_hz does not produce a strictly increasing nanosecond grid after rounding, "
             f"got {sample_rate_hz=}"
         )
         raise ValueError(msg)
+
+    # The pre-check bounds round(interval_ns * k) in exact arithmetic; the offsets above
+    # come from round(step_ns * k) in float64, rounded into int64. The two agree to 1 ns,
+    # and 1 ns is the entire margin at the int64 boundary. Offsets ascend from zero, so a
+    # last timestamp at or below the origin can only mean the shift wrapped. O(1), and
+    # independent of how the offsets were built.
+    if int(retval[-1]) <= start_ns:
+        msg = f"grid wrapped past signed int64 nanoseconds, got {start_ns=} last_ns={int(retval[-1])}"
+        raise ValueError(msg)
+
     retval.flags.writeable = False
 
-    start_ns = int(retval[0])
     timestamps_ns = retval[:-1]
     out_exclusive_end_ns = exclusive_end_ns if exclusive_end_ns is not None else int(retval[-1])
     return start_ns, out_exclusive_end_ns, timestamps_ns

@@ -1,0 +1,2 @@
+{"levelname":"WARNING","message":"json warning","name":"cosmos_curator.example","lineno":42,"asctime":"2026-07-30 14:01:40,123","timestamp_ns":1785420100123000000,"trace_id":"1234567890abcdef1234567890abcdef","span_id":"1234567890abcdef"}
+{"levelname":"INFO","message":"malformed trace context","name":"cosmos_curator.example","lineno":46,"asctime":"2026-07-30 14:01:40,456","trace_id":"not-a-trace-id","span_id":"not-a-span"}

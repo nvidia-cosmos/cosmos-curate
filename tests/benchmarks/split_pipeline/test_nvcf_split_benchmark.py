@@ -10,18 +10,61 @@
 """Test nvcf_split_benchmark."""
 
 import json
+import sys
 from pathlib import Path
 from secrets import randbelow
 from typing import Any
 from unittest.mock import MagicMock, mock_open, patch
 
+import pytest
+
 from benchmarks.secrets import KratosSecrets
 from benchmarks.split_pipeline.nvcf_split_benchmark import (
+    _caption_quality_threshold_values,
+    _configure_otlp_observability,
+    _json_str_map,
+    _merge_observability_labels,
+    _parse_args,
     _read_optional_json,
     _run_benchmark_attempt,
     _summary_counts_are_valid,
     report_metrics,
 )
+from cosmos_curator.pipelines.video.captioning.caption_quality_flags import (
+    DEFAULT_CAPTION_QUALITY_THRESHOLDS,
+    CaptionQualityThresholdConfig,
+)
+
+_REQUIRED_NVCF_CLI_ARGS = [
+    "--funcid",
+    "test-function",
+    "--version",
+    "test-version",
+    "--captioning-algorithm",
+    "qwen",
+    "--splitting-algorithm",
+    "fixed-stride",
+    "--image",
+    "nvcr.io/test/cosmos-curator:test-tag",
+    "--metrics-endpoint",
+    "https://metrics.example.com",
+    "--backend",
+    "test-backend",
+    "--gpu",
+    "L40S",
+    "--instance-type",
+    "test-instance",
+    "--s3-input-prefix",
+    "s3://bucket/input",
+    "--s3-output-prefix",
+    "s3://bucket/output",
+    "--max-concurrency",
+    "1",
+    "--limit",
+    "1",
+    "--gpus-per-node",
+    "1",
+]
 
 
 def _make_caption_quality_stats() -> dict[str, Any]:
@@ -35,6 +78,12 @@ def _make_caption_quality_stats() -> dict[str, Any]:
             "blocked": 1,
             "error": 1,
             "skipped": 0,
+        },
+        "caption_quality_flags_evaluated_count": 3,
+        "caption_quality_flag_counts": {
+            "flag_length_outlier": 1,
+            "flag_repetition": 2,
+            "flag_near_duplicate": 0,
         },
         "empty_caption_count": 1,
         "sentinel_caption_count": 2,
@@ -50,6 +99,10 @@ def _make_caption_quality_metrics() -> dict[str, Any]:
         "caption_status_blocked": 1,
         "caption_status_error": 1,
         "caption_status_skipped": 0,
+        "caption_quality_flags_evaluated_count": 3,
+        "flag_length_outlier": 1,
+        "flag_repetition": 2,
+        "flag_near_duplicate": 0,
         "empty_caption_count": 1,
         "sentinel_caption_count": 2,
     }
@@ -58,6 +111,230 @@ def _make_caption_quality_metrics() -> dict[str, Any]:
 def _make_kratos_secrets() -> KratosSecrets:
     bearer_token = "test_token"  # noqa: S105
     return KratosSecrets(api_key="test_api", bearer_token=bearer_token)
+
+
+@pytest.mark.parametrize(
+    ("extra_args", "expected"),
+    [
+        ([], DEFAULT_CAPTION_QUALITY_THRESHOLDS),
+        (
+            [
+                "--caption-quality-length-floor-words",
+                "6",
+                "--caption-quality-length-ceiling-words",
+                "900",
+                "--caption-quality-repeated-trigram-min-count",
+                "3",
+                "--caption-quality-near-duplicate-jaccard-threshold",
+                "0.75",
+            ],
+            CaptionQualityThresholdConfig(
+                length_floor_words=6,
+                length_ceiling_words=900,
+                repeated_trigram_min_count=3,
+                near_duplicate_jaccard_threshold=0.75,
+            ),
+        ),
+    ],
+    ids=["defaults", "overrides"],
+)
+def test_parse_args_builds_caption_quality_threshold_config(
+    monkeypatch: pytest.MonkeyPatch,
+    extra_args: list[str],
+    expected: CaptionQualityThresholdConfig,
+) -> None:
+    """NVCF CLI values should build one validated shared threshold policy."""
+    monkeypatch.setattr(sys, "argv", ["nvcf_split_benchmark.py", *_REQUIRED_NVCF_CLI_ARGS, *extra_args])
+
+    args = _parse_args()
+
+    assert args.caption_quality_thresholds == expected
+
+
+def test_parse_args_rejects_invalid_caption_quality_thresholds(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """NVCF CLI should reject an invalid effective threshold policy."""
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "nvcf_split_benchmark.py",
+            *_REQUIRED_NVCF_CLI_ARGS,
+            "--caption-quality-length-floor-words",
+            "10",
+            "--caption-quality-length-ceiling-words",
+            "9",
+        ],
+    )
+
+    with pytest.raises(SystemExit):
+        _parse_args()
+
+    assert "length_ceiling_words" in capsys.readouterr().err
+
+
+def test_parse_args_validates_observability_labels(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Malformed observability labels should use argparse's normal error path."""
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "nvcf_split_benchmark.py",
+            *_REQUIRED_NVCF_CLI_ARGS,
+            "--enable-otlp-logs",
+            "--observability-labels-json",
+            '{"customer": 42}',
+        ],
+    )
+
+    with pytest.raises(SystemExit):
+        _parse_args()
+
+    assert "observability labels must be a JSON object with non-empty string keys and values" in capsys.readouterr().err
+
+
+def test_parse_args_parses_observability_labels(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Validated observability labels should be available to the benchmark caller."""
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "nvcf_split_benchmark.py",
+            *_REQUIRED_NVCF_CLI_ARGS,
+            "--enable-otlp-traces",
+            "--observability-labels-json",
+            '{"customer": "test"}',
+        ],
+    )
+
+    args = _parse_args()
+
+    assert args.observability_labels == {"customer": "test"}
+
+
+def test_caption_quality_threshold_values_uses_split_config_keys() -> None:
+    """Serialize threshold values with the split JSON/API key spellings."""
+    thresholds = CaptionQualityThresholdConfig(
+        length_floor_words=6,
+        length_ceiling_words=900,
+        repeated_trigram_min_count=3,
+        near_duplicate_jaccard_threshold=0.75,
+    )
+
+    assert _caption_quality_threshold_values(thresholds) == {
+        "caption_quality_length_floor_words": 6,
+        "caption_quality_length_ceiling_words": 900,
+        "caption_quality_repeated_trigram_min_count": 3,
+        "caption_quality_near_duplicate_jaccard_threshold": 0.75,
+    }
+
+
+def test_configure_otlp_observability_enables_only_requested_signals() -> None:
+    """Benchmark OTLP controls should preserve independent chart signal gates."""
+    deploy_data: dict[str, Any] = {
+        "configuration": {
+            "metrics": {
+                "remoteWrite": {"endpoint": "https://prom.example"},
+                "otlp": {"timeout": "20s"},
+            },
+        }
+    }
+
+    _configure_otlp_observability(
+        deploy_data,
+        "https://otlp.example",
+        {"customer": "test-customer"},
+        enable_metrics=True,
+        enable_traces=False,
+        enable_logs=False,
+        nvcf_mtls=False,
+    )
+
+    configuration = deploy_data["configuration"]
+    assert configuration["metrics"]["remoteWrite"]["endpoint"] == "https://prom.example"
+    assert configuration["metrics"]["otlp"] == {"enabled": True, "timeout": "20s"}
+    assert "enabled" not in configuration["metrics"]
+    assert configuration["metrics"]["extraExternalLabels"] == {"customer": "test-customer"}
+    assert "logging" not in configuration
+    assert "tracing" not in configuration
+    assert configuration["otlp"] == {"endpoint": "https://otlp.example"}
+
+
+def test_configure_otlp_observability_keeps_nvcf_mtls_explicit_and_uses_chart_defaults() -> None:
+    """The NVCF mTLS profile should be independent and avoid restating chart defaults."""
+    deploy_data: dict[str, Any] = {
+        "configuration": {
+            "otlp": {"nvcfSecrets": {"secretName": "custom-secrets"}},
+        }
+    }
+
+    _configure_otlp_observability(
+        deploy_data,
+        "https://otlp.example",
+        {},
+        enable_metrics=False,
+        enable_traces=False,
+        enable_logs=True,
+        nvcf_mtls=True,
+    )
+
+    configuration = deploy_data["configuration"]
+    assert configuration["logging"] == {"otlp": {"enabled": True}}
+    assert "metrics" not in configuration
+    assert "tracing" not in configuration
+    assert configuration["otlp"] == {
+        "endpoint": "https://otlp.example",
+        "extractNVCFSecrets": True,
+        "tls": {"caPath": "/etc/curator-otlp/certs/ca.crt"},
+        "nvcfSecrets": {"secretName": "custom-secrets"},
+    }
+
+
+def test_merge_observability_labels_operator_values_override_template_defaults() -> None:
+    """Operator labels should override static defaults while preserving unrelated defaults."""
+    configuration: dict[str, Any] = {
+        "metrics": {
+            "extraExternalLabels": {
+                "customer": "template-customer",
+                "environment": "staging",
+            }
+        }
+    }
+
+    _merge_observability_labels(
+        configuration,
+        {
+            "customer": "operator-customer",
+            "benchmark": "split-pipeline",
+        },
+    )
+
+    assert configuration["metrics"]["extraExternalLabels"] == {
+        "customer": "operator-customer",
+        "environment": "staging",
+        "benchmark": "split-pipeline",
+    }
+
+
+def test_merge_observability_labels_rejects_non_object_template_labels() -> None:
+    """Malformed template labels should fail with the same clear contract as NVCF deployment."""
+    configuration: dict[str, Any] = {"metrics": {"extraExternalLabels": ["invalid"]}}
+
+    with pytest.raises(TypeError) as exc_info:
+        _merge_observability_labels(configuration, {"customer": "operator-customer"})
+    assert str(exc_info.value) == "configuration.metrics.extraExternalLabels must be an object"
+
+
+@pytest.mark.parametrize("raw_value", ['{"customer": 42}', '{"": "value"}', '["customer"]'])
+def test_json_str_map_rejects_invalid_observability_labels(raw_value: str) -> None:
+    """Observability labels should fail visibly instead of disappearing from the deploy payload."""
+    with pytest.raises((TypeError, ValueError)):
+        _json_str_map(raw_value)
 
 
 def test_run_benchmark_attempt_skips_status_logs(tmp_path: Path) -> None:
@@ -107,7 +384,7 @@ def test_run_benchmark_attempt_skips_status_logs(tmp_path: Path) -> None:
 @patch("benchmarks.split_pipeline.nvcf_split_benchmark._read_optional_json")
 @patch("benchmarks.split_pipeline.nvcf_split_benchmark._read_summary_json")
 @patch("benchmarks.split_pipeline.nvcf_split_benchmark.logger")
-def test_report_metrics_happy_path(  # noqa: PLR0913
+def test_report_metrics_happy_path(
     mock_logger: MagicMock,  # noqa: ARG001
     mock_read_summary_json: MagicMock,
     mock_read_optional_json: MagicMock,
